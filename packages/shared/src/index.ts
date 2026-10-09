@@ -10,3 +10,6 @@ export * from './search';
 export * from './geometry';
 export * from './sources';
 export * from './annotations';
+export * from './evidence';
+export * from './questions';
+export * from './studybook';

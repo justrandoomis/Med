@@ -190,7 +190,9 @@ ai.generateStructured<T>({ task, schema /* zod */, system, input /* untrusted co
 ### 3.6 Evidence contract — §10, §12, AC-05/06/07
 
 * Evidence is created ONLY from existing regions: `evidence.fromRegion(regionId, {start?, end?})` → exact quote.
-* Generators receive a list of `{evidence_id, quote, source label, page label}` that already passed the scope filter.
+* Generators receive evidence under **short aliases** (`E1`, `E2`, … — `EvidenceForModel` in `shared/evidence.ts`) that
+  already passed the scope filter. The server keeps the alias → evidence_id map; an alias it did not hand out is rejected
+  (AC-06). Generated content follows `GeneratedContent` (sentences; every medical sentence carries a claim).
 * Output claims: `{ text, support_type, evidence_ids[] }`. `evidence.validateClaims(ownerType, ownerId, claims, scope)`:
   1. **exists** — every evidence id exists → else reject claim (AC-06). Invalid ids never become visible citations.
   2. **in scope** — every evidence version ∈ `scope.versionIds` → else reject (AC-05).
