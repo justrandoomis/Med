@@ -1,0 +1,295 @@
+{
+  "_note": "Ground truth for the Golden Set. Authored by hand together with the fixtures; reviewed by the orchestrator. Synthetic content.",
+  "lecture_appendicitis.pdf": {
+    "source_type": "lecture",
+    "page_count": 4,
+    "printed_labels": [
+      "11",
+      "12",
+      "13",
+      "14"
+    ],
+    "printed_label_origin": "pdf_page_labels",
+    "pages_need_ocr": [],
+    "must_contain": {
+      "0": [
+        "periumbilical",
+        "McBurney",
+        "NOT exclude"
+      ],
+      "1": [
+        "Ultrasound is the first-line",
+        "ectopic pregnancy"
+      ],
+      "2": [
+        "Alvarado",
+        "Leukocytosis",
+        "10 ×10⁹/L"
+      ],
+      "3": [
+        "Figure 1"
+      ]
+    },
+    "tables": [
+      {
+        "page_index": 2,
+        "min_rows": 10,
+        "merged_header": "Alvarado score (MANTRELS)"
+      }
+    ],
+    "figures": [
+      {
+        "page_index": 3,
+        "caption_contains": "Figure 1"
+      }
+    ],
+    "two_column_page_index": 1,
+    "reading_order_page_1": [
+      "Ultrasound is the first-line",
+      "CT abdomen is preferred",
+      "Differential diagnosis"
+    ],
+    "arabic_must_contain": {
+      "0": [
+        "يبدأ الألم",
+        "الحفرة الحرقفية اليمنى"
+      ],
+      "1": [
+        "الحمل خارج الرحم"
+      ]
+    },
+    "known_extraction_defects": [
+      "Raw PDF text (pdfjs and pdftotext) emits the lam-alef ligature reversed: \"األلم\" instead of \"الألم\". The pipeline must normalize it (or flag the region) — never store the reversed form silently.",
+      "The tanween glyph in \"عادةً\" maps to a stray Latin \"S\" via the font ToUnicode table. A lone Latin letter inside an Arabic word must flag the region for review (extraction accuracy), not pass silently."
+    ]
+  },
+  "lecture_cholecystitis.pdf": {
+    "source_type": "lecture",
+    "page_count": 2,
+    "printed_labels": [
+      "31",
+      "32"
+    ],
+    "printed_label_origin": "detected_text",
+    "pages_need_ocr": []
+  },
+  "mixed_scanned_lecture.pdf": {
+    "page_count": 3,
+    "pages_need_ocr": [
+      1
+    ],
+    "ocr_must_contain": {
+      "1": [
+        "pylori",
+        "urea breath test"
+      ]
+    },
+    "digital_pages": [
+      0,
+      2
+    ]
+  },
+  "questions_surgery_course1.pdf": {
+    "source_type": "question_source",
+    "sections": [
+      {
+        "key": "A",
+        "title_contains": "Section A",
+        "questions": [
+          {
+            "n": "1",
+            "options": 4,
+            "key": "B",
+            "negation": false,
+            "answer_status": "source_key"
+          },
+          {
+            "n": "2",
+            "options": 4,
+            "key": "C",
+            "negation": true,
+            "negation_term": "NOT",
+            "answer_status": "source_key"
+          },
+          {
+            "n": "3",
+            "options": 5,
+            "key": "B",
+            "negation": false,
+            "spans_pages": [
+              0,
+              1
+            ],
+            "answer_status": "source_key"
+          },
+          {
+            "n": "4",
+            "options": 4,
+            "key": "B",
+            "negation": false,
+            "must_contain": "11.5 ×10⁹/L",
+            "answer_status": "source_key"
+          }
+        ]
+      },
+      {
+        "key": "B",
+        "title_contains": "Section B",
+        "questions": [
+          {
+            "n": "1",
+            "options": 4,
+            "key": "A",
+            "negation": false,
+            "answer_status": "source_key"
+          },
+          {
+            "n": "2",
+            "options": 4,
+            "key": "D",
+            "negation": true,
+            "negation_term": "EXCEPT",
+            "answer_status": "source_key"
+          },
+          {
+            "n": "3",
+            "options": 4,
+            "key": null,
+            "negation": false,
+            "option_labels": [
+              "أ",
+              "ب",
+              "ج",
+              "د"
+            ],
+            "answer_status": "missing_key"
+          }
+        ]
+      }
+    ],
+    "total_questions": 7
+  },
+  "questions_previous_exam_2024.pdf": {
+    "source_type": "previous_exam",
+    "questions": [
+      {
+        "n": "1",
+        "options": 4,
+        "key": "B",
+        "exact_duplicate_of": {
+          "file": "questions_surgery_course1.pdf",
+          "section": "A",
+          "n": "1"
+        }
+      },
+      {
+        "n": "2",
+        "options": 4,
+        "key": "A",
+        "near_duplicate_of": {
+          "file": "questions_surgery_course1.pdf",
+          "section": "A",
+          "n": "2"
+        },
+        "must_not_merge": true,
+        "reason": "negation differs and options differ"
+      },
+      {
+        "n": "3",
+        "options": 4,
+        "key": null,
+        "answer_status": "missing_key",
+        "must_contain": [
+          "Na+ 140 mmol/L",
+          "K+ 6.5 mmol/L"
+        ]
+      }
+    ]
+  },
+  "question_photo_circled.png": {
+    "format": "image",
+    "needs_ocr": true,
+    "questions": [
+      {
+        "n": "7",
+        "options": 4,
+        "answer_status": "missing_key",
+        "unofficial_mark_on": "A"
+      }
+    ]
+  },
+  "low_quality_scan.png": {
+    "format": "image",
+    "needs_ocr": true,
+    "expect_low_confidence_or_review": true
+  },
+  "lecture_notes_shock.docx": {
+    "format": "docx",
+    "pagination": "paragraphs",
+    "min_paragraphs": 6,
+    "headings": [
+      "Shock — الصدمة",
+      "Classification",
+      "Initial assessment"
+    ]
+  },
+  "slides_shock.pptx": {
+    "format": "pptx",
+    "pagination": "slides",
+    "slide_count": 3,
+    "slide_titles": [
+      "Shock — overview",
+      "Types of shock",
+      "Initial management"
+    ]
+  },
+  "histology_images.zip": {
+    "format": "image_set",
+    "accepted_order": [
+      "01_epithelium.png",
+      "02_connective_tissue.png",
+      "10_muscle.png"
+    ],
+    "rejected": [
+      "__MACOSX/slides/._01_epithelium.png",
+      "slides/.DS_Store",
+      "slides/readme.txt"
+    ]
+  },
+  "matching": {
+    "lecture": "lecture_appendicitis.pdf",
+    "question_source": "questions_surgery_course1.pdf",
+    "expect_linked_to_lecture": [
+      {
+        "section": "A",
+        "n": "1"
+      },
+      {
+        "section": "A",
+        "n": "2"
+      },
+      {
+        "section": "A",
+        "n": "3"
+      },
+      {
+        "section": "A",
+        "n": "4"
+      }
+    ],
+    "expect_not_directly_covered": [
+      {
+        "section": "B",
+        "n": "1"
+      },
+      {
+        "section": "B",
+        "n": "2"
+      },
+      {
+        "section": "B",
+        "n": "3"
+      }
+    ]
+  }
+}

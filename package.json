@@ -22,7 +22,7 @@
     "lint": "eslint .",
     "test": "npm test -w @medlevo/shared && npm test -w @medlevo/server && npm test -w @medlevo/web",
     "e2e": "playwright test",
-    "fixtures": "node scripts/build-fixtures.mjs",
+    "fixtures": "npm --prefix tools/fixtures install --no-workspaces && node tools/fixtures/build-fixtures.mjs",
     "backup": "npm run backup -w @medlevo/server",
     "restore:verify": "npm run restore:verify -w @medlevo/server"
   },

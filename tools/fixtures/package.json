@@ -1,0 +1,13 @@
+{
+  "name": "medlevo-fixture-builder",
+  "private": true,
+  "type": "module",
+  "description": "Builds the Golden Set fixture documents (synthetic, structural test content). Not part of the app runtime.",
+  "scripts": { "build": "node build-fixtures.mjs" },
+  "dependencies": {
+    "docx": "^9.9.0",
+    "pdf-lib": "^1.17.1",
+    "pptxgenjs": "^4.0.1",
+    "jszip": "^3.10.2"
+  }
+}
