@@ -12,6 +12,11 @@ import libraryModule from './library';
 import sourcesModule from './sources';
 import processingModule from './processing';
 import annotationsModule from './annotations';
+import evidenceModule from './evidence';
+import searchModule from './search';
+import studybookModule from './studybook';
+import questionsModule from './questions';
+import examsModule from './exams';
 
 export interface ModuleEntry {
   name: string;
@@ -33,4 +38,9 @@ export const MODULES: ModuleEntry[] = [
   { name: 'sources', prefix: '/api/sources', plugin: sourcesModule },
   { name: 'processing', prefix: '/api/processing', plugin: processingModule },
   { name: 'annotations', prefix: '/api/annotations', plugin: annotationsModule },
+  { name: 'evidence', prefix: '/api/evidence', plugin: evidenceModule },
+  { name: 'search', prefix: '/api/search', plugin: searchModule },
+  { name: 'studybook', prefix: '/api/studybook', plugin: studybookModule },
+  { name: 'questions', prefix: '/api/questions', plugin: questionsModule },
+  { name: 'exams', prefix: '/api/exams', plugin: examsModule },
 ];

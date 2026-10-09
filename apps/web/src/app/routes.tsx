@@ -10,6 +10,7 @@ import { routes as library } from '../features/library/routes';
 import { routes as upload } from '../features/upload/routes';
 import { routes as sources } from '../features/sources/routes';
 import { routes as workspace } from '../features/workspace/routes';
+import { routes as studybook } from '../features/studybook/routes';
 import { routes as questions } from '../features/questions/routes';
 import { routes as exams } from '../features/exams/routes';
 import { routes as review } from '../features/review/routes';
@@ -27,6 +28,7 @@ export const FEATURES: Record<string, FeatureRoutes> = {
   upload,
   sources,
   workspace,
+  studybook,
   questions,
   exams,
   review,
