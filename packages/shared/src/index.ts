@@ -5,3 +5,4 @@ export * from './scope';
 export * from './errors';
 export * from './settings';
 export * from './features';
+export * from './search';
