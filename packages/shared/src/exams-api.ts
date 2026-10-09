@@ -205,7 +205,10 @@ export function masterySignal(a: Pick<QuestionAttemptDTO, 'is_correct' | 'confid
   if (a.hints_used > 0) return 'correct_after_hint';
   if (a.confidence === 'guess') return 'correct_guess';
   if (a.confidence === 'unsure') return 'correct_unsure';
-  return 'correct_confident_independent';
+  // Only an explicitly CONFIDENT, unassisted answer counts as independent mastery (AC-27).
+  // Unknown confidence is treated conservatively, like an unsure answer.
+  if (a.confidence === 'confident') return 'correct_confident_independent';
+  return 'correct_unsure';
 }
 
 // ───────── session (what the runner needs) ─────────

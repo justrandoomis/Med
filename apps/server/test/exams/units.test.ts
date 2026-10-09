@@ -229,5 +229,7 @@ describe('AC-27 mastery signals', () => {
     expect(masterySignal({ ...a, solution_viewed_before_answer: true })).toBe('correct_after_solution_viewed');
     expect(masterySignal({ ...a, is_correct: false })).toBe('wrong');
     expect(masterySignal({ ...a, is_correct: null })).toBeNull();
+    // unknown confidence is never counted as confident independent mastery
+    expect(masterySignal({ ...a, confidence: null })).toBe('correct_unsure');
   });
 });
