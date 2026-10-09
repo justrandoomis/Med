@@ -1,0 +1,441 @@
+/*
+ * Study Book, explanations, contextual chat and summaries (track C2). Design tokens only.
+ * The Study Book reads like a book page (warm paper, reading face from the evidence styles); the rail parts are
+ * quiet forms. Status is always text (+ icon) — never colour alone.
+ */
+
+/* ───────── rail: explain & ask ───────── */
+.sb-explain {
+  gap: var(--ml-space-4);
+}
+.sb-context {
+  display: grid;
+  gap: var(--ml-space-2);
+}
+.sb-label {
+  margin: 0;
+  font-size: var(--ml-text-sm);
+  font-weight: var(--ml-weight-semibold);
+  color: var(--ml-color-ink-2);
+}
+.sb-muted {
+  margin: 0;
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-sm);
+  line-height: var(--ml-leading-sm);
+}
+.sb-quote {
+  margin: 0;
+  padding-inline-start: var(--ml-space-3);
+  border-inline-start: 3px solid var(--ml-color-line-strong);
+  font-family: var(--ml-font-reading);
+  font-size: var(--ml-text-md);
+  line-height: var(--ml-leading-md);
+  color: var(--ml-color-ink);
+  overflow-wrap: anywhere;
+}
+span.sb-quote {
+  padding-inline-start: var(--ml-space-2);
+  border-inline-start-width: 2px;
+}
+.sb-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-2);
+}
+.sb-scope {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-2);
+}
+.sb-scope > :last-child:not(button) {
+  flex-basis: 100%;
+}
+.sb-prefs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: var(--ml-space-3);
+}
+.sb-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ml-space-2);
+}
+.sb-actions > p {
+  flex-basis: 100%;
+}
+.sb-reason {
+  margin: 0;
+  padding: var(--ml-space-2) var(--ml-space-3);
+  border-radius: var(--ml-radius-sm);
+  background: var(--ml-color-paper-2);
+  border: 1px dashed var(--ml-color-line-strong);
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-sm);
+  line-height: var(--ml-leading-sm);
+}
+.sb-note {
+  margin: 0;
+  padding: var(--ml-space-2) var(--ml-space-3);
+  border-radius: var(--ml-radius-sm);
+  background: var(--ml-color-info-soft);
+  font-size: var(--ml-text-sm);
+  line-height: var(--ml-leading-sm);
+}
+.sb-compare {
+  display: grid;
+  gap: var(--ml-space-3);
+}
+.sb-running {
+  display: grid;
+  gap: var(--ml-space-2);
+  justify-items: start;
+}
+.sb-result {
+  display: grid;
+  gap: var(--ml-space-3);
+  min-width: 0;
+}
+.sb-result .ev-artifact {
+  max-width: none;
+}
+.sb-history,
+.sb-threads,
+.sb-versions,
+.sb-reanchor {
+  border-top: 1px solid var(--ml-color-line);
+  padding-top: var(--ml-space-2);
+}
+.sb-history > summary,
+.sb-threads > summary,
+.sb-versions > summary,
+.sb-reanchor > summary {
+  cursor: pointer;
+  min-height: var(--ml-touch-target);
+  display: flex;
+  align-items: center;
+  font-size: var(--ml-text-sm);
+  font-weight: var(--ml-weight-medium);
+  color: var(--ml-color-ink-2);
+}
+.sb-history ul,
+.sb-threads ul,
+.sb-versions ul,
+.sb-reanchor ul,
+.sb-notes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--ml-space-1);
+}
+.sb-threads li {
+  display: grid;
+  gap: 2px;
+}
+.sb-notes li,
+.sb-reanchor li {
+  font-size: var(--ml-text-sm);
+  line-height: var(--ml-leading-sm);
+  padding-inline-start: var(--ml-space-3);
+  border-inline-start: 2px solid var(--ml-color-line-strong);
+}
+
+/* ───────── chat ───────── */
+.sb-chat {
+  display: grid;
+  gap: var(--ml-space-3);
+  min-width: 0;
+}
+.sb-messages {
+  display: grid;
+  gap: var(--ml-space-3);
+}
+.sb-msg {
+  display: grid;
+  gap: var(--ml-space-2);
+  min-width: 0;
+}
+.sb-msg--owner {
+  justify-self: start;
+  max-width: 92%;
+  padding: var(--ml-space-2) var(--ml-space-3);
+  border-radius: var(--ml-radius-md);
+  background: var(--ml-color-accent-soft);
+  color: var(--ml-color-accent-soft-ink);
+}
+.sb-msg--assistant .ev-artifact {
+  max-width: none;
+}
+.sb-msg--assistant .ev-artifact__title {
+  font-size: var(--ml-text-md);
+  line-height: var(--ml-leading-md);
+}
+.sb-composer {
+  display: grid;
+  gap: var(--ml-space-2);
+}
+
+/* ───────── Study Book pane (full view or one side of the split) ───────── */
+.sb-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
+  background: var(--ml-color-canvas);
+  overscroll-behavior: contain;
+}
+.wk-body--split .sb-pane {
+  border-inline-start: 1px solid var(--ml-color-line);
+}
+.sb-pane__tabs {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  gap: var(--ml-space-1);
+  padding: var(--ml-space-2) var(--ml-space-4);
+  background: var(--ml-color-canvas);
+  border-bottom: 1px solid var(--ml-color-line);
+}
+/* the tab set grows with the book (never shrunk to the pane), so its bar can stay sticky while the pane scrolls */
+.sb-pane__tabset {
+  flex: 0 0 auto;
+}
+.sb-pane__tabs {
+  align-items: center;
+  flex-wrap: wrap;
+}
+.sb-pane__tablist {
+  border: 0;
+}
+.sb-pane__panel:focus-visible {
+  outline: 2px solid var(--ml-color-focus);
+  outline-offset: -2px;
+}
+
+.sb-sync {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-2);
+  margin-inline-start: auto;
+}
+
+.sb-generate,
+.sb-book,
+.sb-summary {
+  display: grid;
+  gap: var(--ml-space-4);
+  width: 100%;
+  max-width: calc(var(--ml-measure-reading) + 2 * var(--ml-space-6));
+  margin-inline: auto;
+  padding: var(--ml-space-5) var(--ml-space-4) var(--ml-space-7);
+  box-sizing: border-box;
+}
+.sb-pane--compact .sb-generate,
+.sb-pane--compact .sb-book,
+.sb-pane--compact .sb-summary {
+  padding-inline: var(--ml-space-3);
+}
+.sb-generate {
+  justify-items: start;
+}
+.sb-generate__scope {
+  display: grid;
+  gap: var(--ml-space-2);
+  justify-items: start;
+  width: 100%;
+}
+.sb-book__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ml-space-2);
+}
+.sb-book__meta,
+.sb-book__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-2);
+}
+.sb-progress {
+  padding: var(--ml-space-3) var(--ml-space-4);
+  border-radius: var(--ml-radius-md);
+  background: var(--ml-color-paper-2);
+}
+.sb-toc {
+  border: 1px solid var(--ml-color-line);
+  border-radius: var(--ml-radius-md);
+  padding: var(--ml-space-2) var(--ml-space-3);
+  background: var(--ml-color-paper);
+}
+.sb-toc ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--ml-space-1);
+}
+.sb-toc__item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-2);
+  min-height: var(--ml-touch-target);
+}
+.sb-toc__link {
+  border: 0;
+  background: none;
+  padding: var(--ml-space-1) 0;
+  font: inherit;
+  color: var(--ml-color-ink);
+  text-align: start;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--ml-color-line-strong);
+  text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+}
+.sb-toc__link:hover {
+  text-decoration-color: currentColor;
+}
+.sb-toc__link:focus-visible {
+  outline: 2px solid var(--ml-color-focus);
+  outline-offset: 2px;
+  border-radius: var(--ml-radius-xs);
+}
+.sb-toc__title {
+  color: var(--ml-color-ink-2);
+  overflow-wrap: anywhere;
+}
+.sb-book__body {
+  padding: var(--ml-space-5);
+  border-radius: var(--ml-radius-lg);
+  background: var(--ml-color-paper);
+  background-image: var(--ml-paper-texture-active);
+  box-shadow: var(--ml-shadow-paper);
+}
+.sb-book__body .ev-artifact {
+  max-width: none;
+}
+.sb-book__body [data-block] {
+  scroll-margin-top: calc(var(--ml-control-h-sm) + var(--ml-space-5));
+}
+.sb-pane--compact .sb-book__body {
+  padding: var(--ml-space-4) var(--ml-space-3);
+}
+@media (max-width: 600px) {
+  .sb-book__body {
+    padding: var(--ml-space-4) var(--ml-space-3);
+    border-radius: var(--ml-radius-md);
+  }
+  .sb-generate,
+  .sb-book,
+  .sb-summary {
+    padding: var(--ml-space-4) var(--ml-space-3) var(--ml-space-7);
+  }
+}
+
+/* ───────── summaries ───────── */
+.sb-summary__form {
+  display: grid;
+  gap: var(--ml-space-3);
+}
+.sb-preview {
+  display: grid;
+  gap: var(--ml-space-2);
+  padding: var(--ml-space-3) var(--ml-space-4);
+  border-radius: var(--ml-radius-md);
+  border: 1px solid var(--ml-color-line);
+  background: var(--ml-color-paper);
+  justify-items: start;
+}
+.sb-preview > p {
+  margin: 0;
+}
+
+.sb-links {
+  margin: calc(-1 * var(--ml-space-2)) 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ml-space-1);
+}
+
+/* rail children never force the rail wider than itself (long titles, LTR islands, tables scroll inside) */
+.sb-explain > *,
+.sb-chat > *,
+.sb-messages > *,
+.sb-msg > * {
+  min-width: 0;
+}
+.sb-thread-title {
+  flex: 1 1 10rem;
+  min-width: 0;
+  font-size: var(--ml-text-sm);
+  font-weight: var(--ml-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.sb-blocknotes {
+  display: grid;
+  gap: var(--ml-space-2);
+}
+.sb-blocknotes[open] > summary {
+  margin-bottom: var(--ml-space-2);
+}
+.sb-blocknote {
+  display: grid;
+  gap: var(--ml-space-1);
+  justify-items: start;
+  padding-inline-start: var(--ml-space-3);
+  border-inline-start: 2px solid var(--ml-color-accent);
+}
+.sb-blocknote__text {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* disclosure marker for the flex summaries (a flex summary loses the native one); RTL: ◂ closed, ▾ open */
+.sb-history > summary::before,
+.sb-threads > summary::before,
+.sb-versions > summary::before,
+.sb-reanchor > summary::before {
+  content: '◂';
+  content: '◂' / '';
+  display: inline-block;
+  margin-inline-end: var(--ml-space-2);
+  font-size: 0.85em;
+  color: var(--ml-color-ink-3);
+}
+.sb-history[open] > summary::before,
+.sb-threads[open] > summary::before,
+.sb-versions[open] > summary::before,
+.sb-reanchor[open] > summary::before {
+  transform: rotate(-90deg);
+}
+.sb-history > summary::-webkit-details-marker,
+.sb-threads > summary::-webkit-details-marker,
+.sb-versions > summary::-webkit-details-marker,
+.sb-reanchor > summary::-webkit-details-marker {
+  display: none;
+}
+:root[dir='ltr'] .sb-history > summary::before,
+:root[dir='ltr'] .sb-threads > summary::before,
+:root[dir='ltr'] .sb-versions > summary::before,
+:root[dir='ltr'] .sb-reanchor > summary::before {
+  content: '▸';
+  content: '▸' / '';
+}
+:root[dir='ltr'] .sb-history[open] > summary::before,
+:root[dir='ltr'] .sb-threads[open] > summary::before,
+:root[dir='ltr'] .sb-versions[open] > summary::before,
+:root[dir='ltr'] .sb-reanchor[open] > summary::before {
+  transform: rotate(90deg);
+}

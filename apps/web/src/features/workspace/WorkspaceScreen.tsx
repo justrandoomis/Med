@@ -1,11 +1,14 @@
 // Study workspace (§23–§26, §30, §46): full-bleed book in the middle, reading/writing bar on top, the
 // Contextual Study Rail on the right, pages/outline/bookmarks on the left (only when they fit), and the
 // owner's session restored and autosaved. Route: /study/:sourceId?v=<versionId>&page=<index>.
+// Views (§23, §24, §26): the original lecture · the MedLevo Study Book (Lecture Twin: switching jumps to the
+// nearest related block / page) · the lecture next to another source · the lecture next to its Study Book
+// (optional synchronized scrolling). Explanation actions from the selection toolbar open the «الشرح والسؤال» tab.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowRight, Focus } from 'lucide-react';
+import { ArrowRight, Focus, Link2, X } from 'lucide-react';
 import { normalizeRotation, type AnnotationAnchor, type SourceDetail, type TextQuote } from '@medlevo/shared';
-import { Button, ErrorState, LoadingState, Sheet, buttonClass, cx, useResizablePanel } from '../../design';
+import { Button, ErrorState, IconButton, LoadingState, Sheet, buttonClass, cx, useResizablePanel } from '../../design';
 import { useCapabilities } from '../../lib/capabilities';
 import { getDb } from '../../lib/localdb';
 import { useSettings } from '../../lib/settings';
@@ -17,8 +20,9 @@ import { fetchSourceAnnotations, markOpened } from './data/api';
 import { mergeServerAnnotations, registerWorkspaceAppliers } from './data/local';
 import { activeVersionId, useSourceDetail, useVersionDocument, type SourceDocument } from './data/useSourceDocument';
 import { SearchPanel } from './chrome/SearchPanel';
-import { TopBar } from './chrome/TopBar';
+import { TopBar, type WorkspaceView } from './chrome/TopBar';
 import { canSplit, decidePanels, defaultLeftOpen, effectiveLayout, canShowSpread, RAIL_MAX, RAIL_MIN } from './model/layout';
+import { usePendingAiRequest } from './model/aiActions';
 import { loadBackStack, popBack, pushBack, saveBackStack, type BackEntry, type ReaderPosition } from './model/backStack';
 import { fullPageLabel } from './model/pages';
 import type { SearchResult } from './model/search';
@@ -38,9 +42,28 @@ import { RemoteMoveBanner, SessionConflictDialog } from './session/SessionPrompt
 import { useReadingProgress } from './session/useReadingProgress';
 import { useStudySession, type StudySessionApi } from './session/useStudySession';
 import { SecondaryPane, SplitPicker } from './split/SplitPane';
+import { StudyBookPane } from './studybook/StudyBookPane';
+import { useStudyBookAvailability } from './studybook/useStudyBook';
 import './workspace.css';
 
-export const STUDY_BOOK_REASON = 'لم يُنشأ كتاب الدراسة بعد؛ يصل مع مرحلة كتاب الدراسة (MedLevo Study Book).';
+// per-device view preferences (UI conveniences, never owner data): the Study Book view per source, sync scrolling
+const VIEW_PREF_KEY = (sourceId: string) => `medlevo.workspace.view.${sourceId}`;
+const BOOK_SYNC_KEY = 'medlevo.workspace.studybook-sync';
+function readPref(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function writePref(key: string, value: string | null): void {
+  try {
+    if (value === null) window.localStorage.removeItem(key);
+    else window.localStorage.setItem(key, value);
+  } catch {
+    /* storage unavailable: the preference is simply not remembered */
+  }
+}
 
 interface UrlPlace {
   versionId: string | null;
@@ -207,8 +230,26 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
   const [split, setSplit] = useState<{ sourceId: string; pageIndex: number } | null>(loc0.split?.secondary_source_id ? { sourceId: loc0.split.secondary_source_id, pageIndex: loc0.split.secondary_page_index ?? 0 } : null);
   const [splitPicker, setSplitPicker] = useState(false);
   const splitReason = panels.phone || !canSplit(panels.canvasWidth + (panels.rail === 'docked' ? Math.min(panels.railWidth, 200) : 0)) ? 'العرض جنبًا إلى جنب يحتاج شاشة أعرض (1024 بكسل على الأقل).' : null;
+
+  // ── Study Book views (§24): full view, or the lecture | Study Book split ──
+  const studyBook = useStudyBookAvailability(sourceId, online);
+  const explicitPlace = url.pageIndex != null || !!url.pageId || !!url.bbox || !!url.regionId;
+  // an explicit place in the URL (citation jump) opens the original, where that place is visible
+  const [bookView, setBookView] = useState(() => !explicitPlace && readPref(VIEW_PREF_KEY(sourceId)) === 'study_book');
+  const [splitBook, setSplitBook] = useState(() => !split && loc0.split?.mode === 'study_book');
+  const [bookSync, setBookSync] = useState(() => readPref(BOOK_SYNC_KEY) !== 'off');
+  const [bookJump, setBookJump] = useState(0);
+  /** the lecture page (index into pages) of the Study Book block on top — where switching back lands */
+  const bookTop = useRef<number | null>(null);
+  /** when the lecture last moved because the Study Book scrolled (sync without feedback loops) */
+  const movedByBook = useRef(0);
   const splitActive = !!split && !splitReason;
-  const canvasWidth = splitActive ? panels.canvasWidth / 2 : panels.canvasWidth;
+  const splitBookActive = !split && splitBook && !splitReason;
+  const bookOnly = bookView && !splitActive && !splitBookActive;
+  const view: WorkspaceView = splitActive ? 'split' : splitBookActive ? 'split_book' : bookOnly ? 'study_book' : 'original';
+  // the canvas start position when it (re)mounts after the Study Book view
+  const [canvasStart, setCanvasStart] = useState<{ frac: number }>({ frac: initial.frac });
+  const canvasWidth = splitActive || splitBookActive ? panels.canvasWidth / 2 : panels.canvasWidth;
   const layout = effectiveLayout(layoutPref, canvasWidth, panels.phone);
   const spreadReason = canShowSpread(canvasWidth, panels.phone) ? null : 'لا تتسع الشاشة لصفحتين متقابلتين؛ تُعرض صفحة واحدة.';
 
@@ -263,8 +304,8 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
   const { markViewed } = useReadingProgress(sourceId, versionId, online);
 
   // ── autosave the place (debounced in the session hook) ──
-  const stateRef = useRef({ zoom, fit, effectiveZoom, viewRotation, layoutPref, railOpen, railWidth: rail.width, railTab, leftOpen, leftTab, split });
-  stateRef.current = { zoom, fit, effectiveZoom, viewRotation, layoutPref, railOpen, railWidth: rail.width, railTab, leftOpen, leftTab, split };
+  const stateRef = useRef({ zoom, fit, effectiveZoom, viewRotation, layoutPref, railOpen, railWidth: rail.width, railTab, leftOpen, leftTab, split, splitBook });
+  stateRef.current = { zoom, fit, effectiveZoom, viewRotation, layoutPref, railOpen, railWidth: rail.width, railTab, leftOpen, leftTab, split, splitBook };
   const buildLocation = useCallback((): ReaderLocation => {
     const s = stateRef.current;
     const l = locRef.current;
@@ -278,13 +319,13 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
       layout: s.layoutPref,
       rail: { open: s.railOpen, width: s.railWidth, tab: s.railTab },
       left_panel: { open: s.leftOpen, tab: s.leftTab },
-      split: s.split ? { mode: 'source', secondary_source_id: s.split.sourceId, secondary_page_index: s.split.pageIndex } : null,
+      split: s.split ? { mode: 'source', secondary_source_id: s.split.sourceId, secondary_page_index: s.split.pageIndex } : s.splitBook ? { mode: 'study_book' } : null,
     };
   }, [pages]);
-  const save = useCallback(() => session.save(buildLocation(), versionId, stateRef.current.split ? 'split' : 'original'), [session, buildLocation, versionId]);
+  const save = useCallback(() => session.save(buildLocation(), versionId, stateRef.current.split || stateRef.current.splitBook ? 'split' : 'original'), [session, buildLocation, versionId]);
   useEffect(() => {
     save();
-  }, [save, zoom, fit, viewRotation, layoutPref, railOpen, rail.width, railTab, leftOpen, leftTab, split]);
+  }, [save, zoom, fit, viewRotation, layoutPref, railOpen, rail.width, railTab, leftOpen, leftTab, split, splitBook]);
 
   const onLocation = useCallback(
     (l: BookLocation) => {
@@ -335,11 +376,32 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
     }),
     [sourceId, versionId],
   );
+  /** back entries pushed while the Study Book view was showing (going back restores that view) */
+  const bookBackMarks = useRef(new Set<number>());
+  const bookOnlyRef = useRef(bookOnly);
+  bookOnlyRef.current = bookOnly;
   const pushHere = useCallback(() => {
     const p = position();
     const page = pages[p.pageIndex];
-    setBackStack((s) => pushBack(s, { position: p, label: `${page ? fullPageLabel(page) : ''} — ${detail.title}`, createdAt: Date.now() }));
+    const createdAt = Date.now();
+    if (bookOnlyRef.current) bookBackMarks.current.add(createdAt);
+    setBackStack((s) => pushBack(s, { position: p, label: `${page ? fullPageLabel(page) : ''} — ${detail.title}${bookOnlyRef.current ? ' (كتاب الدراسة)' : ''}`, createdAt }));
   }, [position, pages, detail.title]);
+
+  /** leave the full Study Book view for the original lecture at `index` (Lecture Twin / a citation jump) */
+  const showOriginalAt = useCallback(
+    (index: number, frac = 0) => {
+      if (!bookOnlyRef.current) return false;
+      const i = Math.min(Math.max(0, index), pages.length - 1);
+      setBookView(false);
+      writePref(VIEW_PREF_KEY(sourceId), null);
+      setCanvasStart({ frac });
+      setPageIndex(i);
+      locRef.current = { pageIndex: i, frac };
+      return true;
+    },
+    [pages.length, sourceId],
+  );
 
   const anchorFor = useCallback(
     (i: number): AnnotationAnchor | null => {
@@ -367,7 +429,9 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
         setHighlight({ pageId: pages[idx]!.id, bbox: req.bbox ?? null, regionId: req.regionId ?? null, label: req.label ?? null });
         setAnnouncement(`فُتح الموضع: ${req.label ?? fullPageLabel(pages[idx]!)}. للعودة استخدم «العودة إلى موضعك».`);
         if (panels.phone) setRailOpen(false);
-        goToPage(idx, req.bbox ? Math.max(0, req.bbox.y - 0.05) : 0);
+        const frac = req.bbox ? Math.max(0, req.bbox.y - 0.05) : 0;
+        // from the Study Book: the cited place is shown in the original lecture
+        if (!showOriginalAt(idx, frac)) goToPage(idx, frac);
         return { ok: true };
       },
       goBack() {
@@ -378,6 +442,18 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
         const p = entry.position;
         if (p.sourceId !== sourceId || p.versionId !== versionId) {
           navigate(studyUrl({ sourceId: p.sourceId, versionId: p.versionId, pageIndex: p.pageIndex, offset: p.pageOffset }));
+          return true;
+        }
+        if (bookBackMarks.current.delete(entry.createdAt)) {
+          // the jump started in the Study Book: return to it, at the block of that page
+          setPageIndex(p.pageIndex);
+          locRef.current = { pageIndex: p.pageIndex, frac: p.pageOffset };
+          setSplit(null);
+          setSplitBook(false);
+          setBookView(true);
+          writePref(VIEW_PREF_KEY(sourceId), 'study_book');
+          setBookJump((n) => n + 1);
+          setAnnouncement(`عدت إلى كتاب الدراسة عند ${entry.label}.`);
           return true;
         }
         setFit(p.fit);
@@ -393,7 +469,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
       backLabel: top?.label ?? null,
       clearHighlight: () => setHighlight(null),
     };
-  }, [backStack, sourceId, versionId, detail.versions, pages, navigate, pushHere, goToPage, panels.phone]);
+  }, [backStack, sourceId, versionId, detail.versions, pages, navigate, pushHere, goToPage, panels.phone, showOriginalAt]);
 
   // ── selection ──
   const canvasEl = useCallback(() => canvasRef.current?.element() ?? null, []);
@@ -467,9 +543,11 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
         return;
       }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
-      // composite widgets handle their own arrows
-      const inWidget = !!target?.closest('[role="toolbar"],[role="tablist"],[role="radiogroup"],[role="menu"],[role="separator"],[role="dialog"],.wk-rail,.wk-left,.wk-search');
+      // composite widgets handle their own arrows; the Study Book pane scrolls natively
+      const inWidget = !!target?.closest('[role="toolbar"],[role="tablist"],[role="radiogroup"],[role="menu"],[role="separator"],[role="dialog"],.wk-rail,.wk-left,.wk-search,.sb-pane');
       const onCanvas = !!target?.closest('.wk-canvas');
+      // the Study Book alone: no page flips of a lecture that is not on screen
+      if (bookOnly && ['ArrowLeft', 'ArrowRight', 'ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End'].includes(key)) return;
       switch (key) {
         case 'ArrowLeft':
         case 'ArrowRight':
@@ -528,7 +606,98 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selection, searchOpen, highlight, focusMode, layout, step, goToPage, toggleLeft, toggleRail, toggleFocus, pages.length]);
+  }, [selection, searchOpen, highlight, focusMode, layout, step, goToPage, toggleLeft, toggleRail, toggleFocus, pages.length, bookOnly]);
+
+  // ── explanation actions from the selection toolbar → the «الشرح والسؤال» tab (it consumes the request) ──
+  const pendingAi = usePendingAiRequest();
+  useEffect(() => {
+    if (!pendingAi) return;
+    setRailTab('explain');
+    setRailOpen(true);
+    setLastPanel('rail');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingAi?.id]);
+
+  // ── views ──
+  const changeView = useCallback(
+    (v: WorkspaceView) => {
+      if (v === 'split') {
+        setSplitBook(false);
+        setBookView(false);
+        writePref(VIEW_PREF_KEY(sourceId), null);
+        if (!split) setSplitPicker(true);
+        return;
+      }
+      if (v === 'split_book') {
+        if (bookOnlyRef.current && bookTop.current != null) showOriginalAt(bookTop.current);
+        setSplit(null);
+        setBookView(false);
+        writePref(VIEW_PREF_KEY(sourceId), null);
+        setSplitBook(true);
+        setBookJump((n) => n + 1);
+        return;
+      }
+      if (v === 'study_book') {
+        setSplit(null);
+        setSplitBook(false);
+        setBookView(true);
+        writePref(VIEW_PREF_KEY(sourceId), 'study_book');
+        bookTop.current = null;
+        setBookJump((n) => n + 1); // Lecture Twin: the block nearest the current lecture page
+        const here = pages[locRef.current.pageIndex];
+        setAnnouncement(`كتاب الدراسة: يُعرض أقرب جزء إلى ${here ? fullPageLabel(here) : 'الصفحة الحالية'}.`);
+        return;
+      }
+      // original
+      setSplit(null);
+      setSplitBook(false);
+      if (bookOnlyRef.current) {
+        const target = bookTop.current ?? locRef.current.pageIndex;
+        showOriginalAt(target);
+        if (pages[target]) setAnnouncement(`المحاضرة الأصلية: ${fullPageLabel(pages[target]!)}، الصفحة المرتبطة بما كنت تقرؤه في كتاب الدراسة.`);
+      }
+      setBookView(false);
+      writePref(VIEW_PREF_KEY(sourceId), null);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sourceId, split, showOriginalAt, pages],
+  );
+
+  /** «افتح في المحاضرة» from the full Study Book: the original lecture at that page */
+  const changeViewToPage = useCallback(
+    (i: number) => {
+      if (!showOriginalAt(i)) goToPage(i);
+      else if (pages[i]) setAnnouncement(`المحاضرة الأصلية: ${fullPageLabel(pages[i]!)}.`);
+    },
+    [showOriginalAt, goToPage, pages],
+  );
+
+  /** the Study Book reports the lecture page of its top block (Lecture Twin; optional sync in the split) */
+  const onBookPage = useCallback(
+    (i: number) => {
+      bookTop.current = i;
+      if (bookOnlyRef.current) {
+        // the rail follows what is being read
+        setPageIndex((p) => (p === i ? p : i));
+        locRef.current = { pageIndex: i, frac: 0 };
+        return;
+      }
+      if (stateRef.current.splitBook && bookSyncRef.current && i !== locRef.current.pageIndex) {
+        movedByBook.current = Date.now();
+        goToPage(i, 0);
+      }
+    },
+    [goToPage],
+  );
+  const bookSyncRef = useRef(bookSync);
+  bookSyncRef.current = bookSync;
+  // lecture scrolled in the split → the Study Book follows (unless the move came from the book itself)
+  useEffect(() => {
+    if (!splitBookActive || !bookSync) return;
+    if (Date.now() - movedByBook.current < 900) return;
+    setBookJump((n) => n + 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageIndex]);
 
   // ── page context ──
   const tool = ink.toolState.tool;
@@ -640,15 +809,14 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
                 goToPage(i);
                 if (pages[i]) setAnnouncement(`انتقلت إلى ${fullPageLabel(pages[i]!)}.`);
               }}
-              view={splitActive ? 'split' : 'original'}
-              onView={(v) => {
-                if (v === 'original') setSplit(null);
-                else if (!split) setSplitPicker(true);
-              }}
+              view={view}
+              onView={changeView}
               splitReason={splitReason}
-              studyBookReason={STUDY_BOOK_REASON}
+              studyBookReason={studyBook.reason}
               searchOpen={searchOpen}
               onToggleSearch={() => {
+                // searching the source text happens in the original (its hits are on the pages)
+                if (bookOnly && !searchOpen) changeView('original');
                 setSearchOpen((o) => !o);
                 setSearchFocus((n) => n + 1);
               }}
@@ -688,7 +856,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
               saveDetail={describeSyncSnapshot(sync)}
               back={backTop ? { label: 'العودة إلى موضعك', title: backTop.label } : null}
               onBack={() => nav.goBack()}
-              inkAvailable={inkAvailable}
+              inkAvailable={inkAvailable && !bookOnly}
             />
           ) : (
             <div className="wk-focusbar">
@@ -721,7 +889,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
             </div>
           )}
 
-          <div className={cx('wk-body', panels.rail === 'docked' && 'wk-body--rail', panels.left === 'docked' && 'wk-body--left', splitActive && 'wk-body--split')}>
+          <div className={cx('wk-body', panels.rail === 'docked' && 'wk-body--rail', panels.left === 'docked' && 'wk-body--left', (splitActive || splitBookActive) && 'wk-body--split', bookOnly && 'wk-body--book')}>
             <main className="wk-main" aria-label="الكتاب">
               {searchOpen && (
                 <SearchPanel
@@ -737,6 +905,17 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
                 />
               )}
               <div className="wk-panes">
+                {bookOnly ? (
+                  <StudyBookPane
+                    doc={doc}
+                    pageIndex={pageIndex}
+                    jumpKey={bookJump}
+                    onVisiblePage={onBookPage}
+                    onOpenPage={(i) => changeViewToPage(i)}
+                    online={online}
+                    onBookChanged={studyBook.refresh}
+                  />
+                ) : (
                 <BookCanvas
                   ref={canvasRef}
                   id="wk-book"
@@ -744,7 +923,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
                   fallbackSize={null}
                   measured={measured}
                   pageIndex={pageIndex}
-                  initialFrac={initial.frac}
+                  initialFrac={canvasStart.frac}
                   zoom={zoom}
                   fit={fit}
                   viewRotation={viewRotation}
@@ -763,6 +942,38 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
                   strokeActive={() => strokeActive.current}
                   className={cx(writing && 'wk-canvas--writing')}
                 />
+                )}
+                {splitBookActive && (
+                  <StudyBookPane
+                    compact
+                    doc={doc}
+                    pageIndex={pageIndex}
+                    jumpKey={bookJump}
+                    onVisiblePage={onBookPage}
+                    onOpenPage={(i) => goToPage(i)}
+                    online={online}
+                    onBookChanged={studyBook.refresh}
+                    toolbar={
+                      <>
+                        <Button
+                          size="sm"
+                          variant="plain"
+                          icon={<Link2 size={16} />}
+                          aria-pressed={bookSync}
+                          onClick={() => {
+                            const next = !bookSync;
+                            setBookSync(next);
+                            writePref(BOOK_SYNC_KEY, next ? 'on' : 'off');
+                            if (next) setBookJump((n) => n + 1);
+                          }}
+                        >
+                          {bookSync ? 'التمرير متزامن' : 'التمرير مستقل'}
+                        </Button>
+                        <IconButton size="sm" label="أغلق كتاب الدراسة الجانبي" icon={<X size={16} />} onClick={() => changeView('original')} />
+                      </>
+                    }
+                  />
+                )}
                 {splitActive && split && (
                   <SecondaryPane sourceId={split.sourceId} initialPage={split.pageIndex} onPage={(i) => setSplit((s) => (s && s.pageIndex !== i ? { ...s, pageIndex: i } : s))} onClose={() => setSplit(null)} />
                 )}
@@ -782,7 +993,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
             )}
           </div>
 
-          {selection && !focusMode && (
+          {selection && !focusMode && !bookOnly && (
             <SelectionToolbar
               selection={selection}
               canvas={canvasRef.current?.element() ?? null}

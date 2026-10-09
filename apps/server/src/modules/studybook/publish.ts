@@ -85,6 +85,39 @@ export interface ProcessResult {
 
 const LITERAL_REASON = 'النمط الحرفي يعرض اقتباسات حرفية من المصدر فقط؛ حُذفت هذه الصياغة.';
 const CELL_REMOVED = 'غير مثبت في المصادر المسموحة';
+const UNCITED_REASON =
+  'جملة بلا دليل مرفق داخل محتوى طبي؛ حُذفت لأنها قد تحمل معلومة غير مستندة. تُنشر دون دليل جمل الربط القصيرة والأسئلة الموجّهة للمتعلم فقط.';
+
+/**
+ * Block kinds whose claim-less sentences are not medical statements by nature: section headings, a self-check
+ * question, a mnemonic (labelled as such by the server; the facts it helps remember carry their own claims), and
+ * a coverage note (what the sources do NOT cover).
+ */
+const CLAIMLESS_KINDS = new Set<GeneratedBlockOut['kind']>(['heading', 'mini_question', 'memory_hook', 'coverage_note']);
+
+function wordCount(text: string): number {
+  return text.trim().split(/\s+/).filter(Boolean).length;
+}
+
+/**
+ * Review hardening (§0.1, AC-29): the evidence module keeps a claim-less sentence as «connective text» unless it
+ * carries a value / threshold — it cannot decide «medical» reliably. A generator (or an instruction injected into
+ * an uploaded document) could therefore publish a medical statement simply by omitting its claim. Inside medical
+ * content blocks this module only lets through what is recognisably NOT a statement of fact: a question to the
+ * learner, or a short Arabic connective phrase (≤ 6 words, no Latin term, no digit). Everything else is removed
+ * and reported, like any other unsupported sentence.
+ */
+export function isConnectiveText(text: string): boolean {
+  const t = text.trim().replace(/[\s.»"'”)\]]+$/u, '');
+  if (!t) return true;
+  if (/[?؟]$/u.test(t)) return true;
+  return wordCount(t) <= 6 && !/[A-Za-z]/.test(t) && !/[0-9٠-٩۰-۹]/.test(t);
+}
+
+/** A comparison table's first column names the aspect (e.g. «Mechanism», «الجرعة») — a label, not a claim. */
+function isAspectLabel(text: string): boolean {
+  return wordCount(text) <= 6 && !/[0-9٠-٩۰-۹]/.test(text);
+}
 
 const LABELS: Partial<Record<ContentBlockView['kind'], string>> = {
   example: `${GENERATED_EXAMPLE_LABEL_AR} — مؤلَّف للتعليم، ليس من المصدر ولا لمريض حقيقي`,
@@ -160,6 +193,29 @@ export async function processGenerated(ctx: AppContext, content: GeneratedConten
       const keep = b.sentences.filter((s) => s.original_quote && s.claim);
       for (const s of b.sentences) if (!(s.original_quote && s.claim)) removed.push({ text: s.text, reason_ar: LITERAL_REASON });
       return { ...b, kind: 'original_quote' as const, sentences: keep, table: null };
+    })
+    // claim-less sentences inside medical content: only questions / short connective phrases (see isConnectiveText);
+    // «original quotes» without a claim are left to validateClaims, which rejects them with its own reason
+    .map((b) => {
+      if (CLAIMLESS_KINDS.has(b.kind)) return b;
+      const sentences = b.sentences.filter((s) => {
+        if (s.claim || s.original_quote || isConnectiveText(s.text)) return true;
+        removed.push({ text: s.text, reason_ar: UNCITED_REASON });
+        return false;
+      });
+      const table = b.table
+        ? {
+            ...b.table,
+            rows: b.table.rows.map((row) =>
+              row.map((cell, c) => {
+                if (cell.claim || cell.original_quote || (c === 0 ? isAspectLabel(cell.text) : isConnectiveText(cell.text))) return cell;
+                removed.push({ text: cell.text, reason_ar: UNCITED_REASON });
+                return { text: CELL_REMOVED, claim: null };
+              }),
+            ),
+          }
+        : b.table;
+      return { ...b, sentences, table };
     })
     .filter((b) => b.sentences.length > 0 || (b.table?.rows.length ?? 0) > 0);
 

@@ -163,7 +163,7 @@ export function ChatPanel({ sourceId, page, anchor, anchorText, scope, style, ga
       {active && (
         <div className="sb-messages" aria-live="polite">
           <div className="sb-row">
-            <StatusPill tone="neutral">{active.thread.title ?? 'محادثة'}</StatusPill>
+            <BidiText as="span" className="sb-thread-title" text={shortQuote(active.thread.title ?? 'محادثة', 140)} />
             {active.thread.socratic && <StatusPill tone="info">وضع سقراطي</StatusPill>}
             <Button size="sm" variant="plain" icon={<MessageSquarePlus size={14} />} onClick={() => setActive(null)}>
               محادثة جديدة

@@ -13,9 +13,13 @@
 //   POST /threads · GET /threads?source_id=&page_id= · GET /threads/:id · POST /threads/:id/messages · /archive
 //   POST /messages/:id/save-note        → note (origin 'ai_answer') through the annotations sync handler
 //   GET  /rules?source_id=&node_id= · PUT /rules/owner · PUT|DELETE /rules/nodes/:nodeId
-// Terminology CRUD stays with the evidence module (/api/evidence/terms, owner of medical_term); this module reads
-// the dictionary to tell the generator the owner's preferred renderings.
-import type { FastifyInstance } from 'fastify';
+//   GET|POST /terms · PATCH|DELETE /terms/:id   the owner's terminology dictionary (§21) — see below
+// Terminology: `medical_term` is owned by the evidence module (ARCHITECTURE §2), which implements its CRUD once at
+// /api/evidence/terms (validation, uniqueness, audit; also used by retrieval / search expansion). The Study Book
+// contract path /api/studybook/terms FORWARDS to that implementation unchanged (same session, CSRF and origin
+// headers), so there is a single write path to the table. This module reads the dictionary to tell the generator
+// the owner's preferred renderings (terms.ts). Source text is never edited.
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { EXPLANATION_TEMPLATES, type ExplanationRules, type ExplanationRulesResponse, type StudyArtifactView } from '@medlevo/shared';
 import type { ModuleOptions } from '../../context';
@@ -60,6 +64,30 @@ const rulesQuery = z.object({ source_id: ID.optional(), node_id: ID.optional() }
 
 export interface StudybookModuleOptions {
   hooks?: StudybookHooks;
+}
+
+/** Headers carried over when forwarding to the owning module (credentials + CSRF/origin checks run again there). */
+const FORWARDED_HEADERS = ['cookie', 'x-medlevo-csrf', 'origin', 'user-agent', 'accept-language'] as const;
+
+/** Forward a terminology request to the evidence module's single implementation; status and body pass through. */
+async function forwardToEvidenceTerms(app: FastifyInstance, req: FastifyRequest, reply: FastifyReply, suffix: string): Promise<FastifyReply> {
+  const headers: Record<string, string> = {};
+  for (const h of FORWARDED_HEADERS) {
+    const v = req.headers[h];
+    if (typeof v === 'string') headers[h] = v;
+  }
+  const hasBody = req.body !== undefined && req.body !== null && req.method !== 'GET' && req.method !== 'DELETE';
+  if (hasBody) headers['content-type'] = 'application/json';
+  const res = await app.inject({
+    method: req.method as 'GET' | 'POST' | 'PATCH' | 'DELETE',
+    url: `/api/evidence/terms${suffix}`,
+    headers,
+    ...(hasBody ? { payload: JSON.stringify(req.body) } : {}),
+  });
+  const type = res.headers['content-type'];
+  reply.code(res.statusCode);
+  if (typeof type === 'string') reply.header('content-type', type);
+  return reply.send(res.body);
 }
 
 const NOT_AI_REASON = 'تتطلب ضبط مزود ذكاء اصطناعي على الخادم (ANTHROPIC_API_KEY).';
@@ -222,6 +250,13 @@ export function createStudybookModule(opts: StudybookModuleOptions = {}) {
       ctx.audit.record({ entityType: 'explanation_rules', entityId: nodeId, action: 'delete', summary: 'إزالة قواعد الشرح الخاصة بالمجلد' });
       return rulesResponse(ctx, { node_id: nodeId });
     });
+
+    // ───────── terminology (§21) — forwarded to the owning evidence module ─────────
+    const termParams = z.object({ id: ID });
+    app.get('/terms', async (req, reply) => forwardToEvidenceTerms(app, req, reply, ''));
+    app.post('/terms', async (req, reply) => forwardToEvidenceTerms(app, req, reply, ''));
+    app.patch('/terms/:id', async (req, reply) => forwardToEvidenceTerms(app, req, reply, `/${encodeURIComponent(parseParams(termParams, req).id)}`));
+    app.delete('/terms/:id', async (req, reply) => forwardToEvidenceTerms(app, req, reply, `/${encodeURIComponent(parseParams(termParams, req).id)}`));
   };
 }
 

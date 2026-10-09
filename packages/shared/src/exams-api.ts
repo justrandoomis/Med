@@ -500,3 +500,51 @@ export interface WrittenQuestionView {
   attempts: WrittenAttemptView[];
   occurrences: QuestionOccurrenceView[];
 }
+
+// ───────── HTTP envelopes (/api/exams) ─────────
+export interface ExamCreateResponse {
+  session: ExamSessionView;
+  /** false when a retried create (same attempt_id) returned the existing exam */
+  created: boolean;
+}
+
+export interface HintRequest {
+  level: 1 | 2;
+}
+export interface HintResponse {
+  hint: HintView;
+}
+
+/** Practice «تحقق من إجابتي»: the answer of one item (QuestionAttemptInput minus what the item pins). */
+export interface PracticeAnswerRequest {
+  id: string;
+  selected_option_ids: string[];
+  confidence?: ConfidenceLevel | null;
+  hints_used?: number;
+  solution_viewed_before_answer?: boolean;
+  time_ms?: number | null;
+  flagged?: boolean;
+  answered_at: number;
+}
+
+export interface MistakeUpdateResponse {
+  attempt: QuestionAttemptDTO;
+}
+
+export interface GenerationRunListResponse {
+  runs: GenerationRunView[];
+}
+
+export interface WrittenAttemptResponse {
+  attempt: WrittenAttemptView;
+}
+
+export interface WrittenGradeRequest {
+  /** explicit owner choice; default: the lecture of the question's best link (lecture only) */
+  scope?: SourceScope | null;
+}
+
+/** Route of the written flow for a question (written types are not delivered by the MCQ runner). */
+export function writtenUrl(questionId: string): string {
+  return `/exams/written/${encodeURIComponent(questionId)}`;
+}

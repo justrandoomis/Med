@@ -4,6 +4,7 @@
 // source → back); abstentions show their reason and an explicit «وسّع النطاق»; without an AI provider the tab
 // says exactly why (the server's reason) instead of pretending.
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Image as ImageIcon, Languages, Sparkles, Wand2, X } from 'lucide-react';
 import {
   ANSWER_STYLES,
@@ -20,7 +21,7 @@ import {
   type SourcePageView,
   type SourceScope,
 } from '@medlevo/shared';
-import { Button, ErrorState, LoadingState, Menu, MenuItem, SegmentedControl, Select, StatusPill, TextField } from '../../../design';
+import { Button, ErrorState, LoadingState, Menu, MenuItem, SegmentedControl, Select, StatusPill, TextField, buttonClass } from '../../../design';
 import { errorMessage, isApiError } from '../../../lib/api';
 import { useCapabilities } from '../../../lib/capabilities';
 import { useSettings } from '../../../lib/settings';
@@ -249,6 +250,14 @@ export function ExplainTab({ doc, page, pageIndex, online }: ExplainTabProps) {
         <Select label="المستوى" options={EXPLANATION_LEVELS.map((l) => ({ value: l, label: EXPLANATION_LEVEL_LABELS_AR[l] }))} value={level} onValueChange={setLevel} />
         <Select label="نمط الرد" options={ANSWER_STYLES.map((s) => ({ value: s, label: ANSWER_STYLE_LABELS_AR[s] }))} value={style} onValueChange={setStyle} />
       </div>
+      <p className="sb-links">
+        <Link className={buttonClass({ variant: 'plain', size: 'sm' })} to={`/explanation-rules?source_id=${encodeURIComponent(sourceId)}`}>
+          قواعد الشرح لهذه المادة
+        </Link>
+        <Link className={buttonClass({ variant: 'plain', size: 'sm' })} to="/terms">
+          قاموس المصطلحات
+        </Link>
+      </p>
 
       {unavailable && mode !== 'ask' && (
         <div className="wk-disabled-card" role="note" id={reasonId}>
@@ -282,7 +291,7 @@ export function ExplainTab({ doc, page, pageIndex, online }: ExplainTabProps) {
           )}
           {!figureGate.available && (page?.has_images || context?.text) ? (
             <p id="sb-figure-reason" className="sb-reason">{`شرح الشكل: ${figureGate.reason}`}</p>
-          ) : figureGate.available && caps.data?.features['ai.figure_explain']?.reason_ar ? (
+          ) : figureGate.available && (page?.has_images || context?.text) && caps.data?.features['ai.figure_explain']?.reason_ar ? (
             <p className="sb-muted">{caps.data.features['ai.figure_explain'].reason_ar}</p>
           ) : null}
         </div>

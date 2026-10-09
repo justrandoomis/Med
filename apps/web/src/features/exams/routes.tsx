@@ -1,27 +1,15 @@
-// PLACEHOLDER — owned by another track; replace this file's contents when the feature is built.
-// Shows honestly that the screen is not built yet (§61) and what it will contain.
-import { GraduationCap } from 'lucide-react';
-import { Term } from '../../design';
+// Practice & exams routes (§37–§41). The runner is full-bleed (a clean question sheet without the app shell);
+// everything else lives in the shell. Screens are lazy chunks.
 import type { FeatureRoutes } from '../../app/routeTypes';
-import { PlaceholderScreen } from '../shell/PlaceholderScreen';
-
-function ExamsPlaceholder() {
-  return (
-    <PlaceholderScreen
-      title="التدريب والامتحانات"
-      purpose="التدريب ومحاكي الامتحان والحالات السريرية."
-      spec="§39, §41, §42"
-      icon={<GraduationCap size={22} />}
-      willContain={[
-      'أوضاع الدراسة: تعلّم، فهم، تدريب، مراجعة، امتحان.',
-      'محاكي امتحان بمؤقت، دون كشف الحل قبل الإنهاء.',
-      <>الأسئلة المقالية والحالات السريرية و<Term>OSCE</Term>.</>,
-      'نتائج مفصلة مع الأدلة بعد الحل.',
-      ]}
-    />
-  );
-}
 
 export const routes: FeatureRoutes = {
-  shell: [{ path: 'exams/*', element: <ExamsPlaceholder /> }],
+  shell: [
+    { path: 'exams', lazy: () => import('./HistoryScreen').then((m) => ({ Component: m.HistoryScreen })) },
+    { path: 'exams/new', lazy: () => import('./BuilderScreen').then((m) => ({ Component: m.BuilderScreen })) },
+    { path: 'exams/generate', lazy: () => import('./GenerateScreen').then((m) => ({ Component: m.GenerateScreen })) },
+    { path: 'exams/written/:questionId', lazy: () => import('./WrittenScreen').then((m) => ({ Component: m.WrittenScreen })) },
+    { path: 'exams/:attemptId/results', lazy: () => import('./ResultsScreen').then((m) => ({ Component: m.ResultsScreen })) },
+    { path: 'practice', lazy: () => import('./PracticeEntry').then((m) => ({ Component: m.PracticeEntry })) },
+  ],
+  fullBleed: [{ path: 'exams/:attemptId', lazy: () => import('./RunnerScreen').then((m) => ({ Component: m.RunnerScreen })) }],
 };

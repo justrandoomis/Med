@@ -56,3 +56,35 @@ export function useStudyBook(sourceId: string, online: boolean) {
     setBook: (book: StudyBookView) => setState((s) => ({ ...s, book, status: 'ready' })),
   };
 }
+
+export const STUDY_BOOK_OFFLINE_AR = 'كتاب الدراسة يُقرأ من الخادم؛ لا يوجد اتصال الآن.';
+
+/**
+ * Whether the «كتاب الدراسة» view can be opened for a source: a version exists (readable without AI), or one can
+ * be generated now. Otherwise the server's own reason (e.g. AI not configured, source not processed) is returned.
+ */
+export function useStudyBookAvailability(sourceId: string, online: boolean): { reason: string | null; hasBook: boolean; refresh: () => void } {
+  const [state, setState] = useState<{ reason: string | null; hasBook: boolean }>({ reason: online ? 'جارٍ التحقق من كتاب الدراسة…' : STUDY_BOOK_OFFLINE_AR, hasBook: false });
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    if (!online) {
+      setState((s) => (s.hasBook ? s : { reason: STUDY_BOOK_OFFLINE_AR, hasBook: false }));
+      return;
+    }
+    let cancelled = false;
+    studybookApi
+      .bookForSource(sourceId)
+      .then((r) => {
+        if (cancelled) return;
+        const hasBook = !!r.book;
+        setState({ hasBook, reason: hasBook || r.can_generate.available ? null : (r.can_generate.reason_ar ?? 'لا يمكن إنشاء كتاب الدراسة الآن.') });
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setState({ hasBook: false, reason: errorMessage(e, 'تعذّر التحقق من كتاب الدراسة.') });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sourceId, online, tick]);
+  return { ...state, refresh: () => setTick((n) => n + 1) };
+}

@@ -6,7 +6,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { ExplainResponse, StudyArtifactView } from '@medlevo/shared';
 import { newId } from '../../src/lib/ids';
 import { fromRegion, resolveScope } from '../../src/modules/evidence/services';
-import { regionWith } from '../evidence/helpers';
+import { linkReference, regionWith } from '../evidence/helpers';
 import { aliasFor, content, evidenceIn, lectureOnly, S, ScriptedAi, studyLibrary, withRefs, type StudyLib } from './helpers';
 
 const ai = new ScriptedAi();
@@ -416,5 +416,30 @@ describe('figures (AC-08) and Compare Mode', () => {
     // the unsupported value cell was removed and replaced by an honest placeholder
     expect(tb.table!.rows[1]![2]!.paragraphs[0]!.runs.map((x) => x.t).join('')).toBe('غير مثبت في المصادر المسموحة');
     expect(a.removed.some((x) => x.text.includes('50 mSv'))).toBe(true);
+  });
+
+  it('AC-05: items found only outside the lock → abstention WITHOUT a model call; the lecture-only result is never served to the wider scope', async () => {
+    linkReference(lib.t, lib.lecture.sourceId, lib.reference.sourceId);
+    const before = ai.calls.length;
+    const body = { items: ["Murphy's sign", 'right costal margin'], scope: lectureOnly(lib) };
+    const res = await lib.t.app.inject({ method: 'POST', url: '/api/studybook/compare', headers: lib.h, payload: body });
+    expect(res.statusCode, res.body).toBe(200);
+    const a = res.json().artifact as StudyArtifactView;
+    expect(a.abstain).toMatchObject({ reason: 'not_found_in_scope' });
+    expect(a.abstain!.suggest_scope).toMatchObject({ mode: 'lecture_plus_references', reference_source_ids: [lib.reference.sourceId] });
+    expect(a.blocks).toHaveLength(0);
+    expect(ai.calls.length).toBe(before); // the model was never asked
+    // the owner explicitly widens: the reference is searched (a different key, so no reuse of the abstention)
+    ai.once('compare', (req) => {
+      const m = aliasFor(req, 'Murphy');
+      return content([{ kind: 'paragraph', sentences: [S.c(evidenceIn(req.prompt).find((e) => e.alias === m)!.text.split(/(?<=\.)\s/)[0]!, [m], 'directly_stated')] }]);
+    });
+    const wide = await lib.t.app.inject({ method: 'POST', url: '/api/studybook/compare', headers: lib.h, payload: { ...body, scope: a.abstain!.suggest_scope } });
+    expect(wide.statusCode, wide.body).toBe(200);
+    expect(wide.json().cached).toBe(false);
+    expect(wide.json().artifact.scope.mode).toBe('lecture_plus_references');
+    // and the narrow request still gets its own (cached) abstention, never the wider answer
+    const again = await lib.t.app.inject({ method: 'POST', url: '/api/studybook/compare', headers: lib.h, payload: body });
+    expect(again.json().artifact.abstain).toMatchObject({ reason: 'not_found_in_scope' });
   });
 });

@@ -40,7 +40,7 @@ import { buildExplanationPrompt, GENERATOR_VERSION, resolveRules, type RulesPatc
 import { figureOutputSchema, type CompareBody, type ExplainBody, type FigureOutput } from './schema';
 import { termsForTexts } from './terms';
 import { labelParagraph, paragraphOf, richText, shorten } from './text';
-import { normalizeForSearch } from '@medlevo/shared';
+import { normalizeForSearch, pageDisplayLabel } from '@medlevo/shared';
 
 // ───────── real-patient requests (§12) ─────────
 const REAL_PATIENT_PATTERNS: RegExp[] = [
@@ -112,6 +112,16 @@ function selectionText(anchor: SelectionAnchor, regions: RegionLite[]): string {
     .slice(0, 6000);
 }
 
+/** «ص 12» for a whole-page request (no selected text). */
+function anchorPageLabel(ctx: AppContext, anchor: SelectionAnchor): string | null {
+  if (!anchor.page_id) return null;
+  const p = ctx.db.get<{ page_index: number; printed_label: string | null; kind: 'page' | 'slide' | 'image' | 'docx_section' | 'audio_segment' }>(
+    'SELECT page_index, printed_label, kind FROM source_page WHERE id = ?',
+    [anchor.page_id],
+  );
+  return p ? pageDisplayLabel(p) : null;
+}
+
 function normalizedAnchor(a: SelectionAnchor): Record<string, unknown> {
   return {
     source_id: a.source_id,
@@ -181,7 +191,7 @@ export async function explainSelection(ctx: AppContext, body: ExplainBody, opts:
   const selection = selectionText(anchor, regions);
   const base: ArtifactBase = {
     kind: body.action === 'explain_image' ? 'figure_explanation' : 'explanation',
-    title: `${KIND_TITLE[body.action]}: ${shorten(selection || (body.instruction ?? ''), 70) || 'التحديد'}`,
+    title: `${KIND_TITLE[body.action]}: ${shorten(selection || (body.instruction ?? ''), 70) || anchorPageLabel(ctx, anchor) || 'التحديد'}`,
     primarySourceId: anchor.source_id,
     scope,
     rules,

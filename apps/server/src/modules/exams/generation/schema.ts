@@ -31,7 +31,7 @@ export const generatedQuestionSchema = z.object({
 export type GeneratedQuestion = z.infer<typeof generatedQuestionSchema>;
 
 export const generationOutputSchema = z.object({
-  abstain: z.object({ reason: z.enum(['insufficient_evidence', 'not_found_in_scope']), detail: z.string().max(800) }).nullable(),
+  abstain: z.object({ reason: z.enum(['insufficient_evidence', 'not_found_in_scope']), detail: z.string().max(800) }).nullable().optional(),
   questions: z.array(generatedQuestionSchema).max(5),
 });
 export type GenerationOutput = z.infer<typeof generationOutputSchema>;

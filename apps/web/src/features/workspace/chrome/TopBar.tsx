@@ -33,10 +33,11 @@ export interface TopBarProps {
   pages: readonly SourcePageView[];
   pageIndex: number;
   onGoToPage: (i: number) => void;
-  view: 'original' | 'split';
-  onView: (v: 'original' | 'split') => void;
+  view: WorkspaceView;
+  onView: (v: WorkspaceView) => void;
   splitReason: string | null;
-  studyBookReason: string;
+  /** null → the Study Book can be opened (a version exists or one can be generated); else the reason */
+  studyBookReason: string | null;
   searchOpen: boolean;
   onToggleSearch: () => void;
   zoomLabel: string;
@@ -65,6 +66,16 @@ export interface TopBarProps {
 
 const ZOOM_PRESETS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
 
+/** Original lecture · MedLevo Study Book · lecture + another source · lecture + its Study Book (§23, §24, §26). */
+export type WorkspaceView = 'original' | 'study_book' | 'split' | 'split_book';
+
+export const VIEW_LABELS_AR: Record<WorkspaceView, string> = {
+  original: 'المحاضرة الأصلية',
+  study_book: 'كتاب الدراسة',
+  split: 'جنبًا إلى جنب',
+  split_book: 'المحاضرة + كتاب الدراسة',
+};
+
 function Hint({ label, children }: { label: string; children: Parameters<typeof Tooltip>[0]['children'] }) {
   return (
     <Tooltip content={label} describe={false}>
@@ -78,23 +89,27 @@ function check(on: boolean): ReactNode {
 }
 
 export function TopBar(p: TopBarProps) {
+  const splitBookReason = p.splitReason ?? p.studyBookReason;
   const viewMenu = (
     <Menu
       label="طريقة العرض"
       trigger={
         <Button size="sm" variant="plain" iconEnd={<ChevronDown size={16} />} className="wk-viewswitch">
-          {p.view === 'split' ? 'جنبًا إلى جنب' : 'المحاضرة الأصلية'}
+          {VIEW_LABELS_AR[p.view]}
         </Button>
       }
     >
       <MenuItem icon={check(p.view === 'original')} onSelect={() => p.onView('original')}>
-        المحاضرة الأصلية
+        {VIEW_LABELS_AR.original}
       </MenuItem>
-      <MenuItem icon={check(false)} onSelect={() => undefined} disabled disabledReason={p.studyBookReason}>
-        كتاب الدراسة
+      <MenuItem icon={check(p.view === 'study_book')} onSelect={() => p.onView('study_book')} disabled={!!p.studyBookReason && p.view !== 'study_book'} disabledReason={p.studyBookReason ?? undefined}>
+        {VIEW_LABELS_AR.study_book}
+      </MenuItem>
+      <MenuItem icon={check(p.view === 'split_book')} onSelect={() => p.onView('split_book')} disabled={!!splitBookReason && p.view !== 'split_book'} disabledReason={splitBookReason ?? undefined}>
+        {VIEW_LABELS_AR.split_book}
       </MenuItem>
       <MenuItem icon={check(p.view === 'split')} onSelect={() => p.onView('split')} disabled={!!p.splitReason && p.view !== 'split'} disabledReason={p.splitReason ?? undefined}>
-        جنبًا إلى جنب
+        جنبًا إلى جنب مع مصدر آخر
       </MenuItem>
     </Menu>
   );
@@ -169,8 +184,11 @@ export function TopBar(p: TopBarProps) {
             <MenuSeparator />
             {layoutItems}
             <MenuSeparator />
-            <MenuItem icon={check(false)} onSelect={() => undefined} disabled disabledReason={p.studyBookReason}>
-              كتاب الدراسة
+            <MenuItem icon={check(p.view === 'original')} onSelect={() => p.onView('original')}>
+              {VIEW_LABELS_AR.original}
+            </MenuItem>
+            <MenuItem icon={check(p.view === 'study_book')} onSelect={() => p.onView('study_book')} disabled={!!p.studyBookReason && p.view !== 'study_book'} disabledReason={p.studyBookReason ?? undefined}>
+              {VIEW_LABELS_AR.study_book}
             </MenuItem>
             <MenuItem icon={<Columns2 size={16} />} onSelect={() => undefined} disabled disabledReason={p.splitReason ?? 'العرض جنبًا إلى جنب يحتاج شاشة أعرض.'}>
               جنبًا إلى جنب

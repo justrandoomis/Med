@@ -1,5 +1,5 @@
 // Study Book module client (/api/studybook) — explanations, comparisons, Study Book, summaries, contextual chat,
-// explanation rules — plus the owner's term dictionary, which the evidence module owns (/api/evidence/terms).
+// explanation rules — plus the owner's term dictionary (/api/studybook/terms → evidence module, owner of the table).
 import type {
   ChatPostResponse,
   ChatThreadResponse,
@@ -79,9 +79,9 @@ export const studybookApi = {
   saveNodeRules: (nodeId: string, patch: ExplanationRulesPatch) => api.put<ExplanationRulesResponse>(`/studybook/rules/nodes/${encodeURIComponent(nodeId)}`, patch),
   clearNodeRules: (nodeId: string) => api.del<ExplanationRulesResponse>(`/studybook/rules/nodes/${encodeURIComponent(nodeId)}`),
 
-  // the owner's dictionary is owned by the evidence module (also used by retrieval / search expansion)
-  terms: () => api.get<{ terms: MedicalTermView[] }>('/evidence/terms', { timeoutMs: 30_000 }),
-  createTerm: (t: TermInput) => api.post<{ term: MedicalTermView }>('/evidence/terms', t),
-  updateTerm: (id: string, t: Partial<TermInput>) => api.patch<{ term: MedicalTermView }>(`/evidence/terms/${encodeURIComponent(id)}`, t),
-  deleteTerm: (id: string) => api.del<{ ok: true }>(`/evidence/terms/${encodeURIComponent(id)}`),
+  // the owner's dictionary: /api/studybook/terms forwards to the evidence module (owner of medical_term; also used by retrieval / search expansion)
+  terms: () => api.get<{ terms: MedicalTermView[] }>('/studybook/terms', { timeoutMs: 30_000 }),
+  createTerm: (t: TermInput) => api.post<{ term: MedicalTermView }>('/studybook/terms', t),
+  updateTerm: (id: string, t: Partial<TermInput>) => api.patch<{ term: MedicalTermView }>(`/studybook/terms/${encodeURIComponent(id)}`, t),
+  deleteTerm: (id: string) => api.del<{ ok: true }>(`/studybook/terms/${encodeURIComponent(id)}`),
 };

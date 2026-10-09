@@ -105,7 +105,7 @@ export function serveHint(ctx: AppContext, exam: ExamRow, attempt: ExamAttemptRo
   const pages: HintView['pages'] = [];
   let heading: string | null = null;
   for (const l of links.slice(0, 2)) {
-    let lp = l.lecture_pages.slice(0, 3);
+    let lp = [...l.lecture_pages].sort((a, b) => a.page_index - b.page_index).slice(0, 3);
     if (lp.length === 0 && q.origin_type === 'generated') {
       const c = ctx.db.get<{ evidence_json: string }>('SELECT evidence_json FROM generated_question_candidate WHERE question_id = ? ORDER BY created_at DESC LIMIT 1', [q.id]);
       const ids = fromJson<{ lecture_page_ids?: string[] }>(c?.evidence_json ?? null, {})?.lecture_page_ids ?? [];

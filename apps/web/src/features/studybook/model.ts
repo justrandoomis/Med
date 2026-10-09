@@ -1,7 +1,11 @@
 // Pure helpers for the Study Book / explanation UI (unit-tested in model.test.ts).
 import {
   boxesIntersect,
+  normalizeForSearch,
   type ArtifactView,
+  type ExplanationRulesPatch,
+  type ExplanationRulesResponse,
+  type MedicalTermView,
   type NormBox,
   type ScopeMode,
   type SourceDetail,
@@ -91,4 +95,97 @@ export function regionsUnder(regions: readonly SourceRegionView[], rects: readon
 export function shortQuote(text: string, n = 220): string {
   const t = text.replace(/\s+/g, ' ').trim();
   return t.length > n ? `${t.slice(0, n - 1)}…` : t;
+}
+
+// ───────── terminology dictionary (§21) ─────────
+export interface TermForm {
+  term_en: string;
+  abbreviation: string;
+  synonyms: string;
+  explanation_ar: string;
+  accepted_translation_ar: string;
+  owner_preferred_ar: string;
+}
+
+export const EMPTY_TERM_FORM: TermForm = { term_en: '', abbreviation: '', synonyms: '', explanation_ar: '', accepted_translation_ar: '', owner_preferred_ar: '' };
+
+/** Synonyms typed as «a، b, c» or one per line → trimmed, de-duplicated (case-insensitive), max 30. */
+export function parseSynonyms(text: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of text.split(/[,،؛;\n]/)) {
+    const t = raw.replace(/\s+/g, ' ').trim();
+    if (!t) continue;
+    const k = t.toLocaleLowerCase('en');
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(t.slice(0, 200));
+    if (out.length >= 30) break;
+  }
+  return out;
+}
+
+export function termFormFrom(t: Pick<MedicalTermView, 'term_en' | 'abbreviation' | 'synonyms' | 'explanation_ar' | 'accepted_translation_ar' | 'owner_preferred_ar'>): TermForm {
+  return {
+    term_en: t.term_en,
+    abbreviation: t.abbreviation ?? '',
+    synonyms: t.synonyms.join('، '),
+    explanation_ar: t.explanation_ar ?? '',
+    accepted_translation_ar: t.accepted_translation_ar ?? '',
+    owner_preferred_ar: t.owner_preferred_ar ?? '',
+  };
+}
+
+/** Form → API body (empty optional fields become null so an edit can clear them). */
+export function termInputFrom(f: TermForm): { term_en: string; abbreviation: string | null; synonyms: string[]; explanation_ar: string | null; accepted_translation_ar: string | null; owner_preferred_ar: string | null } {
+  const opt = (s: string) => (s.trim() ? s.trim() : null);
+  return {
+    term_en: f.term_en.replace(/\s+/g, ' ').trim(),
+    abbreviation: opt(f.abbreviation),
+    synonyms: parseSynonyms(f.synonyms),
+    explanation_ar: opt(f.explanation_ar),
+    accepted_translation_ar: opt(f.accepted_translation_ar),
+    owner_preferred_ar: opt(f.owner_preferred_ar),
+  };
+}
+
+/** Field errors in Arabic (only what the server would also refuse; the server stays the authority). */
+export function validateTermForm(f: TermForm, existing: readonly Pick<MedicalTermView, 'id' | 'term_en'>[], editingId: string | null = null): Partial<Record<keyof TermForm, string>> {
+  const errors: Partial<Record<keyof TermForm, string>> = {};
+  const term = f.term_en.replace(/\s+/g, ' ').trim();
+  if (!term) errors.term_en = 'اكتب المصطلح بالإنجليزية كما يرد في مصادرك.';
+  else if (term.length > 200) errors.term_en = 'المصطلح أطول من 200 حرف.';
+  else if (existing.some((t) => t.id !== editingId && t.term_en.toLocaleLowerCase('en') === term.toLocaleLowerCase('en'))) errors.term_en = 'هذا المصطلح موجود في قاموسك؛ عدّله بدل إضافته مرة ثانية.';
+  if (f.abbreviation.trim().length > 40) errors.abbreviation = 'الاختصار أطول من 40 حرفًا.';
+  return errors;
+}
+
+/** Local filter over the dictionary (English term, abbreviation, synonyms, Arabic renderings). */
+export function termMatches(t: Pick<MedicalTermView, 'term_en' | 'abbreviation' | 'synonyms' | 'explanation_ar' | 'accepted_translation_ar' | 'owner_preferred_ar'>, query: string): boolean {
+  const q = normalizeForSearch(query).trim();
+  if (!q) return true;
+  const hay = normalizeForSearch([t.term_en, t.abbreviation ?? '', ...t.synonyms, t.explanation_ar ?? '', t.accepted_translation_ar ?? '', t.owner_preferred_ar ?? ''].join(' '));
+  return q.split(/\s+/).every((w) => hay.includes(w));
+}
+
+export const TERM_ORIGIN_LABELS_AR: Record<MedicalTermView['origin'], string> = {
+  owner: 'أضفته أنت',
+  extracted: 'مستخرج من مصدر',
+  generated: 'مقترح مولَّد',
+};
+
+// ───────── explanation rules (§19) ─────────
+/** The patch the owner layer would store after changing one field (include toggles merge). */
+export function mergeRulesPatch(base: ExplanationRulesPatch | null, change: ExplanationRulesPatch): ExplanationRulesPatch {
+  const merged: ExplanationRulesPatch = { ...(base ?? {}), ...change };
+  if (base?.include || change.include) merged.include = { ...(base?.include ?? {}), ...(change.include ?? {}) };
+  return merged;
+}
+
+/** Which layer decides a field (for «من أين جاءت هذه القاعدة؟»). */
+export function ruleSourceAr(field: keyof ExplanationRulesPatch, layers: Pick<ExplanationRulesResponse['layers'], 'owner' | 'node'>): string {
+  if (layers.node?.override && layers.node.override[field] !== undefined) return `خاص بـ «${layers.node.title}»`;
+  if (field === 'template' && layers.node?.template_key) return `قالب المجلد «${layers.node.title}»`;
+  if (layers.owner && layers.owner[field] !== undefined) return 'قواعدك العامة';
+  return field === 'level' || field === 'dialect' || field === 'socratic' ? 'من الإعدادات' : 'الافتراضي';
 }

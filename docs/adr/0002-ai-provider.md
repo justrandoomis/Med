@@ -90,3 +90,14 @@ No sampling parameters (`temperature`/`top_p`/`top_k` are 400s on these models) 
   injection defence), so a cache prefix would never repeat. Costs are therefore estimated without cache savings.
 * Batches API not used (requests are interactive or per-section jobs).
 * Prices are a static snapshot; the owner must treat costs as estimates (the UI says so).
+
+## Verification (2026-10-09)
+
+* `npx vitest run --root apps/server test/ai-provider` — 14 passed (mocked HTTP layer through the SDK's `fetch`
+  option: request shaping, structured output schema, effort / fallback gating per model, vision blocks, per-role
+  models, usage incl. cache tokens, price estimates, refusal / truncation, error mapping with request ids, bounded
+  retries on 429 / 529, abort vs timeout, factory + secret handling, orchestrator usage records and the budget
+  pre-check with reasoning headroom). No network, no key.
+* The rest of the AI pipeline (explanations, Study Book, chat, summaries, figures) is tested with test-only fake
+  providers; see `docs/modules/studybook.md` §4. No real model call was made in this environment.
+

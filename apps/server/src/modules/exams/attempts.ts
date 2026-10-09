@@ -146,6 +146,11 @@ export function insertQuestionAttempt(
     const at = findAttempt(db, input.exam_attempt_id);
     if (!at) throw new AppError('NOT_FOUND', 'محاولة الاختبار غير موجودة على الخادم.', 404);
     exam = getExam(db, at.exam_id);
+    const solutionsAtEnd = isAssessedMode(exam.mode) || examPolicy(exam).show_solution === 'at_end';
+    if (solutionsAtEnd && at.status !== 'completed' && at.status !== 'abandoned') {
+      // during an exam the answers live in the attempt state and are graded when it is finished (AC-19)
+      throw new AppError('CONFLICT', 'في هذا الاختبار تُحفظ الإجابات في المحاولة وتُصحَّح عند إنهائه، لا سؤالًا سؤالًا.', 409);
+    }
     const items = examItems(exam);
     if (index === null) index = items.findIndex((i) => i.question_version_id === v.id);
     const item = index !== null && index >= 0 ? items[index] : undefined;

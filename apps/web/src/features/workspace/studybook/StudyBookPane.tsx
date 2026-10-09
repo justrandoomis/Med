@@ -2,7 +2,7 @@
 // progress, the book rendered with C1's ArtifactContent (chips → Evidence Peek → open source → back), sections with
 // «open in the lecture», freeze, regeneration as a NEW version (notes never move; vanished anchors listed), and
 // Lecture Twin: the pane scrolls to the block nearest the lecture page and reports the page of the block on top.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { BookOpen, ListTree, Lock, LockOpen, RefreshCw, RotateCcw, Square } from 'lucide-react';
 import {
   SCOPE_MODE_LABELS_AR,
@@ -10,14 +10,15 @@ import {
   type StudyBookSectionView,
   type StudyBookView,
 } from '@medlevo/shared';
-import { Button, ConfirmDialog, EmptyState, ErrorState, LoadingState, StatusPill, useToast, type StatusTone } from '../../../design';
+import { Button, ConfirmDialog, EmptyState, ErrorState, LoadingState, StatusPill, Tab, TabList, TabPanel, Tabs, useToast, type StatusTone } from '../../../design';
 import { errorMessage } from '../../../lib/api';
 import { useCapabilities } from '../../../lib/capabilities';
 import { useSettings } from '../../../lib/settings';
-import { ArtifactContent, ScopeBadge, ScopePicker } from '../../evidence';
+import { ArtifactContent, ContentAlertsPanel, ScopeBadge, ScopePicker } from '../../evidence';
 import { studybookApi } from '../../studybook/api';
 import { coverageSummary, defaultScopeFor, nearestBlock, pageOfBlock, referencesOf, sectionsProgressAr } from '../../studybook/model';
 import type { SourceDocument } from '../data/useSourceDocument';
+import { BlockNotes } from './BlockNotes';
 import { SummaryPanel } from './SummaryPanel';
 import { useStudyBook } from './useStudyBook';
 import './studybook.css';
@@ -26,62 +27,96 @@ const SECTION_TONE: Record<StudyBookSectionView['status'], StatusTone> = { pendi
 
 export interface StudyBookPaneProps {
   doc: SourceDocument;
-  /** the lecture page the owner is on (Lecture Twin target) */
+  /** the lecture page the owner is on (index into `doc.pages`) — the Lecture Twin target */
   pageIndex: number;
   /** bump to scroll the book to the block nearest `pageIndex` (switching views / sync) */
   jumpKey: number;
-  /** the original page of the block currently at the top of the book */
+  /** the original page (index into `doc.pages`) of the block currently at the top of the book */
   onVisiblePage?: (pageIndex: number) => void;
-  /** open a lecture page (Lecture Twin back to the original) */
+  /** open a lecture page (index into `doc.pages`) — Lecture Twin back to the original */
   onOpenPage: (pageIndex: number) => void;
   online: boolean;
   /** split view: narrower header */
   compact?: boolean;
+  /** extra controls for the pane's bar (split view: sync scrolling, close) */
+  toolbar?: ReactNode;
+  /** a version was created / changed (the workspace refreshes the view switch) */
+  onBookChanged?: () => void;
 }
 
-export function StudyBookPane({ doc, pageIndex, jumpKey, onVisiblePage, onOpenPage, online, compact }: StudyBookPaneProps) {
+export function StudyBookPane({ doc, pageIndex, jumpKey, onVisiblePage, onOpenPage, online, compact, toolbar, onBookChanged }: StudyBookPaneProps) {
   const sb = useStudyBook(doc.detail.id, online);
   const caps = useCapabilities();
   const [tab, setTab] = useState<'book' | 'summaries'>('book');
   const book = sb.book;
+  const content =
+    sb.status === 'loading' ? (
+      <LoadingState inline stage="جارٍ تحميل كتاب الدراسة…" />
+    ) : sb.status === 'offline' ? (
+      <EmptyState headingLevel={3} title="كتاب الدراسة يحتاج اتصالًا" description="لم يُحمَّل كتاب الدراسة على هذا الجهاز. يظهر عند عودة الاتصال." />
+    ) : sb.status === 'error' && !sb.data ? (
+      <ErrorState inline message={sb.error ?? 'تعذّر تحميل كتاب الدراسة.'} onRetry={() => void sb.reload()} />
+    ) : !book ? (
+      <GeneratePanel
+        doc={doc}
+        canGenerate={sb.data?.can_generate ?? { available: false, reason_ar: null }}
+        onCreated={(b) => {
+          sb.setBook(b);
+          onBookChanged?.();
+        }}
+      />
+    ) : (
+      <BookView
+        doc={doc}
+        book={book}
+        pageIndex={pageIndex}
+        jumpKey={jumpKey}
+        onVisiblePage={onVisiblePage}
+        onOpenPage={onOpenPage}
+        canGenerate={sb.data?.can_generate ?? { available: false, reason_ar: null }}
+        onChanged={(b) => {
+          sb.setBook(b);
+          onBookChanged?.();
+        }}
+        onOpenVersion={(id) => sb.openVersion(id)}
+        onReload={() => void sb.reload()}
+      />
+    );
   return (
-    <section className={`sb-pane${compact ? ' sb-pane--compact' : ''}`} aria-label="كتاب الدراسة">
-      <div className="sb-pane__tabs" role="tablist" aria-label="كتاب الدراسة والملخصات">
-        <button type="button" role="tab" aria-selected={tab === 'book'} className="sb-tab" onClick={() => setTab('book')}>
-          <BookOpen size={16} aria-hidden="true" />
-          كتاب الدراسة
-        </button>
-        <button type="button" role="tab" aria-selected={tab === 'summaries'} className="sb-tab" onClick={() => setTab('summaries')}>
-          <ListTree size={16} aria-hidden="true" />
-          الملخصات
-        </button>
-      </div>
-      {tab === 'summaries' ? (
-        <SummaryPanel doc={doc} pageIndex={pageIndex} online={online} gate={caps.feature('ai.summaries')} />
-      ) : sb.status === 'loading' ? (
-        <LoadingState inline stage="جارٍ تحميل كتاب الدراسة…" />
-      ) : sb.status === 'offline' ? (
-        <EmptyState headingLevel={3} title="كتاب الدراسة يحتاج اتصالًا" description="لم يُحمَّل كتاب الدراسة على هذا الجهاز. يظهر عند عودة الاتصال." />
-      ) : sb.status === 'error' && !sb.data ? (
-        <ErrorState inline message={sb.error ?? 'تعذّر تحميل كتاب الدراسة.'} onRetry={() => void sb.reload()} />
-      ) : !book ? (
-        <GeneratePanel doc={doc} canGenerate={sb.data?.can_generate ?? { available: false, reason_ar: null }} onCreated={(b) => sb.setBook(b)} />
-      ) : (
-        <BookView
-          doc={doc}
-          book={book}
-          pageIndex={pageIndex}
-          jumpKey={jumpKey}
-          onVisiblePage={onVisiblePage}
-          onOpenPage={onOpenPage}
-          canGenerate={sb.data?.can_generate ?? { available: false, reason_ar: null }}
-          onChanged={(b) => sb.setBook(b)}
-          onOpenVersion={(id) => sb.openVersion(id)}
-          onReload={() => void sb.reload()}
-        />
-      )}
+    <section className={`sb-pane${compact ? ' sb-pane--compact' : ''}`} aria-label="كتاب الدراسة" data-testid="study-book-pane">
+      <Tabs value={tab} onValueChange={(v) => setTab(v as 'book' | 'summaries')} className="sb-pane__tabset">
+        <div className="sb-pane__tabs">
+          <TabList label="كتاب الدراسة والملخصات" className="sb-pane__tablist">
+            <Tab value="book" icon={<BookOpen size={16} />}>
+              كتاب الدراسة
+            </Tab>
+            <Tab value="summaries" icon={<ListTree size={16} />}>
+              الملخصات
+            </Tab>
+          </TabList>
+          {toolbar && <div className="sb-sync">{toolbar}</div>}
+        </div>
+        <TabPanel value="book" className="sb-pane__panel">
+          {content}
+        </TabPanel>
+        <TabPanel value="summaries" className="sb-pane__panel">
+          <SummaryPanel doc={doc} pageIndex={pageIndex} online={online} gate={caps.feature('ai.summaries')} />
+        </TabPanel>
+      </Tabs>
     </section>
   );
+}
+
+/**
+ * Scroll only the Study Book pane (never the page or the workspace around it — on phones a document scroll would
+ * push the reading bar off screen), leaving room for the pane's sticky bar.
+ */
+function scrollBlockIntoPane(el: HTMLElement): void {
+  const pane = el.closest<HTMLElement>('.sb-pane');
+  if (!pane) return;
+  const bar = pane.querySelector<HTMLElement>('.sb-pane__tabs');
+  const offset = el.getBoundingClientRect().top - pane.getBoundingClientRect().top;
+  pane.scrollTop = Math.max(0, pane.scrollTop + offset - (bar?.offsetHeight ?? 0) - 8);
 }
 
 function GeneratePanel({ doc, canGenerate, onCreated }: { doc: SourceDocument; canGenerate: { available: boolean; reason_ar: string | null }; onCreated: (b: StudyBookView) => void }) {
@@ -166,50 +201,80 @@ function BookView({ doc, book, pageIndex, jumpKey, onVisiblePage, onOpenPage, ca
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const programmatic = useRef(0);
+  const [topBlock, setTopBlock] = useState<string | null>(null);
   const cov = coverageSummary(a.coverage);
   const needsReanchor = book.reanchor.filter((r) => r.status === 'needs_reanchor');
   const generating = a.status === 'generating';
 
+  // twin entries use `page_index` (order in the file); the workspace uses indexes into doc.pages
+  const fileIndexOf = useCallback((i: number) => doc.pages[i]?.page_index ?? i, [doc.pages]);
+  const arrayIndexOf = useCallback((pageIndexInFile: number) => doc.pages.findIndex((p) => p.page_index === pageIndexInFile), [doc.pages]);
+
   // Lecture Twin: scroll to the block nearest the lecture page when asked (view switch / sync)
   const scrollToPage = useCallback(
     (pi: number) => {
-      const key = nearestBlock(book.twin, pi);
+      const key = nearestBlock(book.twin, fileIndexOf(pi));
       if (!key || !bodyRef.current) return;
       const el = bodyRef.current.querySelector<HTMLElement>(`[data-block="${CSS.escape(key)}"]`);
       if (!el) return;
       programmatic.current = Date.now();
-      el.scrollIntoView({ block: 'start', behavior: 'auto' });
+      bodyRef.current.dataset.twinTarget = key;
+      scrollBlockIntoPane(el);
     },
-    [book.twin],
+    [book.twin, fileIndexOf],
   );
   useEffect(() => {
     scrollToPage(pageIndex);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jumpKey, a.id]);
 
-  // report the page of the block on top (for switching back and optional sync)
+  // report the page of the block on top (for switching back and optional sync). Positions are read fresh on each
+  // change; right after our own jump the report waits (no feedback loop) and then reports where the owner is —
+  // unless that is still the block we jumped to (the lecture position stays the source of truth).
   useEffect(() => {
     const root = bodyRef.current;
     if (!root || !onVisiblePage || typeof IntersectionObserver === 'undefined') return;
-    const visible = new Map<string, number>();
+    const visible = new Set<string>();
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const report = () => {
+      timer = null;
+      let best: { key: string; top: number } | null = null;
+      for (const key of visible) {
+        const el = root.querySelector<HTMLElement>(`[data-block="${CSS.escape(key)}"]`);
+        if (!el) continue;
+        const t = el.getBoundingClientRect().top;
+        if (!best || t < best.top) best = { key, top: t };
+      }
+      if (!best) return;
+      setTopBlock(best.key);
+      const wait = 600 - (Date.now() - programmatic.current);
+      if (wait > 0) {
+        timer = setTimeout(report, wait + 30);
+        return;
+      }
+      if (best.key === root.dataset.twinTarget && Date.now() - programmatic.current < 5000) return;
+      const p = pageOfBlock(book.twin, best.key);
+      const i = p === null ? -1 : arrayIndexOf(p);
+      if (i >= 0) onVisiblePage(i);
+    };
     const io = new IntersectionObserver(
       (entries) => {
         for (const e of entries) {
           const key = (e.target as HTMLElement).dataset.block!;
-          if (e.isIntersecting) visible.set(key, e.boundingClientRect.top);
+          if (e.isIntersecting) visible.add(key);
           else visible.delete(key);
         }
-        if (Date.now() - programmatic.current < 600) return; // our own scroll: no feedback loop
-        const top = [...visible.entries()].sort((x, y) => x[1] - y[1])[0];
-        if (!top) return;
-        const p = pageOfBlock(book.twin, top[0]);
-        if (p !== null) onVisiblePage(p);
+        if (timer) clearTimeout(timer);
+        report();
       },
       { root: null, threshold: [0, 0.25] },
     );
     root.querySelectorAll<HTMLElement>('[data-block]').forEach((el) => io.observe(el));
-    return () => io.disconnect();
-  }, [book.twin, onVisiblePage, a.id, a.blocks.length]);
+    return () => {
+      io.disconnect();
+      if (timer) clearTimeout(timer);
+    };
+  }, [book.twin, onVisiblePage, arrayIndexOf, a.id, a.blocks.length]);
 
   const act = async (name: string, fn: () => Promise<StudyBookView>, done?: string) => {
     setBusy(name);
@@ -278,6 +343,13 @@ function BookView({ doc, book, pageIndex, jumpKey, onVisiblePage, onOpenPage, ca
           </Button>
         </p>
       )}
+      {a.status === 'stale' && (
+        <details className="sb-versions" open>
+          <summary>ما الذي تغيّر في المصدر؟</summary>
+          <p className="sb-muted">هذه النسخة من كتاب الدراسة بُنيت على نسخة أقدم من المصدر؛ لم يُعدَّل شيء تلقائيًا. ثبّتها إن أردت إبقاءها، أو أنشئ نسخة جديدة.</p>
+          <ContentAlertsPanel sourceId={doc.detail.id} />
+        </details>
+      )}
       {a.versions.length > 1 && (
         <details className="sb-versions">
           <summary>{`نسخ هذا الكتاب (${a.versions.length})`}</summary>
@@ -314,7 +386,8 @@ function BookView({ doc, book, pageIndex, jumpKey, onVisiblePage, onOpenPage, ca
                     className="sb-toc__link"
                     onClick={() => {
                       programmatic.current = Date.now();
-                      bodyRef.current?.querySelector<HTMLElement>(`[data-block="${CSS.escape(first)}"]`)?.scrollIntoView({ block: 'start' });
+                      const el = bodyRef.current?.querySelector<HTMLElement>(`[data-block="${CSS.escape(first)}"]`);
+                      if (el) scrollBlockIntoPane(el);
                     }}
                   >
                     {s.title ?? 'قسم'}
@@ -322,8 +395,8 @@ function BookView({ doc, book, pageIndex, jumpKey, onVisiblePage, onOpenPage, ca
                 ) : (
                   <span className="sb-toc__title">{s.title ?? 'قسم'}</span>
                 )}
-                {s.page_indexes.length > 0 && (
-                  <Button size="sm" variant="plain" onClick={() => onOpenPage(s.page_indexes[0]!)} aria-label={`افتح ${s.page_labels_ar[0] ?? ''} في المحاضرة`}>
+                {s.page_indexes.length > 0 && arrayIndexOf(s.page_indexes[0]!) >= 0 && (
+                  <Button size="sm" variant="plain" onClick={() => onOpenPage(arrayIndexOf(s.page_indexes[0]!))} aria-label={`افتح ${s.page_labels_ar[0] ?? ''} في المحاضرة`}>
                     {s.page_labels_ar[0] ?? ''}
                   </Button>
                 )}
@@ -333,6 +406,22 @@ function BookView({ doc, book, pageIndex, jumpKey, onVisiblePage, onOpenPage, ca
           })}
         </ol>
       </nav>
+
+      {!generating && (
+        <BlockNotes
+          lineageId={a.lineage_id}
+          versionNo={a.version_no}
+          blocks={a.blocks}
+          topBlockKey={topBlock}
+          onJump={(k) => {
+            const el = bodyRef.current?.querySelector<HTMLElement>(`[data-block="${CSS.escape(k)}"]`);
+            if (el) {
+              programmatic.current = Date.now();
+              scrollBlockIntoPane(el);
+            }
+          }}
+        />
+      )}
 
       {needsReanchor.length > 0 && (
         <details className="sb-reanchor">
