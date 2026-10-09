@@ -7,3 +7,6 @@ export * from './settings';
 export * from './features';
 export * from './api';
 export * from './search';
+export * from './geometry';
+export * from './sources';
+export * from './annotations';

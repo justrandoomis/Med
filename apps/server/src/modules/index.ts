@@ -8,6 +8,10 @@ import filesModule from './files';
 import jobsModule from './jobs';
 import settingsModule from './settings';
 import syncModule from './sync';
+import libraryModule from './library';
+import sourcesModule from './sources';
+import processingModule from './processing';
+import annotationsModule from './annotations';
 
 export interface ModuleEntry {
   name: string;
@@ -25,4 +29,8 @@ export const MODULES: ModuleEntry[] = [
   { name: 'jobs', prefix: '/api/jobs', plugin: jobsModule },
   { name: 'sync', prefix: '/api/sync', plugin: syncModule },
   { name: 'ai', prefix: '/api/ai', plugin: aiModule },
+  { name: 'library', prefix: '/api/library', plugin: libraryModule },
+  { name: 'sources', prefix: '/api/sources', plugin: sourcesModule },
+  { name: 'processing', prefix: '/api/processing', plugin: processingModule },
+  { name: 'annotations', prefix: '/api/annotations', plugin: annotationsModule },
 ];
