@@ -242,6 +242,24 @@ describe('ExplainTab', () => {
     expect(aiRequestStore.get()).toBeNull(); // consumed once
   });
 
+  it('Explain Until Understood re-teaches the explanation’s own passage and action, not whatever is selected now', async () => {
+    const { doc, page } = makeDoc();
+    const passage = { source_id: doc.detail.id, version_id: page.version_id, page_id: doc.pages[0]!.id, region_ids: ['R9'], quote: { exact: 'Pain starts around the umbilicus.' } };
+    const calls = server((_b, n) => json({ artifact: artifact(n === 1 ? { title: 'تبسيط: Pain starts', params: { action: 'simplify' }, anchor: passage } : { id: 'A2', version_no: 2, title: 'تبسيط: Pain starts (2)' }), cached: false }));
+    act(() => {
+      aiRequestStore.request({ action: 'simplify', anchor: passage, text: passage.quote.exact, pageIndex: 0, rects: [] });
+    });
+    renderTab(doc, page);
+    await screen.findByRole('heading', { name: 'تبسيط: Pain starts' });
+    // the owner drops the selection (the tab now targets the current page) and asks for another way
+    fireEvent.click(screen.getByRole('button', { name: 'استخدم الصفحة بدل التحديد' }));
+    fireEvent.click(screen.getByRole('button', { name: 'لم أفهم — اشرح بطريقة أخرى' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'تشبيه' }));
+    await screen.findByRole('heading', { name: 'تبسيط: Pain starts (2)' });
+    const retry = calls.filter((c) => c.url === '/api/studybook/explain')[1]!.body as Record<string, unknown>;
+    expect(retry).toMatchObject({ action: 'simplify', anchor: passage, retry_of: { artifact_id: 'A1', strategy: 'analogy' } });
+  });
+
   it('Ask: the composer is disabled with the chat capability’s reason when chat is not configured', async () => {
     const c = caps('available');
     c.features['ai.chat'] = { key: 'ai.chat', state: 'requires_configuration', reason_ar: AI_REASON };

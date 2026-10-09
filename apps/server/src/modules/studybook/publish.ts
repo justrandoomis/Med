@@ -100,18 +100,57 @@ function wordCount(text: string): number {
 }
 
 /**
+ * Words a pure transition / lead-in is made of (normalized with normalizeForSearch: no harakat, ا/ي/ه unified).
+ * Deliberately small: it holds discourse words, pronouns / prepositions and the names of template sections — no
+ * medical noun, verb or adjective and no negation — so a phrase made ONLY of these words cannot state a fact.
+ */
+const CONNECTIVE_WORDS = new Set(
+  [
+    // Arabic (MSA + the Iraqi teaching tone the rules allow)
+    'لنر', 'لنري', 'نري', 'سنري', 'دعنا', 'دعونا', 'خلي', 'خلينا', 'نشوف', 'شوف', 'ليش', 'لماذا', 'ليه', 'اذن', 'الان', 'هسه', 'هسا', 'الحين',
+    'بعباره', 'اخري', 'ابسط', 'بمعني', 'يعني', 'باختصار', 'ببساطه', 'اولا', 'ثانيا', 'ثالثا', 'رابعا', 'اخيرا', 'مثلا', 'لاحظ', 'لاحظي',
+    'تذكر', 'تذكري', 'انتبه', 'انتبهي', 'ركز', 'ركزي', 'هنا', 'هيا', 'حسنا', 'طيب', 'تمام', 'خلاصه', 'الخلاصه', 'النقطه', 'الفكره', 'التاليه',
+    'التالي', 'كالتالي', 'كما', 'يلي', 'فيما', 'نبدا', 'لنبدا', 'سنبدا', 'نشرح', 'لنشرح', 'سنشرح', 'بالتفصيل', 'خطوه', 'بخطوه', 'معا', 'سويه',
+    'ننتقل', 'لننتقل', 'ننظر', 'لننظر', 'نتعرف', 'لنتعرف', 'نفهم', 'لنفهم', 'نراجع', 'لنراجع', 'نتذكر', 'لنتذكر', 'هذا', 'هذه', 'ذلك', 'تلك',
+    'هو', 'هي', 'الي', 'علي', 'في', 'من', 'عن', 'مع', 'ثم', 'او', 'لكن', 'بل', 'اي', 'كيف', 'السبب', 'السوال', 'الجواب', 'الاجابه', 'الشرح',
+    'المثال', 'الموضوع', 'القسم', 'الجزء', 'الفقره', 'الاسباب', 'الاعراض', 'العلامات', 'التشخيص', 'العلاج', 'الفحوصات', 'المضاعفات', 'التعريف',
+    'الاليه', 'الاهم', 'المهم', 'مهم', 'جدا',
+    // English lead-ins
+    "let's", 'lets', 'let', 'us', 'see', 'why', 'now', 'so', 'in', 'other', 'words', 'first', 'second', 'next', 'then', 'finally', 'for',
+    'example', 'note', 'remember', 'here', 'the', 'idea', 'step', 'by', 'okay', 'ok', 'summary', 'recap', 'to', 'sum', 'up', 'we', 'will',
+    'look', 'at', 'this', 'that', 'how', 'what', 'and', 'a',
+  ].map((w) => normalizeForSearch(w)),
+);
+
+/** Placeholders the comparison prompt prescribes for a cell the sources do not cover (and the server's own). */
+const NOT_COVERED_PHRASES = new Set(['غير مذكور في المصادر المسموحة', CELL_REMOVED].map((p) => normalizeForSearch(p)));
+
+function connectiveWord(w: string): boolean {
+  if (CONNECTIVE_WORDS.has(w)) return true;
+  // a conjunction / preposition glued to the word: و ف ب ل ك, optionally followed by «ال»
+  const m = /^[وفبلك](.+)$/u.exec(w);
+  return !!m && (CONNECTIVE_WORDS.has(m[1]!) || CONNECTIVE_WORDS.has(`ال${m[1]!}`));
+}
+
+/**
  * Review hardening (§0.1, AC-29): the evidence module keeps a claim-less sentence as «connective text» unless it
  * carries a value / threshold — it cannot decide «medical» reliably. A generator (or an instruction injected into
- * an uploaded document) could therefore publish a medical statement simply by omitting its claim. Inside medical
+ * an uploaded document) could therefore publish a medical statement simply by omitting its claim — and a short
+ * Arabic statement («الزائدة الملتهبة لا تحتاج جراحة.») has no digit or Latin letter to catch. Inside medical
  * content blocks this module only lets through what is recognisably NOT a statement of fact: a question to the
- * learner, or a short Arabic connective phrase (≤ 6 words, no Latin term, no digit). Everything else is removed
- * and reported, like any other unsupported sentence.
+ * learner, the prescribed «not covered» placeholder, or a short phrase (≤ 6 words) made only of connective words
+ * (CONNECTIVE_WORDS). Everything else is removed and reported, like any other unsupported sentence.
  */
 export function isConnectiveText(text: string): boolean {
-  const t = text.trim().replace(/[\s.»"'”)\]]+$/u, '');
+  const t = text.trim().replace(/[\s.»"'”)\]:،,؛;!…-]+$/u, '');
   if (!t) return true;
   if (/[?؟]$/u.test(t)) return true;
-  return wordCount(t) <= 6 && !/[A-Za-z]/.test(t) && !/[0-9٠-٩۰-۹]/.test(t);
+  const norm = normalizeForSearch(t).replace(/\s+/g, ' ').trim();
+  if (NOT_COVERED_PHRASES.has(norm)) return true;
+  if (/[0-9]/.test(norm)) return false;
+  const words = norm.split(/[^\p{L}\p{N}']+/u).filter(Boolean);
+  if (words.length === 0) return true;
+  return words.length <= 6 && words.every(connectiveWord);
 }
 
 /** A comparison table's first column names the aspect (e.g. «Mechanism», «الجرعة») — a label, not a claim. */

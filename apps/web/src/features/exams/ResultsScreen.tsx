@@ -21,7 +21,7 @@ import { examsApi } from './api';
 import { FeedbackPanel } from './FeedbackPanel';
 import { localAttempt, registerExamAppliers, saveMistakeType } from './local';
 import { MixedLine } from './MixedLine';
-import { CONFIDENCE_LABELS_AR, answeredCount, durationAr, formatClock, ofAr, questionsAr } from './model';
+import { CONFIDENCE_LABELS_AR, answeredCount, durationAr, formatClock, isFinished, ofAr, questionsAr } from './model';
 import './exams.css';
 
 function ItemStatus({ item }: { item: ExamResultItem }) {
@@ -53,7 +53,7 @@ export function ResultsScreen() {
   const toast = useToast();
   const [data, setData] = useState<ExamResultDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState<{ answered: number } | null>(null);
+  const [pending, setPending] = useState<{ answered: number; finished: boolean } | null>(null);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState<Record<number, AttemptFeedbackView | 'loading' | string>>({});
   usePageTitle(data ? `نتيجة: ${data.title}` : 'النتيجة');
@@ -74,7 +74,7 @@ export function ResultsScreen() {
       if (isApiError(e) && (e.status === 409 || e.offline)) {
         const local = await localAttempt(getDb(), attemptId);
         if (local?.state) {
-          setPending({ answered: answeredCount(local.state) });
+          setPending({ answered: answeredCount(local.state), finished: isFinished(local.state) });
           return;
         }
       }
@@ -117,6 +117,20 @@ export function ResultsScreen() {
   };
 
   if (loading) return <LoadingState stage="جارٍ حساب النتيجة…" />;
+  if (pending && !pending.finished) {
+    // the attempt is still running on this device: the result (and the solutions) appear only after finishing
+    return (
+      <div className="ml-page ml-page--narrow ex-page">
+        <h1 className="ml-page__title">المحاولة لم تنتهِ بعد</h1>
+        <p className="ex-note" role="status">
+          أجبت عن {questionsAr(pending.answered)} حتى الآن، وإجاباتك محفوظة على هذا الجهاز. تظهر النتيجة والحلول بعد إنهاء الاختبار.
+        </p>
+        <Link to={`/exams/${encodeURIComponent(attemptId)}`} className={buttonClass({ variant: 'primary' })}>
+          أكمل الاختبار
+        </Link>
+      </div>
+    );
+  }
   if (pending) {
     return (
       <div className="ml-page ml-page--narrow ex-page">

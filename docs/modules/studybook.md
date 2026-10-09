@@ -180,3 +180,52 @@ orchestrator usage records, budget pre-check with reasoning headroom).
 * `GET /api/studybook/terms` forwards in-process (`app.inject`), so the evidence module's audit entries are the record;
   a session refresh cookie from the forwarded call is not passed back (the original request's cookie is still valid).
 * Not run: real iPad/iPhone Safari, VoiceOver/NVDA, axe/Lighthouse.
+
+## 6. Independent review (adversarial, 2026-10-09)
+
+An independent review of this track read the server module, the adapter, the web parts and the tests, and ran
+them. A first review attempt was cut off by a container restart. It left `test/studybook/review.test.ts` with
+9 regression tests (7 failing) and one fix in `publish.ts`. This pass checked each of those findings again, fixed
+the ones still open, and added its own. Every fix has a regression test. Each test was run against the pre-fix code
+(the files were swapped temporarily and then restored) and **failed there**: 9 server tests and 2 web tests.
+
+| # | sev. | finding | fix |
+|---|---|---|---|
+| 1 | major | A claim-less sentence in a medical block was kept as «connective text» unless it had a digit or a Latin letter. A short Arabic statement («الزائدة الملتهبة لا تحتاج جراحة.») was published **uncited**. The first fix (≤ 6 words, no Latin, no digit) still let it through. | `publish.ts isConnectiveText`: without a claim, a sentence is kept only if it is a question to the learner, the prescribed «غير مذكور في المصادر المسموحة» placeholder, or ≤ 6 words that are **all** in a small connective lexicon (no medical words, no negation). Anything else is removed and listed in `removed`. Headings, mini questions, memory hooks and coverage notes stay exempt (see limits). |
+| 2 | major | Save-as-note accepted any client `note_id`. An existing note was then upserted through the sync handler: a deleted note of the owner (in the trash) was **overwritten and brought back** with the AI answer; a live note produced a conflict copy and the owner's note was returned as «saved». | `chat.ts saveAnswerAsNote`: an existing note id is accepted only if it is this same answer saved before (idempotent `duplicate`). Any other existing id → 409; nothing is written. |
+| 3 | major | Study Book job: a non-retryable provider failure was re-thrown, so the whole job retried (×3). A refusal was **billed 3 times**, and a bad key failed every section, one call each. | `book.ts`: refusal, truncation and too-large fail **that section only**, with the specific reason, and the other sections continue. Auth, permission, unknown model or a bad request fail the **job at once**: one call, every remaining section failed with the reason, no retries. Retryable failures still retry. |
+| 4 | major | AC-29: a section title (the text of a **document heading**, i.e. untrusted) was put inside the *trusted* task text of the Study Book prompt. | The title now goes to the model only as a delimited `SECTION TITLE` untrusted block. The trusted task refers to that block. Summaries were changed the same way. |
+| 5 | major | The cache key (§3.7) did not include the owner dictionary, which the prompt and the retrieval expansion both use, nor the generator / verifier models. An explanation made with an old dictionary or an older `MEDLEVO_MODEL_*` was served as current. | `generate.ts keySettings` adds `terms` (a fingerprint of the dictionary, `terms.ts terminologyVersion`) and `generator_model` / `verifier_model` to the keys of explanations, figures, comparisons, the Study Book and summaries. |
+| 6 | major | Explain Until Understood accepted any `retry_of`: an explanation of another source joined the wrong lineage. An explanation made under a **wider** scope was fed back to a lecture_only request as model context, so out-of-lock text leaked in. | `explain.ts assertRetryInLineage`: the retry must target an explanation of the same source and version (400 otherwise), and the versions it was built from must lie inside the current lock (409 `OUT_OF_SCOPE`). Both checks run before any model call. The web retries the explanation's **own** passage and action (`ExplainTab retryActionOf / retryContextOf`), not the current selection. |
+| 7 | minor | Figure without vision: when every sentence failed verification, the result was **published as an explanation** containing only the «explained from the caption only» warning. | `generate.ts publishGenerated`: a warning alone is not content. The result is now an `insufficient_evidence` abstention, and the removed sentences can be shown on demand. |
+| 8 | minor | A chat thread could be bound to regions of another version (only the anchor's version was checked). A `block` anchor was not checked at all. | `chat.ts createThread`: the anchor regions must belong to the anchor version, and a block anchor must belong to a Study Book of that source (409 otherwise). |
+| 9 | minor | A chat answer left `draft` / `verifying` by a server restart showed «being written» forever. | `chat.ts messageView`: after 30 minutes it shows as `rejected`, with no content. |
+| 10 | minor | `section_keys` (progressive generation, shared contract) created a new lineage version holding **only** those sections. Once published it superseded the complete book, and it opened needs-reanchor review items for notes on all the other sections. | `book.ts`: the version keeps every section. Only the requested sections run, the others stay `pending`, and the version is `partial`, so it never supersedes a complete one. «resume» generates the rest. |
+| 11 | minor | Re-anchoring: notes on paragraphs of sections that were not finished yet (pending / failed) were reported as gone. A `needs_reanchor` review item stayed open after a later version brought the paragraph back. | `computeReanchor` skips sections that are not finished yet. When a note is `matched`, the server closes the open item it made (`dismissed`, with a server resolution). The owner's note is never touched. |
+| 12 | minor | Selection longer than 6000 characters: the toolbar sent the full quote, and the server refused it (400). | `SelectionToolbar`: the quote is capped to what the server accepts. |
+| 13 | minor | Arabic counting in coverage: «غطّى صفحتان», «11 من 12 أقسام». | `model.ts sectionsOfAr`, accusative «صفحتين». |
+
+Checked with no change needed:
+- The Anthropic adapter against the `claude-api` skill: `claude-opus-5-5`; thinking omitted (adaptive, never disabled); `output_config.effort` high/low; structured output through `output_config.format`; streaming `finalMessage()`; `fallbacks: "default"` with the 2026-07-01 beta; typed SDK errors, most specific first; request ids; price table, labelled as an estimate.
+- The key is never logged, returned or serialized (`toJSON`, SDK logger off).
+- Every route sits behind the global owner session and CSRF check; bodies are validated with strict zod schemas.
+- No `dangerouslySetInnerHTML` / `innerHTML` in the track's web code.
+- Drafts never render content in chat; Study Book sections appear only when complete.
+
+### Verification of this review
+| command | result |
+|---|---|
+| `npx vitest run --root apps/server test/studybook test/ai-provider` | 7 files, 92 passed (`review.test.ts` 28, of which 13 are the `isConnectiveText` table) |
+| `npm test -w @medlevo/server` | 40 files, **611 passed** |
+| `npx tsc -p apps/server --noEmit` / `npx tsc -p apps/web --noEmit` | exit 0 / exit 0 |
+| `npm test -w @medlevo/web` | 46 files, 368 passed, **1 failed**: `test/settings-screen.test.tsx`, which this review did not touch. It took 4.5 s under load in the full run; re-run alone, it **passes**, so it is a timing flake |
+| `npm run build -w @medlevo/web` | success |
+| the same tests against the pre-fix files | the 9 new server tests and 2 new web tests **failed** there |
+
+The Playwright browser check (`real-server-check.mjs`) was **not re-run** in this review.
+
+### Residual risks (not fixed)
+- `memory_hook`, `heading`, `mini_question` and `coverage_note` blocks may still hold claim-less sentences. They carry visible labels, and a value, threshold or dose without a claim is still removed by the evidence module. A mnemonic that restates a fact without a citation is not detectable deterministically.
+- The connective lexicon is conservative. A legitimate transition outside it is removed and listed as unsupported, which can be noisy but never publishes an uncited fact.
+- Comparison-table header cells and first-column aspect labels (≤ 6 words, no digit) are not claim-checked.
+- The real-patient detector is still a pattern list. No real model has been called in this environment.

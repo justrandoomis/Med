@@ -1,6 +1,7 @@
 // The runner's session: server delivery payload (cached for offline), the resumable local state (IndexedDB first,
-// outbox upsert with the full state), the active-time clock (paused / hidden tab → no time counted) and periodic
-// autosave. A reload or crash resumes from IndexedDB; nothing the owner answered is lost.
+// outbox upsert with the full state), the active-time clock (paused → no time counted; a hidden tab stops the clock
+// only when the fixed policy allows pausing) and periodic autosave. A reload or crash resumes from IndexedDB;
+// nothing the owner answered is lost.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { newId, type ExamSessionView } from '@medlevo/shared';
 import { isApiError } from '../../lib/api';
@@ -123,8 +124,11 @@ export function useExamSession(attemptId: string, opts: { clock?: () => number; 
       last = now;
       const visible = typeof document === 'undefined' || document.visibilityState !== 'hidden';
       const cur = stateRef.current;
-      if (!cur || cur.status !== 'in_progress' || !visible) return;
-      const next = tick(cur, Math.min(delta, 5_000));
+      // the policy is fixed at creation (§39): when it forbids pausing, leaving the tab / app is NOT an implicit
+      // pause — the clock keeps counting (background timers are throttled to ~1/min, hence the larger cap)
+      const noPause = sessionRef.current ? !sessionRef.current.exam.policy.pause_allowed : false;
+      if (!cur || cur.status !== 'in_progress' || (!visible && !noPause)) return;
+      const next = tick(cur, Math.min(delta, noPause ? 120_000 : 5_000));
       stateRef.current = next;
       setState(next);
       dirty.current = true;

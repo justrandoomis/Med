@@ -56,6 +56,10 @@ describe('honest counts and coverage (no percentages, never «complete» when so
     expect(coverageSummary({ pages_total: 4, pages_covered: 3 }).complete).toBe(false);
     expect(coverageSummary({ pages_total: 4, pages_covered: 4, missing_ar: ['الصفحة 4 غير مقروءة'] }).complete).toBe(false);
     expect(coverageSummary({ pages_total: 4, pages_covered: 3 }).text).toBe('غطّى 3 صفحات من 4');
+    // review: grammatical number / case of the counted nouns
+    expect(coverageSummary({ pages_total: 4, pages_covered: 2 }).text).toBe('غطّى صفحتين من 4');
+    expect(coverageSummary({ pages_total: 12, pages_covered: 11, sections_total: 12, sections_covered: 11 }).text).toBe('غطّى 11 صفحة من 12 و11 من 12 قسمًا');
+    expect(coverageSummary({ pages_total: 4, pages_covered: 4, sections_total: 2, sections_covered: 1 }).text).toBe('غطّى 4 صفحات من 4 و1 من قسمين');
     expect(JSON.stringify(coverageSummary({ pages_total: 4, pages_covered: 3 }))).not.toMatch(/%/);
   });
 });

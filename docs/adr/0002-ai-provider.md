@@ -101,3 +101,15 @@ No sampling parameters (`temperature`/`top_p`/`top_k` are 400s on these models) 
 * The rest of the AI pipeline (explanations, Study Book, chat, summaries, figures) is tested with test-only fake
   providers; see `docs/modules/studybook.md` §4. No real model call was made in this environment.
 
+
+## Independent review (2026-10-09)
+
+* The adapter was checked against the `claude-api` skill (model id, adaptive thinking left implicit, effort, structured
+  output through `output_config.format`, streaming `finalMessage()`, `fallbacks: "default"`, typed errors, price
+  table). No change was needed.
+* Consequence for model overrides: every generated-content cache key now includes the configured generator and
+  verifier models (`studybook/generate.ts keySettings`). After a change to `MEDLEVO_MODEL_*`, artifacts produced by
+  the previous model are never served as current.
+* Study Book jobs no longer retry a non-retryable `ProviderError`. A `refusal`, `truncated` or `too_large` error fails
+  only that section, while `auth`, `permission`, `not_found` or `bad_request` fails the whole job after one call.
+  A refused request is therefore never billed again by an automatic retry.

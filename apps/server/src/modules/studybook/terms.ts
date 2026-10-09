@@ -4,6 +4,21 @@
 import { normalizeForSearch } from '@medlevo/shared';
 import type { AppContext } from '../../context';
 import { fromJson } from '../../db/db';
+import { sha256 } from '../../lib/hash';
+
+/**
+ * Fingerprint of the owner's dictionary as the generator and the retrieval see it (terms, abbreviations, synonyms,
+ * preferred / accepted renderings). It is part of every generated-content cache key (ARCHITECTURE §3.7: «settings
+ * that affect output»): the dictionary feeds the OWNER TERMINOLOGY prompt line and the evidence module's query
+ * expansion, so after an edit an explanation made with the old dictionary is never served again as current.
+ */
+export function terminologyVersion(ctx: AppContext): string {
+  const rows = ctx.db.all<{ term_en: string; abbreviation: string | null; synonyms_json: string; owner_preferred_ar: string | null; accepted_translation_ar: string | null }>(
+    'SELECT term_en, abbreviation, synonyms_json, owner_preferred_ar, accepted_translation_ar FROM medical_term ORDER BY term_en COLLATE NOCASE, id',
+  );
+  if (rows.length === 0) return 'terms-none';
+  return `terms-${sha256(rows.map((r) => [r.term_en, r.abbreviation ?? '', r.synonyms_json, r.owner_preferred_ar ?? '', r.accepted_translation_ar ?? ''].join('\u0001')).join('\u0002')).slice(0, 16)}`;
+}
 
 export interface PromptTerm {
   term_en: string;

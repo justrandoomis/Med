@@ -70,6 +70,21 @@ const RUNNING_STAGE: Record<ExplainAction | 'compare', string> = {
   compare: 'يُبحث عن كل طرف في النطاق ثم يُتحقق من كل خلية…',
 };
 
+const EXPLAIN_ACTIONS: readonly ExplainAction[] = ['explain', 'simplify', 'translate', 'explain_image'];
+
+/** Explain Until Understood re-teaches the explanation's own passage with its own action (not the current selection). */
+function retryActionOf(params: Record<string, unknown> | undefined, fallback: RunState['action']): ExplainAction {
+  const a = params?.action;
+  if (typeof a === 'string' && (EXPLAIN_ACTIONS as readonly string[]).includes(a)) return a as ExplainAction;
+  return fallback && fallback !== 'compare' ? fallback : 'explain';
+}
+
+function retryContextOf(anchor: SelectionAnchor | null | undefined, doc: SourceDocument, fallback: Context | null): Context | null {
+  if (!anchor) return fallback;
+  const i = doc.pages.findIndex((p) => p.id === anchor.page_id);
+  return { anchor, text: anchor.quote?.exact ?? '', pageIndex: i >= 0 ? i : (fallback?.pageIndex ?? 0) };
+}
+
 export function ExplainTab({ doc, page, pageIndex, online }: ExplainTabProps) {
   const caps = useCapabilities();
   const { settings } = useSettings();
@@ -365,7 +380,7 @@ export function ExplainTab({ doc, page, pageIndex, online }: ExplainTabProps) {
                 }
               >
                 {RETRY_STRATEGIES.map((s) => (
-                  <MenuItem key={s} onSelect={() => void explain((run.action as ExplainAction) ?? 'explain', context ?? effective, { retry: { artifact_id: result.id, strategy: s } })}>
+                  <MenuItem key={s} onSelect={() => void explain(retryActionOf(result.params, run.action), retryContextOf(result.anchor, doc, context ?? effective), { retry: { artifact_id: result.id, strategy: s } })}>
                     {RETRY_STRATEGY_LABELS_AR[s]}
                   </MenuItem>
                 ))}

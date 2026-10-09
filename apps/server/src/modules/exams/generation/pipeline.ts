@@ -9,7 +9,8 @@
 //     → per question: deterministic checks (validate.ts) + the vault's own validation
 //                   → INDEPENDENT ctx.ai 'validate_question' (solves the item without the key)
 //                   → claims of the explanation and of EVERY distractor explanation through C1 validateClaims
-//                     (aliases handed out only; scope; critical tokens; independent verify_support)
+//                     (aliases handed out only; scope; critical tokens; independent verify_support) — every
+//                     medical sentence must end up 'linked' (a «partial» / unverified one blocks publishing)
 //                   → issues → bounded repair (max 2 repairs) → still failing → review queue, NEVER published
 //     → passing questions are persisted through the questions service (origin 'generated', AI-derived key,
 //       «سؤال مولد بواسطة MedLevo من المصادر المحددة», learning objective, concepts, lecture pages, evidence,
@@ -452,6 +453,9 @@ async function checkClaims(ctx: AppContext, candidateId: string, scope: StoredSc
     for (const r of res) {
       if (r.medical && !r.keep) fail('evidence_supported', `${where}: جملة لم تجتز التحقق من الأدلة — ${r.reason_ar ?? 'غير مدعومة'}`);
       else if (r.status === 'conflict') fail('evidence_supported', `${where}: الدليل يناقض جملة فيه.`);
+      // a medical sentence the independent verifier did not confirm (partial / missing verdict → needs_review)
+      // is not evidence-backed: a published question carries ONLY linked claims (§38, ARCHITECTURE §0.1)
+      else if (r.medical && r.status !== 'linked') fail('evidence_supported', `${where}: جملة لم يؤكد المحقق المستقل دعمها بالدليل — ${r.reason_ar ?? 'تحتاج مراجعة'}`);
     }
     if (!res.some((r) => r.keep && r.status === 'linked')) {
       fail(p.key === null ? 'evidence_supported' : 'distractors_explained', `${where} بلا جملة مرتبطة بدليل تحقق منه المحقق المستقل.`);

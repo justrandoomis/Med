@@ -119,7 +119,8 @@ export class SyncRegistry {
         const tx: SyncTx = { db: this.db, now, deviceId: op.device_id, touch: (t, id) => void this.touch(t, id) };
         let applied: SyncApplyResult;
         try {
-          applied = handler.apply(op, tx);
+          // own SAVEPOINT: a handler that writes and then rejects (AppError) leaves no partial writes behind
+          applied = this.db.tx(() => handler.apply(op, tx));
         } catch (e) {
           if (!isAppError(e)) throw e;
           applied = { result: 'rejected', detail: e.messageAr };

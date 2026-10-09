@@ -70,9 +70,13 @@ attempt + file and checked against the exam's items), neutral alt «الصورة
   merge by each answer's own timestamp, submitted answers locked, invalid options dropped (reported), elapsed and
   item times never decrease and are capped by wall-clock time, pause only if the policy allows it, a finished
   attempt is immutable (a repeated identical finish → `duplicate`). Finishing materializes one `question_attempt`
-  per answered item with the client's ids (idempotent with the client's own appends).
+  per answered item with the client's ids (idempotent with the client's own appends) — in practice too, a chosen but
+  unchecked answer becomes an attempt. An item whose pinned question was purged with its source is skipped (reported
+  in the op detail, shown unscored with the reason) — finishing is never rejected half-way (review fix).
 * AC-26: a key correction after an attempt creates a new version (questions module); the attempt keeps its version,
-  result and key snapshot; feedback shows «تغيّر مفتاح هذا السؤال بعد محاولتك … لم يُعَد تقييمها».
+  result and key snapshot; feedback shows «تغيّر مفتاح هذا السؤال بعد محاولتك … لم يُعَد تقييمها». When the
+  correction came BEFORE the answer (the exam had pinned the older version) the note says so: graded on the pinned
+  version's key, a new exam uses the corrected one (review fix).
 
 ### Practice: hints, solution, feedback, mistakes
 * Hint 1 (`hints.ts`): the lecture pages of the question's links (in page order) and the page heading only if it
@@ -115,7 +119,8 @@ History: newest first, scores hidden for unfinished assessed attempts.
    stem + options + evidence, never the key or explanations: chosen answer must equal the key, exactly one
    defensible option, answerable from evidence, no clue issues) → C1 `validateClaims` on the explanation and each
    distractor explanation (aliases handed out only, scope, critical tokens, independent `verify_support`): no
-   rejected / conflicting medical sentence, at least one **linked** claim for the answer and for each distractor.
+   rejected / conflicting / **unconfirmed** (`needs_review`, e.g. a «partial» verdict) medical sentence — every
+   medical sentence must be `linked` (review fix) — and at least one linked claim for the answer and each distractor.
 5. Failure → repair call with the failed checks listed (max 2 repairs, 3 rounds) → still failing → candidate
    `needs_review` + `review_queue_item` (`question_validation_failed`, `entity_type='generated_question_candidate'`,
    `details.origin='exams'`), **never published**. No verifier available → straight to review (repairs cannot help).
@@ -130,8 +135,8 @@ Typed answers saved append-only (idempotent id; MCQ questions refused; recognize
 owner confirmed it). Grading: the question's rubric, or a rubric generated from evidence retrieved in the scope
 (request scope, else the best linked lecture, lecture only) and validated point by point. ≥ 2 verified points (or a
 question rubric of ≥ 2 points) → `rubric_score` with an **estimated** score; otherwise `qualitative_only` (no number).
-Wrong statements are kept only when their «why» is evidence-backed; the improved answer keeps verified sentences
-with claim ids. No rubric and no linked lecture → qualitative only without calling the model. Graded once (asking
+Only generated rubric points the verifier confirmed (`linked`) enter the rubric and the score; wrong statements are
+kept only when their «why» is `linked` (review fix); the improved answer keeps verified sentences with claim ids. No rubric and no linked lecture → qualitative only without calling the model. Graded once (asking
 again returns the stored assessment). Label «تقييم تعليمي آلي، ليس تصحيحًا رسميًا».
 
 ### Routes (`/api/exams`, owner session + CSRF)
@@ -159,8 +164,10 @@ Capabilities: `exams` available; `ai.generate_questions`, `ai.grade_written` ava
   navigator (state in words: «السؤال 3، مُجاب، مُعلَّم للمراجعة، الحالي»), timer (`role="timer"`, total left or
   elapsed, per-question budget «تجاوزت وقت السؤال» as information only, spoken warnings at 5 and 1 min), pause only
   when the policy allows it (the question is hidden while paused), autosave status (design `SaveStatus` from the
-  outbox state), optional confidence (تخمين / غير متأكد / واثق), finish dialog with counts. The total limit finishes
-  the attempt automatically (answers kept).
+  outbox state), optional confidence (تخمين / غير متأكد / واثق — read-only once a practice answer was checked),
+  finish dialog with counts. The total limit finishes the attempt automatically (answers kept). When the fixed policy
+  forbids pausing, a hidden tab / another app does not stop the clock (it says so). Generated questions in the set are
+  announced in the header («أسئلة مولدة بواسطة MedLevo …», «محاكاة مولدة — ليست نسخة متوقعة من الامتحان»).
 * **Practice**: «تلميح» → «تلميح أعمق» → «اعرض الحل» (disabled with the reason in Anti-shortcut mode),
   «تحقّق من إجابتي» → `FeedbackPanel` (result line in words + icon, AC-27 note, key and «اختيارك» tags, explanation
   and distractor explanations with C1 `CitationChip`s, origin and occurrences, lecture pages, mistake editor).
@@ -254,3 +261,56 @@ Final command results (repo root, `NODE_OPTIONS='--disable-warning=ExperimentalW
   history links and by URL; a link in the app shell navigation (core-web, `app/AppShell.tsx`) or on the home screen
   belongs to those owners and was not added by this track.
 * Not run: real iPad/iPhone Safari, VoiceOver/NVDA, axe/Lighthouse.
+
+## 5. Independent adversarial review (2026-10-09)
+A second agent reviewed this track by reading the code and running probes (regression tests written first, seen
+failing on the original code, then fixed). Files touched: `exams/{attempts,delivery,feedback,results,routes,store,
+written}.ts`, `exams/generation/pipeline.ts`, `test/exams/review.test.ts` (new), web `RunnerScreen.tsx`,
+`ResultsScreen.tsx`, `WrittenScreen.tsx`, `model.ts`, `useExamSession.ts`, `exams.css`, `model.test.ts`,
+`review.test.tsx` (new), this file. No shared contract, migration or other track's file was changed.
+
+Confirmed and fixed:
+| # | Severity | Defect | Fix + regression test |
+|---|---|---|---|
+| 1 | major | Generated MCQ published although a medical sentence of its explanation / a distractor explanation was only `needs_review` (verifier verdict «partial»): `checkClaims` only failed rejected / conflicting sentences and required ONE linked sentence per part | every medical sentence must be `linked`; `review.test.ts` «partial claim is never published» + control |
+| 2 | major | Finishing an exam whose pinned question was purged meanwhile: `materializeAnswers` threw → the sync engine recorded the op `rejected` but the `completed` state written just before stayed committed (the engine catches `AppError` inside its transaction) → remaining answers never graded, attempt immutable, client told «rejected» | materialization never throws per item (skips + counts, op detail explains); purged items delivered / scored as unscored with the reason; `missing_on_server` ignores them; `review.test.ts` (verified on the old code: op `rejected`, server status `completed`) |
+| 3 | major | Practice: answers chosen but not checked before «إنهاء التدريب» were never attempts, yet the result counted them in `missing_on_server` → a permanent false «لم تصل الخادم بعد» | finishing materializes every answered item (practice too); `review.test.ts` |
+| 4 | major | Practice: the confidence of a CHECKED answer stayed editable; the change only altered this device's copy (the recorded append-only attempt kept the old value) and allowed re-labelling a guess after seeing the correction (AC-27 data). `model.test.ts` asserted this behaviour | `setConfidence` refuses submitted answers; the picker becomes a read-only line; tests updated + `review.test.tsx` |
+| 5 | major | A hidden tab / another app stopped the clock even when the FIXED policy forbids pausing (timed exam / time-pressure) — an implicit pause the policy does not allow (§39) | time counts while hidden when `pause_allowed` is false (cap 120 s per tick for throttled background timers) and the runner says so; `review.test.tsx` (+ control: practice still stops) |
+| 6 | minor | Written grading: generated rubric points that the verifier did not confirm (`needs_review`) entered the rubric and the estimated score; «wrong statement» notes were shown with an unconfirmed reason | only `linked` points / reasons; `review.test.ts` |
+| 7 | minor | Anti-shortcut: «اعرض الحل» right after choosing an answer was refused (409) because the outbox push is debounced and the server checks its own copy | the runner sends the state before asking; `review.test.tsx` |
+| 8 | minor | Results page of a still-running attempt said «أنهيت المحاولة على هذا الجهاز» | says the attempt is still running + «أكمل الاختبار»; `review.test.tsx` |
+| 9 | minor | Generated questions were not labelled as generated anywhere in the runner (the contract's `ExamItemView` has no origin) | header line with the generated count from the build report («محاكاة مولدة — ليست نسخة متوقعة من الامتحان» for generated simulations); `review.test.tsx` |
+| 10 | minor | AC-26 note said «تغيّر مفتاح هذا السؤال بعد محاولتك» also when the key was corrected BEFORE the answer (exam pinned the older version) | wording by timing; `review.test.ts` |
+| 11 | minor | Written answer save used a new client id on every click → a retry after a lost response stored the answer twice | stable pending id until success; Arabic agreement «سؤال واحد مُعلَّمة» fixed; «removed» count wording |
+
+Checked and found correct (no change): no key / explanation / source / section / evidence / media name in the
+delivery payload or media headers; hints, feedback, solution and result refused during assessed attempts; unresolved
+keys never scored and excluded from assessed modes; pinned versions + key snapshot (no silent re-grade); one attempt
+per item (unique index), append idempotency by client id, `duplicate` on retried ops; policy cannot be changed by sync
+payloads; generation never publishes a failing candidate, the validator never sees the key, scope / pages locked to
+the lecture version, abstention before the generator is called; auth + CSRF via the global guard, zod on bodies.
+
+Not fixed — reported (outside this track's paths or a contract decision):
+* core-server `SyncRegistry.applyOne` catches `AppError` from a handler INSIDE its transaction, so writes a handler
+  made before throwing are committed while the op is recorded `rejected` (a SAVEPOINT around `handler.apply` would
+  fix it for every module). The exams handlers no longer throw after writing.
+* `ExamItemView` carries no origin: generated items can only be announced per set, not per question, during the
+  attempt (they are labelled per question after answering / in the results). A contract field would be needed.
+* `masterySignal` (shared) treats a correct answer with NO confidence given as «صحيحة بثقة ودون مساعدة»; confidence is
+  optional in the runner, so independent mastery may be over-counted by the learning track unless it handles `null`.
+* A practice / exam attempt pinned to a superseded version is still graded on that version's (corrected) key; the
+  feedback says so, but the attempt counts. Changing this is a product decision (AC-26 only requires preservation).
+* `wantedTypes` (question-type filter of the builder) drops questions without an exclusion entry (no
+  `ExamExclusionCode` for it in the shared contract).
+
+Commands after the fixes (repo root, `NODE_OPTIONS='--disable-warning=ExperimentalWarning'`):
+| Command | Result |
+|---|---|
+| `npx vitest run test/exams` (in `apps/server`) | 4 files, 60 tests passed |
+| `npm test -w @medlevo/server` | 40 files, 611 tests passed |
+| `npx vitest run src/features/exams` (in `apps/web`) | 4 files, 23 tests passed |
+| `npm test -w @medlevo/web` | 46 files, 369 tests passed |
+| `npx tsc -p apps/server --noEmit` / `npx tsc -p apps/web --noEmit` | exit 0 / exit 0 |
+| `npm run build -w @medlevo/web` | exit 0 |
+| `node apps/web/src/features/exams/real-server-check.mjs` | «OK: 36 checks passed.» |

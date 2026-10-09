@@ -227,6 +227,20 @@ export function attemptsAr(n: number): string {
   return `${n} محاولة`;
 }
 
+/** Reason shown for an item whose pinned question was purged with its source after the exam was created. */
+export const PURGED_ITEM_REASON_AR = 'حُذف هذا السؤال نهائيًا مع مصدره بعد إنشاء الاختبار؛ لا يُحتسب ولا يمكن تصحيحه.';
+
+/** Pinned versions of the items that still exist (a source purge removes its questions, never the exam). */
+export function existingVersions(db: Db, items: ExamItemRecord[]): Set<string> {
+  const ids = [...new Set(items.map((i) => i.question_version_id))];
+  const out = new Set<string>();
+  for (let i = 0; i < ids.length; i += 400) {
+    const part = ids.slice(i, i + 400);
+    for (const r of db.all<{ id: string }>(`SELECT id FROM question_version WHERE id IN (${part.map(() => '?').join(',')})`, part)) out.add(r.id);
+  }
+  return out;
+}
+
 /** Ensure an exam attempt belongs to the context's DB (used by routes). */
 export function attemptWithExam(ctx: AppContext, attemptId: string): { attempt: ExamAttemptRow; exam: ExamRow } {
   const attempt = getAttempt(ctx.db, attemptId);

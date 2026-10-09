@@ -105,7 +105,7 @@ export function sessionView(ctx: AppContext, attemptId: string): ExamSessionView
     attempt: attemptDTO(attempt),
     items,
     media_expires_at: mediaExpiresAt,
-    unscored_reasons: unscoredReasons(examItems(exam)),
+    unscored_reasons: unscoredReasons(ctx, examItems(exam)),
   };
 }
 

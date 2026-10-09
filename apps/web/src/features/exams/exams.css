@@ -171,6 +171,9 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.ex-runner__origin {
+  font-size: var(--ml-text-sm);
+}
 .ex-runner__tools {
   display: flex;
   flex-wrap: wrap;

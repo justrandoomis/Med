@@ -40,6 +40,9 @@ export function WrittenScreen() {
   const [grading, setGrading] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // client id of the answer being saved: a retry after a lost response re-sends the SAME id (idempotent on the
+  // server), so one answer is never stored twice; a new id only after a successful save
+  const pendingId = useRef(newId());
 
   const load = useCallback(async () => {
     setError(null);
@@ -57,6 +60,7 @@ export function WrittenScreen() {
 
   const onType = (v: string) => {
     setText(v);
+    pendingId.current = newId(); // the text changed: a different answer
     if (draftTimer.current) clearTimeout(draftTimer.current);
     draftTimer.current = setTimeout(() => void saveWrittenDraft(getDb(), questionId, v), 400);
   };
@@ -66,7 +70,8 @@ export function WrittenScreen() {
     setSaving(true);
     setActionError(null);
     try {
-      await examsApi.saveWritten({ id: newId(), question_id: view.question_id, question_version_id: view.question_version_id, answer_text: text, answered_at: Date.now() });
+      await examsApi.saveWritten({ id: pendingId.current, question_id: view.question_id, question_version_id: view.question_version_id, answer_text: text, answered_at: Date.now() });
+      pendingId.current = newId();
       await saveWrittenDraft(getDb(), questionId, '');
       setText('');
       await load();
@@ -240,7 +245,7 @@ export function AssessmentView({ a }: { a: WrittenAssessmentView }) {
           {n}
         </p>
       ))}
-      {a.removed.length > 0 && <p className="ex-muted">حُذفت {a.removed.length} جملة من الإجابة المحسنة لأنها لم تجتز التحقق من الأدلة.</p>}
+      {a.removed.length > 0 && <p className="ex-muted">أُهملت {a.removed.length} من الجمل المولدة (نقاط معيار أو أسباب أو جمل من الإجابة المحسنة) لأنها لم تجتز التحقق من الأدلة.</p>}
     </section>
   );
 }

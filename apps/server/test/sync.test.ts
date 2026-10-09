@@ -83,6 +83,23 @@ afterEach(async () => {
 const push = (ops: SyncOp[]) => t.app.inject({ method: 'POST', url: '/api/sync/push', headers: h, payload: { ops } });
 
 describe('sync push', () => {
+  it('rolls back writes a handler made before rejecting (no partial commit with a rejected op)', async () => {
+    t.ctx.sync.registerEntity('test_partial', {
+      apply(o, tx) {
+        tx.db.run('INSERT INTO test_note (id, body, rev) VALUES (?, ?, 1)', [o.entity_id, 'partial']);
+        tx.touch('test_note', o.entity_id);
+        throw new AppError('VALIDATION_FAILED', 'رفض بعد الكتابة.', 400);
+      },
+      serialize: () => null,
+    });
+    const o = op({ entity_type: 'test_partial', entity_id: 'P1', payload: {} });
+    const r = await push([o]);
+    expect(r.json().results[0]).toMatchObject({ op_id: o.op_id, result: 'rejected' });
+    expect(t.ctx.db.all('SELECT * FROM test_note WHERE id = ?', ['P1'])).toHaveLength(0);
+    expect(t.ctx.db.all("SELECT * FROM sync_change WHERE entity_id = 'P1'")).toHaveLength(0);
+    expect(t.ctx.sync.operation(o.op_id)).toMatchObject({ result: 'rejected' });
+  });
+
   it('applies an op once; re-sending the same op_id returns duplicate + the original result', async () => {
     const o = op({ entity_type: 'test_note', entity_id: 'N1', payload: { body: 'نص' } });
     const r1 = await push([o]);

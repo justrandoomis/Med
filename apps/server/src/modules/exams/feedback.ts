@@ -99,7 +99,16 @@ export function buildFeedback(ctx: AppContext, exam: ExamRow, attempt: ExamAttem
         .map((id) => q.current.options.find((o) => o.id === id))
         .filter(Boolean)
         .map((o) => o!.source_label ?? o!.option_key);
-      newer = `تغيّر مفتاح هذا السؤال بعد محاولتك (النسخة ${q.current.version_no}: ${ANSWER_STATUS_LABELS_AR[q.current.answer_status]}${labels.length ? ` — ${labels.join('، ')}` : ''}). بقيت نتيجة محاولتك كما قُيّمت وقت الإجابة ولم يُعَد تقييمها.`;
+      const now = `النسخة ${q.current.version_no}: ${ANSWER_STATUS_LABELS_AR[q.current.answer_status]}${labels.length ? ` — ${labels.join('، ')}` : ''}`;
+      // when did the change happen relative to THIS answer? (the exam pinned version v when it was created)
+      const changedAt = ctx.db.get<{ at: number | null }>('SELECT MIN(created_at) AS at FROM question_version WHERE question_id = ? AND version_no > ?', [item.question_id, v.version_no])?.at ?? null;
+      if (qa && changedAt !== null && changedAt < qa.answered_at) {
+        newer = `صُحّح مفتاح هذا السؤال قبل إجابتك، لكن هذا الاختبار ثبّت النسخة ${v.version_no} عند إنشائه فقُيّمت إجابتك على مفتاحها (المفتاح الحالي — ${now}). لم يتغير شيء تلقائيًا؛ أنشئ اختبارًا جديدًا ليُستخدم المفتاح المصحح.`;
+      } else if (qa) {
+        newer = `تغيّر مفتاح هذا السؤال بعد محاولتك (${now}). بقيت نتيجة محاولتك كما قُيّمت وقت الإجابة ولم يُعَد تقييمها.`;
+      } else {
+        newer = `هذا الاختبار ثبّت النسخة ${v.version_no} من السؤال، ولمفتاحه الآن نسخة أحدث (${now}). يُعرض هنا مفتاح النسخة المثبتة.`;
+      }
     }
   }
 

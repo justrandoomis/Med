@@ -80,7 +80,9 @@ describe('state transitions', () => {
     expect(m.answers['1']!.selected_option_ids).toEqual(['b']);
     const locked = patchAnswer(s, 0, { submitted: true });
     expect(chooseOption(locked, 0, 'o3', { multi: false, attemptId: 'x', now: 9 })).toBe(locked);
-    expect(setConfidence(locked, 0, 'guess', 10).answers['0']).toMatchObject({ confidence: 'guess', at: 2 });
+    // confidence is part of the checked answer: it cannot be re-labelled after «تحقّق» (review fix, AC-27 data)
+    expect(setConfidence(locked, 0, 'guess', 10)).toBe(locked);
+    expect(setConfidence(s, 0, 'guess', 10).answers['0']).toMatchObject({ confidence: 'guess', at: 10 });
     expect(answeredCount(s)).toBe(1);
   });
 

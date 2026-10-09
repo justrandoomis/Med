@@ -357,14 +357,22 @@ export async function gradeWrittenAttempt(ctx: AppContext, attemptId: string, bo
   } else {
     rubric = [];
     indexMap = new Map();
+    let unconfirmed = 0;
     genRubric.forEach((p, i) => {
       const res = rubricRes[i];
       if (!res || !res.keep) return; // a rubric point that failed evidence validation never counts
+      // a generated point the independent verifier did not confirm («partial», no verdict) is not part of the rubric:
+      // it would otherwise add to the estimated score as if it were source-backed
+      if (res.status !== 'linked') {
+        unconfirmed++;
+        return;
+      }
       const id = `r${rubric.length + 1}`;
       indexMap.set(i, id);
       rubric.push({ id, text: p.text, weight: p.weight, claim_id: res.claim_id, evidence_ids: res.evidence_ids });
     });
-    const verified = genRubric.filter((_, i) => rubricRes[i]?.keep && rubricRes[i]?.status === 'linked').length;
+    if (unconfirmed > 0) notes.push(`أُهملت ${unconfirmed} من نقاط المعيار لأن المحقق المستقل لم يؤكد دعمها بالدليل؛ لا تدخل في التقدير.`);
+    const verified = rubric.length;
     sufficient = verified >= MIN_VERIFIED_POINTS;
     if (!sufficient) notes.push(`نقاط المعيار المتحقق منها بدليل (${verified}) أقل من ${MIN_VERIFIED_POINTS}؛ لا تُقدَّر درجة لتجنب رقم مضلل، وعُرضت ملاحظات نوعية.`);
     else notes.push('المعيار مولد من أدلة المصادر داخل النطاق المقفل وتحقق منه المحقق المستقل نقطةً نقطة.');
@@ -390,7 +398,8 @@ export async function gradeWrittenAttempt(ctx: AppContext, attemptId: string, bo
   const wrong: WrittenAssessmentView['wrong_statements'] = [];
   out.wrong_statements.forEach((w, i) => {
     const res = whyRes[i];
-    if (res?.keep && res.medical) wrong.push({ text: shorten(w.text, 600), why: res.text });
+    // «this statement is wrong» is told only with a reason the verifier confirmed from the sources
+    if (res?.keep && res.medical && res.status === 'linked') wrong.push({ text: shorten(w.text, 600), why: res.text });
   });
   if (out.wrong_statements.length > wrong.length) notes.push(`أُهملت ${out.wrong_statements.length - wrong.length} ملاحظة «خطأ» لأن سببها لم يُثبت بدليل من المصادر.`);
   const keptImproved = improvedRes.filter((x) => x.keep);

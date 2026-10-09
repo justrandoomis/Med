@@ -6,7 +6,7 @@ import type { AppContext } from '../../context';
 import { fromJson } from '../../db/db';
 import { hmacSha256, safeEqual } from '../../lib/hash';
 import { deriveKey, loadOrCreateServerSecret } from '../../lib/secret';
-import { examItems, type ExamItemRecord, type ExamRow } from './store';
+import { PURGED_ITEM_REASON_AR, examItems, existingVersions, type ExamItemRecord, type ExamRow } from './store';
 
 export const MEDIA_TOKEN_TTL_MS = 2 * 60 * 60 * 1000;
 
@@ -141,6 +141,22 @@ export function deliverItems(ctx: AppContext, exam: ExamRow, attemptId: string):
   let mediaExpiresAt: number | null = null;
   const items = records.map((rec, index) => {
     const v = ctx.db.get<VersionLite>('SELECT id, qtype, stem_json, has_negation, negation_terms_json FROM question_version WHERE id = ?', [rec.question_version_id]);
+    if (!v) {
+      // purged with its source after the exam was created: nothing to answer, never scored (reason in unscored_reasons)
+      const gone: ExamItemView = {
+        index,
+        question_id: rec.question_id,
+        question_version_id: rec.question_version_id,
+        qtype: 'sba',
+        stem: { v: 1, paragraphs: [{ dir: 'rtl', runs: [{ t: PURGED_ITEM_REASON_AR }] }] },
+        options: [],
+        has_negation: false,
+        negation_terms: [],
+        media: [],
+        scored: false,
+      };
+      return gone;
+    }
     const opts = new Map(
       ctx.db
         .all<{ id: string; text_json: string }>('SELECT id, text_json FROM question_option WHERE question_version_id = ?', [rec.question_version_id])
@@ -172,11 +188,13 @@ export function deliverItems(ctx: AppContext, exam: ExamRow, attemptId: string):
   return { items, mediaExpiresAt };
 }
 
-/** Unscored reasons by item index (practice: shown next to the item, AC-14). */
-export function unscoredReasons(records: ExamItemRecord[]): Record<string, string> {
+/** Unscored reasons by item index (practice: shown next to the item, AC-14; purged questions in any mode). */
+export function unscoredReasons(ctx: AppContext, records: ExamItemRecord[]): Record<string, string> {
+  const alive = existingVersions(ctx.db, records);
   const out: Record<string, string> = {};
   records.forEach((r, i) => {
-    if (!r.scored) out[String(i)] = r.unscored_reason_ar ?? 'لا يُحتسب في النتيجة.';
+    if (!alive.has(r.question_version_id)) out[String(i)] = PURGED_ITEM_REASON_AR;
+    else if (!r.scored) out[String(i)] = r.unscored_reason_ar ?? 'لا يُحتسب في النتيجة.';
   });
   return out;
 }

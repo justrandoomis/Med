@@ -30,7 +30,7 @@ import { AppError } from '../../lib/errors';
 import { newId } from '../../lib/ids';
 import { resolveScope, VERIFIER_VERSION } from '../evidence/services';
 import { artifactView, storedScope, type AbstainView, type StoredScope } from './artifacts';
-import { isRealPatientRequest, realPatientAbstain } from './explain';
+import { anchorRegions, isRealPatientRequest, realPatientAbstain } from './explain';
 import { assertAnchorInScope, generateSingleShot, pinnedScope, publishAbstention, requireAi, type ArtifactBase, type SingleShotInput } from './generate';
 import { GENERATOR_VERSION, resolveRules } from './rules';
 import type { messageCreateSchema, saveNoteSchema, threadCreateSchema } from './schema';
@@ -106,8 +106,17 @@ function threadView(ctx: AppContext, t: ThreadRow): ChatThreadView {
   };
 }
 
+/**
+ * An answer still «draft / verifying» long after any generation could have finished (the server restarted or the
+ * request died mid-way) is shown as not completed — never as still being written, and never with content.
+ * Model calls time out after 4 minutes and verification batches after 2 minutes each; 30 minutes is far beyond.
+ */
+const STALE_DRAFT_MS = 30 * 60 * 1000;
+
 function messageView(ctx: AppContext, m: MessageRow): ChatMessageView {
   const detail = fromJson<{ abstain?: AbstainView }>(m.detail_json);
+  const pending = m.role === 'assistant' && (m.status === 'draft' || m.status === 'verifying');
+  if (pending && ctx.clock.now() - (m.updated_at ?? m.created_at) > STALE_DRAFT_MS) m = { ...m, status: 'rejected' };
   const settled = m.status === 'final' || m.status === 'abstained';
   let artifact: StudyArtifactView | null = null;
   if (m.role === 'assistant' && settled && m.artifact_id) {
@@ -139,6 +148,14 @@ export function createThread(ctx: AppContext, body: z.infer<typeof threadCreateS
   if (anchor?.page_id) {
     const p = ctx.db.get<{ version_id: string }>('SELECT version_id FROM source_page WHERE id = ?', [anchor.page_id]);
     if (!p || p.version_id !== anchor.version_id) throw new AppError('OUT_OF_SCOPE', 'الصفحة المحددة لا تنتمي إلى نسخة المصدر المحددة.', 409);
+  }
+  // the thread is bound to its passage: every anchor region must belong to the anchor's (locked) version
+  if (anchor) anchorRegions(ctx, anchor);
+  if (anchor?.block) {
+    const lineage = ctx.db.get<{ primary_source_id: string | null }>('SELECT primary_source_id FROM artifact WHERE lineage_id = ? LIMIT 1', [anchor.block.lineage_id]);
+    if (!lineage || lineage.primary_source_id !== anchor.source_id) {
+      throw new AppError('OUT_OF_SCOPE', 'الفقرة المحددة ليست من كتاب دراسة لهذا المصدر.', 409, { lineage_id: anchor.block.lineage_id });
+    }
   }
   const sourceId = anchor?.source_id ?? scope.sourceIds[0] ?? null;
   const versionId = anchor?.version_id ?? (sourceId ? (scope.versionBySource[sourceId] ?? null) : null);
@@ -359,6 +376,16 @@ export function saveAnswerAsNote(ctx: AppContext, messageId: string, body: z.inf
   } else if (anchor?.page_id) {
     const p = ctx.db.get<{ page_index: number }>('SELECT page_index FROM source_page WHERE id = ?', [anchor.page_id]);
     if (p) noteAnchor = { type: 'page', source_id: anchor.source_id, version_id: anchor.version_id, page_id: anchor.page_id, page_index: p.page_index, space: 'page_norm' };
+  }
+  // the note id is the client's (a fresh ULID). It must never name another note: an existing note is only ever
+  // this same answer saved before (→ the idempotent duplicate below); anything else — the owner's own note, a
+  // deleted one in the trash, another answer — is refused, so nothing is overwritten or resurrected (§0.6).
+  const existing = ctx.db.get<{ origin: string; ai_record_json: string | null }>('SELECT origin, ai_record_json FROM note WHERE id = ?', [body.note_id]);
+  if (existing) {
+    const rec = fromJson<{ context?: { message_id?: string } }>(existing.ai_record_json);
+    if (existing.origin !== 'ai_answer' || rec?.context?.message_id !== m.id) {
+      throw new AppError('CONFLICT', 'معرّف الملاحظة مستخدم لملاحظة أخرى؛ لم يُكتب فوقها شيء. أعد المحاولة لتُحفظ الإجابة في ملاحظة جديدة.', 409, { note_id: body.note_id });
+    }
   }
   const sourceTitle = t.source_id ? ctx.db.get<{ title: string; source_type: keyof typeof SOURCE_TYPE_LABELS_AR }>('SELECT title, source_type FROM source WHERE id = ?', [t.source_id]) : undefined;
   const aiRecord = {

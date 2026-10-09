@@ -130,7 +130,8 @@ export function SelectionToolbar({ selection, canvas, textRoot, anchorFor, fixed
         version_id: pageAnchor.version_id,
         page_id: pageAnchor.page_id,
         region_ids: [],
-        quote: text ? (highlight?.quote ?? { exact: text }) : null,
+        // the server accepts a quote of at most 6000 characters: a longer selection is sent as its first 6000
+        quote: text ? (highlight?.quote && highlight.quote.exact.length <= 6000 ? highlight.quote : { exact: text }) : null,
       },
       text,
       pageIndex: selection.pageIndex,

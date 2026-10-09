@@ -67,12 +67,21 @@ export function pagesAr(n: number): string {
   return `${n} صفحة`;
 }
 
+/** «قسم واحد», «قسمين» (after «من»), «7 أقسام», «12 قسمًا». */
+export function sectionsOfAr(n: number): string {
+  if (n === 1) return 'قسم واحد';
+  if (n === 2) return 'قسمين';
+  if (n >= 3 && n <= 10) return `${n} أقسام`;
+  return `${n} قسمًا`;
+}
+
 /** Coverage in words; `complete` only when every counted page/section is covered and nothing is missing. */
 export function coverageSummary(c: ArtifactView['coverage']): { complete: boolean; text: string | null } {
   if (!c) return { complete: false, text: null };
   const parts: string[] = [];
-  if (typeof c.pages_total === 'number' && typeof c.pages_covered === 'number' && c.pages_total > 0) parts.push(`غطّى ${pagesAr(c.pages_covered)} من ${c.pages_total}`);
-  if (typeof c.sections_total === 'number' && typeof c.sections_covered === 'number' && c.sections_total > 0) parts.push(`و${c.sections_covered} من ${c.sections_total} أقسام`);
+  // the object of «غطّى» is accusative: «صفحتين», not «صفحتان»
+  if (typeof c.pages_total === 'number' && typeof c.pages_covered === 'number' && c.pages_total > 0) parts.push(`غطّى ${c.pages_covered === 2 ? 'صفحتين' : pagesAr(c.pages_covered)} من ${c.pages_total}`);
+  if (typeof c.sections_total === 'number' && typeof c.sections_covered === 'number' && c.sections_total > 0) parts.push(`و${c.sections_covered} من ${sectionsOfAr(c.sections_total)}`);
   const missing = c.missing_ar?.length ?? 0;
   const complete =
     missing === 0 &&

@@ -18,6 +18,7 @@ import {
   type StudyBlockMeta,
 } from '@medlevo/shared';
 import type { AppContext } from '../../context';
+import { fromJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
 import { newId } from '../../lib/ids';
 import type { ProviderImage, UntrustedBlock } from '../ai/types';
@@ -31,6 +32,7 @@ import {
   publishGenerated,
   requireAi,
   retrieveAndPack,
+  keySettings,
   type ArtifactBase,
   type SingleShotInput,
 } from './generate';
@@ -79,7 +81,8 @@ interface RegionLite {
   bbox_json: string | null;
 }
 
-function anchorRegions(ctx: AppContext, anchor: SelectionAnchor): RegionLite[] {
+/** The anchor's regions; every one must belong to the anchor's version (else OUT_OF_SCOPE, nothing runs). */
+export function anchorRegions(ctx: AppContext, anchor: SelectionAnchor): RegionLite[] {
   const ids = [...new Set(anchor.region_ids ?? [])];
   if (ids.length === 0) return [];
   const rows = ctx.db.all<RegionLite>(
@@ -168,6 +171,7 @@ export async function explainSelection(ctx: AppContext, body: ExplainBody, opts:
     if (!['explanation', 'figure_explanation', 'chat_answer'].includes(previous.kind)) {
       throw new AppError('BAD_REQUEST', 'يمكن إعادة الشرح بأسلوب آخر لشرح سابق فقط.', 400);
     }
+    assertRetryInLineage(previous, anchor, scope);
     lineage = { lineageId: previous.lineage_id, versionNo: nextVersionNo(ctx, previous.lineage_id), parentArtifactId: previous.id };
   }
 
@@ -180,7 +184,7 @@ export async function explainSelection(ctx: AppContext, body: ExplainBody, opts:
     level: rules.level,
     language: 'ar',
     dialect: rules.dialect,
-    settings: { style: body.style },
+    settings: keySettings(ctx, body.action === 'explain_image' ? 'vision_figure' : 'explain', { style: body.style }),
     params: {
       anchor: normalizedAnchor(anchor),
       instruction: body.instruction?.trim() || null,
@@ -248,6 +252,25 @@ export async function explainSelection(ctx: AppContext, body: ExplainBody, opts:
     defaultRegionIds: regions.map((r) => r.id),
   };
   return { artifact: await generateSingleShot(ctx, input), cached: false };
+}
+
+/**
+ * Explain Until Understood re-teaches THE SAME passage: the explanation being retried must be of the same source
+ * and version, and everything it was built from must lie inside the current lock — its text goes to the model as
+ * context, so an explanation made under a wider scope never leaks into a narrower request (Source Lock).
+ */
+function assertRetryInLineage(previous: ArtifactRow, anchor: SelectionAnchor, scope: ScopeReport): void {
+  const prevAnchor = fromJson<SelectionAnchor>(previous.anchor_json);
+  const prevScope = fromJson<{ version_ids?: string[] }>(previous.scope_json);
+  const sameSource = previous.primary_source_id === anchor.source_id && (!prevAnchor || (prevAnchor.source_id === anchor.source_id && prevAnchor.version_id === anchor.version_id));
+  if (!sameSource) {
+    throw new AppError('BAD_REQUEST', 'يُعاد الشرح بأسلوب آخر لشرح سابق للمصدر ونسخته نفسيهما فقط؛ اطلب شرحًا جديدًا لهذا الموضع.', 400, { retry_of: previous.id });
+  }
+  const allowed = new Set(scope.versionIds);
+  const outside = (prevScope?.version_ids ?? []).filter((v) => !allowed.has(v));
+  if (outside.length) {
+    throw new AppError('OUT_OF_SCOPE', 'الشرح السابق بُني على مصادر خارج النطاق المقفل الحالي؛ لا يُستخدم سياقًا لطلب أضيق. اطلب شرحًا جديدًا أو استخدم النطاق نفسه.', 409, { retry_of: previous.id });
+  }
 }
 
 function plainOfArtifact(ctx: AppContext, id: string): string {
@@ -482,7 +505,7 @@ export async function compareItems(ctx: AppContext, body: CompareBody, opts: Exp
     level: rules.level,
     language: 'ar',
     dialect: rules.dialect,
-    settings: { style: body.style },
+    settings: keySettings(ctx, 'compare', { style: body.style }),
     params: { items, anchor: anchor ? normalizedAnchor(anchor) : null, instruction: body.instruction?.trim() || null },
   });
   const base: ArtifactBase = {

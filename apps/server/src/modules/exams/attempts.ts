@@ -409,37 +409,54 @@ function writeAttempt(db: Db, a: ExamAttemptDTO, now: number, deviceId: string |
   );
 }
 
-/** Finishing an attempt: one question_attempt per answered item (the client's ids; idempotent). */
-export function materializeAnswers(db: Db, exam: ExamRow, a: ExamAttemptDTO, now: number, deviceId: string | null, touch: (t: string, id: string) => void): number {
+/**
+ * Finishing an attempt: one question_attempt per answered item (the client's ids; idempotent). Practice answers
+ * that were chosen but not checked are attempts too (the owner answered them; nothing chosen is dropped).
+ * Never throws for one item: an item whose pinned question no longer exists (purged with its source) is skipped
+ * and counted, so finishing can never be rejected half-way with the other answers left ungraded.
+ */
+export function materializeAnswers(
+  db: Db,
+  exam: ExamRow,
+  a: ExamAttemptDTO,
+  now: number,
+  deviceId: string | null,
+  touch: (t: string, id: string) => void,
+): { inserted: number; skipped: number } {
   const items = examItems(exam);
-  const assessed = isAssessedMode(exam.mode) || examPolicy(exam).show_solution === 'at_end';
-  let n = 0;
+  let inserted = 0;
+  let skipped = 0;
   for (const [k, ans] of Object.entries(a.answers)) {
     const idx = Number(k);
     const item = items[idx];
     if (!item || ans.selected_option_ids.length === 0) continue;
-    if (!assessed && !ans.submitted) continue; // practice: only answers the owner checked are attempts
-    const res = insertQuestionAttempt(
-      db,
-      {
-        id: ans.attempt_id,
-        question_id: item.question_id,
-        question_version_id: item.question_version_id,
-        exam_attempt_id: a.id,
-        exam_item_index: idx,
-        selected_option_ids: ans.selected_option_ids,
-        confidence: ans.confidence,
-        hints_used: ans.hints_used,
-        solution_viewed_before_answer: ans.solution_viewed_before_answer,
-        time_ms: ans.time_ms ?? a.timer.item_ms[k] ?? null,
-        flagged: a.flagged.includes(idx),
-        answered_at: Math.min(ans.at, now),
-      },
-      { now, deviceId, touch },
-    );
-    if (res.inserted) n++;
+    try {
+      const res = insertQuestionAttempt(
+        db,
+        {
+          id: ans.attempt_id,
+          question_id: item.question_id,
+          question_version_id: item.question_version_id,
+          exam_attempt_id: a.id,
+          exam_item_index: idx,
+          selected_option_ids: ans.selected_option_ids,
+          confidence: ans.confidence,
+          hints_used: ans.hints_used,
+          solution_viewed_before_answer: ans.solution_viewed_before_answer,
+          time_ms: ans.time_ms ?? a.timer.item_ms[k] ?? null,
+          flagged: a.flagged.includes(idx),
+          answered_at: Math.min(ans.at, now),
+        },
+        { now, deviceId, touch },
+      );
+      if (res.inserted) inserted++;
+    } catch (e) {
+      // checks run before any write, so nothing of this item was stored; the answer stays in the attempt state
+      if (!(e instanceof AppError)) throw e;
+      skipped++;
+    }
   }
-  return n;
+  return { inserted, skipped };
 }
 
 export function examAttemptHandler(ctx: AppContext): SyncEntityHandler {
@@ -464,9 +481,12 @@ export function examAttemptHandler(ctx: AppContext): SyncEntityHandler {
       }
       writeAttempt(tx.db, m.next, tx.now, tx.deviceId);
       tx.touch('exam_attempt', row.id);
-      if (m.next.status === 'completed') materializeAnswers(tx.db, exam, m.next, tx.now, tx.deviceId, tx.touch);
+      const mat = m.next.status === 'completed' ? materializeAnswers(tx.db, exam, m.next, tx.now, tx.deviceId, tx.touch) : { inserted: 0, skipped: 0 };
       const entity = attemptDTO(findAttempt(tx.db, row.id)!);
-      const detail = m.dropped > 0 ? `أُهملت ${m.dropped} إجابة غير صالحة (خيار لا يخص السؤال المثبت).` : undefined;
+      const notes: string[] = [];
+      if (m.dropped > 0) notes.push(`أُهملت ${m.dropped} إجابة غير صالحة (خيار لا يخص السؤال المثبت).`);
+      if (mat.skipped > 0) notes.push(`أُنهيت المحاولة؛ ${mat.skipped} من الإجابات تخص سؤالًا لم يعد موجودًا (حُذف نهائيًا مع مصدره)، فبقيت في المحاولة دون تصحيح.`);
+      const detail = notes.length ? notes.join(' ') : undefined;
       return { result: m.merged ? 'merged' : 'applied', entity, ...(detail ? { detail } : {}) };
     },
   };

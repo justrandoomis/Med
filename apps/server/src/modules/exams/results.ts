@@ -16,7 +16,18 @@ import {
 import type { AppContext } from '../../context';
 import { fromJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
-import { attemptDTO, examItems, examPolicy, questionAttemptDTO, questionsAr, type ExamAttemptRow, type ExamRow, type QuestionAttemptRow } from './store';
+import {
+  PURGED_ITEM_REASON_AR,
+  attemptDTO,
+  examItems,
+  examPolicy,
+  existingVersions,
+  questionAttemptDTO,
+  questionsAr,
+  type ExamAttemptRow,
+  type ExamRow,
+  type QuestionAttemptRow,
+} from './store';
 
 const RELATION_RANK: Record<string, number> = { directly_covered: 0, strongly_related: 1, partially_covered: 2, course_related_only: 3 };
 
@@ -93,11 +104,16 @@ export function computeResult(ctx: AppContext, exam: ExamRow, attempt: ExamAttem
   const overBudget = { total: 0, correct: 0 };
   const withinBudget = { total: 0, correct: 0 };
 
+  const alive = existingVersions(ctx.db, items);
+
   items.forEach((item, index) => {
     const qa = byIndex.get(index) ?? null;
     const dto = qa ? questionAttemptDTO(qa) : null;
     const answerState = state.answers[String(index)];
-    if (!qa && answerState && answerState.selected_option_ids.length > 0 && (answerState.submitted || finished)) missing++;
+    const purged = !alive.has(item.question_version_id);
+    // an answer the server will still receive (never one of a purged question: it can no longer be graded)
+    if (!qa && !purged && answerState && answerState.selected_option_ids.length > 0 && (answerState.submitted || finished)) missing++;
+    if (purged && !dto) item = { ...item, scored: false, unscored_reason_ar: PURGED_ITEM_REASON_AR };
     const counted = dto ? dto.scored : item.scored;
     const v = ctx.db.get<{ stem_json: string }>('SELECT stem_json FROM question_version WHERE id = ?', [item.question_version_id]);
     const links = bestLinks(ctx, item.question_id);

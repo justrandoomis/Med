@@ -47,7 +47,7 @@ import {
   type ScopeReport,
 } from '../evidence/services';
 import { artifactView, findReusable, getArtifactRow, nextVersionNo, requireArtifact, type ArtifactRow } from './artifacts';
-import { callModel, insertArtifact, pinnedScope, requireAi, type ArtifactBase, type PackedEvidence } from './generate';
+import { callModel, insertArtifact, keySettings, pinnedScope, requireAi, type ArtifactBase, type PackedEvidence } from './generate';
 import { indexArtifact, processGenerated, recordBlockDependencies, writeBlocks, type PackContext } from './publish';
 import { GENERATOR_VERSION, resolveRules } from './rules';
 import type { studyBookBodySchema, summaryBodySchema } from './schema';
@@ -316,6 +316,8 @@ interface SectionedParams {
   instruction?: string | null;
   page_indexes?: number[] | null;
   language: 'ar';
+  /** progressive generation: the sections this run generates (the others stay pending until «resume») */
+  only_sections?: string[];
 }
 
 function assertSourceVersionInScope(scope: ScopeReport, sourceId: string, versionId: string): void {
@@ -352,12 +354,17 @@ export function createStudyBook(ctx: AppContext, body: z.infer<typeof studyBookB
   if (['pending', 'processing'].includes(src.status)) throw new AppError('CONFLICT', 'لم تكتمل معالجة المصدر بعد؛ يُولَّد كتاب الدراسة من البنية المعالجة.', 409);
   requireAi(ctx, 'study_book');
   const rules = resolveRules(ctx, { sourceId: body.source_id, overrides: body.rules ?? null });
-  let plans = planStudyBookSections(ctx, src.versionId);
+  const plans = planStudyBookSections(ctx, src.versionId);
+  if (plans.length === 0) throw new AppError('INSUFFICIENT_EVIDENCE', 'لا توجد في هذه النسخة مقاطع نصية معالجة يمكن بناء كتاب الدراسة منها (قد تكون الصفحات غير مقروءة).', 422);
+  // progressive generation: only these sections now. The version still holds EVERY section (the others stay
+  // «pending», the version is «partial» and never supersedes a complete one); «resume» generates the rest.
+  let only: string[] | null = null;
   if (body.section_keys?.length) {
     const wanted = new Set(body.section_keys);
-    plans = plans.filter((p) => wanted.has(p.section_key)).map((p, ord) => ({ ...p, ord }));
+    only = plans.filter((p) => wanted.has(p.section_key)).map((p) => p.section_key);
+    if (only.length === 0) throw new AppError('VALIDATION_FAILED', 'الأقسام المطلوبة غير موجودة في هذه النسخة من المصدر.', 400, { section_keys: body.section_keys });
+    if (only.length === plans.length) only = null;
   }
-  if (plans.length === 0) throw new AppError('INSUFFICIENT_EVIDENCE', 'لا توجد في هذه النسخة مقاطع نصية معالجة يمكن بناء كتاب الدراسة منها (قد تكون الصفحات غير مقروءة).', 422);
   const key = cacheKey(ctx, {
     kind: 'study_book',
     scope,
@@ -367,8 +374,8 @@ export function createStudyBook(ctx: AppContext, body: z.infer<typeof studyBookB
     level: rules.level,
     language: 'ar',
     dialect: rules.dialect,
-    settings: { style: 'detailed' },
-    params: { source_id: body.source_id, version_id: src.versionId, sections: plans.map((p) => p.section_key) },
+    settings: keySettings(ctx, 'study_book', { style: 'detailed' }),
+    params: { source_id: body.source_id, version_id: src.versionId, sections: plans.map((p) => p.section_key), only },
   });
   if (!body.regenerate) {
     const cached = findReusable(ctx, key, 'study_book');
@@ -388,6 +395,7 @@ export function createStudyBook(ctx: AppContext, body: z.infer<typeof studyBookB
     rules,
     style: 'detailed',
     language: 'ar',
+    ...(only ? { only_sections: only } : {}),
   };
   const id = startSectioned(ctx, {
     base: { kind: 'study_book', title: `كتاب الدراسة — ${src.title}`, primarySourceId: body.source_id, scope, rules, cacheKey: key, params: params as unknown as Record<string, unknown>, anchor: null, lineage },
@@ -418,9 +426,15 @@ export function resumeSectioned(ctx: AppContext, artifactId: string): StudyBookV
   if (!['partial', 'failed'].includes(a.status)) throw new AppError('CONFLICT', 'لا يوجد ما يُستأنف: كل الأقسام مكتملة.', 409);
   requireAi(ctx, a.kind === 'summary' ? 'summarize' : 'study_book');
   const n = (ctx.db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM processing_job WHERE idempotency_key LIKE ?`, [`%:${a.id}:%`])?.n ?? 0) + 1;
+  const params = fromJson<SectionedParams>(a.params_json);
   ctx.db.tx(() => {
     ctx.db.run(`UPDATE artifact_section SET status = 'pending', updated_at = ? WHERE artifact_id = ? AND status IN ('failed','generating')`, [ctx.clock.now(), a.id]);
     ctx.db.run(`UPDATE artifact SET status = 'generating', updated_at = ? WHERE id = ?`, [ctx.clock.now(), a.id]);
+    // resuming a progressive generation generates every remaining section
+    if (params?.only_sections) {
+      const { only_sections: _o, ...rest } = params;
+      ctx.db.run('UPDATE artifact SET params_json = ? WHERE id = ?', [toJson(rest), a.id]);
+    }
   });
   const job = ctx.jobs.enqueue(a.kind === 'summary' ? SUMMARY_JOB : STUDY_BOOK_JOB, { artifact_id: a.id }, { idempotencyKey: `${a.kind === 'summary' ? SUMMARY_JOB : STUDY_BOOK_JOB}:${a.id}:${n}` });
   ctx.db.run('UPDATE artifact SET job_id = ? WHERE id = ?', [job.id, a.id]);
@@ -518,6 +532,7 @@ export function createSummary(ctx: AppContext, body: z.infer<typeof summaryBodyS
     level: rules.level,
     language: 'ar',
     dialect: rules.dialect,
+    settings: keySettings(ctx, 'summarize'),
     params: { source_id: body.source_id, version_id: src.versionId, pages: pageIndexes, instruction: body.instruction?.trim() || null },
   });
   const cached = findReusable(ctx, key, 'summary');
@@ -577,6 +592,17 @@ export interface SectionJobInput {
   artifact_id: string;
 }
 
+/** Provider failures that concern this section's content only (the next section may well succeed). */
+const SECTION_LEVEL_PROVIDER_ERRORS = new Set(['refusal', 'truncated', 'too_large']);
+
+/** A classified provider failure surfaced by the orchestrator (AI_PROVIDER_ERROR with details.provider_error). */
+function providerFailure(e: unknown): { kind: string; retryable: boolean } | null {
+  if (!isAppError(e) || e.code !== 'AI_PROVIDER_ERROR') return null;
+  const d = e.details as { provider_error?: unknown; retryable?: unknown } | undefined;
+  if (!d || typeof d.provider_error !== 'string') return null;
+  return { kind: d.provider_error, retryable: d.retryable === true };
+}
+
 function toJobError(e: unknown): JobError | null {
   if (!isAppError(e)) return null;
   if (['AI_NOT_CONFIGURED', 'AI_BUDGET_EXCEEDED', 'OUT_OF_SCOPE', 'FEATURE_DISABLED'].includes(e.code)) return new JobError(e.code, e.messageAr, { retryable: false });
@@ -605,8 +631,10 @@ export function sectionJobHandler(ctx: AppContext, hooks: StudybookHooks = {}) {
     const total = sections.length;
     let done = sections.filter((s) => s.status === 'complete' || s.status === 'abstained').length;
     run.progress({ stage: 'sections', done, total, unit: 'sections' });
+    const only = params.only_sections ? new Set(params.only_sections) : null;
     for (const s of sections) {
       if (s.status === 'complete' || s.status === 'abstained' || s.status === 'failed') continue;
+      if (only && !only.has(s.section_key)) continue; // not requested in this run: stays pending
       try {
         await run.checkpoint(`section:${s.section_key}`, async () => {
           // a finished section is never generated twice (crash after commit, before the checkpoint)
@@ -623,9 +651,19 @@ export function sectionJobHandler(ctx: AppContext, hooks: StudybookHooks = {}) {
           finalizeSectioned(ctx, a.id, { jobStatus: 'failed', jobError: fatal.messageAr });
           throw fatal;
         }
-        if (isAppError(e) && e.code === 'SCHEMA_REJECTED') {
-          // this section only: recorded as failed, the others continue
-          setSection(ctx, a.id, s.section_key, 'failed', 0, { reason_ar: e.messageAr });
+        const provider = providerFailure(e);
+        if (provider && !provider.retryable && !SECTION_LEVEL_PROVIDER_ERRORS.has(provider.kind)) {
+          // the key / permission / model id / request shape: every section would fail the same way → stop now
+          const msg = (e as { messageAr: string }).messageAr;
+          markRemaining(ctx, a.id, 'failed', msg);
+          finalizeSectioned(ctx, a.id, { jobStatus: 'failed', jobError: msg });
+          throw new JobError('AI_PROVIDER_ERROR', msg, { retryable: false });
+        }
+        if ((isAppError(e) && e.code === 'SCHEMA_REJECTED') || (provider && !provider.retryable)) {
+          // this section only (schema rejected after the one repair, refusal, truncation, too large): recorded as
+          // failed with its specific reason, the others continue. A non-retryable failure is never asked again
+          // by a job retry (it would only bill the same refusal again); «resume» lets the owner try it explicitly.
+          setSection(ctx, a.id, s.section_key, 'failed', 0, { reason_ar: (e as { messageAr: string }).messageAr });
         } else {
           const lastAttempt = run.attempt >= 3;
           if (lastAttempt && !run.signal.aborted) {
@@ -748,14 +786,17 @@ async function generateSection(
     versionIds: [...new Set(pack.views.map((v) => v.version_id))],
   };
   const isBook = params.mode === 'study_book';
+  // the section title comes from the document (a heading region) — untrusted DATA: it is shown to the model only
+  // inside a delimited block, never inside the trusted task text (AC-29)
+  if (s.title) blocks.unshift({ label: isBook ? 'SECTION TITLE (from the source document)' : 'PAGES (labels of the pages summarized)', text: s.title });
   const taskText = isBook
     ? [
-        `Write the MedLevo Study Book section «${s.title ?? ''}» for the regions R1…R${ordered.length} (in their original order).`,
+        `Write the MedLevo Study Book section titled in the SECTION TITLE block for the regions R1…R${ordered.length} (in their original order).`,
         'Start with ONE "heading" block (the section title in Arabic, keeping the English term). Then, for each region in order, write the blocks that explain it and set "explains_regions" to the R-aliases each block explains.',
         'Use "term" blocks for key terms, and the optional blocks allowed by the rules. Do not skip a region that has evidence; a region without citable text is mentioned only through what the evidence says.',
       ].join('\n')
     : [
-        `Summarize the pages «${s.title ?? ''}» (evidence excerpts in order).`,
+        'Summarize the pages listed in the PAGES block (evidence excerpts in order).',
         SUMMARY_INSTRUCTIONS[params.summary_type ?? 'quick'],
         'Keep every negation, condition and exception that changes meaning. Set "explains_regions" to the R-aliases each block covers.',
       ].join('\n');
@@ -899,8 +940,31 @@ export function computeReanchor(ctx: AppContext, artifactId: string): ReanchorIt
     ...notes.map((x) => ({ kind: 'note' as const, id: x.id, blockKey: x.anchor_target_key.slice(`artifact_block:${prefix}`.length), prevVersion: fromJson<{ artifact_version?: number }>(x.anchor_json)?.artifact_version ?? null })),
   ];
   const now = ctx.clock.now();
+  // sections of THIS version that are not finished (pending / failed / generating): their paragraphs may still
+  // come; a note on one of them is not reported as needing re-anchoring until the section is decided
+  const unfinished = new Set(
+    ctx.db.all<{ section_key: string }>(`SELECT section_key FROM artifact_section WHERE artifact_id = ? AND status NOT IN ('complete','abstained')`, [artifactId]).map((r) => r.section_key),
+  );
+  const sectionOfBlock = (blockKey: string): string | null =>
+    ctx.db.get<{ section_key: string | null }>(
+      `SELECT cb.section_key FROM content_block cb JOIN artifact x ON x.id = cb.artifact_id WHERE x.lineage_id = ? AND cb.block_key = ? LIMIT 1`,
+      [a.lineage_id, blockKey],
+    )?.section_key ?? null;
   for (const it of items) {
     const status = keys.has(it.blockKey) ? 'matched' : 'needs_reanchor';
+    if (status === 'needs_reanchor' && unfinished.size) {
+      const sec = sectionOfBlock(it.blockKey);
+      if (sec && unfinished.has(sec)) continue;
+    }
+    if (status === 'matched') {
+      // an earlier version's report said this paragraph was gone; it is back → that server-made item is closed
+      ctx.db.run(
+        `UPDATE review_queue_item SET status = 'dismissed', resolved_at = ?, resolution_json = ?
+          WHERE kind = 'needs_reanchor' AND entity_type = ? AND entity_id = ? AND status = 'open'
+            AND json_extract(details_json, '$.origin') = 'studybook' AND json_extract(details_json, '$.lineage_id') = ?`,
+        [now, toJson({ by: 'server', reason_ar: `الفقرة نفسها موجودة في النسخة ${a.version_no} من كتاب الدراسة؛ بقيت الملاحظة مرتبطة بها ولم يتغير فيها شيء.` }), it.kind, it.id, a.lineage_id],
+      );
+    }
     ctx.db.run(
       `INSERT INTO artifact_reanchor (artifact_id, target_kind, target_id, block_key, previous_version_no, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (artifact_id, target_kind, target_id) DO UPDATE SET block_key = excluded.block_key, previous_version_no = excluded.previous_version_no, status = excluded.status`,

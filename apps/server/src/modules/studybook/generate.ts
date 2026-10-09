@@ -34,6 +34,7 @@ import { abstainView, artifactView, storedScope, type AbstainView, type Artifact
 import { indexArtifact, processGenerated, recordBlockDependencies, writeBlocks, type PackContext, type PreparedBlock, type ProcessResult } from './publish';
 import { buildExplanationPrompt, GENERATOR_VERSION } from './rules';
 import { generatedContentSchema, type GeneratedContentOut } from './schema';
+import { terminologyVersion } from './terms';
 import { shorten } from './text';
 
 /** Abstain reasons a model may choose; anything else is mapped to insufficient_evidence. */
@@ -46,6 +47,21 @@ export function requireAi(ctx: AppContext, task: AiTask): void {
   const reason = st.tasks[task]?.reason_ar ?? ABSTAIN_REASON_LABELS_AR.ai_not_configured;
   const budgetBlocked = st.configured && !!st.tasks[task]?.model;
   throw new AppError(budgetBlocked ? 'AI_BUDGET_EXCEEDED' : 'AI_NOT_CONFIGURED', reason, 409, { task });
+}
+
+/**
+ * Output-affecting settings that belong in every generated-content cache key besides scope / rules / versions
+ * (ARCHITECTURE §3.7): the owner dictionary (prompt + retrieval expansion) and the models that generate and verify
+ * (a changed MEDLEVO_MODEL_* override must not serve answers of the previous model as current).
+ */
+export function keySettings(ctx: AppContext, task: AiTask, extra: Record<string, unknown> = {}): Record<string, unknown> {
+  const st = ctx.ai.status();
+  return {
+    ...extra,
+    terms: terminologyVersion(ctx),
+    generator_model: st.tasks[task]?.model ?? null,
+    verifier_model: st.tasks.verify_support?.model ?? null,
+  };
 }
 
 export interface LineageInput {
@@ -243,7 +259,10 @@ export async function publishGenerated(ctx: AppContext, input: SingleShotInput, 
   });
   const extra = input.appendBlocks ? input.appendBlocks(processed) : [];
   const blocks = [...processed.blocks, ...extra.map((b, i) => ({ ...b, ord: processed.blocks.length + i }))];
-  if (processed.keptMedical === 0 && extra.length === 0) {
+  // a server warning (e.g. «explained from the caption only») is not an explanation by itself: when nothing
+  // medical survived and nothing else was added, the answer is an abstention, never an empty «explained» result
+  const substantiveExtra = extra.filter((b) => b.kind !== 'warning');
+  if (processed.keptMedical === 0 && substantiveExtra.length === 0) {
     // nothing medical survived verification → an honest abstention, the removed sentences on demand
     const detail = processed.removed.length ? `حُذفت ${processed.removed.length} جملة لأنها لم تجتز التحقق من الأدلة؛ لا يُعرض جواب غير مدعوم.` : null;
     return publishAbstention(ctx, input, abstainView('insufficient_evidence', detail), processed.removed);

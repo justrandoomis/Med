@@ -161,11 +161,16 @@ export function chooseOption(s: LocalExamState, index: number, optionId: string,
   return { ...s, answers: { ...s.answers, [key]: next } };
 }
 
+/**
+ * Confidence belongs to the answer as given: it can change until the answer is checked (practice) or the attempt is
+ * finished (exam). After «تحقّق» the attempt is already recorded (append-only) — a later change would only alter
+ * this device's copy and would let a guess be re-labelled after seeing the correction (AC-27 data).
+ */
 export function setConfidence(s: LocalExamState, index: number, confidence: ConfidenceLevel, now: number): LocalExamState {
   const key = String(index);
   const cur = s.answers[key];
-  if (!cur || isFinished(s)) return s;
-  return { ...s, answers: { ...s.answers, [key]: { ...cur, confidence, at: cur.submitted ? cur.at : now } } };
+  if (!cur || cur.submitted || isFinished(s)) return s;
+  return { ...s, answers: { ...s.answers, [key]: { ...cur, confidence, at: now } } };
 }
 
 export function patchAnswer(s: LocalExamState, index: number, patch: Partial<ExamAnswerState>): LocalExamState {

@@ -182,6 +182,16 @@ export function RunnerScreen() {
     setBusy('solution');
     setNotice(null);
     try {
+      if (policy?.anti_shortcut) {
+        // Anti-shortcut is enforced on the server against its copy of the chosen answer: send this device's state
+        // first (the outbox push is otherwise debounced), so a just-chosen answer is not refused
+        await s.persistNow();
+        try {
+          await getSyncEngine().syncNow();
+        } catch {
+          // no engine (tests): the request below reports the server's answer
+        }
+      }
       const fb = await examsApi.solution(attemptId, index);
       setFeedback((f) => ({ ...f, [index]: fb }));
       await s.update((st) => patchAnswer(st, index, { solution_viewed_before_answer: !st.answers[String(index)]?.submitted }), { persist: true });
@@ -190,7 +200,7 @@ export function RunnerScreen() {
     } finally {
       setBusy(null);
     }
-  }, [attemptId, index, s]);
+  }, [attemptId, index, s, policy?.anti_shortcut]);
 
   const changeMistake = useCallback(
     async (type: MistakeType | null) => {
@@ -307,6 +317,8 @@ export function RunnerScreen() {
   const unscoredReason = session.unscored_reasons[String(index)];
   const solutionBlocked = policy.anti_shortcut && !(answer && answer.selected_option_ids.length > 0);
   const stemId = `ex-stem-${index}`;
+  const generatedCount = exam.build?.by_origin.generated ?? 0;
+  const timed = !!(policy.total_seconds || policy.per_question_seconds);
   // the question keeps its own direction (an English question reads LTR: labels on the left, like the paper)
   const qDir = item!.stem.paragraphs[0]?.dir ?? 'rtl';
 
@@ -322,6 +334,12 @@ export function RunnerScreen() {
             <MixedLine text={exam.title} />
           </h1>
           {exam.title !== exam.mode_label_ar && <span className="ex-muted">{exam.mode_label_ar}</span>}
+          {generatedCount > 0 && (
+            <span className="ex-muted ex-runner__origin">
+              {exam.is_generated_simulation ? 'محاكاة مولدة — ليست نسخة متوقعة من الامتحان. ' : ''}
+              أسئلة مولدة بواسطة MedLevo من المصادر المحددة في هذه المجموعة: {questionsAr(generatedCount)}
+            </span>
+          )}
         </div>
         <div className="ex-runner__tools">
           {(s.offline || !online) && (
@@ -431,12 +449,19 @@ export function RunnerScreen() {
                   );
                 })}
               </div>
+              {timed && !policy.pause_allowed && !finished && (
+                <p className="ex-muted">لا إيقاف مؤقت في هذا الاختبار: الوقت يُحتسب ولو انتقلت إلى تبويب أو تطبيق آخر.</p>
+              )}
               <p id="ex-keys-hint" className="ex-muted ex-keys-hint">
                 اختر بالأرقام 1–{Math.min(9, item!.options.length)} أو بالحروف. سهما الأعلى والأسفل بين الخيارات، وسهما اليمين واليسار بين الأسئلة.
               </p>
 
               {answer && answer.selected_option_ids.length > 0 && !finished && (
-                <ConfidencePicker value={answer.confidence} onChange={(v) => void s.update((st) => setConfidence(st, index, v, Date.now()), { persist: true })} />
+                <ConfidencePicker
+                  value={answer.confidence}
+                  locked={!!answer.submitted}
+                  onChange={(v) => void s.update((st) => setConfidence(st, index, v, Date.now()), { persist: true })}
+                />
               )}
 
               {practice && !finished && (
@@ -502,7 +527,7 @@ export function RunnerScreen() {
           {counts && (
             <p className="ex-muted">
               أُجيب {counts.answered} من {session.items.length}
-              {counts.flagged > 0 && ` — ${questionsAr(counts.flagged)} مُعلَّمة`}
+              {counts.flagged > 0 && ` — المُعلَّمة للمراجعة: ${questionsAr(counts.flagged)}`}
             </p>
           )}
           <ol className="ex-navigator__grid">
@@ -538,7 +563,7 @@ export function RunnerScreen() {
           counts ? (
             <>
               أُجيب {counts.answered} من {session.items.length}.{counts.unanswered > 0 && ` ${questionsAr(counts.unanswered)} بلا إجابة ${isAssessedMode(exam.mode) ? 'تُحسب غير صحيحة' : 'لا تدخل في النتيجة'}.`}
-              {counts.flagged > 0 && ` لديك ${questionsAr(counts.flagged)} مُعلَّمة للمراجعة.`} بعد الإنهاء لا تتغير الإجابات.
+              {counts.flagged > 0 && ` المُعلَّمة للمراجعة: ${questionsAr(counts.flagged)}.`} بعد الإنهاء لا تتغير الإجابات.
             </>
           ) : (
             'بعد الإنهاء لا تتغير الإجابات.'
@@ -552,7 +577,15 @@ export function RunnerScreen() {
   );
 }
 
-function ConfidencePicker({ value, onChange }: { value: ConfidenceLevel | null; onChange: (v: ConfidenceLevel) => void }) {
+function ConfidencePicker({ value, locked, onChange }: { value: ConfidenceLevel | null; locked: boolean; onChange: (v: ConfidenceLevel) => void }) {
+  if (locked) {
+    // recorded with the checked answer (append-only): shown, never re-labelled after seeing the correction
+    return (
+      <p className="ex-muted ex-confidence">
+        {value ? `مدى ثقتك المسجّل مع إجابتك: ${CONFIDENCE_LABELS_AR[value]}` : 'لم تحدد مدى ثقتك قبل التحقق من إجابتك.'}
+      </p>
+    );
+  }
   return (
     <div className="ex-confidence" role="group" aria-labelledby="ex-conf-label">
       <span id="ex-conf-label" className="ex-group-label">
