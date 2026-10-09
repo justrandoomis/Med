@@ -1,0 +1,37 @@
+{
+  "name": "medlevo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MedLevo AI — personal, source-grounded, book-first, Arabic-first medical study platform (single owner).",
+  "type": "module",
+  "workspaces": [
+    "packages/shared",
+    "apps/server",
+    "apps/web"
+  ],
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:server": "npm run dev -w @medlevo/server",
+    "dev:web": "npm run dev -w @medlevo/web",
+    "build": "npm run build -w @medlevo/web",
+    "start": "npm run start -w @medlevo/server",
+    "typecheck": "tsc -p packages/shared --noEmit && tsc -p apps/server --noEmit && tsc -p apps/web --noEmit",
+    "lint": "eslint .",
+    "test": "npm test -w @medlevo/shared && npm test -w @medlevo/server && npm test -w @medlevo/web",
+    "e2e": "playwright test",
+    "fixtures": "node scripts/build-fixtures.mjs",
+    "backup": "npm run backup -w @medlevo/server",
+    "restore:verify": "npm run restore:verify -w @medlevo/server"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.0",
+    "eslint": "^9.39.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.13.0",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.71.1"
+  }
+}

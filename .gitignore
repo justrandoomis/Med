@@ -1,0 +1,21 @@
+node_modules/
+dist/
+build/
+coverage/
+.vite/
+*.log
+.env
+.env.*
+!.env.example
+# runtime data (database, private files, backups) is never committed
+data/
+apps/server/data/
+backups/
+test-results/
+playwright-report/
+.tmp/
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+.DS_Store
