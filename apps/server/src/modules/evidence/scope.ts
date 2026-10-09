@@ -164,13 +164,13 @@ export function resolveScope(ctx: AppContext, input: SourceScope | unknown): Sco
   } else if (scope.mode === 'lecture_plus_references' || scope.mode === 'external') {
     let refs = scope.reference_source_ids;
     if (refs.length === 0 && scope.lecture_source_id) {
-      // the lecture's own chosen references (explicit source links made by the owner)
+      // the lecture's own chosen references: links «R reference_for lecture» made by the owner. The link is
+      // directional — a source the lecture is itself a reference FOR is not one of its references (it would
+      // widen the lock to another lecture's material)
       refs = db
-        .all<{ other: string }>(
-          `SELECT CASE WHEN from_source_id = ? THEN to_source_id ELSE from_source_id END AS other
-             FROM source_link WHERE relation = 'reference_for' AND (from_source_id = ? OR to_source_id = ?) ORDER BY created_at`,
-          [scope.lecture_source_id, scope.lecture_source_id, scope.lecture_source_id],
-        )
+        .all<{ other: string }>(`SELECT from_source_id AS other FROM source_link WHERE relation = 'reference_for' AND to_source_id = ? ORDER BY created_at`, [
+          scope.lecture_source_id,
+        ])
         .map((r) => r.other);
     }
     for (const id of refs) pick(id, 'reference');

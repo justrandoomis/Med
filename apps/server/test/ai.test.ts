@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { ResolvedScope } from '@medlevo/shared';
 import { createTestApp, type TestApp } from './helpers/app';
 import { FakeAiProvider } from './helpers/fake-ai';
+import { MODULES } from '../src/modules';
 
 let t: TestApp | null = null;
 afterEach(async () => {
@@ -173,7 +174,9 @@ describe('AI orchestrator', () => {
   });
 
   it('reports unsupported tasks and capability state when configured but not implemented', async () => {
-    t = await createTestApp({ ai: new FakeAiProvider({ supports: ['summarize'] }) });
+    // core modules only: feature modules (e.g. studybook → ai.explain) declare their own capability state
+    const CORE = new Set(['auth', 'settings', 'audit', 'files', 'jobs', 'sync', 'ai']);
+    t = await createTestApp({ ai: new FakeAiProvider({ supports: ['summarize'] }), modules: MODULES.filter((m) => CORE.has(m.name)) });
     expect(t.ctx.ai.isAvailable('summarize')).toBe(true);
     expect(t.ctx.ai.isAvailable('vision_figure')).toBe(false);
     await expect(t.ctx.ai.generateStructured(req({ task: 'vision_figure' }))).rejects.toMatchObject({ code: 'AI_NOT_CONFIGURED' });

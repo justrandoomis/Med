@@ -13,7 +13,7 @@ import { AppError } from '../../lib/errors';
 import { newId } from '../../lib/ids';
 import { type Clock, startOfMonthInTz } from '../../lib/time';
 import { buildPrompt, estimateTokens } from './prompt';
-import type { AiProvider, ProviderImage, ProviderResponse, UntrustedBlock } from './types';
+import { ProviderError, type AiProvider, type ProviderErrorKind, type ProviderImage, type ProviderResponse, type UntrustedBlock } from './types';
 
 /** Version of the explanation/verification rules; recorded with every call and in cache keys. */
 export const AI_RULES_VERSION = 'rules-2026.10-1';
@@ -58,6 +58,21 @@ const MSG = {
   providerError: 'تعذر الحصول على رد من مزود الذكاء الاصطناعي. أعد المحاولة بعد قليل.',
   schemaRejected: 'رُفضت نتيجة الذكاء الاصطناعي لأنها لم تطابق البنية المطلوبة حتى بعد محاولة تصحيح واحدة. لم يُحفظ شيء منها.',
   outOfScope: 'طُلب استخدام مصدر خارج نطاق المصادر المحدد (Source Lock). وسّع النطاق صراحةً إن أردت.',
+};
+
+/** (track C2) specific Arabic reasons for classified provider failures (ProviderError). Never the raw provider text. */
+const PROVIDER_ERROR_AR: Record<ProviderErrorKind, string> = {
+  auth: 'رفض مزود الذكاء الاصطناعي مفتاح الخادم (ANTHROPIC_API_KEY غير صالح أو أُلغي). حدّث المفتاح في إعدادات الخادم.',
+  permission: 'المفتاح المضبوط على الخادم لا يملك صلاحية هذا الطلب لدى المزود.',
+  not_found: 'النموذج المحدد غير متاح لهذا الحساب لدى المزود. راجع MEDLEVO_MODEL_* في إعدادات الخادم.',
+  bad_request: 'رفض المزود صيغة الطلب. لم يُحفظ شيء؛ أبلغ عن المشكلة إن تكررت.',
+  too_large: 'المحتوى المرسل أكبر من الحد الذي يقبله المزود. اختر نطاقًا أو صفحات أقل.',
+  rate_limited: 'تجاوز الخادم حد الطلبات لدى مزود الذكاء الاصطناعي بعد إعادة المحاولة. انتظر قليلًا ثم أعد المحاولة.',
+  overloaded: 'مزود الذكاء الاصطناعي مشغول أو متعطل مؤقتًا بعد إعادة المحاولة. أعد المحاولة بعد قليل.',
+  timeout: 'انتهت مهلة انتظار رد مزود الذكاء الاصطناعي. أعد المحاولة، أو اختر جزءًا أصغر.',
+  connection: 'تعذر الاتصال بمزود الذكاء الاصطناعي من الخادم. تحقق من اتصال الخادم بالإنترنت.',
+  refusal: 'امتنع النموذج عن إكمال هذا الطلب لأسباب تتعلق بسياسة السلامة لدى المزود. لم يُعرض أي ناتج جزئي.',
+  truncated: 'انقطع رد النموذج قبل اكتماله (بلغ الحد الأقصى للطول)، فلم يُستخدم أي جزء منه. جرّب جزءًا أصغر.',
 };
 
 function budgetMessage(budget: number): string {
@@ -200,9 +215,10 @@ export class AiOrchestrator {
     }
     const base = { task: req.task, provider: provider.name, sourceVersionIds: req.sourceVersionIds, rulesVersion, jobId: req.jobId ?? null };
 
-    // budget guard (worst case: full output length)
+    // budget guard (worst case: full output length, incl. any reasoning headroom the provider adds)
     const budget = this.budget();
-    const worstCase = provider.estimateCostUsd(model, { inputTokens: estimateTokens(built.system + built.prompt), outputTokens: maxOutputTokens });
+    const ceiling = provider.outputTokenCeiling ? provider.outputTokenCeiling(req.task, maxOutputTokens) : maxOutputTokens;
+    const worstCase = provider.estimateCostUsd(model, { inputTokens: estimateTokens(built.system + built.prompt), outputTokens: Math.max(ceiling, maxOutputTokens) });
     if (budget.monthly_usd <= 0 || budget.spent_usd + worstCase > budget.monthly_usd) {
       this.recordUsage({ ...base, model, status: 'budget_blocked', cost: 0 });
       throw new AppError('AI_BUDGET_EXCEEDED', budgetMessage(budget.monthly_usd), 409, {
@@ -231,9 +247,21 @@ export class AiOrchestrator {
         const latency = Date.now() - started;
         return { res, latency, cost: provider.estimateCostUsd(res.model, res.usage) };
       } catch (e) {
-        this.recordUsage({ ...base, model, status: 'error', latencyMs: Date.now() - started });
+        const pe = e instanceof ProviderError ? e : null;
+        // a classified failure keeps the provider request id and any billed usage (e.g. a truncated answer)
+        this.recordUsage({
+          ...base,
+          model: pe?.model ?? model,
+          status: 'error',
+          latencyMs: Date.now() - started,
+          inputTokens: pe?.usage?.inputTokens ?? null,
+          outputTokens: pe?.usage?.outputTokens ?? null,
+          cost: pe?.usage ? provider.estimateCostUsd(pe.model ?? model, pe.usage) : 0,
+          requestRef: pe?.requestRef ?? null,
+        });
         if (req.signal?.aborted) throw req.signal.reason ?? e;
-        this.log.warn({ task: req.task, provider: provider.name, errName: (e as Error)?.name }, 'AI provider call failed');
+        this.log.warn({ task: req.task, provider: provider.name, errName: (e as Error)?.name, kind: pe?.kind, requestRef: pe?.requestRef }, 'AI provider call failed');
+        if (pe) throw new AppError('AI_PROVIDER_ERROR', PROVIDER_ERROR_AR[pe.kind], 502, { provider_error: pe.kind, retryable: pe.retryable });
         throw new AppError('AI_PROVIDER_ERROR', MSG.providerError, 502);
       }
     };

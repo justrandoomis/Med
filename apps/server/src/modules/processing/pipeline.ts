@@ -362,6 +362,7 @@ class VersionRun {
         actor: 'job',
         jobId: run.id,
       });
+      if (final.status !== 'failed') enqueueQuestionFollowUp(ctx, version.id, run.id);
       const output: ProcessOutput = {
         version_id: version.id,
         status: final.status,
@@ -1102,4 +1103,22 @@ export function finalizeRegions(regions: LayoutRegion[], lowQuality: boolean, te
     }
   }
   return reviews;
+}
+
+/**
+ * Hook for the Question Vault (track C3): once a version is processed, queue question extraction (question
+ * sources / previous exams) or lecture ↔ question matching (lectures). Guarded: when the questions module (its
+ * job kinds) is absent nothing happens, and a failure here never fails processing. Idempotent per processing run.
+ */
+function enqueueQuestionFollowUp(ctx: AppContext, versionId: string, processJobId: string): void {
+  try {
+    const src = ctx.db.get<{ source_type: string }>('SELECT s.source_type FROM source_version v JOIN source s ON s.id = v.source_id WHERE v.id = ?', [versionId]);
+    if (!src) return;
+    const kind =
+      src.source_type === 'question_source' || src.source_type === 'previous_exam' ? 'extract_questions' : src.source_type === 'lecture' ? 'match_questions' : null;
+    if (!kind || !ctx.jobs.isRegistered(kind)) return;
+    ctx.jobs.enqueue(kind, { version_id: versionId }, { idempotencyKey: `${kind}:${versionId}:${processJobId}`, parentJobId: processJobId });
+  } catch (e) {
+    ctx.log.warn({ err: e, versionId }, 'could not enqueue the question follow-up job');
+  }
 }

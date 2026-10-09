@@ -28,6 +28,7 @@ import { sha256File } from '../../lib/hash';
 import { newId } from '../../lib/ids';
 import { extractZipSafe, readZipEntryCount } from '../../lib/safe-zip';
 import { contextOf } from '../library/service';
+import { onSourceVersionChanged } from '../evidence/dependencies';
 import { suggestSourceType } from './classify';
 import { removeStoredFileIfUnreferenced } from './purge';
 import { classifyOle, cleanFileName, IMAGE_MIMES, imageSize, naturalCompare, sniff, tiffSize, titleFromFileName, UNSUPPORTED_REASONS_AR, type SniffedImage } from './sniff';
@@ -649,25 +650,10 @@ export async function registerReplacement(ctx: AppContext, sourceId: string, fil
       );
       ctx.db.run('UPDATE source SET current_version_id = ?, processing_status = ?, updated_at = ? WHERE id = ?', [versionId, insp.format === 'audio' ? 'partial' : 'pending', now, sourceId]);
       insertImagePages(ctx, versionId, parts, now);
-      // content change alert: what depended on the previous versions (§18). The frozen version is untouched.
-      const affected = ctx.db.all<{ type: string; id: string }>(
-        `SELECT DISTINCT dependent_type AS type, dependent_id AS id FROM artifact_dependency
-         WHERE source_version_id IN (SELECT id FROM source_version WHERE source_id = ? AND id <> ?)`,
-        [sourceId, versionId],
-      );
-      const frozenNote = src.frozen_version_id ? ' النسخة المثبّتة (Source Freeze) لم تتغير؛ أدوات الدراسة تستمر عليها حتى تختار غير ذلك.' : '';
-      ctx.db.run(
-        `INSERT INTO content_alert (id, kind, severity, source_id, source_version_id, summary, affected_json, status, created_at)
-         VALUES (?, 'source_replaced', 'info', ?, ?, ?, ?, 'open', ?)`,
-        [
-          newId(now),
-          sourceId,
-          versionId,
-          `رُفعت نسخة جديدة (${no}) من «${src.title}». ${affected.length > 0 ? `عناصر مشتقة تعتمد على النسخ السابقة: ${affected.length}، تحتاج مراجعة.` : 'لا يوجد محتوى مشتق يعتمد على النسخ السابقة.'}${frozenNote}`,
-          JSON.stringify(affected.map((a) => ({ type: a.type, id: a.id, impact: 'needs_review' }))),
-          now,
-        ],
-      );
+      // content change alert (§18) through the evidence module's dependency service: per-dependent impact
+      // (compared once the new version is processed), non-frozen artifacts marked stale, frozen ones kept
+      // with a warning. The frozen version (Source Freeze) is untouched. See docs/modules/evidence-search.md.
+      onSourceVersionChanged(ctx, { sourceId, fromVersionId: null, toVersionId: versionId, kind: 'source_replaced' });
       ctx.audit.record({
         entityType: 'source',
         entityId: sourceId,

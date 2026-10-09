@@ -18,3 +18,6 @@ export * from './processing';
 export * from './workspace';
 export * from './evidence-api';
 export * from './search-api';
+export * from './questions-api';
+export * from './studybook-api';
+export * from './exams-api';

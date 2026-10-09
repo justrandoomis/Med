@@ -1,13 +1,14 @@
-// Toolbar over a text selection (§26, §30): highlight, underline, copy, add a note — all local-first —
-// and the AI / learning actions shown disabled with their reasons until they are built.
+// Toolbar over a text selection (§26, §30): highlight, underline, copy, add a note — all local-first — and the
+// explanation actions (Explain / Simplify / Translate / Ask / Compare / Explain Image), which hand the selection
+// anchor to the «الشرح والسؤال» rail tab. Learning actions that belong to later tracks stay disabled with reasons.
 import { useLayoutEffect, useRef, useState } from 'react';
-import { Copy, Highlighter, NotebookPen, Sparkles, Underline, Eraser } from 'lucide-react';
+import { BookOpenText, Copy, Highlighter, NotebookPen, Sparkles, Underline, Eraser } from 'lucide-react';
 import { boxesIntersect, normalizeRotation, type AnnotationAnchor, type NormBox, type TextHighlightData, type TextQuote } from '@medlevo/shared';
 import { Button, Menu, MenuItem, Toolbar, Term, useToast, cx } from '../../../design';
 import { useCapabilities } from '../../../lib/capabilities';
 import { getDb, type AnnotationRow } from '../../../lib/localdb';
 import { createAnnotation, deleteAnnotation } from '../data/local';
-import { pendingActionReason, SELECTION_AI_ACTIONS } from '../model/aiActions';
+import { actionDisabledReason, aiRequestStore, SELECTION_AI_ACTIONS, type ExplainActionId } from '../model/aiActions';
 import { clientRectsToNorm, quoteFromText, rangeOffsetsWithin, roundBox } from '../model/textQuote';
 import type { BookSelection } from './useBookSelection';
 
@@ -117,6 +118,27 @@ export function SelectionToolbar({ selection, canvas, textRoot, anchorFor, fixed
     onDone();
   };
 
+  /** explanation family → the rail («الشرح والسؤال») with this selection as the anchor */
+  const askRail = (action: ExplainActionId) => {
+    const pageAnchor = anchorFor(selection.pageIndex);
+    if (!pageAnchor || pageAnchor.type !== 'page') return;
+    const text = (highlight?.quote.exact ?? selection.text).trim().slice(0, 6000);
+    aiRequestStore.request({
+      action,
+      anchor: {
+        source_id: pageAnchor.source_id,
+        version_id: pageAnchor.version_id,
+        page_id: pageAnchor.page_id,
+        region_ids: [],
+        quote: text ? (highlight?.quote ?? { exact: text }) : null,
+      },
+      text,
+      pageIndex: selection.pageIndex,
+      rects: highlight?.rects ?? [],
+    });
+    onDone();
+  };
+
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(selection.text);
@@ -146,6 +168,10 @@ export function SelectionToolbar({ selection, canvas, textRoot, anchorFor, fixed
         <Button size="sm" variant="plain" icon={<NotebookPen size={16} />} onClick={() => onAddNote(selection.pageIndex, highlight?.quote ?? (selection.text.trim() ? { exact: selection.text.trim().slice(0, 2000) } : null))}>
           ملاحظة
         </Button>
+        {/* always reachable: when explanations are unavailable the rail says exactly why (never a dead button) */}
+        <Button size="sm" variant="plain" icon={<BookOpenText size={16} />} onClick={() => askRail('explain')}>
+          اشرح
+        </Button>
         <Menu
           label="أدوات الشرح والتعلّم"
           trigger={
@@ -154,11 +180,14 @@ export function SelectionToolbar({ selection, canvas, textRoot, anchorFor, fixed
             </Button>
           }
         >
-          {SELECTION_AI_ACTIONS.map((a) => (
-            <MenuItem key={a.id} onSelect={() => undefined} disabled disabledReason={pendingActionReason(caps.feature(a.feature))}>
-              {a.label} <Term>{a.term}</Term>
-            </MenuItem>
-          ))}
+          {SELECTION_AI_ACTIONS.map((a) => {
+            const reason = actionDisabledReason(a, caps.feature(a.feature));
+            return (
+              <MenuItem key={a.id} onSelect={() => askRail(a.id as ExplainActionId)} disabled={!!reason} disabledReason={reason ?? undefined}>
+                {a.label} <Term>{a.term}</Term>
+              </MenuItem>
+            );
+          })}
         </Menu>
       </Toolbar>
       {highlightReason && fixedPages === false && <p className="ml-visually-hidden">{highlightReason}</p>}
