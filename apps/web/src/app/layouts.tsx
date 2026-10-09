@@ -1,0 +1,109 @@
+import { useEffect } from 'react';
+import { Link, Outlet, isRouteErrorResponse, useLocation, useNavigate, useRouteError } from 'react-router-dom';
+import { CloudOff, Compass } from 'lucide-react';
+import { Button, EmptyState, ErrorState, buttonClass } from '../design';
+import { setUnauthenticatedHandler } from '../lib/api';
+import { forgetAuth } from '../lib/auth';
+import { capabilitiesStore } from '../lib/capabilities';
+import { settingsStore } from '../lib/settings';
+import { getSyncEngine } from '../lib/sync';
+import { usePageTitle } from '../lib/usePageTitle';
+
+/** Root layout: wires the global "session expired" handler to the router. */
+export function RootLayout() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  useEffect(() => {
+    setUnauthenticatedHandler(() => {
+      forgetAuth();
+      getSyncEngine().stop();
+      const next = location.pathname + location.search;
+      if (!location.pathname.startsWith('/login')) navigate(`/login?expired=1&next=${encodeURIComponent(next)}`, { replace: true });
+    });
+    return () => setUnauthenticatedHandler(null);
+  }, [navigate, location.pathname, location.search]);
+  return <Outlet />;
+}
+
+/**
+ * Everything behind the owner session. Starts the sync engine and loads settings/capabilities.
+ * Offline with a known session: the app opens from local data and syncs when the server returns.
+ */
+export function OwnerLayout() {
+  useEffect(() => {
+    const engine = getSyncEngine();
+    engine.start();
+    void settingsStore.load();
+    void capabilitiesStore.refresh();
+    return () => engine.stop();
+  }, []);
+  return <Outlet />;
+}
+
+export function RouteErrorScreen() {
+  const error = useRouteError();
+  const navigate = useNavigate();
+  usePageTitle('تعذّر فتح الصفحة');
+  if (isRouteErrorResponse(error) && error.status === 503) {
+    return (
+      <div className="ml-standalone">
+        <EmptyState
+          icon={<CloudOff size={28} />}
+          title="لا يمكن التحقق من تسجيل الدخول دون اتصال"
+          description={
+            <>
+              <p>{typeof error.data === 'string' ? error.data : 'تعذّر الوصول إلى الخادم.'}</p>
+              <p>لم يسبق تسجيل الدخول على هذا الجهاز، لذلك لا توجد نسخة محلية لفتحها. اتصل بالإنترنت ثم أعد المحاولة.</p>
+            </>
+          }
+          actions={
+            <Button variant="primary" onClick={() => navigate(0)}>
+              إعادة المحاولة
+            </Button>
+          }
+          headingLevel={2}
+        />
+      </div>
+    );
+  }
+  const notFound = isRouteErrorResponse(error) && error.status === 404;
+  if (notFound) return <NotFoundScreen />;
+  return (
+    <div className="ml-standalone">
+      <ErrorState
+        title="حدث خطأ أثناء فتح هذه الصفحة"
+        message="لم يُفقد شيء مما كتبته: الكتابة تُحفظ على هذا الجهاز أولًا. أعد تحميل الصفحة، وإن تكرر الخطأ فارجع إلى الرئيسية."
+        onRetry={() => navigate(0)}
+        retryLabel="إعادة التحميل"
+        actions={
+          <Link to="/" className={buttonClass({ variant: 'plain' })}>
+            الرئيسية
+          </Link>
+        }
+      />
+    </div>
+  );
+}
+
+export function NotFoundScreen() {
+  usePageTitle('الصفحة غير موجودة');
+  return (
+    <div className="ml-page">
+      <EmptyState
+        icon={<Compass size={28} />}
+        title="هذه الصفحة غير موجودة"
+        description="ربما تغيّر الرابط أو نُقل العنصر. ابدأ من الرئيسية أو من المكتبة."
+        actions={
+          <>
+            <Link to="/" className={buttonClass({ variant: 'primary' })}>
+              الرئيسية
+            </Link>
+            <Link to="/library" className={buttonClass({ variant: 'secondary' })}>
+              المكتبة
+            </Link>
+          </>
+        }
+      />
+    </div>
+  );
+}

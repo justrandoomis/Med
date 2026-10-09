@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="MedLevo AI">
+  <rect width="512" height="512" fill="#3A47A8"/>
+  <g transform="translate(256 256) scale(.72) translate(-256 -256)">
+    <path d="M256 158c-38-27-90-37-148-30a8 8 0 0 0-7 8v222a8 8 0 0 0 9 8c55-6 104 3 146 28z" fill="#E4E1D8"/>
+    <path d="M256 158c38-27 90-37 148-30a8 8 0 0 1 7 8v222a8 8 0 0 1-9 8c-55-6-104 3-146 28z" fill="#FFFDF8"/>
+    <path d="M134 120h52v128l-26-19-26 19z" fill="#E8BA55"/>
+    <path d="M364 206h-72M364 246h-72M364 286h-52" stroke="#3A47A8" stroke-opacity=".3" stroke-width="12" stroke-linecap="round"/>
+  </g>
+</svg>

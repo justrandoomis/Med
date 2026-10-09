@@ -17,7 +17,8 @@ function issueMessageAr(issue: z.core.$ZodIssue): string {
   if (issue.code === 'custom' && issue.message && /[؀-ۿ]/.test(issue.message)) return issue.message;
   switch (issue.code) {
     case 'invalid_type':
-      return (issue as { input?: unknown }).input === undefined ? 'هذا الحقل مطلوب.' : `نوع القيمة غير صحيح (المتوقع: ${issue.expected}).`;
+      // zod 4 does not include the input in issues by default; a missing key reads "received undefined"
+      return /received undefined/.test(issue.message) ? 'هذا الحقل مطلوب.' : `نوع القيمة غير صحيح (المتوقع: ${issue.expected}).`;
     case 'too_small': {
       const min = Number(issue.minimum);
       if (issue.origin === 'string') return `النص أقصر من الحد الأدنى (${min} أحرف).`;

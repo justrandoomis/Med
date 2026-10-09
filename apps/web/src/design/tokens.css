@@ -1,0 +1,271 @@
+/*
+ * MedLevo Study Surface — design tokens (spec §22).
+ *
+ * Rules
+ *  - Feature code uses these variables only: no ad-hoc hex colours, px spacings or durations.
+ *  - Neutral canvas, warm paper, ONE accent (indigo "ink"). Semantic colours are always paired with
+ *    an icon and text (never colour alone).
+ *  - Themes: light (default) / dark. Explicit choice via <html data-theme="light|dark">;
+ *    without data-theme the OS preference decides (prefers-color-scheme).
+ *  - Paper texture: <html data-paper="on|off">. Subtle, never reduces contrast; disabled in
+ *    prefers-contrast: more.
+ *  - Motion: <html data-reduce-motion="on|off">; without it prefers-reduced-motion decides.
+ *  - Text scale: <html style="--ml-text-scale: 1.15" data-text-scale="1.15">.
+ *  - Arabic is never letter-spaced (it breaks joined letterforms).
+ *
+ * The dark palette is declared twice (explicit attribute + OS preference) on purpose: CSS cannot
+ * share one declaration block between a selector and a media query. Keep both blocks identical.
+ */
+
+:root {
+  /* ── spacing (rem so layout scales with the owner's text size) ── */
+  --ml-space-0: 0;
+  --ml-space-1: 0.25rem; /* 4 */
+  --ml-space-2: 0.5rem; /* 8 */
+  --ml-space-3: 0.75rem; /* 12 */
+  --ml-space-4: 1rem; /* 16 */
+  --ml-space-5: 1.5rem; /* 24 */
+  --ml-space-6: 2rem; /* 32 */
+  --ml-space-7: 3rem; /* 48 */
+
+  /* ── radii: hierarchy, not one radius everywhere ── */
+  --ml-radius-xs: 4px; /* chips inside text, kbd */
+  --ml-radius-sm: 6px; /* small controls, checkboxes */
+  --ml-radius-md: 10px; /* buttons, inputs, list rows */
+  --ml-radius-lg: 14px; /* paper sheets, popovers */
+  --ml-radius-xl: 20px; /* dialogs, bottom sheets */
+  --ml-radius-pill: 999px;
+
+  /* ── type ── */
+  --ml-font-ui: 'IBM Plex Sans Arabic', system-ui, -apple-system, 'Segoe UI', 'Noto Sans Arabic', Tahoma, sans-serif;
+  --ml-font-reading: 'Noto Naskh Arabic', 'IBM Plex Sans Arabic', 'Geeza Pro', 'Traditional Arabic', serif;
+  /* LTR runs (terms, units, formulas) inside Arabic: a Latin face with a generous x-height. */
+  --ml-font-latin: 'IBM Plex Sans Arabic', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --ml-font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
+
+  --ml-text-scale: 1;
+
+  --ml-text-xs: 0.8125rem; /* 13 — captions, metadata; never smaller */
+  --ml-leading-xs: 1.55;
+  --ml-text-sm: 0.875rem; /* 14 — secondary text, controls */
+  --ml-leading-sm: 1.6;
+  --ml-text-md: 1rem; /* 16 — body UI */
+  --ml-leading-md: 1.7; /* Arabic needs more leading than Latin for marks and descenders */
+  --ml-text-lg: 1.125rem; /* 18 — emphasized body, section titles */
+  --ml-leading-lg: 1.6;
+  --ml-text-xl: 1.375rem; /* 22 — screen titles (phone) */
+  --ml-leading-xl: 1.45;
+  --ml-text-2xl: 1.75rem; /* 28 — screen titles (wide) */
+  --ml-leading-2xl: 1.35;
+  --ml-text-3xl: 2.25rem; /* 36 — rare display */
+  --ml-leading-3xl: 1.25;
+  /* Book text (Naskh) reads larger and looser than UI text */
+  --ml-text-reading: 1.1875rem; /* 19 */
+  --ml-leading-reading: 1.95;
+
+  --ml-weight-regular: 400;
+  --ml-weight-medium: 500;
+  --ml-weight-semibold: 600;
+
+  --ml-measure-reading: 42rem; /* ~70 characters of Arabic body text */
+  --ml-measure-form: 30rem;
+
+  /* ── layout ── */
+  --ml-touch-target: 44px;
+  --ml-control-h-sm: 2rem;
+  --ml-control-h-md: 2.5rem;
+  --ml-control-h-lg: 3rem;
+  --ml-topbar-h: 3.5rem;
+  --ml-tabbar-h: 3.75rem;
+  --ml-content-max: 72rem;
+  --ml-safe-top: env(safe-area-inset-top, 0px);
+  --ml-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --ml-safe-left: env(safe-area-inset-left, 0px);
+  --ml-safe-right: env(safe-area-inset-right, 0px);
+
+  --ml-z-sticky: 10;
+  --ml-z-nav: 20;
+  --ml-z-popover: 40;
+  --ml-z-overlay: 50;
+  --ml-z-toast: 60;
+  --ml-z-tooltip: 70;
+
+  /* ── motion (critically damped; nothing decorative) ── */
+  --ml-duration-instant: 80ms;
+  --ml-duration-fast: 140ms;
+  --ml-duration-base: 220ms;
+  --ml-duration-slow: 320ms;
+  --ml-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ml-ease-enter: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --ml-ease-exit: cubic-bezier(0.3, 0, 0.8, 0.15);
+  /* distance used by enter/exit transforms; reduced motion sets it to 0 (fade only) */
+  --ml-motion-shift: 8px;
+  --ml-press-scale: 0.97;
+
+  /* ── colour: light ── */
+  color-scheme: light;
+  --ml-color-canvas: #eef0f1; /* neutral app background */
+  --ml-color-paper: #fffdf8; /* warm paper: reading surfaces, sheets, panels */
+  --ml-color-paper-2: #f7f5ef; /* recessed paper: grouped rows, code, quotes */
+  --ml-color-elevated: #ffffff; /* popovers / menus over paper */
+  --ml-color-ink: #1c2230; /* primary text */
+  --ml-color-ink-2: #4f5764; /* secondary text (7.2:1 on paper) */
+  --ml-color-ink-3: #666d79; /* tertiary text, placeholders (5.1:1 on paper) */
+  --ml-color-line: #e2e1dc; /* hairlines between groups (decorative) */
+  --ml-color-line-strong: #cfcdc6;
+  --ml-color-control-border: #7e848e; /* input outlines: ≥ 3:1 (WCAG 1.4.11) */
+  --ml-color-fill: rgba(28, 34, 48, 0.06); /* plain-button hover, segmented track */
+  --ml-color-fill-strong: rgba(28, 34, 48, 0.1);
+  --ml-color-scrim: rgba(18, 20, 28, 0.38);
+
+  --ml-color-accent: #3a47a8; /* indigo ink — the only accent */
+  --ml-color-accent-hover: #2f3b93;
+  --ml-color-accent-pressed: #27317d;
+  --ml-color-accent-ink: #ffffff; /* text on accent (7.9:1) */
+  --ml-color-accent-soft: #e7e9f6; /* selected rows, active tab */
+  --ml-color-accent-soft-ink: #2f3b93;
+  --ml-color-focus: #3a47a8;
+  --ml-color-selection: rgba(58, 71, 168, 0.2);
+
+  --ml-color-success: #1d6e41;
+  --ml-color-success-soft: #e3f1e8;
+  --ml-color-warning: #7d5200;
+  --ml-color-warning-soft: #f8edd5;
+  --ml-color-danger: #b3261e;
+  --ml-color-danger-soft: #fbe8e6;
+  --ml-color-danger-hover: #9a1f18;
+  --ml-color-danger-ink: #ffffff; /* text on danger (6.4:1) */
+  --ml-color-inverse: #1c2230; /* tooltips */
+  --ml-color-inverse-ink: #fffdf8;
+  --ml-color-info: #0a6580;
+  --ml-color-info-soft: #e1f0f5;
+
+  --ml-shadow-paper: 0 0 0 1px rgba(28, 34, 48, 0.06), 0 1px 2px rgba(28, 34, 48, 0.06);
+  --ml-shadow-raised: 0 0 0 1px rgba(28, 34, 48, 0.08), 0 8px 24px rgba(28, 34, 48, 0.12);
+  --ml-shadow-overlay: 0 0 0 1px rgba(28, 34, 48, 0.08), 0 24px 64px rgba(18, 20, 28, 0.22);
+
+  /* Paper grain: tiny, static, low-alpha; rasterised once per tile. */
+  --ml-paper-texture: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .42 0 0 0 0 .36 0 0 0 0 .26 0 0 0 .09 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  --ml-paper-texture-active: none;
+}
+
+/* ── colour: dark (explicit) ── */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --ml-color-canvas: #121314;
+  --ml-color-paper: #1d1c1a;
+  --ml-color-paper-2: #252421;
+  --ml-color-elevated: #2a2926;
+  --ml-color-ink: #eceae4;
+  --ml-color-ink-2: #b5b2ab;
+  --ml-color-ink-3: #9a978f;
+  --ml-color-line: #2f2e2b;
+  --ml-color-line-strong: #403e3a;
+  --ml-color-control-border: #807d76;
+  --ml-color-fill: rgba(236, 234, 228, 0.07);
+  --ml-color-fill-strong: rgba(236, 234, 228, 0.12);
+  --ml-color-scrim: rgba(0, 0, 0, 0.55);
+  --ml-color-accent: #a3adff;
+  --ml-color-accent-hover: #b8c0ff;
+  --ml-color-accent-pressed: #8c97f2;
+  --ml-color-accent-ink: #121530;
+  --ml-color-accent-soft: #272c4f;
+  --ml-color-accent-soft-ink: #c6ccff;
+  --ml-color-focus: #a3adff;
+  --ml-color-selection: rgba(163, 173, 255, 0.28);
+  --ml-color-success: #6fd39a;
+  --ml-color-success-soft: #1b2e23;
+  --ml-color-warning: #e8ba55;
+  --ml-color-warning-soft: #33280f;
+  --ml-color-danger: #ff8f84;
+  --ml-color-danger-soft: #3a1d1a;
+  --ml-color-danger-hover: #ffaba2;
+  --ml-color-danger-ink: #2b0d0a;
+  --ml-color-inverse: #eceae4;
+  --ml-color-inverse-ink: #1d1c1a;
+  --ml-color-info: #72c7e3;
+  --ml-color-info-soft: #132c35;
+  --ml-shadow-paper: 0 0 0 1px rgba(255, 255, 255, 0.05), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --ml-shadow-raised: 0 0 0 1px rgba(255, 255, 255, 0.07), 0 10px 28px rgba(0, 0, 0, 0.5);
+  --ml-shadow-overlay: 0 0 0 1px rgba(255, 255, 255, 0.07), 0 24px 64px rgba(0, 0, 0, 0.6);
+  --ml-paper-texture: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 .97 0 0 0 0 .9 0 0 0 .05 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* ── colour: dark (OS preference, unless the owner picked light) — keep identical to the block above ── */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --ml-color-canvas: #121314;
+    --ml-color-paper: #1d1c1a;
+    --ml-color-paper-2: #252421;
+    --ml-color-elevated: #2a2926;
+    --ml-color-ink: #eceae4;
+    --ml-color-ink-2: #b5b2ab;
+    --ml-color-ink-3: #9a978f;
+    --ml-color-line: #2f2e2b;
+    --ml-color-line-strong: #403e3a;
+    --ml-color-control-border: #807d76;
+    --ml-color-fill: rgba(236, 234, 228, 0.07);
+    --ml-color-fill-strong: rgba(236, 234, 228, 0.12);
+    --ml-color-scrim: rgba(0, 0, 0, 0.55);
+    --ml-color-accent: #a3adff;
+    --ml-color-accent-hover: #b8c0ff;
+    --ml-color-accent-pressed: #8c97f2;
+    --ml-color-accent-ink: #121530;
+    --ml-color-accent-soft: #272c4f;
+    --ml-color-accent-soft-ink: #c6ccff;
+    --ml-color-focus: #a3adff;
+    --ml-color-selection: rgba(163, 173, 255, 0.28);
+    --ml-color-success: #6fd39a;
+    --ml-color-success-soft: #1b2e23;
+    --ml-color-warning: #e8ba55;
+    --ml-color-warning-soft: #33280f;
+    --ml-color-danger: #ff8f84;
+    --ml-color-danger-soft: #3a1d1a;
+    --ml-color-danger-hover: #ffaba2;
+    --ml-color-danger-ink: #2b0d0a;
+    --ml-color-inverse: #eceae4;
+    --ml-color-inverse-ink: #1d1c1a;
+    --ml-color-info: #72c7e3;
+    --ml-color-info-soft: #132c35;
+    --ml-shadow-paper: 0 0 0 1px rgba(255, 255, 255, 0.05), 0 1px 2px rgba(0, 0, 0, 0.4);
+    --ml-shadow-raised: 0 0 0 1px rgba(255, 255, 255, 0.07), 0 10px 28px rgba(0, 0, 0, 0.5);
+    --ml-shadow-overlay: 0 0 0 1px rgba(255, 255, 255, 0.07), 0 24px 64px rgba(0, 0, 0, 0.6);
+    --ml-paper-texture: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 .97 0 0 0 0 .9 0 0 0 .05 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+}
+
+/* ── paper texture (optional; owner setting) ── */
+:root[data-paper='on'] {
+  --ml-paper-texture-active: var(--ml-paper-texture);
+}
+@media (prefers-contrast: more) {
+  :root {
+    --ml-paper-texture-active: none !important;
+    --ml-color-line: var(--ml-color-line-strong);
+    --ml-color-control-border: var(--ml-color-ink-2);
+  }
+}
+
+/* ── reduced motion: fades only, short ── */
+:root[data-reduce-motion='on'] {
+  --ml-motion-shift: 0px;
+  --ml-press-scale: 1;
+  --ml-duration-base: 120ms;
+  --ml-duration-slow: 160ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-reduce-motion='off']) {
+    --ml-motion-shift: 0px;
+    --ml-press-scale: 1;
+    --ml-duration-base: 120ms;
+    --ml-duration-slow: 160ms;
+  }
+}
+
+/* ── wide screens: no bottom tab bar (navigation lives in the slim top bar) ── */
+@media (min-width: 48rem) {
+  :root {
+    --ml-tabbar-h: 0px;
+  }
+}

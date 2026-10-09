@@ -1,0 +1,23 @@
+/* ── dev gallery helpers (dev/gallery.html only) ── */
+.ml-gallery {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-6);
+  max-width: 48rem;
+}
+.ml-gallery__rail {
+  display: flex;
+  min-height: 6rem;
+  border: 1px solid var(--ml-color-line);
+  border-radius: var(--ml-radius-md);
+  overflow: hidden;
+}
+.ml-gallery__rail-panel {
+  padding: var(--ml-space-3);
+  background: var(--ml-color-paper-2);
+  font-size: var(--ml-text-sm);
+}
+.ml-gallery__rail-book {
+  flex: 1;
+  padding: var(--ml-space-3);
+}

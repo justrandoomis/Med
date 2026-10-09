@@ -1,0 +1,246 @@
+/* MedLevo — base layer: reset, typography defaults, focus, selection, motion, bidi. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  font-family: var(--ml-font-ui);
+  font-size: calc(100% * var(--ml-text-scale));
+  line-height: var(--ml-leading-md);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+  background-color: var(--ml-color-canvas);
+  color: var(--ml-color-ink);
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
+  background-color: var(--ml-color-canvas);
+  color: var(--ml-color-ink);
+  font-size: var(--ml-text-md);
+  line-height: var(--ml-leading-md);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  overflow-wrap: break-word;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p,
+figure,
+blockquote,
+dl,
+dd,
+ul,
+ol {
+  margin: 0;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-weight: var(--ml-weight-semibold);
+  /* Arabic must never be letter-spaced: joined letterforms break apart. */
+  letter-spacing: 0;
+  text-wrap: balance;
+}
+
+p {
+  text-wrap: pretty;
+}
+
+ul[role='list'],
+ol[role='list'] {
+  list-style: none;
+  padding: 0;
+}
+
+img,
+svg,
+video,
+canvas {
+  display: block;
+  max-width: 100%;
+}
+
+svg {
+  flex-shrink: 0;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled,
+[aria-disabled='true'] {
+  cursor: not-allowed;
+}
+
+a {
+  color: var(--ml-color-accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+}
+
+a:hover {
+  text-decoration-thickness: 2px;
+}
+
+code,
+kbd,
+samp,
+pre {
+  font-family: var(--ml-font-mono);
+  font-size: 0.95em;
+}
+
+hr {
+  border: 0;
+  border-top: 1px solid var(--ml-color-line);
+  margin: var(--ml-space-4) 0;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+/* ── focus: always visible for keyboard users, never removed ── */
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ml-color-focus);
+  outline-offset: 2px;
+  border-radius: var(--ml-radius-sm);
+}
+
+/* Programmatic focus targets (headings after navigation, dialogs) don't need a ring. */
+[tabindex='-1']:focus:not(:focus-visible) {
+  outline: none;
+}
+
+::selection {
+  background-color: var(--ml-color-selection);
+  color: inherit;
+}
+
+/* ── motion ── */
+@media (prefers-reduced-motion: no-preference) {
+  :root:not([data-reduce-motion='on']) {
+    scroll-behavior: smooth;
+  }
+}
+
+:root[data-reduce-motion='on'] *,
+:root[data-reduce-motion='on'] *::before,
+:root[data-reduce-motion='on'] *::after {
+  animation-iteration-count: 1 !important;
+  scroll-behavior: auto !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-reduce-motion='off']) *,
+  :root:not([data-reduce-motion='off']) *::before,
+  :root:not([data-reduce-motion='off']) *::after {
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ── bidi: isolated LTR runs (terms, units, formulas, numbers) inside Arabic (§21) ── */
+bdi {
+  unicode-bidi: isolate;
+}
+
+/* English is never smaller or weaker than the Arabic around it. */
+bdi[dir='ltr'],
+.ml-ltr {
+  font-family: var(--ml-font-latin);
+  font-size: 1em;
+  font-weight: inherit;
+  font-style: inherit;
+  letter-spacing: 0;
+  font-variant-numeric: lining-nums;
+}
+
+[dir='ltr'] bdi[dir='rtl'],
+.ml-rtl-island {
+  font-family: var(--ml-font-ui);
+  font-size: 1em;
+}
+
+/* ── utilities used by the design system ── */
+.ml-visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0 0 0 0) !important;
+  clip-path: inset(50%) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+.ml-skip-link {
+  position: absolute;
+  inset-inline-start: var(--ml-space-3);
+  top: calc(var(--ml-safe-top) + var(--ml-space-2));
+  z-index: calc(var(--ml-z-tooltip) + 1);
+  padding: var(--ml-space-2) var(--ml-space-4);
+  border-radius: var(--ml-radius-md);
+  background: var(--ml-color-accent);
+  color: var(--ml-color-accent-ink);
+  font-weight: var(--ml-weight-medium);
+  text-decoration: none;
+  transform: translateY(-200%);
+}
+
+.ml-skip-link:focus-visible {
+  transform: none;
+}
+
+/* Paper surface: the warm sheet content sits on. Texture is optional and purely decorative. */
+.ml-paper {
+  background-color: var(--ml-color-paper);
+  background-image: var(--ml-paper-texture-active);
+  background-repeat: repeat;
+  border-radius: var(--ml-radius-lg);
+  box-shadow: var(--ml-shadow-paper);
+}
+
+@media print {
+  html,
+  body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+  .ml-no-print {
+    display: none !important;
+  }
+}
