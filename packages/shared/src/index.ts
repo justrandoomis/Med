@@ -16,3 +16,5 @@ export * from './studybook';
 export * from './library';
 export * from './processing';
 export * from './workspace';
+export * from './evidence-api';
+export * from './search-api';
