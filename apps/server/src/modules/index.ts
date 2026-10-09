@@ -17,6 +17,11 @@ import searchModule from './search';
 import studybookModule from './studybook';
 import questionsModule from './questions';
 import examsModule from './exams';
+import learningModule from './learning';
+import controlModule from './control';
+import dataModule from './data';
+import casesModule from './cases';
+import mediaModule from './media';
 
 export interface ModuleEntry {
   name: string;
@@ -43,4 +48,9 @@ export const MODULES: ModuleEntry[] = [
   { name: 'studybook', prefix: '/api/studybook', plugin: studybookModule },
   { name: 'questions', prefix: '/api/questions', plugin: questionsModule },
   { name: 'exams', prefix: '/api/exams', plugin: examsModule },
+  { name: 'learning', prefix: '/api/learning', plugin: learningModule },
+  { name: 'control', prefix: '/api/control', plugin: controlModule },
+  { name: 'data', prefix: '/api/data', plugin: dataModule },
+  { name: 'cases', prefix: '/api/cases', plugin: casesModule },
+  { name: 'media', prefix: '/api/media', plugin: mediaModule },
 ];

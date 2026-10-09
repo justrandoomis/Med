@@ -19,6 +19,9 @@ import { routes as planner } from '../features/planner/routes';
 import { routes as search } from '../features/search/routes';
 import { routes as control } from '../features/control/routes';
 import { routes as settings } from '../features/settings/routes';
+import { routes as offline } from '../features/offline/routes';
+import { routes as cases } from '../features/cases/routes';
+import { routes as media } from '../features/media/routes';
 
 /** Every feature's routes (see routeTypes.ts for the placement contract). */
 export const FEATURES: Record<string, FeatureRoutes> = {
@@ -37,6 +40,9 @@ export const FEATURES: Record<string, FeatureRoutes> = {
   search,
   control,
   settings,
+  offline,
+  cases,
+  media,
 };
 
 export function buildRoutes(features: Record<string, FeatureRoutes> = FEATURES): RouteObject[] {
