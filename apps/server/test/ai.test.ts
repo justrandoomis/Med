@@ -51,9 +51,11 @@ describe('AI orchestrator', () => {
     const caps = (await t.app.inject({ method: 'GET', url: '/api/capabilities', headers })).json();
     expect(caps.features['ai.explain'].state).toBe('requires_configuration');
     expect(caps.features['ai.explain'].reason_ar).toMatch(/[؀-ۿ]/);
-    // no entity type is registered yet → sync is honestly not available (see sync.test.ts)
-    expect(caps.features['sync'].state).toBe('not_implemented');
-    expect(caps.features['library']).toMatchObject({ state: 'not_implemented' });
+    // the annotations module registers its sync entity types at boot → sync is available
+    // (with no entity type registered it is not_implemented — see sync.test.ts)
+    expect(caps.features['sync'].state).toBe('available');
+    // the library module (track A1) is implemented → honestly available
+    expect(caps.features['library']).toMatchObject({ state: 'available' });
     expect(caps.features['backup'].state).toBe('not_implemented');
     expect(caps.ai).toEqual({ configured: false, budget_remaining_usd: null });
     for (const f of Object.values(caps.features) as Array<{ state: string; reason_ar?: string }>) {

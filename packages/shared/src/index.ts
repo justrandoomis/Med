@@ -13,3 +13,6 @@ export * from './annotations';
 export * from './evidence';
 export * from './questions';
 export * from './studybook';
+export * from './library';
+export * from './processing';
+export * from './workspace';

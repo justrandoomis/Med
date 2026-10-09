@@ -3,6 +3,7 @@
 // other request's statements can interleave inside BEGIN … COMMIT on the shared connection.
 import { chmodSync } from 'node:fs';
 import { DatabaseSync, type SQLInputValue, type StatementSync } from 'node:sqlite';
+import { normalizeForSearch } from '@medlevo/shared';
 
 export type SqlParams = readonly unknown[] | Readonly<Record<string, unknown>>;
 
@@ -46,6 +47,17 @@ function plain<T>(row: unknown): T {
   return row === undefined ? (undefined as T) : ({ ...(row as object) } as T);
 }
 
+/**
+ * Deterministic SQL functions available on EVERY connection (triggers and migrations call them):
+ *   ml_norm(text) → normalizeForSearch(text) — Arabic/Latin search key used by the chunk_fts triggers
+ *   (migration 0200). NULL stays NULL. Added by the processing track (docs/modules/processing.md).
+ */
+function registerSqlFunctions(raw: DatabaseSync): void {
+  raw.function('ml_norm', { deterministic: true, varargs: false }, (v: unknown) =>
+    typeof v === 'string' ? normalizeForSearch(v) : v === null || v === undefined ? null : normalizeForSearch(String(v)),
+  );
+}
+
 export interface OpenDbOptions {
   readOnly?: boolean;
 }
@@ -63,6 +75,7 @@ export function openDb(path: string, opts: OpenDbOptions = {}): Db {
   raw.exec('PRAGMA foreign_keys = ON;');
   raw.exec('PRAGMA busy_timeout = 5000;');
   raw.exec('PRAGMA synchronous = NORMAL;');
+  registerSqlFunctions(raw);
 
   const cache = new Map<string, StatementSync>();
   let depth = 0;

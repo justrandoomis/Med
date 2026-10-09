@@ -5,6 +5,7 @@ import type { SyncOp } from '@medlevo/shared';
 import { AppError } from '../src/lib/errors';
 import type { SyncEntityHandler } from '../src/modules/sync/registry';
 import { type AuthHeaders, createTestApp, type TestApp } from './helpers/app';
+import { MODULES } from '../src/modules';
 
 let t: TestApp;
 let h: AuthHeaders;
@@ -146,7 +147,9 @@ describe('sync push', () => {
 // regression: 'sync' was reported 'available' while no entity type could be synced at all
 describe('sync capability', () => {
   it('is not_implemented (with an Arabic reason) until an entity type is registered, then available', async () => {
-    const bare = await createTestApp();
+    // core modules only: feature modules (annotations, …) register their entity types at boot
+    const CORE = new Set(['auth', 'settings', 'audit', 'files', 'jobs', 'sync', 'ai']);
+    const bare = await createTestApp({ modules: MODULES.filter((m) => CORE.has(m.name)) });
     try {
       const st = bare.ctx.capabilities.get('sync');
       expect(st.state).toBe('not_implemented');

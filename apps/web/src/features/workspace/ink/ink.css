@@ -1,0 +1,559 @@
+/*
+ * Ink engine styles (features/workspace/ink). UI chrome uses design tokens only (tokens.css).
+ *
+ * Ink colour tokens are CONTENT colours (what the owner writes with). They are declared here once
+ * (values identical to palette.ts — test/ink/palette.test.ts checks it) and read by the canvas
+ * renderer through getComputedStyle on the layer. They resolve per PAPER TONE, which the layer
+ * sets on itself (data-ink-tone) from what is actually behind it: an original PDF page that stays
+ * white in the dark theme keeps light ink values; dark note paper gets the light-on-dark values.
+ * A reader can force the tone with data-ink-paper="light|dark" on an ancestor.
+ *
+ * Highlights use mix-blend-mode (multiply on light paper, screen on dark) so text under them keeps
+ * its contrast. If a wrapper between the page and the layer forms a stacking context (z-index,
+ * transform, opacity < 1 …) the blend cannot reach the page; the layer detects that
+ * (data-blend-isolated) and draws highlights lighter instead.
+ */
+.ml-ink-layer,
+.ml-ink-layer[data-ink-tone='light'] {
+  --ml-ink-c-ink-black: #1c2230;
+  --ml-ink-c-ink-blue: #2346c8;
+  --ml-ink-c-ink-red: #c62828;
+  --ml-ink-c-ink-green: #1e7a46;
+  --ml-ink-c-ink-purple: #6a3fb5;
+  --ml-ink-c-ink-orange: #b85300;
+  --ml-ink-c-hl-yellow: #ffe14d;
+  --ml-ink-c-hl-green: #9be38d;
+  --ml-ink-c-hl-pink: #ff9ccf;
+  --ml-ink-c-hl-blue: #8fd3ff;
+  --ml-ink-c-hl-orange: #ffc074;
+  --ml-ink-c-laser: #e5281b;
+  --ml-ink-highlight-blend: multiply;
+}
+.ml-ink-layer[data-ink-tone='dark'] {
+  --ml-ink-c-ink-black: #eceae4;
+  --ml-ink-c-ink-blue: #8fb0ff;
+  --ml-ink-c-ink-red: #ff8a80;
+  --ml-ink-c-ink-green: #7fd6a0;
+  --ml-ink-c-ink-purple: #c3a6ff;
+  --ml-ink-c-ink-orange: #ffb36b;
+  --ml-ink-c-hl-yellow: #7a6500;
+  --ml-ink-c-hl-green: #2f6b2a;
+  --ml-ink-c-hl-pink: #7a2f58;
+  --ml-ink-c-hl-blue: #1f5675;
+  --ml-ink-c-hl-orange: #7a4a10;
+  --ml-ink-c-laser: #ff5a4d;
+  --ml-ink-highlight-blend: screen;
+}
+.ml-ink-layer[data-blend-isolated] {
+  --ml-ink-highlight-blend: normal;
+}
+
+/* ───────────── layer ───────────── */
+.ml-ink-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* no z-index / transform / opacity here: highlights must blend with the page underneath */
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.ml-ink-layer[data-writing] {
+  pointer-events: auto;
+  /* finger writes: the browser must not pan or zoom under it */
+  touch-action: none;
+  cursor: crosshair;
+}
+/* pen-only: fingers keep scrolling / zooming natively, the stylus writes (its touch sequence is
+   cancelled in JS); a hovering stylus switches to none before it touches where supported */
+.ml-ink-layer[data-writing][data-pen-only] {
+  touch-action: pan-x pan-y pinch-zoom;
+}
+.ml-ink-layer[data-writing][data-pen-only][data-pen-near],
+.ml-ink-layer[data-writing][data-ink-active] {
+  touch-action: none;
+}
+.ml-ink-layer[data-tool='text'] {
+  cursor: text;
+}
+.ml-ink-layer[data-tool='sticky'] {
+  cursor: cell;
+}
+.ml-ink-layer[data-tool='lasso'] {
+  cursor: default;
+}
+
+.ml-ink-layer__canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+.ml-ink-layer__canvas--highlight,
+.ml-ink-layer__canvas--live.is-highlight {
+  mix-blend-mode: var(--ml-ink-highlight-blend, multiply);
+}
+
+/* ───────────── text boxes ───────────── */
+.ml-ink-text {
+  position: absolute;
+  box-sizing: border-box;
+  pointer-events: none;
+  font-family: var(--ml-font-ui);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  transform-origin: center;
+}
+.ml-ink-text p,
+.ml-ink-text ul,
+.ml-ink-text ol {
+  margin: 0;
+}
+.ml-ink-text--editable {
+  pointer-events: auto;
+  cursor: text;
+  border-radius: var(--ml-radius-xs);
+  outline: 1px dashed transparent;
+  outline-offset: 2px;
+}
+.ml-ink-text--editable:hover,
+.ml-ink-text--editable:focus-visible {
+  outline-color: var(--ml-color-accent);
+}
+.ml-ink-text-editor {
+  position: absolute;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  border: 1px dashed var(--ml-color-accent);
+  border-radius: var(--ml-radius-xs);
+  background: var(--ml-color-paper);
+  color: var(--ml-color-ink);
+  font-family: var(--ml-font-ui);
+  line-height: 1.45;
+  resize: none;
+  overflow: hidden;
+  pointer-events: auto;
+  transform-origin: center;
+}
+.ml-ink-text-editor:focus-visible {
+  outline: 2px solid var(--ml-color-focus);
+  outline-offset: 1px;
+}
+
+/* ───────────── sticky notes ───────────── */
+.ml-ink-sticky {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  transform: translate(-50%, -50%);
+  border: 1px solid var(--ml-color-line-strong);
+  border-radius: var(--ml-radius-sm);
+  background: var(--ml-ink-sticky-color, var(--ml-color-warning-soft));
+  color: var(--ml-color-ink);
+  box-shadow: var(--ml-shadow-raised);
+  pointer-events: auto;
+  cursor: pointer;
+}
+.ml-ink-sticky::before {
+  /* 44 px hit area on touch without a bigger visual */
+  content: '';
+  position: absolute;
+  inset: -8px;
+}
+.ml-ink-sticky:focus-visible {
+  outline: 2px solid var(--ml-color-focus);
+  outline-offset: 2px;
+}
+.ml-ink-sticky-card {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+  width: 15rem;
+  padding: var(--ml-space-3);
+  border-radius: var(--ml-radius-lg);
+  border-top: 4px solid var(--ml-ink-c-hl-yellow);
+  background: var(--ml-color-elevated);
+  box-shadow: var(--ml-shadow-raised);
+  pointer-events: auto;
+}
+.ml-ink-sticky-card__input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 5rem;
+  padding: var(--ml-space-2);
+  border: 1px solid var(--ml-color-control-border);
+  border-radius: var(--ml-radius-md);
+  background: var(--ml-color-paper);
+  color: var(--ml-color-ink);
+  font: inherit;
+  font-size: var(--ml-text-md);
+  line-height: var(--ml-leading-md);
+  resize: vertical;
+}
+.ml-ink-sticky-card__input:focus-visible {
+  outline: 2px solid var(--ml-color-focus);
+  outline-offset: 1px;
+}
+.ml-ink-sticky-card__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--ml-space-2);
+}
+.ml-ink-linkbtn {
+  min-height: var(--ml-control-h-sm);
+  padding: 0 var(--ml-space-2);
+  border: 0;
+  border-radius: var(--ml-radius-md);
+  background: transparent;
+  color: var(--ml-color-accent);
+  font: inherit;
+  font-size: var(--ml-text-sm);
+  font-weight: var(--ml-weight-medium);
+  cursor: pointer;
+}
+.ml-ink-linkbtn:hover {
+  background: var(--ml-color-fill);
+}
+.ml-ink-linkbtn:focus-visible {
+  outline: 2px solid var(--ml-color-focus);
+}
+.ml-ink-linkbtn--danger {
+  color: var(--ml-color-danger);
+}
+@media (pointer: coarse) {
+  .ml-ink-linkbtn {
+    min-height: var(--ml-touch-target);
+  }
+}
+
+/* ───────────── lasso selection ───────────── */
+.ml-ink-selection {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1.5px dashed var(--ml-color-accent);
+  border-radius: var(--ml-radius-xs);
+  background: var(--ml-color-selection);
+  pointer-events: auto;
+  touch-action: none;
+  cursor: move;
+}
+.ml-ink-selection[data-locked] {
+  cursor: default;
+  border-style: dotted;
+}
+.ml-ink-selection__rotate,
+.ml-ink-selection__lock {
+  position: absolute;
+  top: -34px;
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  transform: translateX(-50%);
+  border: 1.5px solid var(--ml-color-accent);
+  border-radius: var(--ml-radius-pill);
+  background: var(--ml-color-elevated);
+  color: var(--ml-color-accent);
+  touch-action: none;
+}
+.ml-ink-selection__rotate {
+  cursor: grab;
+}
+.ml-ink-selection__rotate::before,
+.ml-ink-handle::before {
+  content: '';
+  position: absolute;
+  inset: -12px;
+}
+.ml-ink-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  box-sizing: border-box;
+  border: 2px solid var(--ml-color-accent);
+  border-radius: var(--ml-radius-pill);
+  background: var(--ml-color-paper);
+  pointer-events: auto;
+  touch-action: none;
+  cursor: nwse-resize;
+}
+.ml-ink-selbar {
+  position: absolute;
+  z-index: 3;
+  transform: translateX(-50%);
+  padding: 2px var(--ml-space-1);
+  border-radius: var(--ml-radius-lg);
+  background: var(--ml-color-elevated);
+  box-shadow: var(--ml-shadow-raised);
+  pointer-events: auto;
+  white-space: nowrap;
+}
+
+/* ───────────── toolbar ───────────── */
+.ml-ink-toolbar {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.ml-ink-toolbar .ml-toolbar {
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+.ml-ink-toolbar__sep {
+  flex: none;
+  width: 1px;
+  height: 1.25rem;
+  margin: 0 var(--ml-space-1);
+  background: var(--ml-color-line-strong);
+}
+.ml-ink-toolbar__error {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ml-space-1);
+}
+.ml-ink-tip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ml-space-2);
+}
+.ml-ink-tip--stack {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--ml-space-1);
+  max-width: 16rem;
+}
+.ml-ink-tip__note {
+  font-size: var(--ml-text-xs);
+  line-height: var(--ml-leading-xs);
+  white-space: normal;
+}
+
+.ml-ink-swatch {
+  display: inline-block;
+  width: 1.125rem;
+  height: 1.125rem;
+  border-radius: var(--ml-radius-pill);
+  /* ≥ 3:1 outline so dark ink stays visible on a dark popover */
+  box-shadow: inset 0 0 0 1px var(--ml-color-control-border);
+}
+.ml-ink-swatch--sm {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+
+/* options popover */
+.ml-ink-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-4);
+  min-width: 15rem;
+}
+.ml-ink-options__group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+}
+.ml-ink-options__note {
+  margin: 0;
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-sm);
+  line-height: var(--ml-leading-sm);
+}
+.ml-ink-colors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ml-space-2);
+}
+.ml-ink-color {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--ml-control-h-md);
+  height: var(--ml-control-h-md);
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: var(--ml-radius-pill);
+  background: transparent;
+  cursor: pointer;
+}
+.ml-ink-color .ml-ink-swatch {
+  width: 1.5rem;
+  height: 1.5rem;
+}
+.ml-ink-color[aria-checked='true'],
+.ml-ink-color--custom[data-checked] {
+  border-color: var(--ml-color-accent);
+  border-style: solid;
+}
+.ml-ink-color:focus-visible,
+.ml-ink-color--custom:has(:focus-visible) {
+  outline: 2px solid var(--ml-color-focus);
+  outline-offset: 2px;
+}
+.ml-ink-color--custom {
+  border-style: dashed;
+  border-color: var(--ml-color-control-border);
+}
+.ml-ink-color--custom input {
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ml-radius-pill);
+  background: none;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.ml-ink-color--custom input::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+.ml-ink-color--custom input::-webkit-color-swatch {
+  border: 0;
+  border-radius: var(--ml-radius-pill);
+}
+.ml-ink-color--custom input::-moz-color-swatch {
+  border: 0;
+  border-radius: var(--ml-radius-pill);
+}
+@media (pointer: coarse) {
+  .ml-ink-color {
+    width: var(--ml-touch-target);
+    height: var(--ml-touch-target);
+  }
+}
+.ml-ink-width {
+  display: flex;
+  align-items: center;
+  gap: var(--ml-space-3);
+}
+.ml-ink-width input[type='range'] {
+  flex: 1;
+  min-height: var(--ml-control-h-md);
+  accent-color: var(--ml-color-accent);
+}
+.ml-ink-width__preview {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 1.75rem;
+}
+.ml-ink-width__preview > span {
+  display: block;
+  width: 100%;
+  border-radius: var(--ml-radius-pill);
+}
+
+/* ───────────── capability panel ───────────── */
+.ml-ink-caps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-4);
+}
+.ml-ink-caps__device {
+  margin: 0;
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-sm);
+}
+.ml-ink-caps__test {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--ml-space-3);
+  align-items: stretch;
+}
+.ml-ink-caps__pad {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 7rem;
+  border: 1.5px dashed var(--ml-color-control-border);
+  border-radius: var(--ml-radius-lg);
+  background: var(--ml-color-paper-2);
+  color: var(--ml-color-ink-3);
+  font-size: var(--ml-text-sm);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.ml-ink-caps__readout {
+  display: grid;
+  grid-template-columns: max-content max-content;
+  justify-content: start;
+  gap: 2px var(--ml-space-3);
+  margin: 0;
+  font-size: var(--ml-text-sm);
+  align-content: center;
+}
+.ml-ink-caps__readout > div {
+  display: contents;
+}
+.ml-ink-caps__readout dt {
+  color: var(--ml-color-ink-2);
+}
+.ml-ink-caps__readout dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.ml-ink-caps__list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-radius: var(--ml-radius-lg);
+  background: var(--ml-color-paper-2);
+}
+.ml-ink-caps__row {
+  padding: var(--ml-space-3) var(--ml-space-4);
+  border-bottom: 1px solid var(--ml-color-line);
+}
+.ml-ink-caps__row:last-child {
+  border-bottom: 0;
+}
+.ml-ink-caps__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ml-space-3);
+  flex-wrap: wrap;
+}
+.ml-ink-caps__label {
+  font-weight: var(--ml-weight-medium);
+}
+.ml-ink-caps__detail {
+  margin: var(--ml-space-1) 0 0;
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-sm);
+  line-height: var(--ml-leading-sm);
+}
+.ml-ink-caps__honesty {
+  margin: 0;
+  padding: var(--ml-space-3) var(--ml-space-4);
+  border-inline-start: 3px solid var(--ml-color-warning);
+  border-radius: var(--ml-radius-md);
+  background: var(--ml-color-warning-soft);
+  color: var(--ml-color-ink);
+  font-size: var(--ml-text-sm);
+  line-height: var(--ml-leading-sm);
+}
+@media (max-width: 30rem) {
+  .ml-ink-caps__test {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,0 +1,86 @@
+/* Upload screen (tokens only). */
+.ml-upload__dest {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ml-space-3);
+}
+.ml-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--ml-space-3);
+  padding: var(--ml-space-6) var(--ml-space-4);
+  border: 1.5px dashed var(--ml-color-control-border);
+  color: var(--ml-color-ink-2);
+  text-align: center;
+}
+.ml-dropzone[data-over='true'] {
+  border-color: var(--ml-color-accent);
+  background-color: var(--ml-color-accent-soft);
+  color: var(--ml-color-accent-soft-ink);
+}
+.ml-dropzone__title {
+  font-size: var(--ml-text-lg);
+  font-weight: var(--ml-weight-medium);
+  color: var(--ml-color-ink);
+}
+.ml-dropzone__formats {
+  max-width: 34rem;
+  font-size: var(--ml-text-sm);
+  line-height: var(--ml-leading-sm);
+}
+.ml-upload__item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+  padding: var(--ml-space-3) var(--ml-space-4);
+}
+.ml-upload__item + .ml-upload__item {
+  border-top: 1px solid var(--ml-color-line);
+}
+.ml-upload__head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ml-space-2);
+}
+.ml-upload__head .ml-row__text {
+  flex: 1;
+}
+.ml-upload__detail {
+  white-space: normal;
+}
+.ml-upload__row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-2);
+}
+.ml-upload__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-3);
+  margin-top: var(--ml-space-4);
+}
+.ml-upload__entries {
+  font-size: var(--ml-text-sm);
+  color: var(--ml-color-ink-2);
+}
+.ml-upload__entries summary {
+  cursor: pointer;
+  min-height: 2rem;
+}
+.ml-upload__entries ul {
+  margin: var(--ml-space-1) 0 0;
+  padding-inline-start: var(--ml-space-5);
+}
+.ml-upload__processing {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+  padding: var(--ml-space-2) var(--ml-space-3);
+  border-radius: var(--ml-radius-md);
+  background: var(--ml-color-paper-2);
+}
+
