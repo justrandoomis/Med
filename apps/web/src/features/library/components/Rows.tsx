@@ -11,6 +11,7 @@ import { countAr, formatIcon, NOUN, ProcessingPill, SourceSubtitle } from '../la
 import { type LibraryIndex, subtreeCounts } from '../model';
 import { folderTone, libraryIcon } from './Cover';
 import { NodeMenu, SourceMenu } from './ItemMenus';
+import { OnDeviceBadge } from '../../offline/OnDevice';
 
 type Dnd = ReturnType<typeof useLibraryDnd>;
 
@@ -82,6 +83,7 @@ export function SourceRow({
           <span className="ml-row__sub">{meta ?? <SourceSubtitle source={source} />}</span>
           <span className="ml-row__status">
             <ProcessingPill status={source.processing_status} format={source.format} />
+            <OnDeviceBadge sourceId={source.id} />
             {source.tags.slice(0, 3).map((t) => (
               <StatusPill key={t.id} tone="neutral" icon={false}>
                 <bdi>{t.name}</bdi>

@@ -25,11 +25,20 @@ export function fetchPages(sourceId: string, versionId: string, signal?: AbortSi
 
 const regionCache = new Map<string, Promise<PageRegionsResponse>>();
 
-/** Regions of one page (cached for the app session; a failed request is not cached). */
+/**
+ * Regions the reader may show, select, search or cite: a region the owner superseded with a correction (status
+ * 'rejected', control/corrections.ts) keeps its text verbatim on the server for existing citations, but it is never
+ * listed, overlaid or used again in the workspace.
+ */
+export function readerRegions(res: PageRegionsResponse): PageRegionsResponse {
+  return res.regions.some((r) => r.status === 'rejected') ? { ...res, regions: res.regions.filter((r) => r.status !== 'rejected') } : res;
+}
+
+/** Regions of one page without superseded ones (cached for the app session; a failed request is not cached). */
 export function fetchRegions(pageId: string): Promise<PageRegionsResponse> {
   let p = regionCache.get(pageId);
   if (!p) {
-    p = api.get<PageRegionsResponse>(`/sources/pages/${encodeURIComponent(pageId)}/regions`, { timeoutMs: 30_000 });
+    p = api.get<PageRegionsResponse>(`/sources/pages/${encodeURIComponent(pageId)}/regions`, { timeoutMs: 30_000 }).then(readerRegions);
     regionCache.set(pageId, p);
     p.catch(() => regionCache.delete(pageId));
   }

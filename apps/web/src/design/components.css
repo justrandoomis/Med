@@ -367,6 +367,15 @@
 .ml-switch:disabled {
   cursor: not-allowed;
 }
+@media (pointer: coarse) {
+  /* the 51×31 switch keeps its look; a transparent ring makes its touch target 45px tall (critic round; the inset
+     counts from the padding box, inside the 1px border) */
+  .ml-switch::before {
+    content: '';
+    position: absolute;
+    inset: -8px -2px;
+  }
+}
 
 /* checkbox */
 .ml-checkbox {
@@ -488,8 +497,11 @@
   opacity: 0.45;
 }
 @media (pointer: coarse) {
-  .ml-segmented__option {
-    min-height: 2.5rem;
+  /* 44px touch targets (ARCHITECTURE §4) — the small variant too: its 1.875rem used to win on specificity and left
+     30px-tall options on phones (critic round) */
+  .ml-segmented__option,
+  .ml-segmented--sm .ml-segmented__option {
+    min-height: var(--ml-touch-target);
   }
 }
 
@@ -1312,6 +1324,12 @@
   font-weight: var(--ml-weight-medium);
   white-space: nowrap;
   color: var(--ml-color-ink-2);
+}
+@media (pointer: coarse) {
+  /* it opens the sync details: a 44px touch target like every other control (critic round) */
+  button.ml-save-status {
+    min-height: var(--ml-touch-target);
+  }
 }
 .ml-save-status__icon {
   display: inline-flex;

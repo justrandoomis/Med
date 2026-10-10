@@ -92,6 +92,25 @@ export interface ParseResult {
   keys: ParsedKey[];
   sections: ParsedSection[];
   keyBlocks: KeyBlockInfo[];
+  /** lines under an answer-key heading that look like keys in a layout the parser cannot read (reported, never guessed) */
+  unreadKeyLines?: UnreadKeyLine[];
+}
+
+export interface UnreadKeyLine {
+  text: string;
+  line: ParserLine;
+  /** the key heading as printed */
+  heading: string | null;
+}
+
+/** Numbers and option letters only, in an unknown key layout («1 ➜ B», «Q1 is B», «1: B Q2: C») — not a question. */
+function looksLikeUnreadKey(text: string): boolean {
+  if (text.length > 160) return false;
+  const pairs = [...text.matchAll(/[0-9٠-٩]{1,3}\s*\S{0,3}\s*\(?(?:[A-Ha-h]|أ|ب|ج|د|هـ|ه|و)\)?(?![\p{L}\p{N}])/gu)].length;
+  if (pairs === 0) return false;
+  // a real question start carries a stem («1. Which …»), not one letter
+  const words = text.replace(/[0-9٠-٩]+/g, ' ').split(/[^\p{L}]+/u).filter((w) => w.length > 2);
+  return words.length <= pairs;
 }
 
 // ───────── line patterns ─────────
@@ -106,7 +125,9 @@ const AR_ORDINALS: Record<string, string> = {
 const INLINE_KEY = /^(?:answer|ans\.?|correct\s+answer|key)\s*[:：\-–]\s*\(?([A-Ha-h]|[0-9]{1,2})\)?\s*\.?\s*$/i;
 const INLINE_KEY_AR = /^(?:ال)?[إا]جاب(?:ة)?(?:\s+الصحيحة)?\s*[:：\-–]\s*\(?(أ|ا|ب|ج|د|هـ|ه|و|[A-Ha-h])\)?\s*\.?\s*$/u;
 const EXPLANATION = /^(?:explanation|rationale|comment|الشرح|التعليل|التفسير)\s*[:：\-–]\s*(.*)$/iu;
-const KEY_PAIR = /([0-9٠-٩]{1,3})\s*[.)\-:–]?\s*\(?([A-Ha-h]|أ|ب|ج|د|هـ|ه|و)\)?(?![\p{L}\p{N}])/gu;
+// «1. B», «1-B», «1(B)», and (G4 / AC-12) «Q1: B», «Question 1 = B», «1 → B», «س1: ب» — such keys were not read, and
+// «Q1: B Q2: C» even became a bogus question «B Q2: C» while every real question showed «no key»
+const KEY_PAIR = /(?:(?:[Qq](?:uestion)?|(?:ال)?سؤال|س)\s*\.?\s*)?([0-9٠-٩]{1,3})\s*(?:[.)\-:–=]|→|⇒|->)?\s*\(?([A-Ha-h]|أ|ب|ج|د|هـ|ه|و)\)?(?![\p{L}\p{N}])/gu;
 
 interface QStart {
   n: number;
@@ -176,8 +197,12 @@ function parseOptionStart(text: string): OptStart | null {
   if (m && !m[2]!.includes(')')) return mk(m[1]!, m[2]!, 'circled_option', 'open_bracket');
   m = /^([A-H])\s*[.)\]:]\s*(\S.*)$/.exec(t) ?? /^([a-h])\s*[.)\]:]\s+(\S.*)$/.exec(t);
   if (m) return mk(m[1]!, m[2]!, null, null);
-  m = /^\(?\s*(أ|ا|ب|ج|د|هـ|ه|و)\s*[.)\-:]\s*(\S.*)$/u.exec(t);
-  if (m) return mk(m[1]!, m[2]!, null, null);
+  m = /^(\(?)\s*(أ|ا|ب|ج|د|هـ|ه|و)\s*([.)\-:])\s*(\S.*)$/u.exec(t);
+  if (m) {
+    // «(ب. …»: an opening bracket closed by something else — the OCR reading of a hand-drawn circle (G3 / AC-13)
+    const circled = m[1] === '(' && m[3] !== ')' && !m[4]!.includes(')');
+    return mk(m[2]!, m[4]!, circled ? 'circled_option' : null, circled ? 'open_bracket' : null);
+  }
   return null;
 
   function mk(label: string, rest: string, mark: OptStart['mark'], markReason: string | null): OptStart | null {
@@ -259,12 +284,40 @@ function sectionKeyFrom(label: string): string {
 
 function parseSectionHeader(text: string): { key: string; title: string; rest: string } | null {
   const t = stripBidiControls(text).trim();
-  if (t.length > 90) return null;
-  let m = SECTION_EN.exec(t);
-  if (m) return { key: sectionKeyFrom(m[1]!), title: t, rest: m[2]!.replace(/^[\s:—–\-]+/, '') };
-  m = SECTION_AR.exec(t);
-  if (m) return { key: sectionKeyFrom(m[1]!), title: t, rest: m[2]!.replace(/^[\s:—–\-]+/, '') };
-  return null;
+  const m = SECTION_EN.exec(t) ?? SECTION_AR.exec(t);
+  if (!m) return null;
+  const rest = m[2]!.replace(/^[\s:—–\-]+/, '');
+  // a long line is a section header only when it is a section's key run («Section 3: 1. B 2. C … 40. D», G4 / AC-12)
+  if (t.length > 90 && !parseKeyPairs(rest)) return null;
+  return { key: sectionKeyFrom(m[1]!), title: t, rest };
+}
+
+/** Where a section label followed by «:» / «—» starts inside a line (EN «Section B:», AR «القسم الثاني:»). */
+const SECTION_LABEL_AT =
+  /(?:^|\s)(?=(?:section|part|unit|paper|block)\s*[-–:.]?\s*(?:[A-Z]|[IVX]{1,4}|\d{1,2})(?![A-Za-z0-9])\s*[:\-–—]|(?:القسم|الجزء|المجموعة)\s*[-–:.]?\s*[^\s:—–\-]+\s*[:\-–—])/giu;
+
+/**
+ * Several section-labelled key runs printed on ONE line, or merged into one region by the layout
+ * («Section B: 1. C 2. B 3. A Section A: 1. B 2. D», «Answer Key: القسم الأول: 1. ب … القسم الثاني: 1. ج …») → one line
+ * per section, so each run keeps its own section (G4 / AC-12: such a line was dropped whole and every question stayed
+ * «missing key»). The line is left unchanged unless EVERY run is «<section label>: <key pairs>» (and the text before
+ * the first run, if any, is an answer-key heading).
+ */
+export function splitSectionKeyRuns(line: string): string[] {
+  const text = stripBidiControls(line).trim();
+  const starts: number[] = [];
+  for (const m of text.matchAll(SECTION_LABEL_AT)) starts.push((m.index ?? 0) + m[0].length);
+  if (starts.length < 2) return [line];
+  const runs = starts.map((at, i) => text.slice(at, starts[i + 1]).trim());
+  const allKeyRuns = runs.every((r) => {
+    const m = SECTION_EN.exec(r) ?? SECTION_AR.exec(r);
+    return !!m && !!parseKeyPairs(m[2]!.replace(/^[\s:—–\-]+/, ''));
+  });
+  if (!allKeyRuns) return [line];
+  const prefix = text.slice(0, starts[0]).trim();
+  if (!prefix) return runs;
+  const kh = parseKeyHeading(prefix);
+  return kh && !kh.rest ? [prefix, ...runs] : [line];
 }
 
 function parseKeyHeading(text: string): { sectionLabel: string | null; rest: string } | null {
@@ -371,6 +424,7 @@ export function parseQuestions(input: ParserLine[]): ParseResult {
   const questions: ParsedQuestion[] = [];
   const keys: ParsedKey[] = [];
   const keyBlocks: KeyBlockInfo[] = [];
+  const unreadKeyLines: UnreadKeyLine[] = [];
 
   let section: ParsedSection = { key: '', title: null, ordinal: 1, implicit: true };
   sections.push(section);
@@ -581,7 +635,7 @@ export function parseQuestions(input: ParserLine[]): ParseResult {
       continue;
     }
 
-    for (const rawLine of line0.text.split('\n')) {
+    for (const rawLine of line0.text.split('\n').flatMap(splitSectionKeyRuns)) {
       const text = stripBidiControls(rawLine).trim();
       if (!text) continue;
       const line: ParserLine = { ...line0, text };
@@ -628,6 +682,14 @@ export function parseQuestions(input: ParserLine[]): ParseResult {
         const pairs = parseKeyPairs(text);
         if (pairs) {
           handleKeyPairs(pairs, line, keySection, keySectionTitle, text);
+          continue;
+        }
+        // a line right under an answer-key heading that still holds nothing but numbers and option letters in an
+        // unknown layout («1 ➜ B», «Q1 is B»): reported as an unread key (G4 / AC-12, AC-14 — the questions must not
+        // silently read «no key» while a key is printed), never turned into a question
+        const block = currentBlock as KeyBlockInfo | null;
+        if (!pendingSection && block && block.title !== null && !keys.some((k) => k.keyBlock === block.ordinal) && looksLikeUnreadKey(text)) {
+          unreadKeyLines.push({ text, line, heading: block.title });
           continue;
         }
         // anything else ends the key block (a new question, or prose); a bare section header just before
@@ -825,7 +887,7 @@ export function parseQuestions(input: ParserLine[]): ParseResult {
   for (const k of keys) if (!renumber.has(k.keyBlock)) renumber.set(k.keyBlock, renumber.size + 1);
   for (const k of keys) k.keyBlock = renumber.get(k.keyBlock)!;
   const blocks = keyBlocks.filter((b) => renumber.has(b.ordinal)).map((b) => ({ ...b, ordinal: renumber.get(b.ordinal)! }));
-  return { questions, keys, sections: sections.filter((sec) => questions.some((q) => q.sectionKey === sec.key)), keyBlocks: blocks };
+  return { questions, keys, sections: sections.filter((sec) => questions.some((q) => q.sectionKey === sec.key)), keyBlocks: blocks, unreadKeyLines };
 }
 
 /** "Which …? A. x B. y" written on one line → stem + options. */

@@ -5,8 +5,12 @@
 //  * retryable failures re-queue with exponential backoff until max_attempts; fatal ones fail at once
 //  * timeouts abort the run via AbortSignal (retryable)
 //  * cancel never deletes checkpoints or outputs
-//  * running jobs whose heartbeat is stale (process died) are re-queued on boot and while running
+//  * running jobs whose heartbeat is stale (process died) are re-queued on boot and while running; a job whose
+//    claiming process is provably gone (same host, its pid no longer exists — or our own pid with another boot nonce,
+//    e.g. pid 1 in a restarted container) is re-queued at once instead of waiting for the heartbeat to go stale
 //  * idempotency_key → enqueue returns the existing job instead of creating a duplicate
+import { randomBytes } from 'node:crypto';
+import { hostname } from 'node:os';
 import type { FastifyBaseLogger } from 'fastify';
 import type { z } from 'zod';
 import { JOB_STATUS_LABELS_AR, type JobProgress, type JobStatus, type JobView } from '@medlevo/shared';
@@ -96,6 +100,8 @@ interface JobRow {
   heartbeat_at: number | null;
   finished_at: number | null;
   cancel_requested_at: number | null;
+  /** '<hostname>/<pid>/<boot nonce>' of the process that claimed the job (migration 0030; NULL on older rows) */
+  worker_id?: string | null;
   checkpoints?: number;
 }
 
@@ -147,6 +153,10 @@ export class JobQueue {
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private started = false;
   private readonly opts: Required<JobQueueOptions>;
+  private readonly host = hostname();
+  private readonly bootNonce = randomBytes(6).toString('hex');
+  /** recorded on every job this process claims: '<hostname>/<pid>/<boot nonce>' */
+  readonly workerId = `${this.host}/${process.pid}/${this.bootNonce}`;
 
   constructor(
     private readonly db: Db,
@@ -155,6 +165,26 @@ export class JobQueue {
     opts: JobQueueOptions,
   ) {
     this.opts = { backoffBaseMs: 2000, backoffMaxMs: 5 * 60_000, shutdownGraceMs: 10_000, ...opts };
+  }
+
+  /**
+   * Is the process that claimed a running job certainly gone? Only provable on this host: its pid no longer exists,
+   * or it is our own pid with another boot nonce (a restarted container reuses pid 1). Unknown owners (NULL, another
+   * host, a live pid — even a reused one) are not provably gone: they keep the heartbeat rule.
+   */
+  private claimerGone(workerId: string | null | undefined): boolean {
+    if (!workerId || workerId === this.workerId) return false;
+    const parts = workerId.split('/');
+    if (parts.length !== 3 || parts[0] !== this.host) return false;
+    const pid = Number(parts[1]);
+    if (!Number.isInteger(pid) || pid <= 0) return false;
+    if (pid === process.pid) return parts[2] !== this.bootNonce;
+    try {
+      process.kill(pid, 0); // signal 0: existence check only
+      return false;
+    } catch (e) {
+      return (e as NodeJS.ErrnoException).code === 'ESRCH'; // EPERM = exists (another user's process)
+    }
   }
 
   // ───────── registration & enqueue ─────────
@@ -372,17 +402,20 @@ export class JobQueue {
     throw new Error('JobQueue.drain exceeded maxRuns');
   }
 
-  /** Re-queue running jobs whose heartbeat is stale (their process died). Returns the count. */
+  /** Re-queue running jobs whose process died: heartbeat stale, or the claiming process provably gone. Returns the count. */
   requeueStale(): number {
     const now = this.clock.now();
     const threshold = now - this.opts.staleAfterMs;
     const rows = this.db.all<JobRow>(
-      `SELECT * FROM processing_job WHERE status = 'running' AND (heartbeat_at IS NULL OR heartbeat_at < ?)`,
-      [threshold],
+      `SELECT * FROM processing_job WHERE status = 'running'
+         AND (heartbeat_at IS NULL OR heartbeat_at < ? OR (worker_id IS NOT NULL AND worker_id <> ?))`,
+      [threshold, this.workerId],
     );
     let n = 0;
     for (const r of rows) {
       if (this.active.has(r.id)) continue;
+      const stale = r.heartbeat_at === null || r.heartbeat_at < threshold;
+      if (!stale && !this.claimerGone(r.worker_id)) continue; // a live (or unknown) process may still be running it
       n++;
       if (r.cancel_requested_at) {
         this.db.run(
@@ -451,11 +484,11 @@ export class JobQueue {
     if (kinds.length === 0) return undefined;
     const now = this.clock.now();
     return this.db.get<JobRow>(
-      `UPDATE processing_job SET status = 'running', attempts = attempts + 1, started_at = ?, heartbeat_at = ?, finished_at = NULL
+      `UPDATE processing_job SET status = 'running', attempts = attempts + 1, started_at = ?, heartbeat_at = ?, finished_at = NULL, worker_id = ?
        WHERE id = (SELECT id FROM processing_job WHERE status = 'queued' AND run_after <= ? AND kind IN (${kinds.map(() => '?').join(',')})
                    ORDER BY run_after, id LIMIT 1)
        RETURNING *`,
-      [now, now, now, ...kinds],
+      [now, now, this.workerId, now, ...kinds],
     );
   }
 

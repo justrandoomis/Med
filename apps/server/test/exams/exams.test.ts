@@ -3,6 +3,7 @@
 // names), attempts via sync (idempotent, pinned versions, AC-26), policy immutability, timer/pause, hints and
 // confidence signals (AC-27 data), mistake types (auto + owner edit), results with denominators, history.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { EXAM_ITEM_ORIGIN_LABELS_AR } from '@medlevo/shared';
 import type {
   AttemptFeedbackView,
   ExamAttemptDTO,
@@ -166,10 +167,13 @@ describe('builder (§39, AC-14, AC-17)', () => {
 describe('delivery without leaks (AC-19)', () => {
   it('items carry no key, explanation, source, section, page, link reason or evidence', async () => {
     const r = await createExam(t, { mode: 'exam', count: 50, source_ids: [t.qs.sourceId, t.prev.sourceId, t.lecture.sourceId] });
-    const allowed = ['index', 'question_id', 'question_version_id', 'qtype', 'stem', 'options', 'has_negation', 'negation_terms', 'media', 'scored'];
+    // origin_type + a generic origin label (I1 #5): the KIND of origin only — never the question source's name
+    const allowed = ['index', 'question_id', 'question_version_id', 'qtype', 'stem', 'options', 'has_negation', 'negation_terms', 'media', 'scored', 'origin_type', 'origin_label_ar'];
     for (const item of r.session.items) {
       expect(Object.keys(item).sort()).toEqual([...allowed].sort());
       for (const o of item.options) expect(Object.keys(o).sort()).toEqual(['display_label', 'id', 'text']);
+      expect(item.origin_type).toBe('source');
+      expect(item.origin_label_ar).toBe(EXAM_ITEM_ORIGIN_LABELS_AR.source);
     }
     const body = JSON.stringify(r.session.items);
     for (const leak of ['correct_option', 'explanation', 'distractor', 'answer_status', 'source_key', 'Section A', 'Abdominal pain', 'Surgery Course 1 Questions', 'Previous exam', 'lecture', 'reason', 'evidence', 'claim', 'region', 'page_id', 'source_label', 'occurrence']) {

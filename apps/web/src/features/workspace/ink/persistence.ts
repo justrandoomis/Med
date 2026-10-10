@@ -141,6 +141,9 @@ export function createAnnotationApplier(now: () => number = Date.now): SyncAppli
         return null;
       }
       if (existing?.rev != null && typeof dto.rev === 'number' && dto.rev < existing.rev) return null;
+      // the same server revision is already here (e.g. seeded by the reader's download when the document opened):
+      // nothing to write — rewriting 5 000 identical strokes one by one cost a repaint and a live-query run each (I2)
+      if (existing && existing.syncState === 'synced' && existing.rev != null && dto.rev === existing.rev && !!existing.deletedAt === !!dto.deleted_at) return null;
       const row = rowFromItem(dto, { syncState: 'synced', updatedAt: dto.updated_at ?? now(), rev: dto.rev ?? null });
       await db.annotations.put(row);
       const keys = new Set([row.targetKey]);

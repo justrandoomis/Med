@@ -6,7 +6,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffec
 import type { SourcePageView } from '@medlevo/shared';
 import { cx } from '../../../design';
 import { clampZoom, fitWidthZoom } from '../model/zoom';
-import { ANCHOR_LINE, anchorAt, layoutContinuous, layoutSpread, pagesInRange, spreadOf, type Layout, type PageBox } from './geometry';
+import { ANCHOR_LINE, anchorAt, layoutContinuous, layoutSpread, pagesInRange, readingLineY, spreadOf, type Layout, type PageBox } from './geometry';
 import { PageView } from './PageView';
 import { SwipeTracker } from './swipe';
 import { useReaderPage, type MeasuredSize } from './readerContext';
@@ -217,7 +217,7 @@ export const BookCanvas = forwardRef<BookCanvasHandle, BookCanvasProps>(function
     if (!el || !restored.current) return;
     if (flow) {
       const sections = Array.from(el.querySelectorAll<HTMLElement>('[data-page-index]'));
-      const line = el.scrollTop + el.clientHeight * ANCHOR_LINE;
+      const line = readingLineY(el.scrollTop, el.clientHeight, el.scrollHeight);
       let hit = sections[0];
       for (const s of sections) if (s.offsetTop <= line) hit = s;
       if (hit) {
@@ -229,7 +229,7 @@ export const BookCanvas = forwardRef<BookCanvasHandle, BookCanvasProps>(function
       return;
     }
     if (!geometry) return;
-    const a = anchorAt(geometry, el.scrollTop + el.clientHeight * ANCHOR_LINE);
+    const a = anchorAt(geometry, layout === 'continuous' ? readingLineY(el.scrollTop, el.clientHeight, el.scrollHeight) : el.scrollTop + el.clientHeight * ANCHOR_LINE);
     locRef.current = layout === 'continuous' ? { pageIndex: a.index, frac: a.frac } : { pageIndex: spread.includes(locRef.current.pageIndex) ? locRef.current.pageIndex : (spread[0] ?? 0), frac: a.frac };
     onLocation(locRef.current);
     computeNear();

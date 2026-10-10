@@ -120,7 +120,10 @@ export function useVersionDocument(detail: SourceDetail | null, versionId: strin
           pdf?.destroy();
           return;
         }
-        const sorted = [...pages].sort((a, b) => a.page_index - b.page_index);
+        // an unnumbered page among numbered ones is named by its file position (AC-04); cached answers from before
+        // the server sent the flag get it here
+        const numbered = pages.some((p) => p.kind === 'page' && !!p.printed_label);
+        const sorted = [...pages].sort((a, b) => a.page_index - b.page_index).map((p) => (p.numbered_version === undefined ? { ...p, numbered_version: numbered } : p));
         setState({ status: 'ready', doc: { detail, version, pages: sorted, mode, pdf, pdfError } });
       } catch (e) {
         if (cancelled || ctrl.signal.aborted) return;

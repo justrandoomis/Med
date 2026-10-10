@@ -18,6 +18,7 @@ export const AI_DEPENDENT_FEATURES: ReadonlySet<FeatureKey> = new Set<FeatureKey
   'ai.generate_questions',
   'ai.grade_written',
   'ai.cases',
+  'ai.answer_check',
   'processing.vision',
 ]);
 

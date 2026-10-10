@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Bookmark, BookmarkMinus, BookmarkPlus, MapPin, NotebookPen, Pencil, Trash2 } from 'lucide-react';
 import {
   detectDir,
+  newId,
   richTextFromPlain,
   richTextToPlain,
   segmentRuns,
@@ -20,6 +21,7 @@ import { useEntitySyncState } from '../../../lib/sync';
 import { fetchNeedsReanchor, fetchNotes } from '../data/api';
 import { useAnnotationsOfKind, useLocalNeedsReanchor, useNotes } from '../data/hooks';
 import { createAnnotation, deleteAnnotation, deleteNote, mergeServerNotes, saveNote, type WorkspaceNoteRow } from '../data/local';
+import { clearNoteDraft, writeNoteDraft } from '../data/noteDrafts';
 import type { SourceDocument } from '../data/useSourceDocument';
 import { fullPageLabel } from '../model/pages';
 
@@ -158,7 +160,7 @@ function NotesSection({ doc, pageIndex, pageKeys, draft, onDraftConsumed, anchor
   );
 }
 
-function NoteCard({ note, pageLabel, onEdit, onGo }: { note: WorkspaceNoteRow; pageLabel: string | null; onEdit: () => void; onGo: (() => void) | null }) {
+export function NoteCard({ note, pageLabel, onEdit, onGo }: { note: WorkspaceNoteRow; pageLabel: string | null; onEdit: () => void; onGo: (() => void) | null }) {
   const state = useEntitySyncState('note', note.id);
   const [confirm, setConfirm] = useState(false);
   return (
@@ -172,6 +174,8 @@ function NoteCard({ note, pageLabel, onEdit, onGo }: { note: WorkspaceNoteRow; p
           <span />
         )}
         {note.conflictOfId && <StatusPill tone="warning">نسخة محفوظة من تعارض</StatusPill>}
+        {/* §28: a saved AI answer stays visibly generated in the list, even if its own label paragraph was edited away */}
+        {note.origin === 'ai_answer' && <StatusPill tone="info">إجابة مولَّدة محفوظة — ليست مصدرًا</StatusPill>}
         <SaveStatus state={state ?? 'synced'} compact />
       </div>
       <RichTextView value={note.body as RichText} variant="ui" className="wk-note__body" />
@@ -203,7 +207,9 @@ function NoteCard({ note, pageLabel, onEdit, onGo }: { note: WorkspaceNoteRow; p
  * Note editor: every change is written to this device (debounced) and synced through the outbox.
  * Writing is never lost: the last keystrokes are flushed when the editor closes for any reason (another
  * note opened, the rail tab or sheet closed, the reader left), and saves run one after another so a
- * new note is created once — never twice by two overlapping saves.
+ * new note is created once — never twice by two overlapping saves. A reload or a crashed tab never closes
+ * the editor, so every keystroke is also backed up synchronously (data/noteDrafts.ts) and recovered on the
+ * next load (I2: text typed right before a reload was lost).
  */
 export function NoteEditor({ existing, anchor, quote, pageLabel, onClose }: { existing: WorkspaceNoteRow | null; anchor: AnnotationAnchor | null; quote: TextQuote | null; pageLabel: string; onClose: () => void }) {
   const [text, setText] = useState(() => (existing ? ownText(existing.body as RichText) : ''));
@@ -228,10 +234,27 @@ export function NoteEditor({ existing, anchor, quote, pageLabel, onClose }: { ex
 
   /** text of the note as this editor last saw / wrote it (to notice another device's text arriving) */
   const lastSeen = useRef<string | null>(existing ? noteText(existing.body as RichText) : null);
+  /** id a NEW note is saved under — known before the first save, so a recovered draft lands on the same note */
+  const newNoteId = useRef<string>(existing?.id ?? newId());
+  /** this editor's crash-safe draft (localStorage) */
+  const draftKey = useRef<string>(newId());
+
+  const backup = (value: string) => {
+    writeNoteDraft({
+      key: draftKey.current,
+      noteId: rowRef.current?.id ?? newNoteId.current,
+      body: { v: 1, paragraphs: [...quotesRef.current, ...richTextFromPlain(value).paragraphs] },
+      anchor: (rowRef.current?.anchor as AnnotationAnchor | null | undefined) ?? anchorRef.current,
+      baseText: lastSeen.current,
+    });
+  };
 
   const write = async (value: string) => {
     const own = richTextFromPlain(value).paragraphs;
-    if (own.length === 0 && quotesRef.current.length === 0) return;
+    if (own.length === 0 && quotesRef.current.length === 0) {
+      clearNoteDraft(draftKey.current, '');
+      return;
+    }
     const body: RichText = { v: 1, paragraphs: [...quotesRef.current, ...own] };
     const db = getDb();
     let latestRow = rowRef.current ? ((await db.notes.get(rowRef.current.id)) as WorkspaceNoteRow | undefined) ?? rowRef.current : null;
@@ -241,10 +264,12 @@ export function NoteEditor({ existing, anchor, quote, pageLabel, onClose }: { ex
       // never write over it — keep both, and continue in a new note next to it
       latestRow = null;
     }
-    const row = await saveNote(db, { body, anchor: anchorNow }, latestRow);
+    // a new note uses the id its draft carries; a note continued after a conflict gets a fresh one
+    const row = await saveNote(db, { id: rowRef.current === null ? newNoteId.current : undefined, body, anchor: anchorNow }, latestRow);
     rowRef.current = row;
     lastSeen.current = noteText(row.body as RichText);
     setSavedId(row.id);
+    clearNoteDraft(draftKey.current, lastSeen.current); // kept when newer text was typed meanwhile
   };
 
   const persist = (value: string): Promise<void> => {
@@ -285,6 +310,7 @@ export function NoteEditor({ existing, anchor, quote, pageLabel, onClose }: { ex
           setText(v);
           latest.current = v;
           dirty.current = true;
+          backup(v);
           window.clearTimeout(timer.current);
           timer.current = window.setTimeout(() => void persist(v), 600);
         }}

@@ -150,6 +150,10 @@ owner-dictionary expansion, transcripts notice, cursor paging, semantic refusal,
 * **Semantic retrieval/search** (embeddings) — not built; reported as not used / `requires_configuration`.
 * **Entailment** needs an AI provider (none in this environment): every claim is `needs_review` until one exists; the
   verifier path is tested only with the test-only `FakeAiProvider` (no real model was run).
+* G3 (AC-08): a claim whose ONLY support is evidence from an `uncertain` region (a diagram's labels read by OCR without
+  understanding) is `needs_review` (check `evidence_exists`, reason «تستند فقط إلى قراءة آلية غير مؤكدة…»), never
+  `linked`. `buildEvidencePack({ fixedAnswer: true })` refuses `uncertain` / `needs_review` evidence for packs that feed
+  a fixed answer (generated questions, grading rubrics).
 * Critical-token rules are deterministic heuristics (EN + AR word lists, unit table): they refuse obvious mismatches, they
   do not prove support. Cross-language negation/paraphrase is left to the verifier (only presence is checked); unusual
   units or Arabic phrasings outside the lists are not recognized.
@@ -215,3 +219,45 @@ Remaining risks after the review (not fixed):
 * `/batch` and `/:id` accept caller-supplied `pinned_version_ids`, which make a replaced version read as available
   (display only; artifacts pass their own frozen versions).
 
+
+## 7. Integration round I1 (2026-10-10)
+* **Transcript hits carry their real origin.** Universal search labelled every transcript hit «مقروء آليًا». It now
+  uses the segment's `origin` (`search/service.ts` `transcriptOrigin`): `imported_vtt`/`imported_srt` → `imported`
+  («مستورد من ملف ترجمة»), `manual` → `owner_typed` («كتبته بنفسك»), `transcription` → `recognized`. A segment the
+  owner corrected shows and is searched by the owner's text → `owner_typed`. `SearchOrigin` gained `imported` and
+  `owner_typed` (shared `search-api.ts`; the search screen has a tone and icon for each). Test: server
+  `media/media.test.ts` «transcript hits carry the segment's REAL origin…».
+
+## G1 acceptance fix (2026-10-10, AC-04)
+* Evidence views compute `numbered_version` for the cited page's version (subquery in `VIEW_SQL`): a cited page WITHOUT
+  a printed number in a book whose other pages are numbered is labelled «الصفحة N في الملف» (chip «محاضرة الصفحة N في
+  الملف»), never «ص N» — which may be the printed number of another page. `pageDisplayLabel` (shared) implements it.
+  Tests: `apps/server/test/acceptance/g1-ac04.test.ts`, `packages/shared/test/page-label.test.ts`. Not yet passed by
+  other label producers (search hits, annotation / question / exam / home / export labels). See `docs/ACCEPTANCE.md`.
+
+## G2 acceptance fixes (2026-10-10, AC-05 / AC-06 / AC-07)
+* **`suggestWiderScope(ctx, scope)`** (retrieval.ts, exported from `services.ts`): the «المحاضرة + المراجع» suggestion
+  that `abstainFor` makes is now reusable by generators, so an abstention that comes from the model or from claim
+  verification (the realistic case: a question asked from a lecture page always retrieves that page) also offers the
+  explicit wider scope (§08). Test: `apps/server/test/acceptance/g2-ac05.test.ts`.
+* **Verifier names what its verdict rests on** (claims.ts, AC-07): `verify_support` results may carry `based_on`
+  (aliases). A claim citing the supporting excerpt AND a merely similar one is cited ONLY to the excerpts named — a
+  same-topic paragraph is never shown as support; none named → `needs_review`; the remaining excerpts must still carry
+  the critical tokens (else `needs_review`). A verifier that omits `based_on` keeps the previous behaviour (all cited).
+  Two different verdicts for one claim → `needs_review` (never «first answer wins»). Test: `g2-ac07.test.ts`.
+* **Text «citations»** (`textcite.ts`, exported from `services.ts`): `pseudoCitations / hasPseudoCitation /
+  stripPseudoCitations / inventedCitations` detect a page / slide / paragraph number or an alias marker written into
+  model TEXT («(المحاضرة ص 99)», «p. 31», «[E5]», «الشريحة 4»); figure / table numbers are not citations. Used by the
+  Study Book publisher and the generated-MCQ validator (AC-06). Test: `g2-ac06.test.ts`.
+* Known limit (unchanged, documented): `directly_stated` containment needs ≥ 80 % of the claim's content words — a
+  near-verbatim copy with ONE key noun swapped («… suspected appendicitis» from «… suspected gallstones») passes this
+  pre-check; only the independent verifier rejects it (without a verifier it is `needs_review`, never `linked`).
+
+
+## G8 acceptance fix (AC-26, 2026-10-10)
+* **Every affected item is recognisable** (`dependencies.ts itemIdentity`, `ContentAlertItemView.href`, web `AlertCard`):
+  alert items other than generated artifacts had no title, and `question_attempt` / `case` had no Arabic label — the
+  Control Center showed the raw key «question_attempt». Items now carry a title (question stem + version, card front,
+  exam / case title, artifact title or kind) and the route that opens them; the labels exist for every dependent type and
+  an unknown type reads «عنصر مشتق». Tests: `g8-ac26.test.ts`, `apps/web/src/features/evidence/ContentAlertsPanel.g8.test.tsx`,
+  `e2e/g8-ac26-correction.spec.ts`.

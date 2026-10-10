@@ -5,7 +5,9 @@ import type { AnswerStatus, LectureLinkRelation, QuestionType, ReviewQueueKind }
 import type { JobView } from './api';
 import type { NormBox } from './geometry';
 import type { RichText } from './richtext';
+import type { ClaimView } from './evidence';
 import type {
+  AnswerCheckView,
   AnswerKeyEntryView,
   DuplicateView,
   LectureLinkView,
@@ -170,6 +172,8 @@ export interface QuestionDetailResponse {
   occurrence_boxes: Record<string, Array<{ page_id: string; page_index: number; region_id: string | null; bbox: NormBox | null }>>;
   scorable: boolean;
   unscorable_reason_ar: string | null;
+  /** claims (with citations) of the current version's answer check, if any (§34, AC-14, AC-15) */
+  answer_check_claims?: Record<string, ClaimView>;
 }
 
 // ───────── corrections ─────────
@@ -208,6 +212,24 @@ export interface KeyChangeImpact {
   attempts: Array<{ attempt_id: string; version_id: string; answered_at: number; was_correct: boolean | null; would_be_correct: boolean | null }>;
   content_alert_id: string | null;
   summary_ar: string;
+}
+
+/** POST /api/questions/:id/answer-check — needs the AI capability `ai.answer_check` (§34, AC-14, AC-15). */
+export interface AnswerCheckRequest {
+  /** a lecture linked to the question (default: its best link) — the Source Lock is «Lecture Only» on it */
+  lecture_source_id?: string;
+  /** widen explicitly to «المحاضرة + المراجع» (the lecture's own linked references) */
+  include_references?: boolean;
+}
+
+export interface AnswerCheckResponse {
+  check: AnswerCheckView;
+  question: QuestionView;
+  /** a conflict / an AI-derived answer is a NEW version; the checked version stays as it was */
+  new_version_id: string | null;
+  /** past attempts are never re-graded: what the conflict means for them */
+  impact: KeyChangeImpact | null;
+  claims: Record<string, ClaimView>;
 }
 
 export interface QuestionMutationResponse {

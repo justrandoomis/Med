@@ -22,7 +22,9 @@ export interface SafeZipLimits {
   ratioMinBytes?: number;
 }
 
-export type SafeZipTarget = { mode: 'memory' } | { mode: 'dir'; dir: string };
+/** 'measure': inflate every entry under the limits (headers are not trusted) but keep nothing — used to check an
+ *  office document (DOCX / PPTX are ZIP containers) before it is accepted (G8: lying size headers). */
+export type SafeZipTarget = { mode: 'memory' } | { mode: 'dir'; dir: string } | { mode: 'measure' };
 
 export interface AcceptedZipEntry {
   /** normalized relative path (forward slashes, NFC) */
@@ -162,13 +164,14 @@ interface InternalZipObject {
   };
 }
 
-type InflateOutcome = { ok: true; data: Buffer } | { ok: false; code: ZipRejectCode };
+type InflateOutcome = { ok: true; data: Buffer; size: number } | { ok: false; code: ZipRejectCode };
 
 function inflateEntry(
   entry: InternalZipObject,
   compressedSize: number,
   budget: { remaining: number },
   limits: Required<SafeZipLimits>,
+  keep = true,
 ): Promise<InflateOutcome> {
   return new Promise((resolveP) => {
     const chunks: Buffer[] = [];
@@ -195,10 +198,10 @@ function inflateEntry(
       if (size > limits.ratioMinBytes && size / Math.max(1, compressedSize) > limits.maxRatio) {
         return finish({ ok: false, code: 'RATIO_EXCEEDED' });
       }
-      chunks.push(Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength));
+      if (keep || chunks.length === 0) chunks.push(Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength));
     });
     helper.on('error', () => finish({ ok: false, code: 'ENCRYPTED_OR_CORRUPT' }));
-    helper.on('end', () => finish({ ok: true, data: Buffer.concat(chunks, size) }));
+    helper.on('end', () => finish({ ok: true, data: keep ? Buffer.concat(chunks, size) : Buffer.concat(chunks), size }));
     helper.resume();
   });
 }
@@ -295,12 +298,13 @@ export async function extractZipSafe(input: Buffer, limitsIn: SafeZipLimits, tar
       continue;
     }
     seen.add(key);
-    if (NESTED_ARCHIVE_EXT.test(norm.path)) {
+    const measure = target.mode === 'measure';
+    if (!measure && NESTED_ARCHIVE_EXT.test(norm.path)) {
       reject(originalName, 'NESTED_ARCHIVE');
       continue;
     }
     const compressedSize = entry._data?.compressedSize ?? 0;
-    const out = await inflateEntry(entry, compressedSize, budget, limits);
+    const out = await inflateEntry(entry, compressedSize, budget, limits, !measure);
     if (!out.ok) {
       reject(originalName, out.code);
       if (out.code === 'TOTAL_LIMIT') {
@@ -310,14 +314,17 @@ export async function extractZipSafe(input: Buffer, limitsIn: SafeZipLimits, tar
       }
       continue;
     }
-    if (looksLikeArchive(norm.path, out.data.subarray(0, 8))) {
+    const inflated = measure ? out.size : out.data.length;
+    if (!measure && looksLikeArchive(norm.path, out.data.subarray(0, 8))) {
       reject(originalName, 'NESTED_ARCHIVE');
       continue;
     }
-    budget.remaining -= out.data.length;
-    result.totalUncompressed += out.data.length;
-    const accepted: AcceptedZipEntry = { path: norm.path, originalName, size: out.data.length, compressedSize };
-    if (root) {
+    budget.remaining -= inflated;
+    result.totalUncompressed += inflated;
+    const accepted: AcceptedZipEntry = { path: norm.path, originalName, size: inflated, compressedSize };
+    if (measure) {
+      // nothing is kept: only the measured sizes matter
+    } else if (root) {
       try {
         accepted.filePath = writeInside(root, norm.path, out.data);
       } catch {

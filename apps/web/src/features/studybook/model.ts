@@ -31,6 +31,27 @@ export function defaultScopeFor(detail: Pick<SourceDetail, 'id' | 'links'>, mode
   return base;
 }
 
+/**
+ * Does a chat thread's pinned lock (as the server resolved it) correspond to the Source Lock the rail shows?
+ * A question is only ever sent to a thread that matches (G2 / AC-05): same mode, same lecture, every chosen
+ * reference, and no extra source (e.g. «ملاحظاتي») unless the lock asks for it. «المحاضرة + المراجع» without an
+ * explicit list means the lecture's linked references (resolved server-side), so extra sources are allowed there.
+ */
+export function threadMatchesScope(thread: { scope: { mode: ScopeMode; source_ids: string[] } }, scope: SourceScope): boolean {
+  const ids = new Set(thread.scope.source_ids);
+  if (thread.scope.mode !== scope.mode) return false;
+  const lecture = scope.lecture_source_id ?? null;
+  if ((scope.mode === 'lecture_only' || scope.mode === 'lecture_plus_references') && (!lecture || !ids.has(lecture))) return false;
+  const refs = scope.reference_source_ids ?? [];
+  if (refs.some((r) => !ids.has(r))) return false;
+  const defaultRefs = refs.length === 0 && scope.mode !== 'lecture_only';
+  if (!defaultRefs && !scope.include_my_notes) {
+    const allowed = new Set([lecture, ...refs].filter((x): x is string => !!x));
+    if ([...ids].some((id) => !allowed.has(id))) return false;
+  }
+  return true;
+}
+
 /** The block a page relates to (Lecture Twin): first block on that page, else the nearest following, else the last before. */
 export function nearestBlock(twin: readonly TwinEntry[], pageIndex: number): string | null {
   const on = twin.find((t) => t.page_indexes.includes(pageIndex));

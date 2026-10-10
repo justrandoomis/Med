@@ -11,7 +11,7 @@ export const FEATURE_KEYS = [
   'workspace.reader', 'workspace.ink', 'workspace.handwriting_recognition', 'workspace.audio',
   // evidence & AI
   'search.keyword', 'search.semantic', 'evidence.citations', 'ai.explain', 'ai.chat', 'ai.study_book',
-  'ai.summaries', 'ai.figure_explain', 'ai.generate_questions', 'ai.grade_written', 'ai.cases',
+  'ai.summaries', 'ai.figure_explain', 'ai.generate_questions', 'ai.grade_written', 'ai.cases', 'ai.answer_check',
   'external.evidence', 'external.images',
   // questions & practice
   'questions.vault', 'questions.extraction', 'questions.matching', 'exams',

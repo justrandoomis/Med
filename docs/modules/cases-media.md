@@ -242,8 +242,10 @@ passed.
 - Phrase matching is a heuristic. It can miss a correct paraphrase or accept a passing mention; a double negation
   («never forget to ask about fever») counts as negated. The report says this, and the owner can override any item.
 - AC-09 caption checks are lexical: a hedged caption («possible pneumothorax») or a caption that names the finding
-  for another figure («compare with Figure 3, which shows a pneumothorax») is not detected. The modality is taken from
-  the first one named when a caption names several.
+  for another figure («compare with Figure 3, which shows a pneumothorax») is not detected. G3 (AC-09): a caption that
+  names two modalities («Chest X-ray and CT side by side; the CT shows …») is now excluded as ambiguous (unless the
+  owner classified the image), a caption that says the picture is drawn («(artist's illustration)», «رسم توضيحي») is
+  never a real example, and a finding that is gone («resolved / healed pneumothorax», «زوال …») is not shown.
 - The owner's certainty label on an overlay (for example «من تعليق المصدر») is not checked against the caption.
 - Two saves of the same case racing through evidence validation are refused with 409 inside the transaction; this is
   not covered by a deterministic test (the race needs real asynchronous I/O).
@@ -302,3 +304,13 @@ Results after the review (2026-10-10):
 | `npx tsc -p apps/server --noEmit` / `npx tsc -p apps/web --noEmit` | clean |
 | `npm run build -w @medlevo/web` | succeeded |
 | `node apps/web/src/features/cases/real-server-check.mjs` (after the build) | all 40 checks passed |
+
+## 8. Integration round I1 (2026-10-10)
+* **Case runner: a decision picked right after a stage appeared could be undone.** `CaseRunner` reset the picked
+  decision in a passive effect keyed on the stage. A choice made before that effect ran (the radio right after the
+  stage rendered) was reset to nothing, so «أكّد القرار» did nothing. Under a loaded machine this made two
+  `cases.test.tsx` runner tests fail (1 of 4 parallel runs, 2 tests). The pick is now keyed by stage in state (a new
+  stage starts empty without an effect). Verification: the same file run 4× in parallel, 3 rounds → 12/12 pass
+  (before: 1 of 4 failed). No deterministic test reproduces the effect timing; the existing runner tests are the
+  regression tests.
+* **Transcript search origin** (universal search): see `docs/modules/evidence-search.md` §7.

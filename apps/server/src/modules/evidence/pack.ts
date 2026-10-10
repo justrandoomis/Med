@@ -52,7 +52,19 @@ function modelLabel(v: EvidenceView): string {
  * Build the model-facing pack from evidence ids. Anything outside `scope.versionIds`, from a trashed source
  * or missing is refused here (and reported) — it never reaches the model.
  */
-export function buildEvidencePack(ctx: AppContext, scope: ResolvedScope, evidenceIds: string[], opts: { maxItems?: number } = {}): EvidencePack {
+export interface EvidencePackOptions {
+  maxItems?: number;
+  /**
+   * G3 / AC-08: the pack feeds a FIXED answer (a scored generated question, a grading rubric). Evidence whose region
+   * is an uncertain reading (diagram labels read by OCR without understanding) or flagged for review (low OCR
+   * confidence, a suspected extraction defect) is refused — an unreadable region never becomes a fixed exam answer.
+   */
+  fixedAnswer?: boolean;
+}
+
+export const UNCERTAIN_FOR_FIXED_ANSWER_AR = 'قراءة آلية غير مؤكدة (تسميات رسم قُرئت دون فهم، أو نص ضعيف الثقة أو معلَّم للمراجعة)؛ لا تُبنى عليها إجابة امتحانية ثابتة حتى تُراجَع.';
+
+export function buildEvidencePack(ctx: AppContext, scope: ResolvedScope, evidenceIds: string[], opts: EvidencePackOptions = {}): EvidencePack {
   const max = Math.min(Math.max(opts.maxItems ?? 40, 1), 120);
   const allowed = new Set(scope.versionIds);
   const pinned = new Set(scope.versionIds); // the scope's versions are the ones in use on purpose
@@ -65,6 +77,7 @@ export function buildEvidencePack(ctx: AppContext, scope: ResolvedScope, evidenc
     if (!allowed.has(v.version_id)) refused.push({ evidence_id: v.id, reason_ar: 'الدليل من نسخة خارج النطاق المقفل (Source Lock).' });
     else if (v.availability === 'source_deleted') refused.push({ evidence_id: v.id, reason_ar: 'مصدر الدليل محذوف.' });
     else if (v.extraction_status === 'rejected') refused.push({ evidence_id: v.id, reason_ar: 'رُفض استخراج منطقة هذا الدليل؛ لا يُستخدم حتى يُصحَّح.' });
+    else if (opts.fixedAnswer && (v.extraction_status === 'uncertain' || v.extraction_status === 'needs_review')) refused.push({ evidence_id: v.id, reason_ar: UNCERTAIN_FOR_FIXED_ANSWER_AR });
     else if (kept.length < max) kept.push(v);
   }
   const forModel: EvidenceForModel[] = [];
@@ -78,7 +91,7 @@ export function buildEvidencePack(ctx: AppContext, scope: ResolvedScope, evidenc
 }
 
 /** Convenience: retrieval candidates → evidence rows → pack. */
-export function packFromCandidates(ctx: AppContext, scope: ResolvedScope, candidates: RetrievalCandidate[], opts: { maxItems?: number } = {}): EvidencePack {
+export function packFromCandidates(ctx: AppContext, scope: ResolvedScope, candidates: RetrievalCandidate[], opts: EvidencePackOptions = {}): EvidencePack {
   const rows = evidenceFromCandidates(ctx, candidates);
   return buildEvidencePack(ctx, scope, rows.map((r) => r.id), opts);
 }

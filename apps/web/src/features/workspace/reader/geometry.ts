@@ -99,6 +99,23 @@ export function stepSpread(pageIndex: number, dir: 1 | -1, layout: 'single' | 'd
 /** The reading line sits a quarter down the viewport: the page under it is "the current page". */
 export const ANCHOR_LINE = 0.25;
 
+/**
+ * Content y of the reading line for a scroll position. The last pages of a book can never scroll up to a line a
+ * quarter down the viewport (the scroll stops at the end), so over the last stretch of scrolling the line slides
+ * down to the bottom of the viewport: at the end of the book the last page is the current page. Without this a jump
+ * to the last page (a citation «ص12» on a phone) left the page ABOVE it in the indicator (AC-04).
+ */
+export function readingLineY(scrollTop: number, viewportH: number, contentH: number): number {
+  const base = viewportH * ANCHOR_LINE;
+  const ramp = viewportH - base; // how far the line can still travel down
+  const maxScroll = Math.max(0, contentH - viewportH);
+  const start = Math.max(0, maxScroll - ramp);
+  const span = maxScroll - start;
+  if (span <= 0 || ramp <= 0) return scrollTop + base;
+  const t = Math.min(1, Math.max(0, (scrollTop - start) / span));
+  return scrollTop + base + t * ramp;
+}
+
 /** Page under content coordinate y, and how far into that page (0 = top, 1 = bottom of the page box). */
 export function anchorAt(layout: Layout, y: number): { index: number; frac: number } {
   const pages = layout.pages;

@@ -11,7 +11,7 @@ import {
   isAssessedMode,
   type AttemptFeedbackView,
   type ConfidenceLevel,
-  type ExamItemView,
+  type ExamItemDeliveryView,
   type HintView,
   type MistakeType,
 } from '@medlevo/shared';
@@ -78,7 +78,7 @@ export function RunnerScreen() {
   const policy = exam?.policy;
   const practice = !!exam && !isAssessedMode(exam.mode) && policy?.show_solution === 'after_each';
   const index = state?.current_index ?? 0;
-  const item: ExamItemView | undefined = session?.items[index];
+  const item: ExamItemDeliveryView | undefined = session?.items[index];
   const answer = state?.answers[String(index)];
   const finished = state ? isFinished(state) : false;
   const timers = policy && state ? timerView(policy, state) : null;
@@ -118,11 +118,12 @@ export function RunnerScreen() {
     [attemptId],
   );
 
-  // a checked practice answer reopened after a reload: fetch its feedback
+  // a checked practice answer reopened after a reload: fetch its feedback. Not while «تحقّق» is sending this very
+  // answer (G3): the GET raced the POST and always got a 409 «not answered yet» (a failed request in the console).
   useEffect(() => {
-    if (!practice || !answer?.submitted || feedback[index] || !online) return;
+    if (!practice || !answer?.submitted || feedback[index] || !online || busy === 'check') return;
     void loadFeedback(index);
-  }, [practice, answer?.submitted, feedback, index, online, loadFeedback]);
+  }, [practice, answer?.submitted, feedback, index, online, loadFeedback, busy]);
 
   const check = useCallback(async () => {
     if (!item || !answer || answer.selected_option_ids.length === 0 || answer.submitted || !session) return;
@@ -383,6 +384,12 @@ export function RunnerScreen() {
                 </StatusPill>
               )}
               {!item!.scored && <StatusPill tone="warning">غير محسوب</StatusPill>}
+              {/* generated stays visibly generated (§03) — the origin KIND only, nothing that hints at the answer */}
+              {item!.origin_type === 'generated' && (
+                <StatusPill tone="accent" icon={false}>
+                  {item!.origin_label_ar}
+                </StatusPill>
+              )}
               <Button
                 size="sm"
                 variant="plain"

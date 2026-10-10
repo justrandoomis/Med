@@ -16,6 +16,9 @@
 import {
   JOB_STATUS_LABELS_AR,
   SELECTION_SUMMARY_TYPES,
+  parseRichText,
+  richTextToPlain,
+  samePassage,
   SUMMARY_TYPE_LABELS_AR,
   pageDisplayLabel,
   type ExplanationRules,
@@ -48,7 +51,7 @@ import {
 } from '../evidence/services';
 import { artifactView, findReusable, getArtifactRow, nextVersionNo, requireArtifact, type ArtifactRow } from './artifacts';
 import { callModel, insertArtifact, keySettings, pinnedScope, requireAi, type ArtifactBase, type PackedEvidence } from './generate';
-import { indexArtifact, processGenerated, recordBlockDependencies, writeBlocks, type PackContext } from './publish';
+import { indexArtifact, processGenerated, recordBlockDependencies, stripPseudoCitations, writeBlocks, type PackContext } from './publish';
 import { GENERATOR_VERSION, resolveRules } from './rules';
 import type { studyBookBodySchema, summaryBodySchema } from './schema';
 import { termsForTexts } from './terms';
@@ -231,12 +234,15 @@ function reanchorItems(ctx: AppContext, artifactId: string): ReanchorItem[] {
     'SELECT target_kind, target_id, block_key, previous_version_no, status FROM artifact_reanchor WHERE artifact_id = ? ORDER BY status DESC, target_kind, target_id',
     [artifactId],
   );
+  const keys = new Set(ctx.db.all<{ block_key: string }>('SELECT block_key FROM content_block WHERE artifact_id = ?', [artifactId]).map((r) => r.block_key));
   return rows.map((r) => ({
     ...r,
     reason_ar:
       r.status === 'matched'
         ? 'ما زالت الفقرة نفسها موجودة في هذه النسخة؛ بقيت الملاحظة مرتبطة بها.'
-        : `${r.target_kind === 'note' ? 'ملاحظة' : 'كتابة'} على فقرة${r.previous_version_no ? ` من النسخة ${r.previous_version_no}` : ''} لم تعد موجودة في هذه النسخة؛ حُفظت كما هي وتحتاج إعادة ربط.`,
+        : keys.has(r.block_key)
+          ? `${r.target_kind === 'note' ? 'ملاحظة' : 'كتابة'} على فقرة${r.previous_version_no ? ` من النسخة ${r.previous_version_no}` : ''} تغيّر نصها في هذه النسخة (فقرة أخرى في مكانها)؛ لم تُنقل إليها، وحُفظت كما هي وتحتاج إعادة ربط.`
+          : `${r.target_kind === 'note' ? 'ملاحظة' : 'كتابة'} على فقرة${r.previous_version_no ? ` من النسخة ${r.previous_version_no}` : ''} لم تعد موجودة في هذه النسخة؛ حُفظت كما هي وتحتاج إعادة ربط.`,
   }));
 }
 
@@ -813,7 +819,7 @@ async function generateSection(
   });
   if (run.signal.aborted) throw run.signal.reason;
   if (content.abstain && content.blocks.length === 0) {
-    setSection(ctx, a.id, s.section_key, 'abstained', 0, { reason_ar: shorten(content.abstain.detail || 'لم تكفِ الأدلة لهذا القسم.', 400) });
+    setSection(ctx, a.id, s.section_key, 'abstained', 0, { reason_ar: shorten(stripPseudoCitations(content.abstain.detail || '') || 'لم تكفِ الأدلة لهذا القسم.', 400) });
     return { status: 'abstained', blocks: 0 };
   }
   const processed = await processGenerated(ctx, content, {
@@ -836,7 +842,7 @@ async function generateSection(
     setSection(ctx, a.id, s.section_key, status, status === 'complete' ? processed.blocks.length : 0, {
       removed: processed.removed,
       dropped_headings: processed.droppedHeadings,
-      coverage_note: content.coverage_note ?? null,
+      coverage_note: content.coverage_note ? stripPseudoCitations(content.coverage_note) || null : null,
       model,
       reason_ar: status === 'abstained' ? 'لم تجتز أي جملة طبية في هذا القسم التحقق من الأدلة؛ لم يُنشر.' : null,
     });
@@ -921,10 +927,40 @@ export function finalizeSectioned(ctx: AppContext, artifactId: string, o: { jobS
 }
 
 // ───────── re-anchoring (§25, AC-22) ─────────
-/** Owner notes / annotations anchored to blocks of this lineage: matched (same block_key) or needs_reanchor. */
+function blockPlain(contentJson: string | null): string {
+  try {
+    return richTextToPlain(parseRichText(fromJson(contentJson)));
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Owner notes / annotations anchored to blocks of this lineage: matched or needs_reanchor.
+ * A block key is hash(section, explained regions, kind, ordinal): when a regeneration writes fewer paragraphs about a
+ * region, or reorders them, ANOTHER paragraph inherits the key. A key match therefore only counts when the paragraph
+ * now holding it is still the paragraph the note was written on — its block in the anchored version, else the quote
+ * the anchor kept (G6 / AC-22). Otherwise the note stays where it is, untouched, and is listed for re-anchoring.
+ */
 export function computeReanchor(ctx: AppContext, artifactId: string): ReanchorItem[] {
   const a = requireArtifact(ctx, artifactId);
-  const keys = new Set(ctx.db.all<{ block_key: string }>('SELECT block_key FROM content_block WHERE artifact_id = ?', [artifactId]).map((r) => r.block_key));
+  const blockText = new Map(
+    ctx.db.all<{ block_key: string; content_json: string | null }>('SELECT block_key, content_json FROM content_block WHERE artifact_id = ?', [artifactId]).map((r) => [r.block_key, r.content_json] as const),
+  );
+  const keys = new Set(blockText.keys());
+  /** the paragraph the anchor was written on: (text, is a prefix quote) — null when nothing is known */
+  const anchoredText = (blockKey: string, version: number | null, anchorJson: string | null): { text: string; prefix: boolean } | null => {
+    if (version !== null && version !== a.version_no) {
+      const row = ctx.db.get<{ content_json: string | null }>(
+        `SELECT cb.content_json FROM content_block cb JOIN artifact x ON x.id = cb.artifact_id WHERE x.lineage_id = ? AND x.version_no = ? AND cb.block_key = ? LIMIT 1`,
+        [a.lineage_id, version, blockKey],
+      );
+      if (row) return { text: blockPlain(row.content_json), prefix: false };
+    }
+    if (version === a.version_no) return null; // written on this very version
+    const quote = fromJson<{ quote?: { exact?: string } }>(anchorJson)?.quote?.exact;
+    return quote ? { text: quote, prefix: true } : null;
+  };
   const prefix = `${a.lineage_id}:`;
   const anns = ctx.db.all<{ id: string; target_id: string; anchor_json: string | null }>(
     `SELECT a.id, t.target_id, a.anchor_json FROM annotation_target t JOIN annotation a ON a.id = t.annotation_id
@@ -935,9 +971,9 @@ export function computeReanchor(ctx: AppContext, artifactId: string): ReanchorIt
     `SELECT id, anchor_target_key, anchor_json FROM note WHERE substr(anchor_target_key, 1, ?) = ? AND deleted_at IS NULL`,
     [`artifact_block:${prefix}`.length, `artifact_block:${prefix}`],
   );
-  const items: Array<{ kind: 'annotation' | 'note'; id: string; blockKey: string; prevVersion: number | null }> = [
-    ...anns.map((x) => ({ kind: 'annotation' as const, id: x.id, blockKey: x.target_id.slice(prefix.length), prevVersion: fromJson<{ artifact_version?: number }>(x.anchor_json)?.artifact_version ?? null })),
-    ...notes.map((x) => ({ kind: 'note' as const, id: x.id, blockKey: x.anchor_target_key.slice(`artifact_block:${prefix}`.length), prevVersion: fromJson<{ artifact_version?: number }>(x.anchor_json)?.artifact_version ?? null })),
+  const items: Array<{ kind: 'annotation' | 'note'; id: string; blockKey: string; prevVersion: number | null; anchorJson: string | null }> = [
+    ...anns.map((x) => ({ kind: 'annotation' as const, id: x.id, blockKey: x.target_id.slice(prefix.length), prevVersion: fromJson<{ artifact_version?: number }>(x.anchor_json)?.artifact_version ?? null, anchorJson: x.anchor_json })),
+    ...notes.map((x) => ({ kind: 'note' as const, id: x.id, blockKey: x.anchor_target_key.slice(`artifact_block:${prefix}`.length), prevVersion: fromJson<{ artifact_version?: number }>(x.anchor_json)?.artifact_version ?? null, anchorJson: x.anchor_json })),
   ];
   const now = ctx.clock.now();
   // sections of THIS version that are not finished (pending / failed / generating): their paragraphs may still
@@ -951,7 +987,11 @@ export function computeReanchor(ctx: AppContext, artifactId: string): ReanchorIt
       [a.lineage_id, blockKey],
     )?.section_key ?? null;
   for (const it of items) {
-    const status = keys.has(it.blockKey) ? 'matched' : 'needs_reanchor';
+    let status: 'matched' | 'needs_reanchor' = keys.has(it.blockKey) ? 'matched' : 'needs_reanchor';
+    if (status === 'matched') {
+      const then = anchoredText(it.blockKey, it.prevVersion, it.anchorJson);
+      if (then && !samePassage(then.text, blockPlain(blockText.get(it.blockKey) ?? null), then.prefix)) status = 'needs_reanchor';
+    }
     if (status === 'needs_reanchor' && unfinished.size) {
       const sec = sectionOfBlock(it.blockKey);
       if (sec && unfinished.has(sec)) continue;
@@ -980,7 +1020,9 @@ export function computeReanchor(ctx: AppContext, artifactId: string): ReanchorIt
             it.kind,
             it.id,
             a.primary_source_id,
-            `${it.kind === 'note' ? 'ملاحظة' : 'كتابة'} مرتبطة بفقرة من كتاب الدراسة لم تعد موجودة في النسخة ${a.version_no}؛ حُفظت كما هي وتحتاج إعادة ربط.`,
+            keys.has(it.blockKey)
+              ? `${it.kind === 'note' ? 'ملاحظة' : 'كتابة'} مرتبطة بفقرة من كتاب الدراسة تغيّر نصها في النسخة ${a.version_no} (فقرة أخرى في مكانها)؛ لم تُنقل إليها، وحُفظت كما هي وتحتاج إعادة ربط.`
+              : `${it.kind === 'note' ? 'ملاحظة' : 'كتابة'} مرتبطة بفقرة من كتاب الدراسة لم تعد موجودة في النسخة ${a.version_no}؛ حُفظت كما هي وتحتاج إعادة ربط.`,
             toJson({ origin: 'studybook', lineage_id: a.lineage_id, block_key: it.blockKey, previous_version_no: it.prevVersion, new_version_no: a.version_no, artifact_id: a.id }),
             now,
           ],

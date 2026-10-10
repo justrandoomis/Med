@@ -41,6 +41,35 @@ export interface AnswerKeyEntryView {
   region_id: string | null;
 }
 
+/**
+ * Check of a question's answer against the selected material (§34 «AI-derived Answer» / «Conflicting Key», AC-14, AC-15):
+ * an independent model solves the question from the Source-Locked evidence only (it never sees the key), and every
+ * sentence of its support is verified against the evidence before anything is concluded.
+ *  * agrees     — the evidence supports the key that was checked;
+ *  * conflicts  — «مفتاح المصدر يختار … لكن الأدلة المختارة تشير إلى …»: the original key and past results are kept;
+ *  * derived    — a question without a (usable) key: an AI-derived answer WITH its evidence (never a source key);
+ *  * unresolved — the evidence does not determine one verified answer (nothing changes);
+ *  * abstained  — nothing citable in the scope / the model abstained (nothing changes).
+ */
+export type AnswerCheckOutcome = 'agrees' | 'conflicts' | 'derived' | 'unresolved' | 'abstained';
+
+export interface AnswerCheckView {
+  outcome: AnswerCheckOutcome;
+  /** stable option key the verified evidence points to (null: not determined) */
+  chosen_option_key: string | null;
+  /** the key it was compared with (stable option keys) and its status at check time */
+  key_option_keys: string[] | null;
+  key_status: AnswerStatus;
+  /** verified support sentences (claims → citations → evidence) */
+  claim_ids: string[];
+  evidence_ids: string[];
+  lecture_source_id: string | null;
+  scope_describe_ar: string;
+  reason_ar: string;
+  model: string | null;
+  checked_at: number;
+}
+
 export interface QuestionVersionView {
   id: string;
   question_id: string;
@@ -58,7 +87,13 @@ export interface QuestionVersionView {
   extraction_status: 'not_applicable' | 'extracted' | 'checks_passed' | 'needs_review' | 'owner_reviewed';
   answer_status: AnswerStatus;
   correct_option_ids: string[] | null;
-  key_details: { key_entry_ids?: string[]; conflict_ar?: string; notes_ar?: string } | null;
+  key_details: {
+    key_entry_ids?: string[];
+    conflict_ar?: string;
+    notes_ar?: string;
+    /** the latest check of the answer against the selected material (§34, AC-14, AC-15) — see questions-api.ts */
+    answer_check?: AnswerCheckView;
+  } | null;
   explanation: RichText | null;
   distractor_explanations: Record<string, RichText> | null;
   learning_objective: string | null;

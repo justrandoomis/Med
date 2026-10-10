@@ -47,6 +47,27 @@ export function getVersionRow(ctx: AppContext, id: string): VersionRow {
   return row;
 }
 
+/**
+ * G5 / AC-16: a processed source that changes course (moved, or restored into another folder) or type is matched
+ * again — lecture ↔ the questions of its NEW course (the matcher drops its own stale suggestions of the old course) —
+ * and a source re-typed as a question source / previous exam gets its questions extracted (extraction then matches).
+ * Same guard as the processing hook: nothing happens without the questions module, a failure never fails the edit, and
+ * a version still processing is left to the processing hook.
+ */
+function enqueueQuestionRefresh(ctx: AppContext, src: SourceRow, retyped: boolean): void {
+  try {
+    const versionId = src.frozen_version_id ?? src.current_version_id;
+    if (!versionId) return;
+    const v = ctx.db.get<{ processing_status: string }>('SELECT processing_status FROM source_version WHERE id = ?', [versionId]);
+    if (!v || !['ready', 'partial', 'needs_review'].includes(v.processing_status)) return;
+    const kind = retyped && (src.source_type === 'question_source' || src.source_type === 'previous_exam') ? 'extract_questions' : 'match_questions';
+    if (!ctx.jobs.isRegistered(kind)) return;
+    ctx.jobs.enqueue(kind, { version_id: versionId }, { idempotencyKey: `${kind}:${versionId}:regroup:${newId(ctx.clock.now())}` });
+  } catch (e) {
+    ctx.log.warn({ err: e, sourceId: src.id }, 'could not enqueue the question refresh after a move / type change');
+  }
+}
+
 function metadataSnapshot(r: SourceRow) {
   return {
     title: r.title,
@@ -110,7 +131,9 @@ export class SourcesService {
     const v = getVersionRow(ctx, versionId);
     if (v.source_id !== sourceId) throw Errors.notFound('نسخة المصدر');
     const pages = ctx.db.all<PageRow>('SELECT * FROM source_page WHERE version_id = ? ORDER BY page_index', [versionId]);
-    return { version: toVersionView(v, src.frozen_version_id), pages: pages.map(toPageView) };
+    // a page without a printed number is named by its file position when other pages are numbered (AC-04)
+    const numbered = pages.some((p) => p.kind === 'page' && !!p.printed_label);
+    return { version: toVersionView(v, src.frozen_version_id), pages: pages.map((p) => ({ ...toPageView(p), numbered_version: numbered })) };
   }
 
   regions(pageId: string): PageRegionsResponse {
@@ -118,7 +141,8 @@ export class SourcesService {
     const page = ctx.db.get<PageRow>('SELECT * FROM source_page WHERE id = ?', [pageId]);
     if (!page) throw Errors.notFound('الصفحة');
     const regions = ctx.db.all<RegionRow>('SELECT * FROM source_region WHERE page_id = ? ORDER BY reading_order, created_at', [pageId]);
-    return { page: toPageView(page), regions: regions.map(toRegionView) };
+    const numbered = !!ctx.db.get(`SELECT 1 AS x FROM source_page WHERE version_id = ? AND kind = 'page' AND printed_label IS NOT NULL LIMIT 1`, [page.version_id]);
+    return { page: { ...toPageView(page), numbered_version: numbered }, regions: regions.map(toRegionView) };
   }
 
   patch(id: string, p: PatchSourceRequest): SourceDetail {
@@ -178,6 +202,8 @@ export class SourcesService {
         before: metadataSnapshot(before),
         after: metadataSnapshot(after),
       });
+      const retyped = after.source_type !== before.source_type;
+      if (retyped || moved) enqueueQuestionRefresh(ctx, after, retyped);
     });
     return this.detail(id);
   }
@@ -234,6 +260,7 @@ export class SourcesService {
         before: { node_id: src.node_id, sort_order: src.sort_order },
         after: { node_id: target.node_id, sort_order: order },
       });
+      if (target.node_id !== src.node_id) enqueueQuestionRefresh(ctx, getSourceRow(ctx, id), false);
     });
     return this.summary(id);
   }
@@ -357,6 +384,7 @@ export class SourcesService {
       ]);
       nodeId = nodeId as string;
       ctx.audit.record({ entityType: 'source', entityId: id, action: 'restore', summary: `استعادة «${src.title}» من سلة المحذوفات`, after: { node_id: nodeId } });
+      if (nodeId !== src.node_id) enqueueQuestionRefresh(ctx, getSourceRow(ctx, id), false);
     });
     return this.summary(id);
   }

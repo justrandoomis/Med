@@ -344,6 +344,7 @@ export function ExplainTab({ doc, page, pageIndex, online }: ExplainTabProps) {
           gate={chatGate}
           online={online}
           focusKey={askFocus}
+          onScopeChange={setScope}
         />
       )}
 

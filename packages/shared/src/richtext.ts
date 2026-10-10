@@ -54,7 +54,10 @@ export type RichText = z.infer<typeof richTextSchema>;
 const ARABIC_STRONG = /[؀-؈؋؍؛-ي٭-ٯٱ-ەۥۦۮۯۺ-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]/;
 const HEBREW_STRONG = /[֐-׿]/;
 const LATIN_STRONG = /[A-Za-zÀ-ɏͰ-Ͽµ]/; // Latin, Greek (α, β, µ)
-const ASCII_DIGIT = /[0-9]/;
+// ASCII digits plus superscript / subscript digits: «10⁹», «CO₂», «HCO₃⁻», «x¹» are numbers that belong to the LTR
+// expression they are written in. Left outside the isolate, a trailing «⁹» or «₂» (bidi class EN, resolved as AN
+// after Arabic) is drawn to the LEFT of the isolate — «×10⁹ في اللتر» displayed «⁹×10», «CO₂» displayed «₂CO» (G6 / AC-20).
+const ASCII_DIGIT = /[0-9\u00B2\u00B3\u00B9\u2070\u2074-\u2079\u2080-\u2089]/;
 
 function cls(ch: string): 'R' | 'L' | 'D' | 'N' {
   if (ARABIC_STRONG.test(ch) || HEBREW_STRONG.test(ch)) return 'R';
@@ -94,7 +97,7 @@ const OPENERS = '([{';
 const CLOSERS = ')]}';
 // neutral characters that commonly attach to LTR expressions without a space
 const LEADING_ATTACH = new Set(['+', '-', '−', '±', '~', '≈', '<', '>', '≤', '≥', '#', '$', '@', '↑', '↓']);
-const TRAILING_ATTACH = new Set(['+', '-', '−', '%', '°', "'", '′', '″', '²', '³', '⁺', '⁻', '↑', '↓']);
+const TRAILING_ATTACH = new Set(['+', '-', '−', '%', '°', "'", '′', '″', '²', '³', '⁺', '⁻', '₊', '₋', '↑', '↓']);
 
 /**
  * Split mixed text into runs. LTR islands (Latin words, digits, units, formulas, arrows between

@@ -179,6 +179,11 @@ export interface SourcePageView {
   thumbnail_file_id: string | null;
   render_file_id: string | null;
   section_key: string | null;
+  /**
+   * Some page of this version carries a printed number (AC-04). A page WITHOUT one is then named by its file
+   * position only («الصفحة 1 في الملف») — never «ص 1», which may be the printed number of another page.
+   */
+  numbered_version?: boolean;
 }
 
 export interface SourcePagesResponse {
@@ -258,9 +263,12 @@ export interface UploadResponse {
   results: UploadFileResult[];
 }
 
-/** «ص 12» or «ص 12 (الصفحة 14 في الملف)» when the printed label differs from file order (AC-04). */
+/**
+ * «ص 12» or «ص 12 (الصفحة 14 في الملف)» when the printed label differs from file order (AC-04). A page without a
+ * printed number in a version whose other pages are numbered is «الصفحة 3 في الملف» (its only true identity).
+ */
 export function pageDisplayLabel(
-  page: Pick<SourcePageView, 'page_index' | 'printed_label' | 'kind'>,
+  page: Pick<SourcePageView, 'page_index' | 'printed_label' | 'kind' | 'numbered_version'>,
   opts: { withFileIndex?: boolean } = {},
 ): string {
   const fileNo = page.page_index + 1;
@@ -270,6 +278,7 @@ export function pageDisplayLabel(
   if (page.printed_label && page.printed_label !== String(fileNo)) {
     return opts.withFileIndex === false ? `ص ${page.printed_label}` : `ص ${page.printed_label} (الصفحة ${fileNo} في الملف)`;
   }
+  if (!page.printed_label && page.numbered_version) return `الصفحة ${fileNo} في الملف`;
   return `ص ${page.printed_label ?? fileNo}`;
 }
 

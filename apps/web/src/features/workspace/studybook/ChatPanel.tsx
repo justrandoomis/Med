@@ -19,9 +19,9 @@ import { Button, ErrorState, RichTextView, Skeleton, StatusPill, Switch, TextAre
 import { errorMessage } from '../../../lib/api';
 import type { FeatureGateState } from '../../../lib/capabilities';
 import { getSyncEngine } from '../../../lib/sync';
-import { ArtifactContent, BidiText } from '../../evidence';
+import { ArtifactContent, BidiText, ScopeBadge } from '../../evidence';
 import { studybookApi } from '../../studybook/api';
-import { shortQuote } from '../../studybook/model';
+import { shortQuote, threadMatchesScope } from '../../studybook/model';
 
 export interface ChatPanelProps {
   sourceId: string;
@@ -35,6 +35,8 @@ export interface ChatPanelProps {
   online: boolean;
   /** bump to focus the composer (Ask from the selection toolbar) */
   focusKey: number;
+  /** the owner explicitly widened the lock from an abstention: the rail's lock follows (G2 / AC-05) */
+  onScopeChange?: (scope: SourceScope) => void;
 }
 
 const DRAFT_LABEL: Partial<Record<ChatMessageView['status'], string>> = {
@@ -43,7 +45,7 @@ const DRAFT_LABEL: Partial<Record<ChatMessageView['status'], string>> = {
   rejected: 'تعذّر إكمال هذه الإجابة؛ لم يُعرض أي جزء منها',
 };
 
-export function ChatPanel({ sourceId, page, anchor, anchorText, scope, style, gate, online, focusKey }: ChatPanelProps) {
+export function ChatPanel({ sourceId, page, anchor, anchorText, scope, style, gate, online, focusKey, onScopeChange }: ChatPanelProps) {
   const toast = useToast();
   const [threads, setThreads] = useState<ChatThreadView[] | null>(null);
   const [active, setActive] = useState<ChatThreadResponse | null>(null);
@@ -76,6 +78,14 @@ export function ChatPanel({ sourceId, page, anchor, anchorText, scope, style, ga
     setActive(null);
   }, [anchorKey]);
 
+  // G2 / AC-05: a changed Source Lock in the rail starts a new conversation — a question is never sent to a thread
+  // pinned to another (e.g. wider) lock than the one the rail shows
+  const scopeKey = JSON.stringify([scope.mode, scope.lecture_source_id ?? null, [...scope.reference_source_ids].sort(), scope.include_my_notes]);
+  useEffect(() => {
+    setActive((a) => (a && !threadMatchesScope(a.thread, scope) ? null : a));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopeKey]);
+
   useEffect(() => {
     if (focusKey > 0) composer.current?.focus();
   }, [focusKey]);
@@ -96,8 +106,11 @@ export function ChatPanel({ sourceId, page, anchor, anchorText, scope, style, ga
     setError(null);
     try {
       let thread = active?.thread ?? null;
-      if (!thread || opts.forceNew) {
-        const created = await studybookApi.createThread({ anchor: anchor ?? (page ? { source_id: sourceId, version_id: page.version_id, page_id: page.id, region_ids: [] } : null), scope: opts.scope ?? scope, style, socratic });
+      const lock = opts.scope ?? scope;
+      // only ever continue a thread whose pinned lock is the one in force (an opened older thread with another
+      // lock is shown, but the next question starts a new conversation under the rail's lock)
+      if (!thread || opts.forceNew || !threadMatchesScope(thread, lock)) {
+        const created = await studybookApi.createThread({ anchor: anchor ?? (page ? { source_id: sourceId, version_id: page.version_id, page_id: page.id, region_ids: [] } : null), scope: lock, style, socratic });
         thread = created.thread;
         setActive(created);
       }
@@ -164,11 +177,17 @@ export function ChatPanel({ sourceId, page, anchor, anchorText, scope, style, ga
         <div className="sb-messages" aria-live="polite">
           <div className="sb-row">
             <BidiText as="span" className="sb-thread-title" text={shortQuote(active.thread.title ?? 'محادثة', 140)} />
+            <ScopeBadge scope={active.thread.scope} />
             {active.thread.socratic && <StatusPill tone="info">وضع سقراطي</StatusPill>}
             <Button size="sm" variant="plain" icon={<MessageSquarePlus size={14} />} onClick={() => setActive(null)}>
               محادثة جديدة
             </Button>
           </div>
+          {!threadMatchesScope(active.thread, scope) && (
+            <p className="sb-muted" role="note">
+              هذه المحادثة مقفلة على نطاقها المعروض أعلاه؛ سؤالك التالي يبدأ محادثة جديدة بنطاق المصادر المختار في اللوحة.
+            </p>
+          )}
           {active.messages.map((m) =>
             m.role === 'owner' ? (
               <div key={m.id} className="sb-msg sb-msg--owner">
@@ -182,7 +201,11 @@ export function ChatPanel({ sourceId, page, anchor, anchorText, scope, style, ga
                     <ArtifactContent
                       artifact={m.artifact}
                       showRibbon={false}
-                      onWidenScope={(wider) => void send(lastQuestion(m), { scope: wider, forceNew: true })}
+                      onWidenScope={(wider) => {
+                        // explicit owner action: the rail's lock becomes the wider one, then the question is re-asked
+                        onScopeChange?.(wider);
+                        void send(lastQuestion(m), { scope: wider, forceNew: true });
+                      }}
                     />
                   ) : (
                     <RichTextView value={m.content} />

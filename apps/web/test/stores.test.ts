@@ -105,4 +105,29 @@ describe('settings store', () => {
     expect(server.margin_density).toBe('rich');
     expect(window.localStorage.getItem('medlevo.settings.pending.v1')).toBeNull();
   });
+
+  it('a partial source_priority keeps the other purposes, locally and in the pending patch (I1 #7)', async () => {
+    const patches: Array<Record<string, unknown>> = [];
+    let releaseFirst!: (r: Response) => void;
+    const first = new Promise<Response>((r) => (releaseFirst = r));
+    setFetchImpl(async (_url, init) => {
+      if (init.method === 'PATCH') {
+        patches.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+        if (patches.length === 1) return first;
+      }
+      return json({ settings: settingsStore.get().settings });
+    });
+    const base = settingsStore.get().settings.source_priority;
+    const a = settingsStore.update({ source_priority: { clinical_expansion: ['textbook'] } as never }); // in flight
+    const b = settingsStore.update({ source_priority: { lecture_explanation: ['lecture'] } as never }); // queued meanwhile
+    // the device shows both changes and keeps the untouched purpose
+    expect(settingsStore.get().settings.source_priority).toEqual({ lecture_explanation: ['lecture'], source_question_practice: base.source_question_practice, clinical_expansion: ['textbook'] });
+    releaseFirst(json({ settings: settingsStore.get().settings }));
+    await a;
+    await b;
+    await settingsStore.flush();
+    expect(patches[0]).toEqual({ source_priority: { clinical_expansion: ['textbook'] } });
+    // the second request carries BOTH purposes the owner changed (the pending patch merged per purpose)
+    expect(patches[1]).toEqual({ source_priority: { clinical_expansion: ['textbook'], lecture_explanation: ['lecture'] } });
+  });
 });

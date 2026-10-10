@@ -268,7 +268,10 @@ function detectImpacts(db: Db, cards: FlashcardRow[], now: number): Map<string, 
     const items = db.all<{ dependent_id: string; alert_id: string; impact: string; reason_ar: string | null; kind: ContentAlertKind; summary: string; status: string; created_at: number; resolved_at: number | null }>(
       `SELECT i.dependent_id, i.alert_id, i.impact, i.reason_ar, a.kind, a.summary, a.status, a.created_at, a.resolved_at
          FROM content_alert_item i JOIN content_alert a ON a.id = i.alert_id
-        WHERE i.dependent_type = 'flashcard' AND i.dependent_id IN (${qs})`,
+        WHERE i.dependent_type = 'flashcard' AND i.dependent_id IN (${qs})
+          -- alerts about a corrected QUESTION (key / text) list its mistake cards too; those cards already get the
+          -- question_changed impact below, so the same cause is not shown twice (G8, AC-26)
+          AND NOT (json_valid(a.details_json) AND json_extract(a.details_json, '$.question_id') IS NOT NULL)`,
       ids,
     );
     const alerted = new Set<string>();
@@ -379,6 +382,14 @@ function questionChange(db: Db, fromVersionId: string, toVersionId: string): str
   }
   if ((a.explanation_json ?? '') !== (b.explanation_json ?? '')) return 'صُحّح شرح السؤال الذي صُنعت منه البطاقة؛ قد يحتاج ظهر البطاقة تحديثًا.';
   if (a.stem_json !== b.stem_json) return 'صُحّح نص السؤال الذي صُنعت منه البطاقة؛ قارن وجه البطاقة بالنسخة الجديدة.';
+  // the card's front lists the options and its back names the answer by its text: a corrected option is a changed
+  // fact on the card too (G8, AC-26 — an option-only correction used to leave the card «up to date»)
+  const opts = (id: string) =>
+    db
+      .all<{ option_key: string; text_json: string }>('SELECT option_key, text_json FROM question_option WHERE question_version_id = ? ORDER BY option_key', [id])
+      .map((o) => `${o.option_key}\u0000${o.text_json}`)
+      .join('\u0001');
+  if (opts(fromVersionId) !== opts(toVersionId)) return 'صُحّحت خيارات السؤال الذي صُنعت منه البطاقة؛ قارن وجه البطاقة وجوابها بالنسخة الجديدة.';
   return null;
 }
 

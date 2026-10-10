@@ -7,12 +7,15 @@ import { annotationTargetKey, detectDir, richTextFromPlain, type NormBox, type P
 import { RichTextView, Skeleton, cx } from '../../../design';
 import { loadPdfjs } from '../../../lib/pdf';
 import { InkLayer } from '../ink';
-import { fetchRegions, fileUrl } from '../data/api';
+import { useFileSrc } from '../../../lib/offline';
+import { fetchRegions } from '../data/api';
 import { folio, fullPageLabel } from '../model/pages';
+import { pdfPageUsesRegionText, regionTextRuns } from '../model/regionText';
 import { clientRectsToNorm, rangeFromOffsets } from '../model/textQuote';
 import type { PageGeom } from './geometry';
 import { BoxesLayer, RegionHighlight, TextHighlightsLayer } from './overlays';
 import { useReaderPage } from './readerContext';
+import { logicalTextContent } from './textOrder';
 
 const MAX_CANVAS_PIXELS = 12_000_000; // stays under iOS Safari's canvas memory limit
 
@@ -99,7 +102,7 @@ export const PageView = memo(function PageView({ page, geom, unrotated, near, st
         {!near ? (
           <div className="wk-sheet__placeholder" aria-hidden="true" />
         ) : ctx.mode === 'pdf' ? (
-          <PdfSheet pageIndex={page.page_index} geom={geom} unrotated={unrotated} onTextRoot={onTextRoot}>
+          <PdfSheet page={page} geom={geom} unrotated={unrotated} onTextRoot={onTextRoot}>
             <TextHighlightsLayer targetKey={targetKey} />
             <BoxesLayer boxes={hitBoxes.boxes} current={hitBoxes.current} className="wk-hit" />
             {showHighlight && <RegionHighlight pageId={page.id} bbox={ctx.highlight!.bbox} label={ctx.highlight!.label ?? undefined} />}
@@ -135,21 +138,27 @@ export const PageView = memo(function PageView({ page, geom, unrotated, near, st
 
 // ───────────────────────────── PDF ─────────────────────────────
 function PdfSheet({
-  pageIndex,
+  page: sourcePage,
   geom,
   unrotated,
   onTextRoot,
   children,
 }: {
-  pageIndex: number;
+  page: SourcePageView;
   geom: PageGeom;
   unrotated: { w: number; h: number };
   onTextRoot: (el: HTMLElement | null) => void;
   children: React.ReactNode;
 }) {
+  const pageIndex = sourcePage.page_index;
   const { pdf, textInteractive, reportPageSize, textLang } = useReaderPage();
   const canvasSlot = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLDivElement>(null);
+  // a scanned page inside the PDF has no PDF text layer: its text is the server's OCR (AC-02 — never an empty page)
+  const regionText = pdfPageUsesRegionText(sourcePage);
+  const regions = useRegions(sourcePage.id, regionText);
+  const ocrRef = useRef<HTMLDivElement>(null);
+  const runs = regionText ? regionTextRuns(regions ?? []) : [];
   const [state, setState] = useState<'rendering' | 'ready' | 'error'>('rendering');
 
   // canvas: rendered into a fresh canvas that replaces the old one when done (no blank flash on zoom)
@@ -217,8 +226,13 @@ function PdfSheet({
       const raw = page.getViewport({ scale: 1 }).rawDims as { pageWidth: number; pageHeight: number };
       reportPageSize(pageIndex, { w: raw.pageWidth, h: raw.pageHeight, rotate: ((page.rotate % 360) + 360) % 360 });
       container.replaceChildren();
+      if (regionText) return; // the OCR layer below carries this page's text
       container.style.setProperty('--total-scale-factor', String(geom.scale));
-      const tl = new pdfjs.TextLayer({ textContentSource: page.streamTextContent(), container, viewport: page.getViewport({ scale: geom.scale, rotation: 0 }) });
+      // items in logical reading order (textOrder.ts): selection, copy and in-document search follow the reading,
+      // not the order the PDF producer drew mixed Arabic/English pieces in (AC-20)
+      const content = logicalTextContent(await page.getTextContent());
+      if (cancelled) return;
+      const tl = new pdfjs.TextLayer({ textContentSource: content, container, viewport: page.getViewport({ scale: geom.scale, rotation: 0 }) });
       layer = tl;
       await tl.render();
       if (!cancelled) onTextRoot(container);
@@ -228,10 +242,18 @@ function PdfSheet({
     return () => {
       cancelled = true;
       layer?.cancel();
-      onTextRoot(null);
+      if (!regionText) onTextRoot(null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pdf, pageIndex, geom.scale]);
+  }, [pdf, pageIndex, geom.scale, regionText]);
+
+  // OCR text root: registered again once the runs are in the DOM (search hits and selection map onto it)
+  useEffect(() => {
+    if (!regionText) return;
+    onTextRoot(ocrRef.current);
+    return () => onTextRoot(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [regionText, regions]);
 
   return (
     <>
@@ -241,6 +263,7 @@ function PdfSheet({
       <div className="wk-layers" data-rot={geom.rotation} style={{ width: unrotated.w * geom.scale, height: unrotated.h * geom.scale }}>
         {children}
         <div ref={textRef} className={cx('wk-textlayer', !textInteractive && 'wk-textlayer--inert')} lang={textLang ?? undefined} />
+        {regionText && <OcrTextLayer layerRef={ocrRef} runs={runs} interactive={textInteractive} />}
       </div>
     </>
   );
@@ -278,27 +301,42 @@ function ImageSheet({
   const { textInteractive } = useReaderPage();
   const regions = useRegions(page.id, true);
   const fileId = page.render_file_id;
+  // the downloaded copy on this device when there is one (object URL), else the authenticated file route
+  const src = useFileSrc(fileId);
   const [failed, setFailed] = useState(false);
   const textRef = useCallback((el: HTMLDivElement | null) => onTextRoot(el), [onTextRoot]);
   // same filter and order as the search text of this page (offsets must agree)
-  const textRegions = (regions ?? []).filter((r) => r.bbox && r.text && r.kind !== 'figure').sort((a, b) => a.reading_order - b.reading_order);
+  const textRegions = regionTextRuns(regions ?? []);
   return (
     <div className="wk-layers" data-rot={geom.rotation} style={{ width: unrotated.w * geom.scale, height: unrotated.h * geom.scale }}>
       {fileId && !failed ? (
         // with OCR text the text layer carries the content; without it the image itself must be named
-        <img className="wk-page-image" src={fileUrl(fileId)} alt={textRegions.length ? '' : `صورة ${fullPageLabel(page)} (لا يوجد نص مقروء لها بعد)`} draggable={false} onError={() => setFailed(true)} />
+        src && <img className="wk-page-image" src={src} alt={textRegions.length ? '' : `صورة ${fullPageLabel(page)} (لا يوجد نص مقروء لها بعد)`} draggable={false} onError={() => setFailed(true)} />
       ) : (
-        <p className="wk-sheet__error">{fileId ? 'تعذّر تحميل صورة هذه الصفحة.' : 'لا توجد صورة معالجة لهذه الصفحة بعد.'}</p>
+        <p className="wk-sheet__error">
+          {!fileId
+            ? 'لا توجد صورة معالجة لهذه الصفحة بعد.'
+            : typeof navigator !== 'undefined' && navigator.onLine === false
+              ? 'صورة هذه الصفحة غير محمّلة على هذا الجهاز؛ تظهر عند عودة الاتصال.'
+              : 'تعذّر تحميل صورة هذه الصفحة.'}
+        </p>
       )}
       {children}
       {/* OCR text placed over the image: selectable and readable by screen readers */}
-      <div ref={textRef} className={cx('wk-ocrlayer', !textInteractive && 'wk-textlayer--inert')} lang={textRegions[0]?.lang ?? undefined}>
-        {textRegions.map((r) => (
-          <span key={r.id} className="wk-ocrlayer__run" style={{ left: `${r.bbox!.x * 100}%`, top: `${r.bbox!.y * 100}%`, width: `${r.bbox!.w * 100}%`, height: `${r.bbox!.h * 100}%` }} dir={detectDir(r.text ?? '')}>
-            {r.text}
-          </span>
-        ))}
-      </div>
+      <OcrTextLayer layerRef={textRef} runs={textRegions} interactive={textInteractive} />
+    </div>
+  );
+}
+
+/** Region text placed over a page picture (page image or scanned PDF page): selectable, read by screen readers. */
+function OcrTextLayer({ layerRef, runs, interactive }: { layerRef: React.Ref<HTMLDivElement>; runs: SourceRegionView[]; interactive: boolean }) {
+  return (
+    <div ref={layerRef} className={cx('wk-ocrlayer', !interactive && 'wk-textlayer--inert')} lang={runs[0]?.lang ?? undefined}>
+      {runs.map((r) => (
+        <span key={r.id} className="wk-ocrlayer__run" style={{ left: `${r.bbox!.x * 100}%`, top: `${r.bbox!.y * 100}%`, width: `${r.bbox!.w * 100}%`, height: `${r.bbox!.h * 100}%` }} dir={detectDir(r.text ?? '')}>
+          {r.text}
+        </span>
+      ))}
     </div>
   );
 }

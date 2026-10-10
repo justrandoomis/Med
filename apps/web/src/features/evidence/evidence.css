@@ -625,6 +625,18 @@ h4.ev-par {
 .ev-alert__item-type {
   color: var(--ml-color-ink-2);
 }
+.ev-alert__item-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.ev-alert__item-link {
+  color: var(--ml-color-accent, inherit);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+}
 .ev-alert__item-reason {
   flex-basis: 100%;
   font-size: var(--ml-text-xs);

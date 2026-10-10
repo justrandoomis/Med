@@ -11,7 +11,7 @@
 // Unknown is never accepted: a candidate whose modality / region / caption cannot be checked is excluded with the
 // reason (a nearby but misleading image is worse than none). Nothing here writes explanations.
 import type { ImageCandidate, ImageCheck, ImageRequest, ImageValidation } from '@medlevo/shared';
-import { matchAny, tokens } from '../cases/text';
+import { findPhrase, matchAny, tokens } from '../cases/text';
 
 const MODALITIES: Record<string, string[]> = {
   xray: ['x-ray', 'xray', 'x ray', 'radiograph', 'radiography', 'plain film', 'cxr', 'axr', 'chest x-ray', 'chest film', 'اشعه سينيه', 'صوره شعاعيه', 'صوره بالاشعه السينيه'],
@@ -83,6 +83,30 @@ function classify(text: string | null | undefined, table: Record<string, string[
   return best?.key ?? null;
 }
 
+/**
+ * G3 / AC-09: every modality a caption names (not denied), longest phrase first so «chest x-ray» and «x-ray» are one
+ * mention. Drawings are judged by the origin check, not here.
+ */
+function captionModalities(caption: string | null | undefined): string[] {
+  if (!caption?.trim()) return [];
+  const hits: Array<{ key: string; at: number; end: number }> = [];
+  for (const [key, terms] of Object.entries(MODALITIES)) {
+    if (key === 'drawing') continue;
+    for (const term of terms) {
+      const len = tokens(term).length;
+      for (const h of findPhrase(caption, term)) if (!h.negated) hits.push({ key, at: h.at, end: h.at + len });
+    }
+  }
+  const kept = hits.filter((h) => !hits.some((o) => o !== h && o.key !== h.key && o.at <= h.at && o.end >= h.end && o.end - o.at > h.end - h.at));
+  return [...new Set(kept.map((h) => h.key))];
+}
+
+/** Words that say the picture is drawn, not photographed / acquired (an «illustration» of an X-ray is not an X-ray). */
+const DRAWING_CAPTION_TERMS = [
+  'illustration', 'drawing', 'schematic', 'diagram', 'diagrammatic', 'cartoon', 'sketch', "artist's impression", 'artist impression', 'artistic rendering',
+  'رسم توضيحي', 'رسم تخطيطي', 'رسم تعليمي', 'رسم يدوي', 'مخطط', 'صوره توضيحيه',
+];
+
 export function normalizeModality(s: string | null | undefined): string | null {
   if (!s) return null;
   const direct = Object.keys(MODALITIES).find((k) => k === s.trim().toLowerCase());
@@ -125,9 +149,14 @@ export function validateImageCandidate(candidate: ImageCandidate, request: Image
   const wantRegion = normalizeRegion(request.anatomic_region);
 
   // modality
-  const gotModality = normalizeModality(candidate.modality) ?? classify(candidate.caption, MODALITIES);
+  const metaModality = normalizeModality(candidate.modality);
+  const named = metaModality ? [] : captionModalities(candidate.caption);
+  const gotModality = metaModality ?? classify(candidate.caption, MODALITIES);
   if (!wantModality) checks.push({ check: 'modality', passed: false, reason_ar: `نوع التصوير المطلوب «${request.modality}» غير معروف للمدقق؛ لا يمكن التحقق.` });
-  else if (!gotModality) checks.push({ check: 'modality', passed: false, reason_ar: 'لا يمكن التحقق من نوع التصوير: لا توجد بيانات ولا يذكره التعليق.' });
+  else if (named.length > 1) {
+    // G3 / AC-09: «Chest X-ray and CT side by side; the CT shows …» — which picture is this? Unknown is never accepted.
+    checks.push({ check: 'modality', passed: false, reason_ar: `التعليق يذكر أكثر من نوع تصوير (${named.map(label).join('، ')})؛ لا يمكن التحقق أن هذه الصورة من النوع المطلوب.` });
+  } else if (!gotModality) checks.push({ check: 'modality', passed: false, reason_ar: 'لا يمكن التحقق من نوع التصوير: لا توجد بيانات ولا يذكره التعليق.' });
   else if (gotModality !== wantModality) checks.push({ check: 'modality', passed: false, reason_ar: `نوع التصوير ${label(gotModality)} لا يطابق المطلوب ${label(wantModality)}.` });
   else checks.push({ check: 'modality', passed: true, reason_ar: `نوع التصوير مطابق: ${label(gotModality)}.` });
 
@@ -159,7 +188,10 @@ export function validateImageCandidate(candidate: ImageCandidate, request: Image
   // from a source is never a real radiograph / photograph, whatever its caption names (unless a drawing was asked for)
   const generated = candidate.origin === 'generated' || candidate.image_kind === 'generated_illustration';
   const reorganized = candidate.origin === 'reorganized' || candidate.image_kind === 'reorganized_diagram';
-  const drawing = !!candidate.image_kind && DRAWING_KINDS.has(candidate.image_kind) && wantModality !== 'drawing';
+  // G3 / AC-09: the caption itself may say it is drawn («Chest X-ray appearance of … (artist's illustration)») even when
+  // processing did not classify the picture as a drawing
+  const drawnByCaption = !!candidate.caption && matchAny(candidate.caption, DRAWING_CAPTION_TERMS).matched;
+  const drawing = ((!!candidate.image_kind && DRAWING_KINDS.has(candidate.image_kind)) || drawnByCaption) && wantModality !== 'drawing';
   if ((request.require_real_example ?? true) && (generated || reorganized || drawing)) {
     checks.push({
       check: 'origin',

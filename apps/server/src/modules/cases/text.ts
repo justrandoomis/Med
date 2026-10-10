@@ -19,12 +19,16 @@ import { normalizeForSearch } from '@medlevo/shared';
 const PROCLITICS = ['وال', 'بال', 'فال', 'كال', 'لل', 'ال', 'و', 'ف', 'ب', 'ل', 'ك'];
 const NEGATIONS = new Set(['not', 'no', 'never', 'without', 'nor', 'non', 'لا', 'ليس', 'ليست', 'لم', 'لن', 'بدون', 'غير', 'دون', 'ولا', 'بلا', 'عدم']);
 /** Extra single-token pre-negation cues for captions (strict). */
-const CAPTION_PRE = new Set(['انعدام', 'غياب', 'خلو', 'خالي', 'خاليه', 'نفي', 'exclude', 'excluding']);
+const CAPTION_PRE = new Set([
+  'انعدام', 'غياب', 'خلو', 'خالي', 'خاليه', 'نفي', 'exclude', 'excluding',
+  // G3 / AC-09: a finding that is gone is not shown («resolved pneumothorax», «زوال استرواح الصدر»)
+  'resolved', 'healed', 'زوال', 'اختفاء',
+]);
 /** Two-token pre-negation cues (normalized tokens). «rule out» only for captions: in an answer it names a differential. */
 const PRE_PAIRS = new Set(['negative for', 'free of', 'absence of']);
-const CAPTION_PRE_PAIRS = new Set(['rule out', 'ruled out', 'rules out', 'ruling out']);
+const CAPTION_PRE_PAIRS = new Set(['rule out', 'ruled out', 'rules out', 'ruling out', 'resolution of']);
 /** Post-negation cues for captions: the finding named, then denied. */
-const CAPTION_POST = new Set(['excluded', 'absent', 'resolved', 'مستبعد', 'مستبعده', 'غائب', 'غايب', 'منفي', 'منفيه']);
+const CAPTION_POST = new Set(['excluded', 'absent', 'resolved', 'healed', 'مستبعد', 'مستبعده', 'غائب', 'غايب', 'منفي', 'منفيه', 'زال', 'اختفي']);
 const CAPTION_POST_PAIRS = new Set([
   'ruled out',
   'not seen',

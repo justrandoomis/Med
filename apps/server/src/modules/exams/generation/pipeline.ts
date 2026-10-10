@@ -45,6 +45,7 @@ import { newId } from '../../../lib/ids';
 import type { JobRun } from '../../jobs/queue';
 import type { UntrustedBlock } from '../../ai/types';
 import { abstainFor, packFromCandidates, recordDependencies, resolveScope, retrieve, toResolvedScope, validateClaims, type SentenceResult } from '../../evidence/services';
+import { UNCERTAIN_FOR_FIXED_ANSWER_AR } from '../../evidence/pack';
 import { createQuestion } from '../../questions/service';
 import { validateQuestion } from '../../questions/validate';
 import { questionsAr } from '../store';
@@ -289,6 +290,8 @@ interface PackedForRun {
   views: Array<Pick<EvidenceView, 'id' | 'version_id' | 'source_id' | 'region_id' | 'page_id'>>;
   versionIds: string[];
   searched_ar: string;
+  /** G3 / AC-08: evidence left out because it is an uncertain reading (said in the run summary) */
+  left_out_ar?: string;
 }
 
 function suggestionAr(difficulty: GenerateQuestionsRequest['difficulty'], scope: StoredScope): string {
@@ -722,14 +725,18 @@ async function execute(ctx: AppContext, job: JobRun<{ run_id: string }>): Promis
     });
     const ab = abstainFor(ctx, r, scope);
     if (ab) return { abstain: { reason: ab.reason, reason_ar: ab.reason_ar, detail: ab.detail, suggestion_ar: suggestionAr(req.difficulty, scope), ...(ab.suggest_scope ? { suggest_scope: ab.suggest_scope } : {}) } };
-    const p = packFromCandidates(ctx, scope, r.candidates, { maxItems: 30 });
+    // G3 / AC-08: a generated question's key is a FIXED exam answer — uncertain readings (diagram labels read by OCR,
+    // low-confidence / flagged text) are never handed to the generator as citable evidence
+    const p = packFromCandidates(ctx, scope, r.candidates, { maxItems: 30, fixedAnswer: true });
+    const uncertainLeftOut = p.refused.filter((x) => x.reason_ar === UNCERTAIN_FOR_FIXED_ANSWER_AR).length;
+    const leftOutAr = uncertainLeftOut > 0 ? ` استُبعد ${uncertainLeftOut === 1 ? 'مقتطف واحد' : `${uncertainLeftOut} مقتطفات`} لأنه قراءة آلية غير مؤكدة (مثل تسميات رسم أو نص ضعيف الثقة)؛ لا تُبنى عليه إجابة ثابتة حتى تراجعه.` : '';
     const need = MIN_EVIDENCE[req.difficulty];
     if (p.forModel.length < need) {
       return {
         abstain: {
           reason: 'insufficient_evidence',
           reason_ar: 'الأدلة في النطاق لا تكفي لسؤال بهذه الصعوبة',
-          detail: `وُجد ${p.forModel.length === 0 ? 'لا شيء' : `${p.forModel.length} من المقتطفات`} صالح للاستشهاد، ويحتاج سؤال بمستوى «${GENERATION_DIFFICULTY_LABELS_AR[req.difficulty]}» مع تفسير كل مشتت ${need} على الأقل. ${r.searched.summary_ar}`,
+          detail: `وُجد ${p.forModel.length === 0 ? 'لا شيء' : `${p.forModel.length} من المقتطفات`} صالح للاستشهاد، ويحتاج سؤال بمستوى «${GENERATION_DIFFICULTY_LABELS_AR[req.difficulty]}» مع تفسير كل مشتت ${need} على الأقل.${leftOutAr} ${r.searched.summary_ar}`,
           suggestion_ar: suggestionAr(req.difficulty, scope),
         },
       };
@@ -740,6 +747,7 @@ async function execute(ctx: AppContext, job: JobRun<{ run_id: string }>): Promis
       views: p.views.map((v) => ({ id: v.id, version_id: v.version_id, source_id: v.source_id, region_id: v.region_id, page_id: v.page_id })),
       versionIds: [...new Set(p.views.map((v) => v.version_id))],
       searched_ar: r.searched.summary_ar,
+      ...(leftOutAr ? { left_out_ar: leftOutAr.trim() } : {}),
     };
   });
   if ('abstain' in packed) return finish(ctx, run, 'abstained', null, packed.abstain);
@@ -757,6 +765,7 @@ async function execute(ctx: AppContext, job: JobRun<{ run_id: string }>): Promis
     });
   }
   const summary: RunSummary = { requested: req.count, returned: questions.length, published: 0, needs_review: 0, rejected: 0, evidence: packed.forModel.length, notes_ar: [], model: gen.model };
+  if (packed.left_out_ar) summary.notes_ar.push(packed.left_out_ar);
   if (gen.output.questions.length > req.count) summary.notes_ar.push(`أُهمل ${questionsAr(gen.output.questions.length - req.count)} زائدة عن العدد المطلوب.`);
   if (questions.length < req.count) summary.notes_ar.push(`أرجع المولّد ${questionsAr(questions.length)} فقط؛ الأدلة لم تكفِ للعدد المطلوب.`);
   for (const [i, q] of questions.entries()) {

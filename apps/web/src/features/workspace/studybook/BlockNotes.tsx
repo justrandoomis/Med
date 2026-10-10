@@ -5,7 +5,7 @@
 // (IndexedDB + outbox) and synced; they are the owner's writing, not evidence.
 import { useMemo, useState } from 'react';
 import { NotebookPen } from 'lucide-react';
-import { richTextFromPlain, richTextToPlain, type AnnotationAnchor, type ContentBlockView, type RichText } from '@medlevo/shared';
+import { richTextFromPlain, richTextToPlain, samePassage, type AnnotationAnchor, type ContentBlockView, type RichText } from '@medlevo/shared';
 import { Button, StatusPill, TextArea, useToast } from '../../../design';
 import { getDb } from '../../../lib/localdb';
 import { useLive } from '../data/hooks';
@@ -19,6 +19,11 @@ export interface BlockNotesProps {
   /** the block at the top of the book view (where a new note goes) */
   topBlockKey: string | null;
   onJump: (blockKey: string) => void;
+  /**
+   * notes the server's re-anchoring report for this version lists as `needs_reanchor` (AC-22): a block with the same key
+   * may exist, but it is ANOTHER paragraph (a regeneration wrote fewer paragraphs about the region, or reordered them)
+   */
+  unanchoredIds?: ReadonlySet<string>;
 }
 
 export function blockText(b: ContentBlockView | undefined): string {
@@ -31,7 +36,21 @@ function noteText(n: WorkspaceNoteRow): string {
   return body && Array.isArray(body.paragraphs) ? richTextToPlain(body) : '';
 }
 
-export function BlockNotes({ lineageId, versionNo, blocks, topBlockKey, onJump }: BlockNotesProps) {
+/**
+ * Is `b` still the paragraph note `n` was written on? A note written on another version is only shown «على» a block
+ * when the quote it kept still matches that block's text (offline too, before the server's report arrives).
+ */
+function stillItsParagraph(n: WorkspaceNoteRow, b: ContentBlockView, versionNo: number): boolean {
+  const anchor = n.anchor as { artifact_version?: number; quote?: { exact?: string } } | null;
+  if (!anchor || anchor.artifact_version === versionNo) return true;
+  const quote = anchor.quote?.exact;
+  return !quote || samePassage(quote, blockText(b), true);
+}
+
+const NOT_HERE_AR = 'فقرتها ليست في هذه النسخة — تحتاج إعادة ربط (لم تُنقل)';
+const CHANGED_AR = 'فقرتها تغيّرت في هذه النسخة — تحتاج إعادة ربط (لم تُنقل إلى الفقرة الجديدة)';
+
+export function BlockNotes({ lineageId, versionNo, blocks, topBlockKey, onJump, unanchoredIds }: BlockNotesProps) {
   const toast = useToast();
   const prefix = `artifact_block:${lineageId}:`;
   const notes = useLive<WorkspaceNoteRow[]>(
@@ -78,15 +97,16 @@ export function BlockNotes({ lineageId, versionNo, blocks, topBlockKey, onJump }
           {notes.map((n) => {
             const k = keyOf(n);
             const b = byKey.get(k);
+            const attached = !!b && !unanchoredIds?.has(n.id) && stillItsParagraph(n, b, versionNo);
             return (
               <li key={n.id} className="sb-blocknote">
                 <p className="sb-blocknote__text">{shortQuote(noteText(n), 240)}</p>
-                {b ? (
+                {attached ? (
                   <Button size="sm" variant="plain" onClick={() => onJump(k)}>
                     {`على: «${shortQuote(blockText(b), 60)}»`}
                   </Button>
                 ) : (
-                  <StatusPill tone="warning">فقرتها ليست في هذه النسخة — تحتاج إعادة ربط (لم تُنقل)</StatusPill>
+                  <StatusPill tone="warning">{b ? CHANGED_AR : NOT_HERE_AR}</StatusPill>
                 )}
               </li>
             );

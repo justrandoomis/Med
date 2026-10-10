@@ -9,6 +9,7 @@ import { Bidi, Breadcrumbs, Button, buttonClass, EmptyState, ErrorState, Loading
 import { errorMessage, isApiError } from '../../lib/api';
 import { usePageTitle } from '../../lib/usePageTitle';
 import { questionsApi } from './api';
+import { AnswerCheckSection } from './AnswerCheck';
 import { ChecksSection, DuplicatesSection, KeysSection, LinksSection, OccurrencesSection, ReviewItemsSection, VersionsSection } from './DetailSections';
 import { KeyDialog } from './KeyDialog';
 import { AnswerPill, ExtractionPill, MixedText, NegationPill, OriginIcon, QuestionStatusPill, ReviewPill, Stem } from './labels';
@@ -139,6 +140,7 @@ export function QuestionDetailScreen() {
       </div>
 
       <KeysSection d={d!} />
+      <AnswerCheckSection d={d!} onChanged={() => void load()} />
       <OccurrencesSection d={d!} />
       <LinksSection d={d!} onChanged={() => void load()} />
       <DuplicatesSection questionId={q.id} count={q.duplicates.length} onChanged={() => void load()} />

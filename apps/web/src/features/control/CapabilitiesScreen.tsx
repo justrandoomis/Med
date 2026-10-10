@@ -33,6 +33,7 @@ const FEATURE_LABELS_AR: Record<FeatureKey, string> = {
   'ai.generate_questions': 'توليد الأسئلة',
   'ai.grade_written': 'تقييم الإجابات المكتوبة',
   'ai.cases': 'الحالات السريرية',
+  'ai.answer_check': 'التحقق من مفتاح الإجابة بأدلة المحاضرة',
   'external.evidence': 'أدلة من مصادر خارجية',
   'external.images': 'صور خارجية',
   'questions.vault': 'بنك أسئلتي',
@@ -71,19 +72,23 @@ const STATE: Record<FeatureState, { label: string; tone: StatusTone }> = {
 
 const PEN_SUMMARY = [
   'لم يُختبر أي قلم حقيقي (Apple Pencil أو غيره) على أي جهاز؛ ما اختُبر آليًا كان بالفأرة في Chromium وبمحاكاة في jsdom.',
-  'الضغط والميل والتمرير فوق الشاشة مبنية وتعمل حين يرسلها المتصفح فعلًا، ولم تُختبر على جهاز حقيقي.',
+  // never «تعمل»: these paths ran only with simulated events (G6 / AC-28)
+  'الضغط والميل والتمرير فوق الشاشة مبنية وتُستخدم حين يرسلها المتصفح فعلًا؛ لم تُشغَّل إلا بأحداث محاكاة، ولم تُختبر على جهاز حقيقي.',
   'رفض راحة اليد على الويب تقريبي (وضع القلم فقط، وتجاهل اللمسات الواسعة)؛ رفض النظام الحقيقي يحتاج طبقة iPad أصلية.',
   'النقر المزدوج والضغط على Apple Pencil والكتابة اليدوية Scribble على اللوحة غير متاحة على الويب.',
-  'الكتابة دون اتصال (التخزين المحلي ثم المزامنة) ودقة موضع الحبر عبر التكبير والتدوير اختُبرت آليًا.',
+  'الكتابة دون اتصال (التخزين المحلي ثم المزامنة) ودقة موضع الحبر عبر التكبير والتدوير اختُبرت آليًا بالفأرة في Chromium.',
 ];
 
-function Row({ f }: { f: FeatureStatus }) {
+export function Row({ f }: { f: FeatureStatus }) {
   const s = STATE[f.state];
+  // a working feature may still carry a limit the server states (audio without transcription, figures without
+  // vision, PDF only through browser printing): never hide it behind a bare «تعمل» (§61, critic round)
+  const limited = f.state === 'available' && !!f.reason_ar;
   return (
     <li className="cc-cap">
       <span className="cc-cap__name">{FEATURE_LABELS_AR[f.key] ?? f.key}</span>
-      <StatusPill tone={s.tone}>{s.label}</StatusPill>
-      {f.reason_ar && f.state !== 'available' && <BidiText as="span" dir="rtl" className="cc-cap__why" text={f.reason_ar} />}
+      <StatusPill tone={s.tone}>{limited ? 'تعمل بحدود' : s.label}</StatusPill>
+      {f.reason_ar && <BidiText as="span" dir="rtl" className="cc-cap__why" text={limited ? `الحدود: ${f.reason_ar}` : f.reason_ar} />}
     </li>
   );
 }

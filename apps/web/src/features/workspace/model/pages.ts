@@ -2,7 +2,7 @@
 // page sits in the file. Both are shown when they differ, and "go to page" understands either.
 import { pageDisplayLabel, type SourcePageView } from '@medlevo/shared';
 
-export type PageIdentity = Pick<SourcePageView, 'page_index' | 'printed_label' | 'kind'>;
+export type PageIdentity = Pick<SourcePageView, 'page_index' | 'printed_label' | 'kind' | 'numbered_version'>;
 
 /** Folio under a page: «ص 12» + «الصفحة 14 في الملف» (only when it differs). */
 export function folio(page: PageIdentity): { primary: string; secondary: string | null } {

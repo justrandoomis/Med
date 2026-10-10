@@ -31,6 +31,12 @@ import { questionAttemptDTO } from '../exams/store';
 import { signalResets } from './profile';
 
 // ───────── genome ─────────
+/** After a reset of the mistake types (cut-off `since`), an older answer's type counts again only when the owner
+ *  classified it after the reset (setMistakeType stamps updated_at). */
+export function classificationVisible(r: { answered_at: number; updated_at: number | null; mistake_origin: 'auto' | 'owner' | null }, since: number): boolean {
+  return r.answered_at >= since || (r.mistake_origin === 'owner' && (r.updated_at ?? 0) >= since);
+}
+
 export function mistakeGenome(ctx: AppContext, opts: { sourceId?: string | null; courseNodeId?: string | null } = {}): MistakeGenomeView {
   const resets = signalResets(ctx.db);
   const since = Math.max(resets.mcq_attempts ?? 0, 0);
@@ -48,13 +54,14 @@ export function mistakeGenome(ctx: AppContext, opts: { sourceId?: string | null;
     where.push('q.course_node_id = ?');
     params.push(opts.courseNodeId);
   }
-  const rows = ctx.db.all<{ id: string; question_id: string; answered_at: number; mistake_type: MistakeType | null; mistake_origin: 'auto' | 'owner' | null; auto_mistake_type: MistakeType | null; auto_mistake_reason: string | null; stem_json: string }>(
-    `SELECT qa.id, qa.question_id, qa.answered_at, qa.mistake_type, qa.mistake_origin, qa.auto_mistake_type, qa.auto_mistake_reason, v.stem_json
+  const rows = ctx.db.all<{ id: string; question_id: string; answered_at: number; updated_at: number | null; mistake_type: MistakeType | null; mistake_origin: 'auto' | 'owner' | null; auto_mistake_type: MistakeType | null; auto_mistake_reason: string | null; stem_json: string }>(
+    `SELECT qa.id, qa.question_id, qa.answered_at, qa.updated_at, qa.mistake_type, qa.mistake_origin, qa.auto_mistake_type, qa.auto_mistake_reason, v.stem_json
        FROM question_attempt qa JOIN question q ON q.id = qa.question_id JOIN question_version v ON v.id = qa.question_version_id
       WHERE ${where.join(' AND ')} ORDER BY qa.answered_at DESC, qa.id DESC`,
     params,
   );
-  const typeOf = (r: (typeof rows)[number]) => (r.answered_at < typesSince ? null : r.mistake_type);
+  // a reset hides the classifications made before it — not one the owner sets again afterwards (G8, AC-27)
+  const typeOf = (r: (typeof rows)[number]) => (classificationVisible(r, typesSince) ? r.mistake_type : null);
   const dist = MISTAKE_TYPES.map((t) => {
     const xs = rows.filter((r) => typeOf(r) === t);
     return { type: t, label_ar: MISTAKE_TYPE_LABELS_AR[t], count: xs.length, by_owner: xs.filter((r) => r.mistake_origin === 'owner').length, by_auto: xs.filter((r) => r.mistake_origin !== 'owner').length };

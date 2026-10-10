@@ -21,7 +21,9 @@ import {
   type ContentAlertItemView,
   type ContentAlertKind,
   type ContentAlertView,
+  type RichText,
   type VersionChangeSummary,
+  stemPreview,
 } from '@medlevo/shared';
 import type { AppContext } from '../../context';
 import { fromJson, toJson } from '../../db/db';
@@ -581,16 +583,68 @@ interface AlertRow {
   source_title: string | null;
 }
 
-function itemTitle(ctx: AppContext, type: string, id: string): string | null {
-  if (type === 'artifact') {
-    const a = ctx.db.get<{ title: string | null; kind: string }>('SELECT title, kind FROM artifact WHERE id = ?', [id]);
-    return a ? (a.title ?? null) : null;
+const ARTIFACT_KIND_AR: Record<string, string> = {
+  study_book: 'كتاب الدراسة',
+  summary: 'ملخص',
+  explanation: 'شرح',
+  chat_answer: 'إجابة محادثة',
+  comparison: 'مقارنة',
+  mind_map: 'خريطة ذهنية',
+  flowchart: 'مخطط',
+  figure_explanation: 'شرح شكل',
+  case_explanation: 'شرح حالة',
+};
+
+const stemOf = (json: string | null | undefined, max = 90) => (json ? stemPreview(fromJson<RichText>(json), max) || null : null);
+
+/**
+ * How the owner recognises an affected item (G8, AC-26): a title (artifact title, question stem, card front, exam or
+ * case title) and the app route that opens it. Items that no longer exist get neither.
+ */
+function itemIdentity(ctx: AppContext, type: string, id: string): { title: string | null; href: string | null } {
+  if (type === 'artifact' || type === 'content_block') {
+    const a =
+      type === 'artifact'
+        ? ctx.db.get<{ title: string | null; kind: string; primary_source_id: string | null }>('SELECT title, kind, primary_source_id FROM artifact WHERE id = ?', [id])
+        : ctx.db.get<{ title: string | null; kind: string; primary_source_id: string | null }>(
+            'SELECT a.title, a.kind, a.primary_source_id FROM content_block b JOIN artifact a ON a.id = b.artifact_id WHERE b.id = ?',
+            [id],
+          );
+    if (!a) return { title: null, href: null };
+    return { title: a.title ?? ARTIFACT_KIND_AR[a.kind] ?? null, href: a.primary_source_id ? `/study/${a.primary_source_id}` : null };
   }
-  if (type === 'content_block') {
-    const b = ctx.db.get<{ title: string | null }>('SELECT a.title FROM content_block b JOIN artifact a ON a.id = b.artifact_id WHERE b.id = ?', [id]);
-    return b?.title ?? null;
+  if (type === 'question_version') {
+    const v = ctx.db.get<{ question_id: string; stem_json: string; version_no: number }>('SELECT question_id, stem_json, version_no FROM question_version WHERE id = ?', [id]);
+    if (!v) return { title: null, href: null };
+    const stem = stemOf(v.stem_json);
+    return { title: stem ? `${stem} (النسخة ${v.version_no})` : `النسخة ${v.version_no}`, href: `/questions/${v.question_id}` };
   }
-  return null;
+  if (type === 'question_attempt') {
+    const a = ctx.db.get<{ question_id: string; stem_json: string; exam_attempt_id: string | null }>(
+      'SELECT qa.question_id, v.stem_json, qa.exam_attempt_id FROM question_attempt qa JOIN question_version v ON v.id = qa.question_version_id WHERE qa.id = ?',
+      [id],
+    );
+    if (!a) return { title: null, href: null };
+    return { title: stemOf(a.stem_json), href: `/questions/${a.question_id}` };
+  }
+  if (type === 'flashcard') {
+    const c = ctx.db.get<{ front_json: string; deleted_at: number | null }>('SELECT front_json, deleted_at FROM flashcard WHERE id = ?', [id]);
+    if (!c) return { title: null, href: null };
+    const front = stemOf(c.front_json);
+    return { title: front ? front.replace(/\{\{c\d+::([\s\S]*?)(?:::[\s\S]*?)?\}\}/g, '[…]') : null, href: `/review/cards/${id}` };
+  }
+  if (type === 'exam') {
+    const e = ctx.db.get<{ title: string; items: number }>('SELECT title, json_array_length(items_json) AS items FROM exam WHERE id = ? AND json_valid(items_json)', [id]);
+    if (!e) return { title: null, href: null };
+    const attempt = ctx.db.get<{ id: string; status: string }>('SELECT id, status FROM exam_attempt WHERE exam_id = ? ORDER BY started_at DESC, id DESC LIMIT 1', [id]);
+    const title = e.title.trim() || `اختبار من ${e.items} ${e.items === 1 ? 'سؤال' : e.items === 2 ? 'سؤالين' : e.items <= 10 ? 'أسئلة' : 'سؤالًا'}`;
+    return { title, href: attempt ? (attempt.status === 'completed' ? `/exams/${attempt.id}/results` : `/exams/${attempt.id}`) : null };
+  }
+  if (type === 'case') {
+    const c = ctx.db.get<{ title: string }>('SELECT title FROM clinical_case WHERE id = ?', [id]);
+    return c ? { title: c.title, href: `/cases/${id}` } : { title: null, href: null };
+  }
+  return { title: null, href: null };
 }
 
 function toAlertView(ctx: AppContext, r: AlertRow): ContentAlertView {
@@ -605,14 +659,14 @@ function toAlertView(ctx: AppContext, r: AlertRow): ContentAlertView {
     impact_label_ar: ALERT_IMPACT_LABELS_AR[i.impact],
     frozen: i.frozen === 1,
     reason_ar: i.reason_ar,
-    title: itemTitle(ctx, i.dependent_type, i.dependent_id),
+    ...itemIdentity(ctx, i.dependent_type, i.dependent_id),
   }));
   if (rows.length === 0) {
     // alerts written by other modules (e.g. permanent delete) carry only affected_json
     const legacy = fromJson<Array<{ type: string; id: string; impact?: AlertImpact }>>(r.affected_json, []) ?? [];
     items = legacy.map((i) => {
       const impact: AlertImpact = i.impact && i.impact in ALERT_IMPACT_LABELS_AR ? i.impact : 'needs_review';
-      return { type: i.type, id: i.id, impact, impact_label_ar: ALERT_IMPACT_LABELS_AR[impact], frozen: false, reason_ar: null, title: itemTitle(ctx, i.type, i.id) };
+      return { type: i.type, id: i.id, impact, impact_label_ar: ALERT_IMPACT_LABELS_AR[impact], frozen: false, reason_ar: null, ...itemIdentity(ctx, i.type, i.id) };
     });
   }
   const counts: Record<AlertImpact, number> = { still_valid: 0, needs_regeneration: 0, needs_review: 0 };

@@ -6,11 +6,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { BookOpen, CalendarDays, FileQuestion, Flag, Layers, Library, Target } from 'lucide-react';
 import { liveQuery } from 'dexie';
-import { stemPreview, type HomeDetail, type PlanTaskView, type QuestionDetailResponse, type StudyPlanView } from '@medlevo/shared';
+import { pageDisplayLabel, stemPreview, type HomeDetail, type PlanTaskView, type QuestionDetailResponse, type SourcePagesResponse, type StudyLocation, type StudyPlanView } from '@medlevo/shared';
 import { Checkbox, ErrorState, Skeleton, buttonClass, useToast } from '../../design';
 import { errorMessage } from '../../lib/api';
 import { useCapabilities } from '../../lib/capabilities';
 import { getDb, type StudySessionRow } from '../../lib/localdb';
+import { readOfflineAnswer } from '../../lib/offline';
 import { formatRelative } from '../../lib/time';
 import { usePageTitle } from '../../lib/usePageTitle';
 import { BidiText } from '../evidence';
@@ -37,33 +38,70 @@ export interface ContinueItem {
   updated_at: number;
 }
 
-/** Recent study sessions saved on this device (offline fallback for Continue Studying). */
+/**
+ * The page of a session saved on this device, named like the server names it: from the downloaded page list when the
+ * source is on this device («ص 12 (الصفحة 14 في الملف)»), else by its position in the file — never a guessed
+ * printed number. `null` when the session holds no page.
+ */
+export async function localSessionPageLabel(row: Pick<StudySessionRow, 'sourceId' | 'versionId' | 'location'>): Promise<string | null> {
+  const loc = (row.location ?? {}) as StudyLocation;
+  const hasIndex = typeof loc.page_index === 'number' && loc.page_index >= 0;
+  if (!hasIndex && !loc.page_id) return null;
+  if (row.sourceId && row.versionId) {
+    const pages = await readOfflineAnswer<SourcePagesResponse>(`/api/sources/${encodeURIComponent(row.sourceId)}/versions/${encodeURIComponent(row.versionId)}/pages`);
+    const page = pages?.value.pages?.find((p) => (loc.page_id ? p.id === loc.page_id : p.page_index === loc.page_index));
+    if (page) return pageDisplayLabel(page);
+  }
+  return hasIndex ? filePositionLabel(loc.page_index!) : null;
+}
+
+const filePositionLabel = (pageIndex: number) => `الصفحة ${pageIndex + 1} في الملف`;
+
+/** Recent study sessions saved on this device (offline fallback for Continue Studying), with this device's page. */
 function useLocalContinue(titles: Map<string, string>): ContinueItem[] {
   const [rows, setRows] = useState<StudySessionRow[]>([]);
+  const [labels, setLabels] = useState<Map<string, string | null>>(new Map());
   useEffect(() => {
     const sub = liveQuery(() => getDb().studySessions.orderBy('updatedAt').reverse().limit(20).toArray()).subscribe({ next: setRows, error: () => setRows([]) });
     return () => sub.unsubscribe();
   }, []);
+  useEffect(() => {
+    let alive = true;
+    void Promise.all(rows.map(async (r) => [r.id, await localSessionPageLabel(r).catch(() => null)] as const)).then((entries) => {
+      if (alive) setLabels(new Map(entries));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [rows]);
   return useMemo(() => {
     const seen = new Set<string>();
     const out: ContinueItem[] = [];
     for (const r of rows) {
       if (!r.sourceId || seen.has(r.sourceId) || r.deletedAt) continue;
       seen.add(r.sourceId);
-      out.push({ source_id: r.sourceId, title: titles.get(r.sourceId) ?? 'مصدر على هذا الجهاز', version_id: r.versionId ?? null, page_label_ar: null, mode: r.mode, updated_at: r.updatedAt });
+      const loc = (r.location ?? {}) as StudyLocation;
+      // until the downloaded page list was read: the file position (always true), never the server's older page
+      const label = labels.has(r.id) ? labels.get(r.id)! : typeof loc.page_index === 'number' ? filePositionLabel(loc.page_index) : null;
+      out.push({ source_id: r.sourceId, title: titles.get(r.sourceId) ?? 'مصدر على هذا الجهاز', version_id: r.versionId ?? null, page_label_ar: label, mode: r.mode, updated_at: r.updatedAt });
     }
     return out.slice(0, 5);
-  }, [rows, titles]);
+  }, [rows, titles, labels]);
 }
 
-/** Server list first (it knows every device); this device's newer sessions are merged in. */
+/**
+ * Server list first (it knows every device); this device's newer sessions are merged in. When this device's session
+ * is newer, its place wins: its page label and mode (the server's label names an older place). The server's label
+ * stays only when this device's session holds no page at all.
+ */
 export function mergeContinue(server: readonly ContinueItem[] | null, local: readonly ContinueItem[]): ContinueItem[] {
   const by = new Map<string, ContinueItem>();
   for (const it of server ?? []) by.set(it.source_id, it);
   for (const it of local) {
     const s = by.get(it.source_id);
     if (!s) by.set(it.source_id, it);
-    else if (it.updated_at > s.updated_at) by.set(it.source_id, { ...s, updated_at: it.updated_at, page_label_ar: s.page_label_ar });
+    else if (it.updated_at > s.updated_at)
+      by.set(it.source_id, { ...s, updated_at: it.updated_at, page_label_ar: it.page_label_ar ?? s.page_label_ar, mode: it.mode, version_id: it.version_id ?? s.version_id });
   }
   return [...by.values()].sort((a, b) => b.updated_at - a.updated_at).slice(0, 5);
 }

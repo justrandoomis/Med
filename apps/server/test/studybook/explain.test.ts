@@ -354,7 +354,8 @@ describe('figures (AC-08) and Compare Mode', () => {
     const vt = runsText({ ...a, blocks: [vb] });
     expect(vt).toContain('ليست دليلًا');
     expect(vt).toContain('غير مؤكد');
-    expect(vt).toContain('Clinical suspicion → Ultrasound');
+    // G3 / AC-08: the direction is stated in words (a bare «→» reverses visually next to Arabic labels in RTL)
+    expect(vt).toContain('من «Clinical suspicion» إلى «Ultrasound»');
     // the visual reading carries no claims (never a citation)
     expect(vb.content.paragraphs.every((p) => p.runs.every((x) => !x.claim))).toBe(true);
   });

@@ -24,6 +24,17 @@ describe('capabilities', () => {
     expect(resolveFeature(data, 'upload', false).state).toBe('requires_connection');
     expect(resolveFeature(data, 'workspace.ink', false).available).toBe(true);
   });
+  it('G7 / AC-23: offline, an AI feature the server reported as not configured says it needs a connection (and what was last known)', () => {
+    const data = caps({ 'ai.explain': { state: 'requires_configuration', reason_ar: 'لم يُضبط مفتاح AI على الخادم.' }, 'search.semantic': { state: 'not_implemented', reason_ar: 'غير مبني بعد.' } });
+    const r = resolveFeature(data, 'ai.explain', false);
+    expect(r.available).toBe(false);
+    expect(r.state).toBe('requires_connection');
+    expect(r.reason).toContain('تحتاج هذه الميزة اتصالًا بالإنترنت.');
+    expect(r.reason).toContain('آخر ما عرفه هذا الجهاز من الخادم: لم يُضبط مفتاح AI على الخادم.');
+    // online the server's own state stays; a feature that is not built is never presented as «needs a connection»
+    expect(resolveFeature(data, 'ai.explain', true).state).toBe('requires_configuration');
+    expect(resolveFeature(data, 'search.semantic', false)).toEqual({ available: false, state: 'not_implemented', reason: 'غير مبني بعد.' });
+  });
   it('is unavailable (with a reason) while unknown', () => {
     const r = resolveFeature(null, 'library', true);
     expect(r.available).toBe(false);

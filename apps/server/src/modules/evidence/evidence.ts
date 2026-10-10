@@ -129,6 +129,8 @@ export interface PageForLabel {
   page_index: number;
   printed_label: string | null;
   kind: 'page' | 'slide' | 'image' | 'docx_section' | 'audio_segment';
+  /** other pages of the version carry printed numbers: an unnumbered page is named by its file position (AC-04) */
+  numbered_version?: boolean;
 }
 
 function formatMs(ms: number): string {
@@ -174,6 +176,7 @@ interface ViewRow {
   page_index: number | null;
   printed_label: string | null;
   page_kind: PageForLabel['kind'] | null;
+  version_numbered: number | null;
   region_kind: string | null;
   region_status: EvidenceView['extraction_status'] | null;
   region_bbox_json: string | null;
@@ -188,6 +191,7 @@ export interface GetViewsOptions {
 const VIEW_SQL = `SELECT e.id, e.version_id, e.source_id, e.page_id, e.region_id, e.quote, e.bbox_json,
     s.title AS source_title, s.source_type, s.deleted_at AS source_deleted_at, s.current_version_id, s.frozen_version_id,
     v.version_no, p.page_index, p.printed_label, p.kind AS page_kind,
+    (SELECT 1 FROM source_page pn WHERE pn.version_id = e.version_id AND pn.kind = 'page' AND pn.printed_label IS NOT NULL LIMIT 1) AS version_numbered,
     r.kind AS region_kind, r.status AS region_status, r.bbox_json AS region_bbox_json, r.locator_json
   FROM evidence e
   LEFT JOIN source s ON s.id = e.source_id
@@ -200,7 +204,8 @@ function toView(r: ViewRow, pinned: Set<string>): EvidenceView {
   let availability: EvidenceView['availability'] = 'available';
   if (r.source_deleted_at !== null || r.source_title === null) availability = 'source_deleted';
   else if (active !== r.version_id && !pinned.has(r.version_id)) availability = 'version_replaced';
-  const page: PageForLabel | null = r.page_index !== null && r.page_kind ? { page_index: r.page_index, printed_label: r.printed_label, kind: r.page_kind } : null;
+  const page: PageForLabel | null =
+    r.page_index !== null && r.page_kind ? { page_index: r.page_index, printed_label: r.printed_label, kind: r.page_kind, numbered_version: r.version_numbered === 1 } : null;
   const bbox = fromJson<NormBox>(r.bbox_json) ?? fromJson<NormBox>(r.region_bbox_json) ?? null;
   return {
     id: r.id,

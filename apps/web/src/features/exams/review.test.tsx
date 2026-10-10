@@ -60,6 +60,8 @@ function sessionFor(mode: 'practice' | 'exam', policy: Partial<ExamSessionView['
         negation_terms: [],
         media: [],
         scored: true,
+        origin_type: 'source',
+        origin_label_ar: 'سؤال من مصادر أسئلتك',
       },
     ],
     media_expires_at: null,

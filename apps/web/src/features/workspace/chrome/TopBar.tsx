@@ -62,6 +62,8 @@ export interface TopBarProps {
   back: { label: string; title: string } | null;
   onBack: () => void;
   inkAvailable: boolean;
+  /** extra items for the overflow menu (e.g. «نزّل للعمل دون اتصال…» from features/offline) */
+  extraMenuItems?: ReactNode;
 }
 
 const ZOOM_PRESETS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
@@ -196,6 +198,8 @@ export function TopBar(p: TopBarProps) {
             <MenuItem icon={<Focus size={16} />} onSelect={p.onFocusMode}>
               {p.focusMode ? 'إنهاء وضع التركيز' : 'وضع التركيز'}
             </MenuItem>
+            {p.extraMenuItems && <MenuSeparator />}
+            {p.extraMenuItems}
           </Menu>
         </div>
         {backButton && <div className="wk-topbar__row wk-topbar__row--sub">{backButton}</div>}
@@ -266,6 +270,8 @@ export function TopBar(p: TopBarProps) {
           </div>
           <Menu label="خيارات العرض" align="end" trigger={<IconButton label="خيارات العرض" icon={<Ellipsis size={18} />} size="sm" />}>
             {layoutItems}
+            {p.extraMenuItems && <MenuSeparator />}
+            {p.extraMenuItems}
           </Menu>
           <Hint label={p.focusMode ? 'إنهاء وضع التركيز (F)' : 'وضع التركيز (F)'}>
             <IconButton label={p.focusMode ? 'إنهاء وضع التركيز' : 'وضع التركيز'} icon={<Focus size={18} />} size="sm" pressed={p.focusMode} onClick={p.onFocusMode} />

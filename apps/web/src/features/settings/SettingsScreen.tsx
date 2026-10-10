@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouteLoaderData } from 'react-router-dom';
-import { BookOpenText, ChevronLeft, Clock, Info, Monitor, Moon, Palette, Shield, SlidersHorizontal, Sun } from 'lucide-react';
+import { BookA, BookOpenText, ChevronLeft, Clock, CloudDownload, Info, Monitor, Moon, Palette, ScrollText, Shield, SlidersHorizontal, Sun } from 'lucide-react';
 import { richTextFromPlain, type OwnerSettings } from '@medlevo/shared';
 import {
   Bidi,
@@ -154,6 +154,13 @@ export function SettingsScreen() {
           subtitle="قائمة المراجعة، والمعالجة، والذكاء الاصطناعي وتكلفته التقديرية، والتخزين، وتعارضات المزامنة، والسجل."
           trailing={<ChevronLeft size={18} aria-hidden="true" />}
         />
+        <ListItem
+          to="/offline"
+          leading={<CloudDownload size={20} />}
+          title="بياناتك: التنزيلات والنسخ الاحتياطي والتصدير"
+          subtitle="ما نُزّل على هذا الجهاز للدراسة دون اتصال، ونسخ احتياطية مختبرة، وتصدير كتبك وملاحظاتك."
+          trailing={<ChevronLeft size={18} aria-hidden="true" />}
+        />
       </ul>
 
       <div className="ml-settings__layout">
@@ -297,6 +304,24 @@ export function SettingsScreen() {
                 />
               </div>
             </div>
+            {/* the per-subject rules and the term dictionary used to be reachable only from the Control Center / the
+                reader's explain tab (critic round: every screen reachable from where the owner looks for it) */}
+            <ul role="list" className="ml-list ml-settings__links">
+              <ListItem
+                to="/explanation-rules"
+                leading={<ScrollText size={20} />}
+                title="قواعد الشرح لكل مادة"
+                subtitle="قالب المادة والمستوى وأسلوب اللغة والإضافات لمجلد بعينه."
+                trailing={<ChevronLeft size={18} aria-hidden="true" />}
+              />
+              <ListItem
+                to="/terms"
+                leading={<BookA size={20} />}
+                title="قاموس المصطلحات"
+                subtitle="ترجماتك المفضلة والمرادفات والاختصارات؛ لا تغيّر نص المصادر."
+                trailing={<ChevronLeft size={18} aria-hidden="true" />}
+              />
+            </ul>
           </section>
 
           {/* ───── Time ───── */}

@@ -202,8 +202,10 @@ export function masterySignal(a: Pick<QuestionAttemptDTO, 'is_correct' | 'confid
   if (a.is_correct === null) return null;
   if (!a.is_correct) return 'wrong';
   if (a.solution_viewed_before_answer) return 'correct_after_solution_viewed';
-  if (a.hints_used > 0) return 'correct_after_hint';
+  // A guess stays a guess with or without a hint: more help must never earn MORE credit than the same guess alone
+  // (G8: a hint + guess used to weigh 0.35 against 0.2 for the plain guess). Every combination is the lowest weight.
   if (a.confidence === 'guess') return 'correct_guess';
+  if (a.hints_used > 0) return 'correct_after_hint';
   if (a.confidence === 'unsure') return 'correct_unsure';
   // Only an explicitly CONFIDENT, unassisted answer counts as independent mastery (AC-27).
   // Unknown confidence is treated conservatively, like an unsure answer.
@@ -225,11 +227,31 @@ export interface ExamSummaryView {
   build: ExamBuildReport | null;
 }
 
+/** Where a delivered item comes from (§03 «generated stays visibly generated», §38). */
+export type ExamItemOrigin = 'source' | 'generated' | 'owner';
+
+/**
+ * Origin labels shown DURING an attempt. Only the kind of origin — never a question source's name, year, page or
+ * anything else that could hint at the answer (AC-19). The full label with the source comes with the feedback.
+ */
+export const EXAM_ITEM_ORIGIN_LABELS_AR: Record<ExamItemOrigin, string> = {
+  source: 'سؤال من مصادر أسئلتك',
+  generated: 'سؤال مولد بواسطة MedLevo من المصادر المحددة',
+  owner: 'سؤال أضفته بنفسك',
+};
+
+/** ExamItemView + its origin (additive: every ExamItemView consumer keeps working). */
+export interface ExamItemDeliveryView extends ExamItemView {
+  origin_type: ExamItemOrigin;
+  /** EXAM_ITEM_ORIGIN_LABELS_AR[origin_type] */
+  origin_label_ar: string;
+}
+
 export interface ExamSessionView {
   exam: ExamSummaryView;
   attempt: ExamAttemptDTO;
-  /** delivery payload: no keys, explanations, sources or revealing media names (AC-19) */
-  items: ExamItemView[];
+  /** delivery payload: no keys, explanations, sources or revealing media names (AC-19); the origin KIND only */
+  items: ExamItemDeliveryView[];
   /** media token URLs expire; reopen the session to refresh them */
   media_expires_at: number | null;
   /** practice: unscored items carry a visible reason (AC-14) */

@@ -147,3 +147,90 @@ Still open (not fixed in this review, recorded honestly):
 * Two different session rows (two devices that never synced) are compared by `updated_at` across device clocks.
 * Real iPad / iPhone Safari, Apple Pencil and screen readers were not available to this review either; touch was
   exercised with Chromium touch emulation (CDP touch events) only.
+
+## 6. Integration round I1 (2026-10-10)
+* **Superseded regions are hidden in the reader.** `data/api.ts` `fetchRegions` now passes every answer through
+  `readerRegions`, which drops regions with status `rejected` (an owner correction superseded them; the server keeps
+  them verbatim for existing citations). Overlays, the OCR text layer (image pages), structured text pages, the
+  page-regions list (SourcesTab), the outline, in-page search, ExplainTab and the card editor all read through it, so
+  search offsets and the text layer still agree. The Source Inspector's region list hides them too, except the cited
+  region itself. Test: `reader/PageView.offline.test.tsx`.
+* **Image pages offline.** `ImageSheet`, page thumbnails and the Source Inspector draw downloaded images from IndexedDB
+  (`useFileSrc` in `lib/offline.ts`: object URL, revoked on unmount). Same test file.
+* **Study Book view offline.** `studybook/useStudyBook.ts` reads the downloaded copy (see `docs/modules/data.md` §4).
+  Test: `studybook/StudyBookOffline.test.tsx`.
+* **Download from the reader.** The top bar's overflow menu (`TopBar` `extraMenuItems`, phone and desktop) carries
+  «نزّل للعمل دون اتصال…» / «على هذا الجهاز — إدارة التنزيلات». Test: `features/offline/entry-points.test.tsx`.
+
+## G1 acceptance fixes (2026-10-10, AC-02 / AC-04) — see `docs/ACCEPTANCE.md`
+* **Scanned pages inside a PDF had no text in the reader.** pdf.js finds no text on an image-only PDF page, so the page
+  showed an empty text layer (no selection, nothing for screen readers) and the in-document search never found its
+  words, although the server had OCR'd it. `model/regionText.ts` + `PdfSheet`: pages with `text_status` `ocr`/`mixed`
+  carry the region (OCR) text layer as their text root; `SearchPanel.pageText` searches them from the same runs.
+  Tests: `reader/PageView.ocrpdf.test.tsx`, `e2e/g1-ac02-mixed-pdf.spec.ts`.
+* **An unnumbered page among numbered ones was called «ص N»** (the printed number of another page). Pages now carry
+  `numbered_version` (server, with a client fallback in `data/useSourceDocument.ts`); such a page's folio / indicator is
+  «الصفحة N في الملف». Tests: `model/pages.g1.test.ts`, `e2e/g1-ac04-printed-page.spec.ts`.
+* **The last page never became current on phones.** A jump (citation, go-to) to the last page of a book left the page
+  above it in the indicator, because the last page cannot scroll up to the reading line. `geometry.readingLineY` slides
+  the line down to the bottom of the viewport over the last stretch of scrolling. Test: `reader/readingLine.g1.test.ts`.
+
+## Integration round I2 — performance & resilience (2026-10-10)
+Measured in headless Chromium against the real server (`e2e/perf.spec.ts`, `MEDLEVO_PERF=1`; numbers and limits in
+[`docs/PERFORMANCE.md`](../PERFORMANCE.md)). Fixed:
+* **Memory grew with every page visited.** pdf.js keeps a page's operator list and decoded objects after a display
+  render until `cleanup()`; `reader/pdfDoc.ts` cached every page proxy and never cleaned up. Scrolling a 300-page
+  lecture: JS heap after GC 10.7 → 125.4 MB although only 2–3 page canvases ever existed. The handle now cleans up
+  pages outside its 16 most recently used (`PDF_PAGES_KEPT`; pdf.js refuses while a render of that page runs):
+  20.9 MB after all 300 pages. Test: `reader/pdfDoc.test.ts`.
+* **Note text typed right before a reload / crashed tab was lost** (the editor saves 600 ms after the last keystroke
+  or on unmount; a reload does neither). Every keystroke now also writes a synchronous localStorage draft
+  (`data/noteDrafts.ts`); the next load (`OwnerLayout`) saves any draft left behind into IndexedDB + outbox, under the
+  note id the editor would have used (no duplicate), on top of the note it edited, or as a new note when that note
+  changed elsewhere meanwhile (never written over). Chromium: old build lost the note, new build had it in IndexedDB
+  49 ms after the reload and on the server after sync. Test: `data/noteDrafts.test.tsx` (fails on the old editor).
+* **A page with 5 000 ink strokes showed 377 of them after two minutes.** The text-highlight layer, the bookmarks list
+  and the re-anchor list scanned every annotation of the page (all strokes) and Dexie re-ran them on every ink write,
+  so each stroke delivered by the sync pull cost a full re-read (O(n²)). Local schema v2 (`lib/localdb.ts`) adds
+  `[targetKey+kind]` and `anchorStatus` indexes; the three views read only their own rows and ink writes no longer
+  re-run them. The document download at open (`mergeServerAnnotations`) now tells open pages once (whole-page reload)
+  instead of leaving the strokes to trickle in through the pull. Test: `data/annotationsAtScale.test.tsx`.
+* Verified, unchanged: canvas virtualization (≤ 3 page canvases in the DOM while scrolling 300 pages, 2 after a fling),
+  three completed strokes survive a reload mid-stroke (only the stroke in flight is lost), offline writing converges
+  262 ms after the network returns.
+
+## G2 acceptance fix (2026-10-10, AC-06)
+* A study link naming a place this version does not have (`?page=` past the last page, an unknown `page_id`) was
+  silently clamped to the last page — a stale or fabricated citation showed «ص 14» as if it were the cited page.
+  `WorkspaceScreen` now opens the first page with a visible notice («الموضع المطلوب غير موجود في هذا الإصدار…؛ لم يُفتح
+  موضع آخر على أنه هو»), and no highlight (the in-app jump `openSourceLocation` already refused it). The session
+  decision carries the URL's page number, so it is not used for such a link. Test: `e2e/g2-ac06-invalid-citation.spec.ts`.
+
+## G6 acceptance fix (2026-10-10, AC-20) — see `docs/ACCEPTANCE.md`
+* **The pdf.js text layer is in reading order** (`reader/textOrder.ts` `logicalTextContent`, used by `PageView` for the
+  TextLayer and by `pdfDoc.text()` for the in-document search, so search offsets and DOM text nodes still agree). pdf.js
+  emits a page's items in content-stream order; for a mixed Arabic/English line that order can be neither logical nor
+  visual (Golden Set ص 11: «حول … عند نقطة», «يبدأ الألم عاد», «McBurney», «.»). Selecting that line from its start to its
+  end copied «يبدأ األلم عادMcBurney» — the middle of the sentence was lost — and «نقطة McBurney» was not found. Lines
+  with right-to-left text that are not already in a valid order are now reordered by visual position in their base
+  direction (an LTR run inside an RTL line read left to right; a run the producer emitted contiguously keeps its emitted
+  order), and a space item is placed where the producer left a visual gap without one. Item strings and positions are
+  never changed; English-only lines and lines already in order keep their exact items. Tests:
+  `reader/textOrder.g6.test.ts` (real pdf.js items of the fixture), `e2e/g6-ac20-mixed-text.spec.ts`.
+* Known limit (unchanged): the raw PDF text layer of the Golden Set lecture carries the reversed lam-alef «األلم»; the
+  server repairs it in the stored text (search, Study Book, export), the reader's selectable layer still shows the raw
+  form when copied.
+
+## Acceptance round G7 — AC-24 sync and conflicts (2026-10-10)
+
+Server sync handlers (`apps/server/src/modules/annotations/sync.ts`), both found by `apps/server/test/acceptance/g7-ac24.test.ts`
+and `e2e/g7-ac24-two-devices.spec.ts` (two browser contexts = two devices):
+* **A conflicting edit re-sent under a new op id piled up identical copies.** A stale note / annotation edit is kept as a
+  copy (`conflict_of_id`); the same edit arriving again with another op id (a «retry» rebuilt on the device) created a
+  second, third … identical copy. Now a live copy of the same original with the same content answers `duplicate`
+  («… لم تُنشأ نسخة مكررة»). The same op id was already idempotent.
+* **Two devices on the same page were asked to choose a reading position.** A `study_session` upsert with a stale base
+  revision was always `rejected` with the server copy, so a device that only changed zoom / a rail tab on the page the
+  other device was also on showed the «موضع أحدث من جهاز آخر» dialog with two identical places (it blocked the reader in
+  the two-device E2E). Same source, version, view and page (by id, else index) / Study Book block → the update is applied
+  as `merged` (view preferences are last-write-wins, ARCHITECTURE §3.4). A different page is still never written over.

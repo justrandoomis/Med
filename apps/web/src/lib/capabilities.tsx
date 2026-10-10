@@ -29,6 +29,7 @@ const NEEDS_CONNECTION: ReadonlySet<FeatureKey> = new Set<FeatureKey>([
   'ai.generate_questions',
   'ai.grade_written',
   'ai.cases',
+  'ai.answer_check',
   'external.evidence',
   'external.images',
   'questions.extraction',
@@ -157,7 +158,13 @@ export function resolveFeature(data: CapabilitiesResponse | null, key: FeatureKe
     if (!online && NEEDS_CONNECTION.has(key)) return { available: false, state: 'requires_connection', reason: FEATURE_STATE_REASONS_AR.requires_connection };
     return { available: true, state: 'available', reason: null };
   }
-  return { available: false, state: status.state, reason: status.reason_ar || FEATURE_STATE_REASONS_AR[status.state] };
+  const serverReason = status.reason_ar || FEATURE_STATE_REASONS_AR[status.state];
+  if (!online && NEEDS_CONNECTION.has(key) && status.state === 'requires_configuration') {
+    // G7 / AC-23: offline, a server-side feature first needs a connection; its configuration is only what this device
+    // last heard from the server (it may have changed since), so it is said as such — never as the current state
+    return { available: false, state: 'requires_connection', reason: `${FEATURE_STATE_REASONS_AR.requires_connection} آخر ما عرفه هذا الجهاز من الخادم: ${serverReason}` };
+  }
+  return { available: false, state: status.state, reason: serverReason };
 }
 
 /**

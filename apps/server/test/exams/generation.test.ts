@@ -5,6 +5,7 @@
 // Source Lock on the request; written grading with a verified rubric, qualitative fallback, idempotency.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
+  EXAM_ITEM_ORIGIN_LABELS_AR,
   GENERATED_ORIGIN_LABEL_AR,
   WRITTEN_ASSESSMENT_LABEL_AR,
   type AttemptFeedbackView,
@@ -135,6 +136,16 @@ describe('generated hard MCQs (§37–§38, AC-18)', () => {
     // and the generated question takes part in the origin mix of the builder
     const mix = await createExam(t, { mode: 'exam', count: 2, source_ids: [t.qs.sourceId, t.lecture.sourceId], question_ids: [publishedId], origin_mix: { source: 1, generated: 1 } });
     expect(mix.session.exam.build!.by_origin.generated).toBe(1);
+    // I1 #5: DURING the assessed attempt each item says where it comes from — the generated one is visibly generated,
+    // the source one carries only the generic kind (no source name, AC-19)
+    const gen = mix.session.items.find((i) => i.question_id === publishedId)!;
+    expect(gen.origin_type).toBe('generated');
+    expect(gen.origin_label_ar).toBe(EXAM_ITEM_ORIGIN_LABELS_AR.generated);
+    expect(gen.origin_label_ar).toContain('سؤال مولد بواسطة MedLevo');
+    const src = mix.session.items.find((i) => i.question_id !== publishedId)!;
+    expect(src.origin_type).toBe('source');
+    expect(src.origin_label_ar).toBe(EXAM_ITEM_ORIGIN_LABELS_AR.source);
+    expect(JSON.stringify(mix.session.items)).not.toContain('Surgery Course 1 Questions');
   });
 
   it('two defensible answers (independent validator) → repaired, then published (bounded rounds)', async () => {

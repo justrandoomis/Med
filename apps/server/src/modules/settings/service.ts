@@ -1,6 +1,6 @@
 // Owner settings: key/value rows in owner_setting, validated per key by the shared zod schema and
 // merged with defaults. Invalid stored values fall back to the default for that key (never crash).
-import { DEFAULT_OWNER_SETTINGS, ownerSettingsSchema, type OwnerSettings } from '@medlevo/shared';
+import { DEFAULT_OWNER_SETTINGS, mergeSettingsPatch, ownerSettingsSchema, type OwnerSettings } from '@medlevo/shared';
 import type { Db } from '../../db/db';
 import { fromJson, toJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
@@ -37,7 +37,8 @@ export class SettingsService {
       });
     }
     const before = this.get();
-    const candidate = { ...before, ...patch };
+    // a partial source_priority changes only the purposes it names (the others are never reset to the defaults)
+    const candidate = mergeSettingsPatch(before, patch);
     const parsed = ownerSettingsSchema.safeParse(candidate);
     if (!parsed.success) throw validationError(parsed.error, 'body');
     if (!isValidTimeZone(parsed.data.timezone)) {

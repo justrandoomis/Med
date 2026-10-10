@@ -5,7 +5,7 @@
 // the server.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { CloudOff, FileText, NotebookPen, ScanText, Search as SearchIcon, Sparkles } from 'lucide-react';
+import { CloudOff, FileInput, FileText, NotebookPen, ScanText, Search as SearchIcon, Sparkles } from 'lucide-react';
 import {
   SEARCH_ORIGIN_LABELS_AR,
   SEARCH_RESULT_TYPE_LABELS_AR,
@@ -32,10 +32,12 @@ import { studyUrl } from '../workspace/nav/SourceNavigation';
 import { searchNotesLocally } from './localSearch';
 import './search.css';
 
-const ORIGIN_TONE: Record<SearchOrigin, StatusTone> = { source: 'neutral', owner_note: 'accent', recognized: 'info', generated: 'warning' };
+const ORIGIN_TONE: Record<SearchOrigin, StatusTone> = { source: 'neutral', owner_note: 'accent', owner_typed: 'accent', imported: 'neutral', recognized: 'info', generated: 'warning' };
 const ORIGIN_ICON: Record<SearchOrigin, ReactNode> = {
   source: <FileText size={14} />,
   owner_note: <NotebookPen size={14} />,
+  owner_typed: <NotebookPen size={14} />,
+  imported: <FileInput size={14} />,
   recognized: <ScanText size={14} />,
   generated: <Sparkles size={14} />,
 };

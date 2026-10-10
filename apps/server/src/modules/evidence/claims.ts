@@ -99,6 +99,8 @@ const verdictSchema = z.object({
         index: z.number().int().min(0),
         verdict: z.enum(['supported', 'partial', 'not_supported', 'contradicted']),
         reason: z.string().max(600).default(''),
+        /** G2 / AC-07: the aliases of the excerpts the verdict rests on (a merely similar excerpt is left out) */
+        based_on: z.array(z.string().max(64)).max(30).optional(),
       }),
     )
     .max(200),
@@ -113,8 +115,9 @@ const VERIFY_SYSTEM = [
   '- "not_supported": the evidence does not establish the claim (topical similarity or shared keywords are NOT support).',
   '- "contradicted": the evidence states the opposite or a different value.',
   'Do not use outside knowledge. A claim may be in Arabic while the evidence is in English (or the reverse); judge the meaning.',
+  '- "based_on": the aliases (e.g. "E2") of the excerpts your verdict actually rests on — those that state, entail or contradict the claim. Leave out an excerpt that is only on the same topic or merely shares words with the claim. Use [] for "not_supported".',
   'Write each reason as one short Arabic sentence.',
-  'Return JSON: {"results":[{"index":<claim number>,"verdict":"…","reason":"…"}]} with one entry per claim.',
+  'Return JSON: {"results":[{"index":<claim number>,"verdict":"…","reason":"…","based_on":["E…"]}]} with exactly one entry per claim.',
 ].join('\n');
 
 const MSG = {
@@ -136,6 +139,10 @@ const MSG = {
   contradicted: 'المحقق المستقل: الدليل يناقض الجملة.',
   contradictedUnconfirmed: 'وسم المولّد هذه الجملة بأن المصدر يعارضها، ولم يؤكد المحقق المستقل هذا التعارض؛ تحتاج مراجعة.',
   contradictedNoVerifier: 'وسم المولّد هذه الجملة بأن المصدر يعارضها، ولم يُجرَ تحقق مستقل من ذلك؛ تحتاج مراجعة.',
+  verdictAmbiguous: 'أعاد المحقق المستقل حكمين متعارضين لهذه الجملة؛ تحتاج مراجعة.',
+  basedOnNone: 'لم يحدد المحقق المستقل أي مقتطف من المقتطفات المستشهد بها يستند إليه حكمه؛ تحتاج مراجعة.',
+  basedOnCritical: 'المقتطف الذي يستند إليه المحقق لا يحمل كل القيم أو الحدود أو النفي في الجملة؛ تحتاج مراجعة.',
+  uncertainOnly: 'الجملة تستند فقط إلى قراءة آلية غير مؤكدة (تسميات رسم قُرئت دون فهم)؛ تحتاج مراجعة مقابل الصفحة الأصلية قبل اعتبارها مرتبطة بدليل.',
 };
 
 function hasOwn(o: object, k: string): boolean {
@@ -150,6 +157,8 @@ interface EvidenceRowLite {
   source_deleted: number;
   /** the region was rejected (bad extraction) after the evidence was created, or is model-written text */
   region_unusable: number;
+  /** G3 / AC-08: the region's text is an uncertain reading (diagram labels read by OCR without understanding) */
+  region_uncertain: number;
 }
 
 function langOf(text: string): string {
@@ -183,7 +192,8 @@ export async function validateClaims(ctx: AppContext, input: ValidateClaimsInput
     if (part.length === 0) continue;
     for (const r of ctx.db.all<EvidenceRowLite>(
       `SELECT e.id, e.version_id, e.source_id, e.quote, CASE WHEN s.id IS NULL OR s.deleted_at IS NOT NULL THEN 1 ELSE 0 END AS source_deleted,
-              CASE WHEN r.status = 'rejected' OR r.text_origin = 'vision' THEN 1 ELSE 0 END AS region_unusable
+              CASE WHEN r.status = 'rejected' OR r.text_origin = 'vision' THEN 1 ELSE 0 END AS region_unusable,
+              CASE WHEN r.status = 'uncertain' THEN 1 ELSE 0 END AS region_uncertain
          FROM evidence e LEFT JOIN source s ON s.id = e.source_id LEFT JOIN source_region r ON r.id = e.region_id
         WHERE e.id IN (${part.map(() => '?').join(',')})`,
       part,
@@ -320,7 +330,36 @@ export async function validateClaims(ctx: AppContext, input: ValidateClaimsInput
       r.checks.push({ check: 'entailment', passed: false, reason_ar: r.reason_ar, details: { status: 'missing', declared_contradiction: p.declaredContradiction } });
       continue;
     }
-    const details = { verdict: v.verdict, model: entail.model, declared_contradiction: p.declaredContradiction };
+    if (v === AMBIGUOUS) {
+      r.status = 'needs_review';
+      r.reason_ar = MSG.verdictAmbiguous;
+      r.checks.push({ check: 'entailment', passed: false, reason_ar: r.reason_ar, details: { status: 'ambiguous', declared_contradiction: p.declaredContradiction } });
+      continue;
+    }
+    const details: Record<string, unknown> = { verdict: v.verdict, model: entail.model, declared_contradiction: p.declaredContradiction };
+    // G2 / AC-07: an excerpt the verdict does not rest on (same topic, similar words) is never cited as support for
+    // this claim. Verifiers that do not name excerpts (older contract) keep every cited excerpt.
+    if (v.verdict !== 'not_supported' && Array.isArray(v.based_on) && p.quotes.length > 0) {
+      const named = new Set(v.based_on.map((x) => String(x).trim()));
+      const kept = p.quotes.filter((q) => named.has(q.alias));
+      if (kept.length === 0) {
+        r.status = 'needs_review';
+        r.reason_ar = MSG.basedOnNone;
+        r.checks.push({ check: 'entailment', passed: false, reason_ar: r.reason_ar, details: { ...details, based_on: [...named] } });
+        continue;
+      }
+      if (kept.length < p.quotes.length) {
+        details.dropped_evidence = p.quotes.filter((q) => !named.has(q.alias)).map((q) => q.alias);
+        r.evidence_ids = kept.map((q) => input.aliasMap[q.alias]!);
+        // the values / thresholds / negations must still be in what remains
+        if (!checkCriticalTokens(r.text, kept.map((q) => q.quote)).passed) {
+          r.status = 'needs_review';
+          r.reason_ar = MSG.basedOnCritical;
+          r.checks.push({ check: 'entailment', passed: false, reason_ar: r.reason_ar, details });
+          continue;
+        }
+      }
+    }
     if (p.declaredContradiction && (v.verdict === 'supported' || v.verdict === 'partial')) {
       // the generator says «the source contradicts this», the verifier does not: never shown as a confirmed conflict
       r.status = 'needs_review';
@@ -345,6 +384,17 @@ export async function validateClaims(ctx: AppContext, input: ValidateClaimsInput
     }
   }
 
+  // G3 / AC-08: a sentence whose ONLY support is an uncertain reading (a diagram's labels read by OCR without
+  // understanding — thresholds and symbols are often misread) is shown as needing review, never as «linked»
+  for (const p of pending) {
+    const r = p.result;
+    if (r.status !== 'linked' || r.evidence_ids.length === 0) continue;
+    if (!r.evidence_ids.every((id) => evRows.get(id)?.region_uncertain === 1)) continue;
+    r.status = 'needs_review';
+    r.reason_ar = MSG.uncertainOnly;
+    r.checks.push({ check: 'evidence_exists', passed: false, reason_ar: MSG.uncertainOnly, details: { uncertain_evidence: [...r.evidence_ids] } });
+  }
+
   for (const r of results) r.issues = r.checks.filter((c) => !c.passed && c.reason_ar).map((c) => ({ check: c.check, reason_ar: c.reason_ar! }));
   if (input.persist !== false) persistResults(ctx, input, results, entail.model);
 
@@ -358,11 +408,14 @@ export async function validateClaims(ctx: AppContext, input: ValidateClaimsInput
   };
 }
 
+/** marker for a claim the verifier answered twice with different verdicts */
+const AMBIGUOUS = Symbol('ambiguous-verdict');
+
 interface EntailmentOutcome {
   used: boolean;
   model: string | null;
   reason_ar: string | null;
-  verdicts: Map<number, Verdict>;
+  verdicts: Map<number, Verdict | typeof AMBIGUOUS>;
   batchErrors: Map<number, string>;
 }
 
@@ -397,7 +450,13 @@ async function runEntailment(ctx: AppContext, input: ValidateClaimsInput, pendin
       anyOk = true;
       out.model = res.model;
       const wanted = new Set(batch.map((p) => p.result.index));
-      for (const v of res.output.results) if (wanted.has(v.index) && !out.verdicts.has(v.index)) out.verdicts.set(v.index, v);
+      for (const v of res.output.results) {
+        if (!wanted.has(v.index)) continue;
+        const prev = out.verdicts.get(v.index);
+        // two different verdicts for one claim: neither is trusted (never «first one wins»)
+        if (prev === undefined) out.verdicts.set(v.index, v);
+        else if (prev !== AMBIGUOUS && prev.verdict !== v.verdict) out.verdicts.set(v.index, AMBIGUOUS);
+      }
     } catch (e) {
       if (input.signal?.aborted) throw e;
       const why = isAppError(e) ? e.messageAr : MSG.entailFailed;

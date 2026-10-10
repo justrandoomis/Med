@@ -14,13 +14,14 @@ import { Button, ConfirmDialog, EmptyState, ErrorState, LoadingState, StatusPill
 import { errorMessage } from '../../../lib/api';
 import { useCapabilities } from '../../../lib/capabilities';
 import { useSettings } from '../../../lib/settings';
+import { formatDateTime } from '../../../lib/time';
 import { ArtifactContent, ContentAlertsPanel, ScopeBadge, ScopePicker } from '../../evidence';
 import { studybookApi } from '../../studybook/api';
 import { coverageSummary, defaultScopeFor, nearestBlock, pageOfBlock, referencesOf, sectionsProgressAr } from '../../studybook/model';
 import type { SourceDocument } from '../data/useSourceDocument';
 import { BlockNotes } from './BlockNotes';
 import { SummaryPanel } from './SummaryPanel';
-import { useStudyBook } from './useStudyBook';
+import { STUDY_BOOK_NOT_DOWNLOADED_AR, useStudyBook, type StudyBookState } from './useStudyBook';
 import './studybook.css';
 
 const SECTION_TONE: Record<StudyBookSectionView['status'], StatusTone> = { pending: 'neutral', generating: 'info', complete: 'success', abstained: 'warning', failed: 'danger' };
@@ -53,7 +54,7 @@ export function StudyBookPane({ doc, pageIndex, jumpKey, onVisiblePage, onOpenPa
     sb.status === 'loading' ? (
       <LoadingState inline stage="جارٍ تحميل كتاب الدراسة…" />
     ) : sb.status === 'offline' ? (
-      <EmptyState headingLevel={3} title="كتاب الدراسة يحتاج اتصالًا" description="لم يُحمَّل كتاب الدراسة على هذا الجهاز. يظهر عند عودة الاتصال." />
+      <EmptyState headingLevel={3} title="كتاب الدراسة غير متاح دون اتصال" description={sb.offlineReason ?? STUDY_BOOK_NOT_DOWNLOADED_AR} />
     ) : sb.status === 'error' && !sb.data ? (
       <ErrorState inline message={sb.error ?? 'تعذّر تحميل كتاب الدراسة.'} onRetry={() => void sb.reload()} />
     ) : !book ? (
@@ -69,6 +70,7 @@ export function StudyBookPane({ doc, pageIndex, jumpKey, onVisiblePage, onOpenPa
       <BookView
         doc={doc}
         book={book}
+        offlineCopy={sb.offlineCopy}
         pageIndex={pageIndex}
         jumpKey={jumpKey}
         onVisiblePage={onVisiblePage}
@@ -191,9 +193,11 @@ interface BookViewProps {
   onChanged: (b: StudyBookView) => void;
   onOpenVersion: (id: string | null) => void;
   onReload: () => void;
+  /** the copy downloaded on this device (offline): readable, nothing can be changed */
+  offlineCopy?: StudyBookState['offlineCopy'];
 }
 
-function BookView({ doc, book, pageIndex, jumpKey, onVisiblePage, onOpenPage, canGenerate, onChanged, onOpenVersion, onReload }: BookViewProps) {
+function BookView({ doc, book, pageIndex, jumpKey, onVisiblePage, onOpenPage, canGenerate, onChanged, onOpenVersion, onReload, offlineCopy = null }: BookViewProps) {
   const toast = useToast();
   const a = book.artifact;
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -204,6 +208,8 @@ function BookView({ doc, book, pageIndex, jumpKey, onVisiblePage, onOpenPage, ca
   const [topBlock, setTopBlock] = useState<string | null>(null);
   const cov = coverageSummary(a.coverage);
   const needsReanchor = book.reanchor.filter((r) => r.status === 'needs_reanchor');
+  // notes the server lists as needing re-anchoring in THIS version (their key may now hold another paragraph, AC-22)
+  const unanchoredNoteIds = useMemo(() => new Set(book.reanchor.filter((r) => r.status === 'needs_reanchor' && r.target_kind === 'note').map((r) => r.target_id)), [book.reanchor]);
   const generating = a.status === 'generating';
 
   // twin entries use `page_index` (order in the file); the workspace uses indexes into doc.pages
@@ -306,7 +312,7 @@ function BookView({ doc, book, pageIndex, jumpKey, onVisiblePage, onOpenPage, ca
           {cov.text && <span className="sb-muted">{cov.complete ? `${cov.text} — كل الأقسام المعالجة` : cov.text}</span>}
         </div>
         <div className="sb-book__actions">
-          {generating ? (
+          {offlineCopy ? null : generating ? (
             <Button size="sm" variant="secondary" icon={<Square size={14} />} loading={busy === 'cancel'} onClick={() => void act('cancel', () => studybookApi.cancelBook(a.id), 'أُوقف التوليد؛ الأقسام المكتملة محفوظة.')}>
               أوقف التوليد
             </Button>
@@ -334,7 +340,14 @@ function BookView({ doc, book, pageIndex, jumpKey, onVisiblePage, onOpenPage, ca
         </div>
       </header>
 
-      {!canGenerate.available && canGenerate.reason_ar && !generating && <p className="sb-reason" role="note">{`التوليد غير متاح: ${canGenerate.reason_ar} قراءة النسخ الموجودة متاحة.`}</p>}
+      {offlineCopy ? (
+        <p className="sb-note" role="note" data-testid="sb-offline-copy">
+          {`تقرأ النسخة المحمّلة على هذا الجهاز (حُفظت ${formatDateTime(offlineCopy.storedAt)}). التثبيت وإنشاء نسخة جديدة يحتاجان اتصالًا بالخادم.`}
+          {offlineCopy.notice ? ` ${offlineCopy.notice}` : ''}
+        </p>
+      ) : (
+        !canGenerate.available && canGenerate.reason_ar && !generating && <p className="sb-reason" role="note">{`التوليد غير متاح: ${canGenerate.reason_ar} قراءة النسخ الموجودة متاحة.`}</p>
+      )}
       {book.newer_version_id && (
         <p className="sb-note" role="note">
           توجد نسخة أحدث من كتاب الدراسة؛ هذه النسخة {a.is_frozen ? 'مثبّتة ولن تتغير' : 'أقدم'}.{' '}
@@ -412,6 +425,7 @@ function BookView({ doc, book, pageIndex, jumpKey, onVisiblePage, onOpenPage, ca
           lineageId={a.lineage_id}
           versionNo={a.version_no}
           blocks={a.blocks}
+          unanchoredIds={unanchoredNoteIds}
           topBlockKey={topBlock}
           onJump={(k) => {
             const el = bodyRef.current?.querySelector<HTMLElement>(`[data-block="${CSS.escape(k)}"]`);

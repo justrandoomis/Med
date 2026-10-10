@@ -161,3 +161,11 @@
 .ml-settings__control .ml-list-item__subtitle {
   white-space: normal;
 }
+
+/* links under «القراءة والشرح» to the rules and terms screens */
+.ml-settings__links {
+  margin-top: var(--ml-space-3);
+}
+.ml-settings__links .ml-list-item__subtitle {
+  white-space: normal;
+}

@@ -2,7 +2,7 @@
 // separate statuses (question / extraction / key), sync the question's review items and its search row.
 // A key change on a version that was attempted creates a NEW version and an alert with the impact on past
 // attempts — attempts are never re-graded silently (§36, AC-15, AC-26).
-import { type KeyChangeImpact, type QuestionValidation } from '@medlevo/shared';
+import { type AnswerCheckView, type KeyChangeImpact, type QuestionValidation } from '@medlevo/shared';
 import type { AppContext } from '../../context';
 import { fromJson, toJson } from '../../db/db';
 import { newId } from '../../lib/ids';
@@ -130,14 +130,25 @@ export function refreshQuestion(ctx: AppContext, questionId: string, opts: { job
         ctx.db.run('UPDATE question_version SET key_details_json = ? WHERE id = ?', [toJson(kd), v.id]);
         resolution = { ...resolution, unofficialMarks: src.unofficialMarks };
       } else {
+        const kdNow = fromJson<{ conflict_ar?: string; answer_check?: AnswerCheckView }>(v.key_details_json, {}) ?? {};
+        const check = kdNow.answer_check;
+        // G4 / AC-15: «the source key selects B but the selected evidence points to C» — that conflict stays (shown, not
+        // scored) until the source key ITSELF changes; a later extraction / refresh never silently restores the key
+        const materialConflict =
+          v.answer_status === 'conflicting_key' && check?.outcome === 'conflicts' && src.status === 'source_key' && sameKeys(src.correctOptionKeys, check.key_option_keys);
+        // a check of the same key is kept with the version (it is about exactly this key)
+        const checkStillApplies = !!check && check.key_status === src.status && sameKeys(check.key_option_keys, src.correctOptionKeys);
         const curKeys = correctOptionKeys(ctx, v);
-        const curConflict = fromJson<{ conflict_ar?: string }>(v.key_details_json, {})?.conflict_ar ?? null;
-        const changed = src.status !== v.answer_status || !sameKeys(src.correctOptionKeys, curKeys) || (src.conflictAr ?? null) !== curConflict;
-        const keyDetails = {
-          key_entry_ids: src.keyEntryIds,
-          ...(src.conflictAr ? { conflict_ar: src.conflictAr } : {}),
-          ...(src.notesAr ? { notes_ar: src.notesAr } : {}),
-        };
+        const curConflict = kdNow.conflict_ar ?? null;
+        const changed = !materialConflict && (src.status !== v.answer_status || !sameKeys(src.correctOptionKeys, curKeys) || (src.conflictAr ?? null) !== curConflict);
+        const keyDetails = materialConflict
+          ? { ...kdNow, key_entry_ids: src.keyEntryIds }
+          : {
+              key_entry_ids: src.keyEntryIds,
+              ...(src.conflictAr ? { conflict_ar: src.conflictAr } : {}),
+              ...(src.notesAr ? { notes_ar: src.notesAr } : {}),
+              ...(checkStillApplies ? { answer_check: check } : {}),
+            };
         if (changed) {
           if (isVersionLocked(ctx, v.id)) {
             const d = deriveVersion(ctx, v, {
@@ -168,7 +179,7 @@ export function refreshQuestion(ctx: AppContext, questionId: string, opts: { job
         } else if (toJson(keyDetails) !== v.key_details_json) {
           ctx.db.run('UPDATE question_version SET key_details_json = ? WHERE id = ?', [toJson(keyDetails), v.id]);
         }
-        resolution = src;
+        resolution = materialConflict ? { ...src, status: 'conflicting_key', correctOptionKeys: null, conflictAr: kdNow.conflict_ar ?? null } : src;
       }
     }
 
@@ -249,7 +260,7 @@ export function keyChangeImpact(
   oldVersionId: string,
   newKeys: string[] | null,
   newStatus: string,
-  by: 'owner' | 'source',
+  by: 'owner' | 'source' | 'evidence',
 ): KeyChangeImpact {
   const now = ctx.clock.now();
   const attempts = ctx.db.all<{ id: string; question_version_id: string; selected_option_ids_json: string | null; is_correct: number | null; answered_at: number }>(
@@ -266,18 +277,20 @@ export function keyChangeImpact(
   const changing = rows.filter((r) => r.was_correct !== r.would_be_correct);
   const q = getQuestionRow(ctx, questionId);
   const occ = primaryOccurrence(ctx, q.id);
-  const who = by === 'owner' ? 'صححتَ مفتاح الإجابة' : 'تغيّر مفتاح المصدر';
+  const who = by === 'owner' ? 'صححتَ مفتاح الإجابة' : by === 'evidence' ? 'الأدلة المختارة تخالف مفتاح المصدر' : 'تغيّر مفتاح المصدر';
   const summary =
     rows.length === 0
       ? `${who} لسؤال لم تُحل له محاولات بعد. النسخة السابقة محفوظة.`
-      : `${who}: ${rows.length === 1 ? 'محاولة واحدة سابقة' : `${rows.length} محاولات سابقة`}، منها ${changing.length} ستتغير نتيجتها لو قُيّمت بالمفتاح الجديد. لم يُعَد تقييم أي محاولة تلقائيًا؛ بقيت كل محاولة مرتبطة بنسختها.`;
+      : by === 'evidence'
+        ? `${who}: ${rows.length === 1 ? 'محاولة واحدة سابقة قُيّمت' : `${rows.length} محاولات سابقة قُيّمت`} بمفتاح المصدر؛ بقيت نتائجها كما هي ولم يُعَد تقييم أي منها، والسؤال لا يُحتسب في الاختبارات المقيّمة الجديدة حتى تحسم التعارض.`
+        : `${who}: ${rows.length === 1 ? 'محاولة واحدة سابقة' : `${rows.length} محاولات سابقة`}، منها ${changing.length} ستتغير نتيجتها لو قُيّمت بالمفتاح الجديد. لم يُعَد تقييم أي محاولة تلقائيًا؛ بقيت كل محاولة مرتبطة بنسختها.`;
   const alertId = newId(now);
   const affected = [
     { type: 'question_version', id: oldVersionId, impact: 'needs_review' as const },
     ...changing.map((r) => ({ type: 'question_attempt', id: r.attempt_id, impact: 'needs_review' as const })),
   ];
-  // TODO(C1): no dedicated "key corrected" helper exists in the evidence dependency service yet; the alert is
-  // written with the same shape it uses (content_alert + content_alert_item).
+  // A key correction is not a source-version change, so the evidence dependency service (onSourceVersionChanged) does
+  // not cover it: the alert is written here with the same shape that service uses (content_alert + content_alert_item).
   ctx.db.run(
     `INSERT INTO content_alert (id, kind, severity, source_id, source_version_id, summary, affected_json, status, created_at, details_json)
      VALUES (?, 'key_corrected', 'answer_change', ?, ?, ?, ?, 'open', ?, ?)`,
@@ -293,8 +306,108 @@ export function keyChangeImpact(
     ctx.db.run(
       `INSERT INTO content_alert_item (alert_id, dependent_type, dependent_id, impact, frozen, reason_ar, version_ids_json) VALUES (?, 'question_attempt', ?, 'needs_review', 0, ?, '[]')
        ON CONFLICT (alert_id, dependent_type, dependent_id) DO NOTHING`,
-      [alertId, r.attempt_id, `محاولة سُجلت ${verdict(r.was_correct)} وستكون ${verdict(r.would_be_correct)} بالمفتاح الجديد؛ لم يُعَد تقييمها وبقيت على نسختها.`],
+      [
+        alertId,
+        r.attempt_id,
+        by === 'evidence'
+          ? `محاولة سُجلت ${verdict(r.was_correct)} بمفتاح المصدر، ومفتاحه الآن موضع تعارض مع الأدلة المختارة؛ لم يُعَد تقييمها وبقيت على نسختها.`
+          : `محاولة سُجلت ${verdict(r.was_correct)} وستكون ${verdict(r.would_be_correct)} بالمفتاح الجديد؛ لم يُعَد تقييمها وبقيت على نسختها.`,
+      ],
     );
   }
+  // tools built on this question that no source-version dependency reaches (G8, AC-26): cards made from mistakes
+  // on it and exams that still pin the old version
+  addToolItems(ctx, alertId, questionTools(ctx, questionId, oldVersionId), 'key');
   return { attempts_total: rows.length, would_change: changing.length, attempts: rows, content_alert_id: alertId, summary_ar: summary };
+}
+
+interface QuestionTools {
+  cards: string[];
+  exams: Array<{ id: string; unfinished: boolean }>;
+}
+
+/** Cards made from mistakes on the question and exams that pin `versionId` (finished or not). */
+export function questionTools(ctx: AppContext, questionId: string, versionId: string): QuestionTools {
+  const cards = ctx.db
+    .all<{ id: string }>(
+      `SELECT id FROM flashcard WHERE deleted_at IS NULL AND origin = 'from_mistake' AND json_valid(origin_ref_json)
+          AND json_extract(origin_ref_json, '$.question_id') = ? ORDER BY created_at, id`,
+      [questionId],
+    )
+    .map((r) => r.id);
+  const exams = ctx.db
+    .all<{ id: string; unfinished: number }>(
+      `SELECT e.id, EXISTS (SELECT 1 FROM exam_attempt a WHERE a.exam_id = e.id AND a.status IN ('in_progress', 'paused')) AS unfinished
+         FROM exam e WHERE json_valid(e.items_json)
+          AND EXISTS (SELECT 1 FROM json_each(e.items_json) j WHERE json_extract(j.value, '$.question_version_id') = ?)
+        ORDER BY e.created_at, e.id`,
+      [versionId],
+    )
+    .map((r) => ({ id: r.id, unfinished: r.unfinished === 1 }));
+  return { cards, exams };
+}
+
+function addToolItems(ctx: AppContext, alertId: string, tools: QuestionTools, what: 'key' | 'text'): void {
+  const ins = (type: string, id: string, impact: 'needs_review' | 'still_valid', reason: string) =>
+    ctx.db.run(
+      `INSERT INTO content_alert_item (alert_id, dependent_type, dependent_id, impact, frozen, reason_ar, version_ids_json) VALUES (?, ?, ?, ?, 0, ?, '[]')
+       ON CONFLICT (alert_id, dependent_type, dependent_id) DO NOTHING`,
+      [alertId, type, id, impact, reason],
+    );
+  for (const c of tools.cards) {
+    ins('flashcard', c, 'needs_review', what === 'key' ? 'بطاقة صُنعت من خطأ في هذا السؤال؛ مفتاحه تغيّر، فراجع جوابها. سجل مراجعاتك محفوظ.' : 'بطاقة صُنعت من خطأ في هذا السؤال وتحمل نصه السابق؛ راجعها. سجل مراجعاتك محفوظ.');
+  }
+  for (const e of tools.exams) {
+    if (e.unfinished) {
+      ins('exam', e.id, 'needs_review', what === 'key' ? 'اختبار أُنشئ قبل التصحيح ولم يُنهَ: يثبّت النسخة السابقة ويُصحَّح بمفتاحها؛ الاختبار الجديد يستخدم المفتاح المصحح.' : 'اختبار أُنشئ قبل التصحيح ولم يُنهَ: يعرض النص السابق للسؤال.');
+    } else {
+      const started = ctx.db.get('SELECT 1 AS x FROM exam_attempt WHERE exam_id = ?', [e.id]);
+      if (!started) continue;
+      ins('exam', e.id, 'still_valid', 'اختبار مُنهى على النسخة السابقة: نتيجته كما هي ولم يُعَد تقييمه.');
+    }
+  }
+}
+
+/**
+ * The owner corrected a FACT in the question itself (stem / options / explanation) — a new version (G8, AC-26). When
+ * something was built on the previous version (attempts, cards from mistakes, exams that pin it) one alert names them;
+ * nothing is re-graded or rewritten. Returns null when nothing depends on the previous version.
+ */
+export function questionCorrectionAlert(ctx: AppContext, questionId: string, oldVersionId: string, changedAr: string): string | null {
+  const attempts = ctx.db.all<{ id: string }>('SELECT id FROM question_attempt WHERE question_version_id = ? ORDER BY answered_at, id', [oldVersionId]).map((r) => r.id);
+  const tools = questionTools(ctx, questionId, oldVersionId);
+  const exams = tools.exams.filter((e) => e.unfinished || ctx.db.get('SELECT 1 AS x FROM exam_attempt WHERE exam_id = ?', [e.id]));
+  if (attempts.length === 0 && tools.cards.length === 0 && exams.length === 0) return null;
+  const now = ctx.clock.now();
+  const occ = primaryOccurrence(ctx, questionId);
+  const parts = [
+    attempts.length ? `${attempts.length === 1 ? 'محاولة واحدة' : `${attempts.length} محاولات`} على النسخة السابقة بقيت كما هي ولم يُعَد تقييمها` : '',
+    tools.cards.length ? `${tools.cards.length === 1 ? 'بطاقة واحدة' : `${tools.cards.length} بطاقات`} من أخطائك فيه تحتاج مراجعة` : '',
+    exams.some((e) => e.unfinished) ? 'اختبار لم يُنهَ ما زال على النسخة السابقة' : '',
+  ].filter(Boolean);
+  const summary = `صححتَ ${changedAr} في سؤال؛ أُنشئت نسخة جديدة والنسخة السابقة محفوظة. ${parts.join('، ')}.`;
+  const alertId = newId(now);
+  const affected = [
+    { type: 'question_version', id: oldVersionId, impact: 'needs_review' as const },
+    ...attempts.map((id) => ({ type: 'question_attempt', id, impact: 'still_valid' as const })),
+    ...tools.cards.map((id) => ({ type: 'flashcard', id, impact: 'needs_review' as const })),
+  ];
+  ctx.db.run(
+    `INSERT INTO content_alert (id, kind, severity, source_id, source_version_id, summary, affected_json, status, created_at, details_json)
+     VALUES (?, 'source_updated', 'fact_change', ?, ?, ?, ?, 'open', ?, ?)`,
+    [alertId, occ?.source_id ?? null, occ?.source_version_id ?? null, summary, toJson(affected), now, toJson({ question_id: questionId, corrected: changedAr, by: 'owner' })],
+  );
+  ctx.db.run(
+    `INSERT INTO content_alert_item (alert_id, dependent_type, dependent_id, impact, frozen, reason_ar, version_ids_json) VALUES (?, 'question_version', ?, 'needs_review', 0, ?, '[]')`,
+    [alertId, oldVersionId, `النسخة السابقة من السؤال قبل تصحيح ${changedAr}؛ محفوظة كما هي مع محاولاتها.`],
+  );
+  for (const id of attempts) {
+    ctx.db.run(
+      `INSERT INTO content_alert_item (alert_id, dependent_type, dependent_id, impact, frozen, reason_ar, version_ids_json) VALUES (?, 'question_attempt', ?, 'still_valid', 0, ?, '[]')
+       ON CONFLICT (alert_id, dependent_type, dependent_id) DO NOTHING`,
+      [alertId, id, 'محاولة على النسخة السابقة؛ بقيت مرتبطة بها ولم يتغير تقييمها.'],
+    );
+  }
+  addToolItems(ctx, alertId, { cards: tools.cards, exams }, 'text');
+  return alertId;
 }

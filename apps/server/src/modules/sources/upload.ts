@@ -192,21 +192,32 @@ async function inspectZip(ctx: AppContext, file: IncomingFile, data: Buffer): Pr
   if (!listing) return { ok: false, detected: 'zip', reason: 'تعذّر قراءة الأرشيف (تالف أو مشفّر أو صيغة غير مدعومة).' };
   const has = (n: string) => listing.names.includes(n);
   const hasPrefix = (p: string) => listing.names.some((n) => n.startsWith(p));
-  const officeBombCheck = (): string | null => {
+  const officeBombCheck = async (): Promise<string | null> => {
     if (listing.declaredUncompressed > limits.maxZipUncompressedBytes) return 'حجم المستند بعد فك الضغط يتجاوز الحد المسموح على الخادم.';
     if (listing.worstRatio > limits.maxZipRatio) return 'نسبة الضغط داخل المستند مرتفعة بشكل غير طبيعي (احتمال zip bomb) — رُفض.';
+    // the sizes above are what the archive DECLARES; a hostile package can lie (G8). Inflate everything once under the
+    // same limits, keeping nothing, so the parser never meets a part larger than allowed.
+    const measured = await extractZipSafe(
+      data,
+      { maxEntries: OFFICE_MAX_ENTRIES, maxTotalBytes: limits.maxZipUncompressedBytes, maxEntryBytes: limits.maxZipUncompressedBytes, maxRatio: limits.maxZipRatio },
+      { mode: 'measure' },
+    );
+    const codes = new Set(measured.rejected.map((r) => r.code));
+    if (measured.abortCode === 'TOTAL_LIMIT' || codes.has('TOTAL_LIMIT') || codes.has('ENTRY_TOO_LARGE')) return 'حجم المستند بعد فك الضغط يتجاوز الحد المسموح على الخادم.';
+    if (codes.has('RATIO_EXCEEDED')) return 'نسبة الضغط داخل المستند مرتفعة بشكل غير طبيعي (احتمال zip bomb) — رُفض.';
+    if (measured.aborted || codes.has('ENCRYPTED_OR_CORRUPT')) return 'المستند تالف أو مشفّر: تعذّر فك ضغط أجزائه كما تصفها رؤوس الأرشيف.';
     return null;
   };
   if (has('[Content_Types].xml')) {
     if (hasPrefix('word/')) {
       if (!has('word/document.xml')) return { ok: false, detected: 'docx', reason: 'ملف Word تالف: لا يحتوي على نص المستند (word/document.xml).' };
-      const bomb = officeBombCheck();
+      const bomb = await officeBombCheck();
       if (bomb) return { ok: false, detected: 'docx', reason: bomb };
       return { ok: true, detected: 'docx', format: 'docx', pagination: 'paragraphs', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', pageCount: null };
     }
     if (hasPrefix('ppt/')) {
       if (!has('ppt/presentation.xml')) return { ok: false, detected: 'pptx', reason: 'ملف PowerPoint تالف: لا يحتوي على ملف العرض (ppt/presentation.xml).' };
-      const bomb = officeBombCheck();
+      const bomb = await officeBombCheck();
       if (bomb) return { ok: false, detected: 'pptx', reason: bomb };
       const slides = listing.names.filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n)).length;
       return {

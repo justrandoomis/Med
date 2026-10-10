@@ -9,7 +9,8 @@ import type { HomeDetail, MistakeGenomeView } from '@medlevo/shared';
 import { ToastProvider } from '../../src/design';
 import { setFetchImpl } from '../../src/lib/api';
 import { getDb } from '../../src/lib/localdb';
-import { HomeScreen, mergeContinue } from '../../src/features/home/HomeScreen';
+import { HomeScreen, localSessionPageLabel, mergeContinue } from '../../src/features/home/HomeScreen';
+import { apiKeyFor } from '../../src/lib/offline';
 import { BarList } from '../../src/features/review/components/BarList';
 import { GenomeSection } from '../../src/features/weakness/parts';
 import { clearDb, routeFetch, srsConfigFixture } from './helpers';
@@ -90,18 +91,55 @@ describe('Home', () => {
     expect(screen.getAllByRole('heading', { level: 2 })[0]!.textContent).toBe('تابع الدراسة');
   });
 
-  it('merges a newer local session into the server list without losing the server label', () => {
+  it('merges a newer local session into the server list: this device\'s page wins; the server label stays only when the device has no page', () => {
     const merged = mergeContinue(
-      [{ source_id: 'A', title: 'A', version_id: null, page_label_ar: 'ص 2', mode: 'learn', updated_at: 10 }],
+      [
+        { source_id: 'A', title: 'A', version_id: null, page_label_ar: 'ص 2', mode: 'learn', updated_at: 10 },
+        { source_id: 'C', title: 'C', version_id: null, page_label_ar: 'ص 5', mode: 'learn', updated_at: 10 },
+        { source_id: 'D', title: 'D', version_id: null, page_label_ar: 'ص 7', mode: 'learn', updated_at: 90 },
+      ],
       [
         { source_id: 'A', title: 'A?', version_id: null, page_label_ar: null, mode: 'learn', updated_at: 50 },
         { source_id: 'B', title: 'B', version_id: null, page_label_ar: null, mode: 'learn', updated_at: 20 },
+        // I1 #8: this device read further in C after the server's copy → C shows this device's page and mode
+        { source_id: 'C', title: 'C?', version_id: 'VC', page_label_ar: 'ص 9 (الصفحة 11 في الملف)', mode: 'review', updated_at: 60 },
+        // an OLDER local session never replaces the server's newer place
+        { source_id: 'D', title: 'D', version_id: null, page_label_ar: 'ص 1', mode: 'learn', updated_at: 40 },
       ],
     );
-    expect(merged.map((m) => [m.source_id, m.updated_at, m.page_label_ar])).toEqual([
-      ['A', 50, 'ص 2'],
-      ['B', 20, null],
+    expect(merged.map((m) => [m.source_id, m.updated_at, m.page_label_ar, m.mode])).toEqual([
+      ['D', 90, 'ص 7', 'learn'],
+      ['C', 60, 'ص 9 (الصفحة 11 في الملف)', 'review'],
+      ['A', 50, 'ص 2', 'learn'],
+      ['B', 20, null, 'learn'],
     ]);
+    expect(merged.find((m) => m.source_id === 'C')!.title).toBe('C');
+  });
+
+  it('a newer session on this device is shown at THIS device\'s page — from the downloaded page list, else by file position (I1 #8)', async () => {
+    // Regression: Home kept the server's (older) page label when this device's session was newer.
+    const db = getDb();
+    const now = Date.now();
+    await db.studySessions.put({ id: 'SS-A', sourceId: 'S1', versionId: 'V1', mode: 'learn', view: 'original', location: { page_index: 13 }, updatedAt: now, syncState: 'pending_sync' });
+    await db.studySessions.put({ id: 'SS-B', sourceId: 'S2', versionId: 'V2', mode: 'review', view: 'original', location: { page_index: 6, page_id: 'P2-6' }, updatedAt: now - 1000, syncState: 'pending_sync' });
+    // S2 is downloaded on this device: its page list names page 6 «شريحة 7»
+    await db.apiCache.put({ key: apiKeyFor('/api/sources/S2/versions/V2/pages'), value: { version: { id: 'V2' }, pages: [{ id: 'P2-6', page_index: 6, printed_label: '7', kind: 'slide' }] }, storedAt: now });
+    setFetchImpl(routeFetch({ '/learning/home': home, '/library/tree': { nodes: [], sources: [] }, '/learning/srs-config': srsConfigFixture(), '/questions/Q1': { question: { id: 'Q1', current: { stem: richTextFromPlain('x') } } } }).fn as never);
+    render(
+      <MemoryRouter>
+        <ToastProvider>
+          <HomeScreen />
+        </ToastProvider>
+      </MemoryRouter>,
+    );
+    // the server said «ص 3» for S1 an hour ago; this device is at the 14th page of the file now
+    const first = await screen.findByRole('link', { name: /Acute Appendicitis.*افتح من حيث توقفت/ });
+    await waitFor(() => expect(first.textContent).toContain('الصفحة 14 في الملف'));
+    expect(first.textContent).not.toContain('ص 3');
+    const shock = screen.getByRole('link', { name: /Shock/ });
+    await waitFor(() => expect(shock.textContent).toContain('شريحة 7'));
+    expect(shock.textContent).not.toContain('شريحة 4');
+    expect(await localSessionPageLabel({ sourceId: 'S9', versionId: 'V9', location: {} })).toBeNull();
   });
 });
 

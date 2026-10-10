@@ -7,6 +7,7 @@ import { IconButton, LoadingState, Tooltip, cx } from '../../../design';
 import { fetchRegions } from '../data/api';
 import type { SourceDocument } from '../data/useSourceDocument';
 import { fullPageLabel } from '../model/pages';
+import { pdfPageUsesRegionText, regionPageText } from '../model/regionText';
 import { searchPages, type SearchResult } from '../model/search';
 
 export interface SearchPanelProps {
@@ -22,12 +23,13 @@ export interface SearchPanelProps {
   focusKey: number;
 }
 
-async function pageText(doc: SourceDocument, page: SourcePageView): Promise<{ text: string; breaks?: number[] }> {
-  if (doc.mode === 'pdf' && doc.pdf) return doc.pdf.text(page.page_index);
+export async function pageText(doc: Pick<SourceDocument, 'mode' | 'pdf'>, page: SourcePageView): Promise<{ text: string; breaks?: number[] }> {
+  // a scanned page inside a PDF has no PDF text: its text is the server's OCR, as on the page's text layer (AC-02)
+  if (doc.mode === 'pdf' && doc.pdf && !pdfPageUsesRegionText(page)) return doc.pdf.text(page.page_index);
   const r = await fetchRegions(page.id);
-  const regions = r.regions.filter((x) => x.text && (doc.mode === 'text' ? x.kind !== 'footer' && x.kind !== 'header' : x.bbox && x.kind !== 'figure')).sort((a, b) => a.reading_order - b.reading_order);
-  // same concatenation the page's text layer uses
-  return { text: regions.map((x) => x.text ?? '').join(doc.mode === 'text' ? '\n' : '') };
+  if (doc.mode !== 'text') return { text: regionPageText(r.regions) }; // same runs and concatenation as the text layer
+  const regions = r.regions.filter((x) => x.text && x.kind !== 'footer' && x.kind !== 'header').sort((a, b) => a.reading_order - b.reading_order);
+  return { text: regions.map((x) => x.text ?? '').join('\n') };
 }
 
 export function SearchPanel({ doc, query, onQuery, results, onResults, current, onCurrent, onClose, focusKey }: SearchPanelProps) {

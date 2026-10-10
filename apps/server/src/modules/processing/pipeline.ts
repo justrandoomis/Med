@@ -23,15 +23,16 @@ import {
 import { serializeTable } from './layout/tables';
 import type { Box, DiagramLabel, FigureCandidate, LayoutRegion, PageGeom, TextItem } from './layout/types';
 import { boxOf, median } from './layout/types';
-import type { OcrEngine, OcrWord } from './ocr';
+import { missedTextSegments, type MissedText } from './coverage';
+import type { OcrEngine, OcrResult, OcrWord } from './ocr';
 import { extractDocx, extractPptx, type OfficeDocument } from './office';
 import { closePdf, extractPage, openPdf, pageLabels, PdfOpenError, pageTextItems, pageView, type PageView } from './pdf';
 import { markPageFailed, persistPage, RegionsInUseError, type FigureAsset, type PageRef, type PageUpdate, type ReviewItemInput } from './persist';
-import { decodePng, imageSize, isPng, measureImageQuality, type ImageQuality } from './png';
+import { decodePng, imageSize, isPng, measureImageQuality, type ImageQuality, type RgbaImage } from './png';
 import { applyLectureKind, linkFiguresAcrossPages } from './structure';
 import { writeSummary } from './summary';
 import { hasReversedLamAlef, prepareRegionText, suspicionReasonAr, type SuspicionContext } from './text';
-import { convertToPdf, renderPdfPage, ToolError, type ToolPaths } from './tools';
+import { convertToPdf, popplerReportsDamage, renderPdfPage, ToolError, type ToolPaths } from './tools';
 
 export const PIPELINE_VERSION = 'process-v1';
 export const MAX_ATTEMPTS = 3;
@@ -132,6 +133,8 @@ interface OcrCheckpoint {
   words: OcrWord[];
   confidence: number | null;
   quality: Pick<ImageQuality, 'lowQuality' | 'reasons' | 'contrast' | 'edgeSharpness' | 'blank'> | null;
+  /** G3 / AC-08: places with writing that no OCR word covers (absent in older checkpoints) */
+  missed?: MissedText[];
 }
 
 /** A page-level failure with a specific Arabic reason (the page is marked failed; other pages continue). */
@@ -163,6 +166,8 @@ const MSG = {
     'هذه الصفحة صورة ممسوحة وتحتاج OCR، لكن أداة تحويل صفحات PDF إلى صور (poppler: pdftoppm) غير مثبتة على الخادم. لم تُعامل الصفحة كصفحة فارغة.',
   blankUnverified:
     'لا يوجد نص رقمي ولا صور في هذه الصفحة، وتعذّر التحقق بصريًا من أنها فارغة لأن pdftoppm غير مثبت. راجعها في القارئ.',
+  contentDamaged:
+    'محتوى هذه الصفحة في الملف تالف جزئيًا (تعذّر فك بعض بياناتها)، لذلك تظهر فارغة ولم يُقرأ منها أي نص. لا تُعامل كصفحة فارغة؛ راجعها أو أضف نسخة سليمة من الملف. بقية الصفحات لم تتأثر.',
   noTextFound:
     'هذه الصفحة صورة، لكن التعرف الضوئي (OCR) لم يجد فيها نصًا مقروءًا. قد تكون رسمًا فقط أو مسحًا رديئًا؛ راجعها أو أضف نسخة أوضح.',
   renderFailed: 'تعذر تحويل هذه الصفحة إلى صورة لإجراء OCR (pdftoppm). بقية الصفحات لم تتأثر.',
@@ -180,6 +185,8 @@ const MSG = {
   unexpected: 'حدث خطأ غير متوقع أثناء معالجة هذه الصفحة؛ بقية الصفحات لم تتأثر. أعد معالجة الصفحة لاحقًا.',
   pptxDisplayFailed: 'تعذر إنشاء نسخة العرض الثابتة (PDF) للعرض التقديمي بـLibreOffice؛ الشرائح ونصوصها مستخرجة رغم ذلك.',
   pptxDisplayMissing: 'لم تُنشأ نسخة عرض ثابتة (PDF) للعرض التقديمي لأن LibreOffice غير مثبت؛ الشرائح ونصوصها مستخرجة رغم ذلك.',
+  textNotRead: (n: number) =>
+    `في الصورة كتابة لم يقرأها التعرف الضوئي (${n === 1 ? 'موضع واحد' : n === 2 ? 'موضعان' : `${n} مواضع`})؛ قد يكون النص أو الخيارات ناقصة. قارن بالصورة الأصلية وأضف ما نقص قبل الاعتماد عليه.`,
   lowQuality: (reasons: string[]) =>
     `جودة الصورة منخفضة (${reasons.join('، ')})، لذلك قد يحتوي النص المستخرج بالـOCR على أخطاء لا تظهر في درجة الثقة. راجع النص مقابل الصورة الأصلية قبل الاعتماد عليه.`,
   lowConfidence: (min: number, words: string[]) =>
@@ -658,7 +665,30 @@ class VersionRun {
     return null;
   }
 
-  private async recognize(image: Buffer, mode: 'auto' | 'sparse' = 'auto') {
+  /**
+   * OCR with a coverage check (G3 / AC-08): when the automatic segmentation left text-like ink unread, the page is
+   * read again as one uniform block (PSM 6) and the reading that leaves less unread is kept; what is still unread is
+   * returned so the page is marked for review. Without a decoded image (non-PNG) only the first reading is made.
+   */
+  private async recognizeCovered(image: Buffer, decoded: RgbaImage | null): Promise<{ res: OcrResult; missed: MissedText[] }> {
+    const first = await this.recognize(image);
+    if (!decoded) return { res: first, missed: [] };
+    const missed = missedTextSegments(decoded, first.words);
+    if (missed.length === 0) return { res: first, missed };
+    // keep the first reading (its line order and numbering are better on mixed layouts) and take from the second one
+    // only the words that fall where the first one read nothing
+    const second = await this.recognize(image, 'block');
+    const inMissed = (w: OcrWord) => missed.some((m) => w.x1 >= m.x0 && w.x0 <= m.x1 && Math.min(w.y1, m.y1) - Math.max(w.y0, m.y0) >= 0.3 * (m.y1 - m.y0));
+    const lineOffset = first.words.reduce((n, w) => Math.max(n, w.line), 0) + 1;
+    const extra = second.words.filter(inMissed).map((w) => ({ ...w, line: w.line + lineOffset }));
+    if (extra.length === 0) return { res: first, missed };
+    const words = [...first.words, ...extra];
+    const merged: OcrResult = { words, confidence: words.reduce((sum, w) => sum + w.conf, 0) / words.length };
+    const missed2 = missedTextSegments(decoded, merged.words);
+    return missed2.length < missed.length ? { res: merged, missed: missed2 } : { res: first, missed };
+  }
+
+  private async recognize(image: Buffer, mode: 'auto' | 'sparse' | 'block' = 'auto') {
     try {
       return await this.deps.ocr!.recognize({ image, mode });
     } catch (e) {
@@ -724,6 +754,7 @@ class VersionRun {
     if (noDigitalText && !needsOcr) {
       // nothing drawn that we can see in the operator list: verify visually before calling it blank
       if (this.deps.tools.pdftoppm) {
+        let diagnostics = '';
         const quick = await renderPdfPage({
           pdftoppm: this.deps.tools.pdftoppm,
           pdfPath: ctx.files.path(fileId),
@@ -731,6 +762,7 @@ class VersionRun {
           dpi: 50,
           tmpRoot: ctx.config.tmpDir,
           signal: run.signal,
+          onDiagnostics: (stderr) => (diagnostics = stderr),
         }).catch(() => null);
         let blank = false;
         try {
@@ -739,6 +771,9 @@ class VersionRun {
           blank = false;
         }
         if (!blank) needsOcr = true; // something is drawn: never call it empty without reading it
+        // blank only because its content could not be decoded (broken stream, missing image object): a damaged page
+        // is a stumble to show (AC-03), never a «ready» empty page (AC-02)
+        else if (popplerReportsDamage(diagnostics)) pageIssue = { code: 'PAGE_CONTENT_DAMAGED', reason: MSG.contentDamaged, kind: 'unreadable_page' };
       } else if (bodyChars === 0) {
         pageIssue = { code: 'BLANK_UNVERIFIED', reason: MSG.blankUnverified, kind: 'unreadable_page' };
       }
@@ -755,16 +790,19 @@ class VersionRun {
           const stored = await ctx.files.put(png, { mime: 'image/png', originalName: `page-${page.page_index + 1}.png` });
           let quality: OcrCheckpoint['quality'] = null;
           let size: { width: number; height: number } | null = null;
+          let decoded: RgbaImage | null = null;
           try {
             const img = decodePng(png);
+            decoded = img;
             size = { width: img.width, height: img.height };
             const q = measureImageQuality(img);
             quality = { lowQuality: q.lowQuality, reasons: q.reasons, contrast: q.contrast, edgeSharpness: q.edgeSharpness, blank: q.blank };
           } catch {
             quality = null;
           }
-          const res = await this.recognize(png);
-          return { renderFileId: stored.id, dpi, pxWidth: size?.width ?? null, pxHeight: size?.height ?? null, words: res.words, confidence: res.confidence, quality };
+          // coverage is judged on pure scans only (digital text on the page is not in the OCR reading)
+          const { res, missed } = await this.recognizeCovered(png, dItems.length === 0 ? decoded : null);
+          return { renderFileId: stored.id, dpi, pxWidth: size?.width ?? null, pxHeight: size?.height ?? null, words: res.words, confidence: res.confidence, quality, missed };
         });
         // the render IS the display box (crop box, /Rotate applied): render px / scale = display units
         const ocrScale = (ocrData.dpi ?? RENDER_DPI) / 72;
@@ -830,10 +868,11 @@ class VersionRun {
       if (!ocrTextRegions.length) pageIssue = { code: 'NO_TEXT_FOUND', reason: MSG.noTextFound, kind: 'unreadable_page' };
       else if (lowQuality)
         pageIssue = { code: 'LOW_QUALITY_SCAN', reason: MSG.lowQuality((quality?.reasons ?? []).map((r) => QUALITY_REASON_AR[r])), kind: 'ocr_error' };
+      else if (ocrData.missed?.length) pageIssue = { code: 'TEXT_NOT_READ', reason: MSG.textNotRead(ocrData.missed.length), kind: 'ocr_error' };
     } else {
       textStatus = digitalTextRegions.length ? 'digital' : 'no_text_found';
     }
-    if (pageIssue) reviews.push({ kind: pageIssue.kind, regionKey: null, reasonAr: pageIssue.reason, details: { code: pageIssue.code, quality } });
+    if (pageIssue) reviews.push({ kind: pageIssue.kind, regionKey: null, reasonAr: pageIssue.reason, details: { code: pageIssue.code, quality, ...(ocrData?.missed?.length ? { not_read: ocrData.missed } : {}) } });
     const needsReview = pageIssue !== null || withDiagrams.some((r) => r.status === 'needs_review');
     const ref: PageRef = this.pageRef(page, pageGeom);
     const res = persistPage(ctx, ref, withDiagrams, assets, reviews, {
@@ -901,25 +940,31 @@ class VersionRun {
     const buf = await ctx.files.read(fileId);
     const size = imageSize(buf) ?? (page.width && page.height ? { width: page.width, height: page.height } : null);
     const geom: PageGeom | null = size ? { width: size.width, height: size.height } : null;
+    const pixels = size ? size.width * size.height : 0;
+    const overOcrBudget = pixels > MAX_OCR_PIXELS;
     let quality: OcrCheckpoint['quality'] = null;
-    if (isPng(buf)) {
+    let decoded: RgbaImage | null = null;
+    // Quality metrics only qualify OCR text. An image above the OCR pixel budget is never OCR'd, so it is not decoded
+    // either: a full RGBA decode of a 48 MP photo cost ≈ 0.57 GB of memory and 2.6 s for nothing (docs/PERFORMANCE.md).
+    if (isPng(buf) && !overOcrBudget) {
       try {
-        const q = measureImageQuality(decodePng(buf));
+        decoded = decodePng(buf);
+        const q = measureImageQuality(decoded);
         quality = { lowQuality: q.lowQuality, reasons: q.reasons, contrast: q.contrast, edgeSharpness: q.edgeSharpness, blank: q.blank };
       } catch {
         quality = null;
+        decoded = null;
       }
     }
-    const pixels = size ? size.width * size.height : 0;
     const unavailable =
       this.ocrUnavailable('image') ??
-      (pixels > MAX_OCR_PIXELS ? { code: 'IMAGE_TOO_LARGE', reason: MSG.imageTooLarge(Math.round(pixels / 1e6)) } : null);
+      (overOcrBudget ? { code: 'IMAGE_TOO_LARGE', reason: MSG.imageTooLarge(Math.round(pixels / 1e6)) } : null);
     let ocrData: OcrCheckpoint | null = null;
     let regions: LayoutRegion[] = [];
     if (!unavailable) {
       ocrData = await run.checkpoint<OcrCheckpoint>(`page:${page.page_index}:ocr`, async () => {
-        const res = await this.recognize(buf);
-        return { renderFileId: null, pxWidth: size?.width ?? null, pxHeight: size?.height ?? null, words: res.words, confidence: res.confidence, quality };
+        const { res, missed } = await this.recognizeCovered(buf, decoded);
+        return { renderFileId: null, pxWidth: size?.width ?? null, pxHeight: size?.height ?? null, words: res.words, confidence: res.confidence, quality, missed };
       });
       const items = wordsToItems(ocrData.words, (x, y) => [x, y]);
       const g = geom ?? { width: Math.max(1, ...items.map((i) => i.x1)), height: Math.max(1, ...items.map((i) => i.bottom)) };
@@ -948,7 +993,8 @@ class VersionRun {
     let pageIssue: { code: string; reason: string; kind: 'unreadable_page' | 'ocr_error' } | null = null;
     if (unavailable) pageIssue = { code: unavailable.code, reason: unavailable.reason, kind: 'unreadable_page' };
     else if (lowQuality) pageIssue = { code: 'LOW_QUALITY_SCAN', reason: MSG.lowQuality((quality?.reasons ?? []).map((r) => QUALITY_REASON_AR[r])), kind: 'ocr_error' };
-    if (pageIssue) reviews.push({ kind: pageIssue.kind, regionKey: null, reasonAr: pageIssue.reason, details: { code: pageIssue.code, quality, file_name: fileName } });
+    else if (hasText && ocrData?.missed?.length) pageIssue = { code: 'TEXT_NOT_READ', reason: MSG.textNotRead(ocrData.missed.length), kind: 'ocr_error' };
+    if (pageIssue) reviews.push({ kind: pageIssue.kind, regionKey: null, reasonAr: pageIssue.reason, details: { code: pageIssue.code, quality, file_name: fileName, ...(ocrData?.missed?.length ? { not_read: ocrData.missed } : {}) } });
     const needsReview = pageIssue !== null || regions.some((r) => r.status === 'needs_review');
     const textStatus: PageUpdate['text_status'] = unavailable ? 'needs_ocr' : hasText ? 'ocr' : 'no_text_found';
     const res = persistPage(ctx, this.pageRef(page, geom), regions, assets, reviews, {

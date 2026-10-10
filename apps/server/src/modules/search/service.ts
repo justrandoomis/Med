@@ -52,7 +52,7 @@ interface Scored {
   rank: number;
 }
 
-const GROUP: Record<SearchOrigin, number> = { source: 0, recognized: 1, owner_note: 1, generated: 2 };
+const GROUP: Record<SearchOrigin, number> = { source: 0, recognized: 1, imported: 1, owner_typed: 1, owner_note: 1, generated: 2 };
 
 function clean(t: string | null | undefined): string {
   return (t ?? '').replace(/[\r\n\t]+/g, ' ').trim();
@@ -429,11 +429,22 @@ function searchGenerated(ctx: AppContext, p: SearchParams, match: string, fetch:
   return out;
 }
 
+/**
+ * The real origin of a transcript hit (the segment's own `origin`): typed by the owner, imported from a subtitle
+ * file, or machine-recognized. A segment the owner corrected shows (and is searched by) the owner's text.
+ */
+export function transcriptOrigin(seg: { origin: string; corrected_text: string | null }): SearchOrigin {
+  if (seg.corrected_text !== null) return 'owner_typed';
+  if (seg.origin === 'transcription') return 'recognized';
+  if (seg.origin === 'imported_vtt' || seg.origin === 'imported_srt') return 'imported';
+  return 'owner_typed';
+}
+
 function searchTranscripts(ctx: AppContext, p: SearchParams, match: string, fetch: number, hl: Highlighter, counters: { exactRejected: number }): Scored[] {
   const out: Scored[] = [];
   for (const h of ownerContentHits(ctx, match, ['transcript_segment'], null, fetch)) {
-    const seg = ctx.db.get<{ text: string; corrected_text: string | null; start_ms: number; source_id: string }>(
-      'SELECT t.text, t.corrected_text, t.start_ms, a.source_id FROM transcript_segment t JOIN audio_asset a ON a.id = t.audio_id WHERE t.id = ?',
+    const seg = ctx.db.get<{ text: string; corrected_text: string | null; start_ms: number; source_id: string; origin: string }>(
+      'SELECT t.text, t.corrected_text, t.start_ms, t.origin, a.source_id FROM transcript_segment t JOIN audio_asset a ON a.id = t.audio_id WHERE t.id = ?',
       [h.entity_id],
     );
     if (!seg || !sourcePasses(ctx, p, seg.source_id)) continue;
@@ -453,7 +464,7 @@ function searchTranscripts(ctx: AppContext, p: SearchParams, match: string, fetc
         title: s ? clean(s.title) : 'تفريغ صوتي',
         snippet: makeSnippet(text, hs),
         location: { source_id: seg.source_id, version_id: null, page_id: null, page_index: null, page_label_ar: locatorLabelAr(null, { start_ms: seg.start_ms }), region_id: null },
-        origin: 'recognized',
+        origin: transcriptOrigin(seg),
         source_type: s?.source_type ?? null,
         source_title: s ? clean(s.title) : null,
         is_evidence: false,

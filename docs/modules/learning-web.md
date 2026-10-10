@@ -190,3 +190,23 @@ Commands (repo root unless noted), real results after the fixes:
 | `npx tsc -p apps/server --noEmit` / `npx tsc -p apps/web --noEmit` | exit 0 / exit 0 |
 | `npm run build -w @medlevo/web` | exit 0 |
 | `node apps/web/test/learning/real-server-check.mjs` (after the build) | OK: 53 checks passed |
+
+## 6. Integration round I1 (2026-10-10)
+* **Home «تابع الدراسة» shows this device's place when it is newer.** `mergeContinue` kept the server's page label
+  when this device's session was newer, so Home named an older page. Now this device's label and mode win; the
+  server's label stays only when the device's session holds no page. The device label comes from the downloaded page
+  list when the source is on the device («ص 12 (الصفحة 14 في الملف)», `localSessionPageLabel`), else from the file
+  position («الصفحة 14 في الملف») — never a guessed printed number. Tests: `test/learning/home-and-charts.test.tsx`.
+
+## Integration round I2 — 3 000 cards / 12 000 review events on one device (2026-10-10)
+* **The first sync of a large deck crawled.** `useLocalCards` read both tables with whole-table live queries, and
+  every consumer (review hub, home, session, library) re-folds every card with FSRS on each new set of rows; Dexie
+  re-ran both queries after nearly every pulled change. Profiled in Chromium during a first-visit sync of 3 000 cards
+  + 12 000 events: > 50 % of the main thread in re-reads and re-folds, ≈ 55 events/s reaching IndexedDB. The hook now
+  listens to Dexie's `storagemutated` event and re-reads at most once per `LOCAL_CARDS_RELOAD_MS` (400 ms) during a
+  burst, with one re-read after it; the first write after a quiet period (a rating) is still reflected at once.
+  After: ≈ 250 events/s, main thread mostly idle (the remaining cost is one IndexedDB transaction set per pulled
+  change in the sync engine — not changed here). Test: `test/learning/local-cards-burst.test.tsx` (old code: 153
+  re-reads for 300 writes).
+* The pure fold (`computeQueue`, 3 000 cards × 4 events) measured in Node: `test/learning/queue.perf.test.ts`
+  (`MEDLEVO_PERF=1`); numbers in [`docs/PERFORMANCE.md`](../PERFORMANCE.md).

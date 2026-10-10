@@ -15,6 +15,9 @@
 //
 // History
 //   v1 (2026-10) — initial schema: entity tables, outbox, syncInbox, kv, offline content, apiCache.
+//   v2 (2026-10, I2 performance pass) — annotations: indexes [targetKey+kind] and anchorStatus (index-only, no data
+//        change). Highlight / bookmark / re-anchor views read only their own rows instead of every stroke of the page,
+//        and Dexie no longer re-runs them on every ink write (5 000 strokes on a page: see docs/PERFORMANCE.md).
 import Dexie, { type EntityTable, type Table, type Transaction } from 'dexie';
 import type { SyncOpKind, SyncResult, SyncState } from '@medlevo/shared';
 
@@ -243,6 +246,12 @@ export const LOCAL_SCHEMA: readonly LocalSchemaVersion[] = [
       offlineSources: 'sourceId, versionId, downloadedAt',
       blobs: 'id, sourceId, versionId, kind',
       apiCache: 'key, storedAt',
+    },
+  },
+  {
+    version: 2,
+    stores: {
+      annotations: 'id, targetKey, updatedAt, syncState, [targetKey+kind], anchorStatus',
     },
   },
 ];

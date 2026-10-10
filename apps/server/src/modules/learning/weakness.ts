@@ -33,6 +33,7 @@ import type { Db } from '../../db/db';
 import { fromJson, toJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
 import { newId } from '../../lib/ids';
+import { classificationVisible } from './mistakes';
 import { signalResets, type SignalResets } from './profile';
 import { foldReviews, State } from './srs';
 import { clip, pushTo, srsContext } from './store';
@@ -170,17 +171,18 @@ export function collectSignals(ctx: AppContext, resets: SignalResets = signalRes
     mistake_type: MistakeType | null;
     mistake_origin: 'auto' | 'owner' | null;
     answered_at: number;
+    updated_at: number | null;
     stem_json: string;
   }>(
     `SELECT qa.id, qa.question_id, qa.is_correct, qa.scored, qa.confidence, qa.hints_used, qa.solution_viewed_before_answer, qa.mistake_type,
-            qa.mistake_origin, qa.answered_at, v.stem_json
+            qa.mistake_origin, qa.answered_at, qa.updated_at, v.stem_json
        FROM question_attempt qa JOIN question q ON q.id = qa.question_id JOIN question_version v ON v.id = qa.question_version_id
       WHERE q.deleted_at IS NULL AND qa.answered_at >= ? ORDER BY qa.answered_at, qa.id`,
     [resets.mcq_attempts ?? 0],
   );
   for (const a of attempts) {
     const confidence = resets.confidence !== null && a.answered_at < resets.confidence ? null : a.confidence;
-    const mt = resets.mistake_types !== null && a.answered_at < resets.mistake_types ? null : a.mistake_type;
+    const mt = resets.mistake_types !== null && !classificationVisible(a, resets.mistake_types) ? null : a.mistake_type;
     const isCorrect = a.scored === 1 ? (a.is_correct === null ? null : a.is_correct === 1) : null;
     const cat: MasterySignal | null = masterySignal({ is_correct: isCorrect, confidence, hints_used: a.hints_used, solution_viewed_before_answer: a.solution_viewed_before_answer === 1 });
     const label = stemPreview(fromJson<RichText>(a.stem_json), 90);
@@ -658,7 +660,8 @@ export function listWeaknesses(ctx: AppContext, status?: WeaknessView['status'] 
     items: listStored(ctx, status ?? 'open'),
     sources_note_ar: [
       'المصادر: إجاباتك في أسئلة الاختيار من متعدد، البطاقات التي نسيتها أو تذكرتها، وتقييم إجاباتك المقالية (تقديري).',
-      'الحالات السريرية وOSCE لا تُجمع بعد: لا توجد بيانات محاولات لها في هذا الإصدار.',
+      // critic round: case / OSCE / viva attempts DO exist (each has its own report); only this center does not read them yet
+      'نتائج الحالات السريرية وOSCE والامتحان الشفهي لا تُجمع هنا بعد: تجدها في تقرير كل محاولة، لكن مركز الضعف لا يقرؤها في هذا الإصدار.',
       'الضعف تقدير من سجلك وليس حكمًا نهائيًا؛ يمكنك تعديل الاسم أو إخفاء نقطة أو استبعاد إشارة لا تخصها.',
     ],
     generated_at: ctx.clock.now(),

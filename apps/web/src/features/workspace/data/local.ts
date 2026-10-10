@@ -15,6 +15,7 @@ import type { AnnotationRow, MedLevoDB, NotePageRow, NoteRow, OutboxRecord, Stud
 import { kvSet } from '../../../lib/localdb';
 import { peekDeviceId } from '../../../lib/deviceId';
 import { writeAndEnqueue, type SyncApplier, type SyncEngine } from '../../../lib/sync';
+import { notifySyncedRows } from '../ink/events';
 import type { ReaderLocation } from '../model/session';
 
 // ───────── rows the workspace stores (baseline row types + a few fields) ─────────
@@ -183,16 +184,22 @@ export async function deleteAnnotation(db: MedLevoDB, row: AnnotationRow): Promi
  */
 export async function mergeServerAnnotations(db: MedLevoDB, list: readonly AnnotationDTO[]): Promise<number> {
   let written = 0;
+  const pages = new Set<string>();
   await db.transaction('rw', [db.annotations, db.outbox], async () => {
     for (const a of list) {
       const ops = await db.outbox.where('[entity_type+entity_id]').equals(['annotation', a.id]).filter((o) => o.status !== 'synced').toArray();
       if (blockingOps(ops).length > 0) continue;
       const cur = await db.annotations.get(a.id);
       if (cur && (cur.rev ?? 0) >= a.rev) continue;
-      await db.annotations.put(annotationRowFromDTO(a));
+      const row = annotationRowFromDTO(a);
+      await db.annotations.put(row);
+      pages.add(row.targetKey);
       written++;
     }
   });
+  // pages already open in the reader reload what was written, once per page (I2: 5 000 strokes seeded here were
+  // otherwise shown only as the sync pull re-delivered them one by one — 377 after two minutes)
+  if (pages.size) notifySyncedRows([...pages], null);
   return written;
 }
 

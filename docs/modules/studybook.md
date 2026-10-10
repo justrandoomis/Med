@@ -167,6 +167,11 @@ orchestrator usage records, budget pre-check with reasoning headroom).
   then answered only educationally from the sources (the model is also told to abstain).
 * Figure explanation needs a stored crop (`image_asset` PNG/JPEG); pages without a figure crop are explained from
   caption / OCR text only. Pointing at a sub-area of an image (`anchor.bbox`) only picks the overlapping figure.
+* G3 (AC-08): the visual reading states an arrow's direction in words («من «A» إلى «B»») — a bare «A → B» inside an
+  Arabic paragraph is displayed pointing backwards whenever a label is Arabic (bidi: «→» is not mirrored); items beyond
+  the 40 shown are counted and said («… و6 عناصر أخرى …», treated as uncertain), never dropped silently. A sentence
+  whose only support is a diagram's OCR labels (region `uncertain`) is `needs_review`, never `linked` (C1
+  `validateClaims`). `GENERATOR_VERSION` → `studybook-gen-3`.
 * Study Book sections follow heading regions; a document with no headings gets one section per page. Very large
   sections are split at page boundaries (7 000 characters), not semantically.
 * Chat answers are not streamed token by token (the request returns when verified); the UI shows the running state.
@@ -229,3 +234,33 @@ The Playwright browser check (`real-server-check.mjs`) was **not re-run** in thi
 - The connective lexicon is conservative. A legitimate transition outside it is removed and listed as unsupported, which can be noisy but never publishes an uncited fact.
 - Comparison-table header cells and first-column aspect labels (≤ 6 words, no digit) are not claim-checked.
 - The real-patient detector is still a pattern list. No real model has been called in this environment.
+
+## G2 acceptance fixes (2026-10-10, AC-05 / AC-06; see docs/ACCEPTANCE.md)
+* **Abstention offers the wider scope on the realistic path** (generate.ts): a model abstention
+  (`not_found_in_scope` / `insufficient_evidence`), an answer whose every medical sentence failed verification, and a
+  pack whose evidence was all refused now carry `suggest_scope` («المحاضرة + المراجع», explicit owner action) under
+  «Lecture Only» — before, only a retrieval that found nothing did (§08). Test: `test/acceptance/g2-ac05.test.ts`.
+* **No page / alias «citations» in generated text** (publish.ts): a sentence (claim or not) that writes a page, slide
+  or alias reference its own cited excerpt does not contain is removed and listed in `removed` with the reason;
+  table headers / aspect labels, coverage notes and abstention details are stripped of such references. A faithful
+  quote of a source that itself says «page 14» keeps it. The generator contract says so explicitly;
+  `GENERATOR_VERSION` → `studybook-gen-2` (cached artifacts of the old rule are not served). Test:
+  `test/acceptance/g2-ac06.test.ts` (regression: `g1-ac04.test.ts` quote with «file page 14»). This closes the first
+  residual risk listed above for page references (other claim-less facts remain as described there).
+* **Rail chat follows the visible lock** (web `ChatPanel` + `ExplainTab`, `studybook/model.ts threadMatchesScope`):
+  widening from a chat abstention now moves the rail's lock too; a changed lock starts a new conversation; a question
+  is only ever sent to a thread pinned to the lock the rail shows; the open thread shows its own lock badge. Before,
+  after «وسّع النطاق» the conversation continued in the wider thread while the rail read «المحاضرة فقط», and after
+  narrowing back the next question was still answered from the reference. Test:
+  `apps/web/src/features/workspace/studybook/ChatScope.g2.test.tsx` (failed before the fix).
+
+## G6 acceptance fix (2026-10-10, AC-22) — see `docs/ACCEPTANCE.md`
+* **A note is never reported «matched» to a different paragraph.** Block keys are hash(section, regions, kind, ORDINAL):
+  a regeneration that writes fewer paragraphs about a region, or reorders them, hands a key to another paragraph, and the
+  note / highlight was shown «على» it. `computeReanchor` now also requires that the paragraph holding the key is still the
+  paragraph the anchor was written on — its block in the anchored version (`artifact_version`), else the quote the anchor
+  kept — via `samePassage` (`@medlevo/shared` search.ts: identical after search normalization, or a light rewording, word-
+  set Dice ≥ 0.6). Otherwise: `needs_reanchor`, owner rows untouched, review item «تغيّر نصها … لم تُنقل إليها». Web:
+  `BlockNotes` shows a note as «فقرتها تغيّرت في هذه النسخة — تحتاج إعادة ربط» when the server report lists it, or when its
+  kept quote no longer matches (offline). Tests: `apps/server/test/acceptance/g6-ac22.test.ts` (2 failed before),
+  `studybook/BlockNotes.g6.test.tsx` (2 failed before).

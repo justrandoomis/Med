@@ -44,6 +44,7 @@ import { useStudySession, type StudySessionApi } from './session/useStudySession
 import { SecondaryPane, SplitPicker } from './split/SplitPane';
 import { StudyBookPane } from './studybook/StudyBookPane';
 import { useStudyBookAvailability } from './studybook/useStudyBook';
+import { useOfflineDownloadAction } from '../offline/OnDevice';
 import './workspace.css';
 
 // per-device view preferences (UI conveniences, never owner data): the Study Book view per source, sync scrolling
@@ -191,14 +192,23 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
   const ink = useInk();
   const width = useWindowWidth();
   const sync = useSyncSnapshot();
+  // «نزّل للعمل دون اتصال» / «على هذا الجهاز» in the top bar's overflow menu (Download Manager, features/offline)
+  const offlineAction = useOfflineDownloadAction(sourceId, detail.title);
   usePageTitle(detail.title);
 
   // ── initial place: an explicit page in the URL, else the restored session ──
+  // G2 / AC-06: a place the URL names that does not exist in this version (an unknown page id, a page past the end —
+  // e.g. a stale citation link) is never replaced by another page presented as if it were the cited one (it used to be
+  // clamped to the last page): the reader opens at the first page and says so (the in-app jump refuses it the same
+  // way, `openSourceLocation`). The session decision already carries the URL's page number, so it is not used here.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const missingPlace = useMemo(() => (url.pageId ? !pages.some((p) => p.id === url.pageId) : url.pageIndex != null && url.pageIndex >= pages.length), []);
+  const [placeNoticeOpen, setPlaceNoticeOpen] = useState(missingPlace);
   const initial = useMemo(() => {
     const byId = url.pageId ? pages.findIndex((p) => p.id === url.pageId) : -1;
-    const idx = byId >= 0 ? byId : (url.pageIndex ?? decision.location.page_index ?? 0);
+    const idx = byId >= 0 ? byId : missingPlace ? 0 : (url.pageIndex ?? decision.location.page_index ?? 0);
     const pageIndex = Math.min(Math.max(0, idx), Math.max(0, pages.length - 1));
-    const frac = url.bbox ? Math.max(0, url.bbox.y - 0.05) : (url.offset ?? (url.pageIndex == null && byId < 0 ? (decision.location.page_offset ?? 0) : 0));
+    const frac = missingPlace ? 0 : url.bbox ? Math.max(0, url.bbox.y - 0.05) : (url.offset ?? (url.pageIndex == null && byId < 0 ? (decision.location.page_offset ?? 0) : 0));
     return { pageIndex, frac };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -857,6 +867,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
               back={backTop ? { label: 'العودة إلى موضعك', title: backTop.label } : null}
               onBack={() => nav.goBack()}
               inkAvailable={inkAvailable && !bookOnly}
+              extraMenuItems={offlineAction.item}
             />
           ) : (
             <div className="wk-focusbar">
@@ -881,6 +892,14 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
           {doc.pdfError && (
             <div className="wk-banner wk-banner--warning" role="alert">
               {doc.pdfError}
+            </div>
+          )}
+          {placeNoticeOpen && (
+            <div className="wk-banner wk-banner--warning" role="alert">
+              الموضع المطلوب غير موجود في هذا الإصدار من المصدر (ربما أُعيدت معالجته أو تغيّرت صفحاته)؛ لم يُفتح موضع آخر على أنه هو، ويُعرض الكتاب من صفحته الأولى.{' '}
+              <Button size="sm" variant="plain" onClick={() => setPlaceNoticeOpen(false)}>
+                حسنًا
+              </Button>
             </div>
           )}
           {doc.mode === 'unsupported' && (
@@ -1039,6 +1058,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
               onMine={() => void resolve('mine')}
             />
           )}
+          {offlineAction.dialog}
         </div>
       </ReaderPageContext.Provider>
     </SourceNavigationContext.Provider>

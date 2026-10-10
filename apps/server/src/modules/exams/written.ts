@@ -268,7 +268,8 @@ export async function gradeWrittenAttempt(ctx: AppContext, attemptId: string, bo
     const report = resolveScope(ctx, scopeReq);
     scope = toResolvedScope(report);
     const res = retrieve(ctx, { scope, query: stem, k: 12, purpose: 'lecture_explanation' });
-    const pack = packFromCandidates(ctx, scope, res.candidates, { maxItems: 20 });
+    // G3 / AC-08: the rubric grades a written answer — uncertain readings never become fixed grading points
+    const pack = packFromCandidates(ctx, scope, res.candidates, { maxItems: 20, fixedAnswer: true });
     forModel = pack.forModel;
     aliasMap = pack.aliasMap;
     versionIds = [...new Set(pack.views.map((x) => x.version_id))];

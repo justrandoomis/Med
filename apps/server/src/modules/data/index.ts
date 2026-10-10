@@ -72,6 +72,8 @@ function sendFile(reply: FastifyReply, f: ExportFile) {
   return reply.send(f.body);
 }
 
+export const EXPORT_PDF_LIMIT_AR = 'PDF عبر «نسخة الطباعة» (تصدير HTML) ثم الطباعة إلى PDF من المتصفح؛ لا يوجد مُصدِّر PDF على الخادم، ولا تُطبع الكتابة بالقلم في هذا الملف (هي في تصدير JSON والنسخة الاحتياطية).';
+
 export default async function register(app: FastifyInstance, { ctx }: ModuleOptions): Promise<void> {
   ensureEpoch(ctx.db, ctx.clock.now());
   registerBackupJobs(ctx);
@@ -80,8 +82,9 @@ export default async function register(app: FastifyInstance, { ctx }: ModuleOpti
   ctx.capabilities.set('offline', 'available');
   ctx.capabilities.set('backup', 'available');
   ctx.capabilities.set('export.markdown', 'available');
-  // PDF = print the HTML export from the browser (the UI says so); no server-side PDF renderer exists
-  ctx.capabilities.set('export.pdf', 'available');
+  // PDF = print the HTML export from the browser (the UI says so); no server-side PDF renderer exists — the
+  // capability says so too, so the Control Center never shows a bare «تعمل» for it (critic round)
+  ctx.capabilities.set('export.pdf', 'available', EXPORT_PDF_LIMIT_AR);
   ctx.capabilities.set('export.docx', 'not_implemented', 'تصدير DOCX غير مبني؛ استخدم Markdown أو HTML (والطباعة إلى PDF من المتصفح).');
 
   const forwardFor =

@@ -46,6 +46,12 @@
 .ml-brand-mark {
   border-radius: 7px;
 }
+@media (pointer: coarse) {
+  /* the brand is the «الرئيسية» link on phones: 44px touch target (critic round) */
+  .ml-brand {
+    min-height: var(--ml-touch-target);
+  }
+}
 .ml-topnav {
   display: none;
 }
@@ -227,62 +233,6 @@
   color: var(--ml-color-ink-2);
   font-size: var(--ml-text-lg);
   line-height: var(--ml-leading-lg);
-}
-
-/* ── honest placeholder ── */
-.ml-placeholder {
-  padding: var(--ml-space-5);
-}
-.ml-placeholder__status {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--ml-space-3);
-  padding-bottom: var(--ml-space-4);
-  border-bottom: 1px solid var(--ml-color-line);
-}
-.ml-placeholder__icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-  width: 2.75rem;
-  height: 2.75rem;
-  border-radius: 50%;
-  background: var(--ml-color-accent-soft);
-  color: var(--ml-color-accent-soft-ink);
-}
-.ml-placeholder__title {
-  font-size: var(--ml-text-lg);
-  line-height: var(--ml-leading-lg);
-}
-.ml-placeholder__note {
-  font-size: var(--ml-text-sm);
-  line-height: var(--ml-leading-sm);
-  color: var(--ml-color-ink-2);
-}
-.ml-placeholder__subtitle {
-  margin-top: var(--ml-space-4);
-  margin-bottom: var(--ml-space-2);
-  font-size: var(--ml-text-md);
-  color: var(--ml-color-ink-2);
-}
-.ml-placeholder__list {
-  margin: 0;
-  padding-inline-start: 1.25em;
-}
-.ml-placeholder__list li + li {
-  margin-top: var(--ml-space-2);
-}
-.ml-placeholder__list li::marker {
-  color: var(--ml-color-ink-3);
-}
-.ml-placeholder__spec {
-  margin-top: var(--ml-space-4);
-  font-size: var(--ml-text-xs);
-  color: var(--ml-color-ink-3);
-}
-.ml-placeholder__actions {
-  margin-top: var(--ml-space-5);
 }
 
 /* ── standalone screens (route errors) ── */

@@ -338,6 +338,17 @@ export function persistExtraction(ctx: AppContext, info: VersionInfo, parsed: Pa
           : `مفتاح «${u.sectionLabel ? `القسم ${u.sectionLabel} — ` : ''}السؤال ${u.printedNumber}» في «${info.title}» لا يقابله سؤال مستخرج بهذا الرقم في هذا القسم؛ قد يكون السؤال مفقودًا أو غير مقروء.`,
       details: { entry_id: u.entryId, binding: u.reason },
     }));
+    // a printed key whose layout could not be read: said, never guessed — the questions keep «no key» until the owner
+    // sets their keys (G4 / AC-12, AC-14)
+    const unreadKeys = parsed.unreadKeyLines ?? [];
+    for (const u of unreadKeys) {
+      keyItems.push({
+        kind: 'question_validation_failed',
+        code: `unread_key:${u.line.regionId ?? u.line.pageIndex}:${u.text.slice(0, 40)}`,
+        reason: `تحت «${u.heading ?? 'مفتاح الإجابة'}» في «${info.title}» (الصفحة ${u.line.pageIndex + 1} في الملف) سطر يبدو مفتاح إجابة بصيغة لم تُقرأ: «${u.text.length > 120 ? `${u.text.slice(0, 119)}…` : u.text}». لم يُربط بأي سؤال؛ تبقى الأسئلة «بلا مفتاح» حتى تحدد مفاتيحها بنفسك.`,
+        details: { unread_key: u.text, page_index: u.line.pageIndex, region_id: u.line.regionId },
+      });
+    }
     syncReviewItems(ctx, 'source_version', info.id, 'keys', keyItems, info.source_id, null);
 
     // a replaced question source: once this version (in force) has questions, the questions of its earlier
@@ -370,13 +381,14 @@ export function persistExtraction(ctx: AppContext, info: VersionInfo, parsed: Pa
       [info.id],
     )!.n;
     const total = parsed.questions.length;
-    const status: ExtractionSummaryView['status'] = total === 0 ? 'nothing_found' : needsReview > 0 || bind.unbound.length > 0 ? 'needs_review' : 'completed';
+    const status: ExtractionSummaryView['status'] = total === 0 ? 'nothing_found' : needsReview > 0 || bind.unbound.length > 0 || unreadKeys.length > 0 ? 'needs_review' : 'completed';
     const message =
       total === 0
         ? 'لم يُعثر على أسئلة مرقمة أو خيارات في هذا المصدر. إن كان فيه أسئلة، فقد تكون الصفحات غير مقروءة أو بصيغة غير معروفة؛ أضفها بالإضافة السريعة.'
         : `استُخرج ${total === 1 ? 'سؤال واحد' : `${total} أسئلة`}${sections.length > 1 ? ` في ${sections.length} أقسام` : ''}` +
           `${attached ? `، منها ${attached} موجودة مسبقًا في خزنتك (أضيف لها موضع ظهور جديد)` : ''}` +
           `؛ مفاتيح مربوطة: ${bind.bound}${bind.unbound.length ? `، غير مربوطة: ${bind.unbound.length}` : ''}${bind.marks ? `، علامات غير رسمية: ${bind.marks}` : ''}` +
+          `${unreadKeys.length ? `؛ ${unreadKeys.length === 1 ? 'سطر مفتاح لم تُقرأ صيغته' : `${unreadKeys.length} أسطر مفتاح لم تُقرأ صيغتها`}` : ''}` +
           `${needsReview ? `؛ ${needsReview} تحتاج مراجعتك` : ''}.`;
     const view: ExtractionSummaryView = {
       version_id: info.id,

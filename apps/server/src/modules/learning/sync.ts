@@ -202,7 +202,20 @@ function serializeCard(ctx: AppContext, cardId: string): unknown | null {
   return r ? viewsFor(ctx, [r])[0]! : null;
 }
 
+/**
+ * The live conflict copy of `original` that already holds this content (G7 / AC-24: the same stale edit arriving again
+ * under a new op id must not create a second identical card). A copy stands alone, so its note_id is not compared.
+ */
+function existingConflictCopy(tx: SyncTx, original: FlashcardRow, f: Fields): FlashcardRow | undefined {
+  const want = fieldsContent({ ...f, note_id: null });
+  return tx.db
+    .all<FlashcardRow>('SELECT * FROM flashcard WHERE conflict_of_id = ? AND deleted_at IS NULL', [original.id])
+    .find((c) => rowContent(c) === want);
+}
+
 function copyAsConflict(ctx: AppContext, original: FlashcardRow, f: Fields, tx: SyncTx, createdAt: number): string {
+  const same = existingConflictCopy(tx, original, f);
+  if (same) return same.id;
   const copyId = newId(tx.now);
   insertCard(
     ctx,

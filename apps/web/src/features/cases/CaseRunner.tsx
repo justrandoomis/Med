@@ -187,7 +187,9 @@ export function CaseRunner() {
   const [failed, setFailed] = useState<{ event: EventBody; message: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [announce, setAnnounce] = useState('');
-  const [pick, setPick] = useState<string>('');
+  // the decision picked on the CURRENT stage (keyed by stage, so a new stage starts empty without an effect that could
+  // run after — and undo — a choice made right after the stage appeared)
+  const [picked, setPicked] = useState<{ key: string; id: string }>({ key: '', id: '' });
   const [confirmFinish, setConfirmFinish] = useState(false);
   const [text, setText] = useDraft(`medlevo.cases.draft.${attemptId}`);
   const stageHeading = useRef<HTMLHeadingElement>(null);
@@ -207,8 +209,10 @@ export function CaseRunner() {
 
   const stageId = run?.stage?.id ?? null;
   const vivaKey = run?.viva?.current ? `${run.viva.current.question_id}:${run.viva.current.follow_up_id ?? ''}` : null;
+  const pickKey = `${stageId ?? ''}|${vivaKey ?? ''}`;
+  const pick = picked.key === pickKey ? picked.id : '';
+  const setPick = (id: string) => setPicked({ key: pickKey, id });
   useEffect(() => {
-    setPick('');
     if (stageId || vivaKey) stageHeading.current?.focus();
   }, [stageId, vivaKey]);
 

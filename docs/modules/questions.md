@@ -84,7 +84,8 @@ keeps table rows/cells). Uploaded text is untrusted data: it is only parsed, nev
   block starts a new block (two adjacent printed tables are two blocks, never a silent overwrite). Blocks are
   numbered 1..n per version.
 * **Marks**: a circled option / handwritten mark recognized on a photo (`circled_option`, `handwritten`) is an
-  `unofficial` key entry (`key_block 0`), never an official key (AC-13) → review item `unofficial_mark`.
+  `unofficial` key entry (`key_block 0`), never an official key (AC-13) → review item `unofficial_mark`. G3: the
+  Arabic twin of «(A …» — «(ب. …», an opening bracket not closed by «)» — is recorded as a circled mark too.
 * **Binding** (`keys.ts`): by **(version, section_key, printed_number)**, never by number alone (AC-12). A key
   block with section labels binds to those sections — unless the label was printed for more than one section
   («Part A» of two papers → `ambiguous_section`, review fix R5); an unlabeled block binds only when the file has one section
@@ -293,8 +294,8 @@ console errors.
 
 ## Not done
 
-* AI-derived answers and `answer_evidence` (no AI provider here; nothing fakes them — questions without a key stay
-  `missing_key`, unscored).
+* ~~AI-derived answers and `answer_evidence`~~ — added by the G4 acceptance round as the **answer check** (see «G4» below);
+  without an AI provider it is `requires_configuration` and questions without a key stay `missing_key`, unscored.
 * Semantic / embedding matching and AI explanation of links (deterministic lexical matching only).
 * Answer keys in a separate file (keys are bound within the same version only); manual binding of an unbound
   key entry to a question (the owner sets an owner key instead).
@@ -312,7 +313,7 @@ console errors.
 * OCR quality bounds what photos give; low-confidence regions add a review reason.
 * Matching precision is lexical; `strongly_related` / `partially_covered` links always go through review.
 * `content_alert` + `content_alert_item` for `key_corrected` are written directly by this module
-  (`lifecycle.ts`, marked `TODO(C1)`); move to an evidence-module helper if one is added for key corrections.
+  (`lifecycle.ts`, with a comment explaining why); move to an evidence-module helper if one is added for key corrections.
 * This module writes `concept` / `concept_mention` (candidates only) and `review_queue_item` rows with
   `details_json.origin='questions'`; added indexes on `concept_mention` / `review_queue_item` and the
   `source_region` trigger described above.
@@ -369,3 +370,104 @@ Commands run by the review (repo root, `NODE_OPTIONS='--disable-warning=Experime
 | `npm run build -w @medlevo/web` | exit 0 |
 | `node apps/web/src/features/questions/real-server-check.mjs` | 72 PASS, «OK: real-server Question Vault check passed.» |
 
+
+## Integration round I2 — performance (2026-10-10)
+* **«Questions of this source» was O(questions × occurrences).** With only single-column indexes SQLite drove
+  `o.question_id = q.id AND o.source_id = ?` through `idx_question_occurrence_source`, rescanning every occurrence of
+  the source for each question: on a 2 000-question bank `GET /api/questions?source_id=` took 1.95 s p50 (count + page),
+  exam candidates by source 1.08 s, universal search with a source filter 0.79 s. Migration
+  `0510_question_occurrence_lookup.sql` adds `(question_id, source_id)`: 55 ms p50 for the vault page (2.7 ms / 8.4 ms
+  for the two statements). Test: `test/questions/occurrence-lookup.test.ts` (query plans; fails without the index).
+* Measured, not changed: 2 000 MCQs (240 pages) — processing 10.3 s, `extract_questions` 22.7 s, matching 67 ms.
+* **Found, not fixed (recorded honestly):** an answer key printed as a long line that WRAPS
+  («Section 10: 1. B … 35. D» then «36. C 37. B …» on the next lines) is read as separate key lines; the continuation
+  lines carry no section label, so in a multi-section bank they are kept as `ambiguous_section` with a review item
+  instead of being bound (965 of 2 000 keys in the perf bank, none bound). Safe abstention, but recall is lost;
+  carrying the section label across a key block's wrapped lines is future work.
+
+## Acceptance round G4 — AC-10, AC-11, AC-12, AC-14, AC-15 (2026-10-10)
+
+Verified adversarially on derived fixtures (`fixtures/acceptance/make_g4_fixtures.py`); results and verdicts in
+[`docs/ACCEPTANCE.md`](../ACCEPTANCE.md) («G4»). Changes made to this module (each with a regression test in
+`apps/server/test/acceptance/g4-*.test.ts`):
+
+* **Merged per-section key lines** (`parser.ts splitSectionKeyRuns`): «Section B: 1. C 2. B 3. A Section A: 1. B 2. D» in
+  one region (the layout joins short key lines) was dropped whole — every question «no key». Each run is now its own key
+  line; a «Section N: …» key run longer than 90 characters is accepted as a header when the rest is key pairs.
+* **Key layouts** (`KEY_PAIR`): «Q1: B», «Question 1: B», «1 → B», «1 = B», «س1: ب» are read; «Q1: B Q2: D» no longer
+  becomes a bogus question «B Q2: D».
+* **Unreadable key lines are reported, never guessed** (`ParseResult.unreadKeyLines`, `extract.ts`): a line under an
+  answer-key heading holding only numbers and option letters in an unknown layout («Q1 is C, …») → a review item
+  (`question_validation_failed`, source-version scope `keys`) and «سطر مفتاح لم تُقرأ صيغته» in the extraction summary
+  (status `needs_review`); the questions stay `missing_key`.
+* **Answer check against the material** (`answercheck.ts`, `POST /api/questions/:id/answer-check`, capability
+  `ai.answer_check`, rate-limited like the other AI routes): Source Lock «Lecture Only» on a linked lecture (explicit
+  `include_references` widens to «المحاضرة + المراجع»); the linked pages are the anchor, retrieval purpose
+  `source_question_practice`, evidence packed with `fixedAnswer: true` (no uncertain readings). An independent solver
+  (task `validate_question`) sees only the evidence and the question with neutral letters — never the key — and returns a
+  choice + 1–4 support sentences; every sentence goes through `validateClaims` (aliases, scope, critical tokens,
+  `verify_support`). A conclusion needs ≥ 1 `linked` medical sentence, no unconfirmed one, exactly one defensible
+  option and `answerable_from_evidence`; otherwise `unresolved` / `abstained` (recorded, nothing changes). Outcomes:
+  `agrees` (recorded on the version + `answer_evidence supports_answer`), `conflicts` with a SOURCE key → a new version
+  `conflicting_key` «مفتاح المصدر يختار A لكن الأدلة المختارة تشير إلى B …» (`answer_evidence contradicts_key`; printed key
+  entries and the checked version untouched; `keyChangeImpact(…, 'evidence')` alert listing earlier attempts, never
+  re-graded), with an owner key / earlier derived answer → reported next to it only, `derived` for `missing_key` /
+  `unresolved` → a new version `ai_derived` (created_by `generation`, «AI-derived Answer — لا يوجد مفتاح في المصدر»,
+  evidence linked) — the question stays a SOURCE question; for printed keys that disagree with each other the evidence is
+  shown as help and the conflict is never resolved automatically. The check is stored in `key_details.answer_check`
+  (`AnswerCheckView`); its claims come back as `answer_check_claims` in `GET /:id`.
+* **`refreshQuestion` keeps a material conflict** (`lifecycle.ts`): while the source key is the one that was checked, a
+  re-extraction / refresh never silently restores it (it did immediately — the conflict vanished); a check of the same
+  key is carried over to the refreshed key details.
+* Web: `AnswerCheck.tsx` on the detail screen — the button disabled with the server's reason without a provider or a
+  linked lecture; the last check with its outcome, reason and evidence chips (`ClaimChips`).
+
+Known limits (not changed): Part 2's trailing unlabeled key after per-part keys stays `ambiguous_section` (safe, review
+item); «Paper I/II» sections vs a «Paper 1/2» key → `no_matching_question` (roman ↔ digit not mapped); a LibreOffice
+line wrap inside «38.4 °C» is stored «38.4 ° C»; the answer check's judgement is a model's (no key here — exercised only
+with the test-only scripted provider).
+
+
+## Acceptance round G5 — AC-16, AC-17 (2026-10-10)
+
+* **Exact-duplicate identity keeps meaning-bearing symbols** (`text.ts fingerprint`, AC-17): «base excess −8» (U+2212,
+  also NFKC's form of a superscript «⁻») merged with «base excess 8», «♀» with «♂», «A → B» with «A ← B» — two medically
+  different questions from two files became ONE question with a false «conflicting key». The fingerprint now spells
+  these out before `normPhrase` (a dash used as a sign is a minus; «5–10» stays a range); `normPhrase` itself (also used
+  by lecture matching) is unchanged. Fingerprints stored earlier for texts with these symbols differ from new ones: such
+  a question uploaded again becomes a near-duplicate suggestion instead of attaching (safe direction).
+* **Re-matching after a move or a type change** (AC-16): moving a source to another course (PATCH `node_id`, drag & drop
+  `move`, restore into another folder) or changing its type never re-ran matching — a lecture moved into the course got
+  no questions and the tab said «لم يُعثر على أسئلة…»; a question source first uploaded as «lecture» was never
+  extracted. `sources/service.ts enqueueQuestionRefresh` (guarded like the processing hook) queues `match_questions`
+  (or `extract_questions` for a source re-typed as a question source / previous exam). The matcher drops its OWN stale
+  suggestions out of scope (`staleAutoLinks`: origin `auto`, status `suggested`, `matcher_version` set); owner decisions
+  and generated questions' links are never touched.
+* **The lecture tab shows the question from this lecture's course** (`routes.ts for-lecture`): a question printed in the
+  banks of two courses showed the other course's file and page as its origin.
+* Tests: `apps/server/test/acceptance/g5-ac16.test.ts`, `g5-ac17.test.ts`; `e2e/g5-ac16-late-linking.spec.ts`.
+  Known limit seen there (processing, not fixed here): LibreOffice PDFs reverse plain lam-alef in the text layer
+  («العلامة» → «العالمة»); matching still links (both sides carry it) but the owner reads the wrong spelling.
+
+## Acceptance round G7 — AC-25 (2026-10-10)
+* **Near-duplicate suggestions were lost after an interrupted extraction.** The extraction runs in one transaction and its
+  result is checkpointed afterwards; a power loss between the two re-ran the extraction on retry, which found every
+  question already in the vault (`created = []`) and skipped near-duplicate detection — the previous exam's near-duplicate
+  of A2 was never suggested. The job now also takes the questions whose first version THIS job created
+  (`question_version.job_id`, `version_no = 1`, `created_by = 'extraction'`). Test:
+  `apps/server/test/acceptance/g7-ac25.test.ts` (an interrupted run's vault equals an uninterrupted run's: questions,
+  versions, options, occurrences, keys, lecture links, duplicate suggestions, open review items).
+
+
+## G8 acceptance fixes (AC-26, 2026-10-10)
+* **A key correction names every affected tool** (`lifecycle.ts questionTools / addToolItems`): besides the old version
+  and the attempts whose result would change, the `key_corrected` alert lists the cards made from mistakes on the
+  question and the exams that pin the old version (unfinished → needs review; finished → still valid, result kept).
+* **A corrected FACT in the question text** (`PATCH /:id`, options / stem / explanation) now raises an alert
+  (`questionCorrectionAlert`, kind `source_updated`, severity `fact_change`) when anything was built on the previous
+  version: the old version, its attempts (kept, not re-graded), cards from mistakes, exams that pin it. Before, only a
+  key change was announced.
+* **Evidence-backed answers depend on their lecture passages** (`answercheck.ts insertAnswerEvidence` →
+  `recordDependencies`): a later correction / replacement of the lecture text that an answer check relied on now flags
+  that question version in the content alert (before, only the question's own source was a dependency).
+* Tests: `apps/server/test/acceptance/g8-ac26.test.ts`, `e2e/g8-ac26-correction.spec.ts`.

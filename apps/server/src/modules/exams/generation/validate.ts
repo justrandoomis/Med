@@ -3,6 +3,8 @@
 // distractor explanations) before the evidence and independent-validator checks run.
 import { normalizeForSearch } from '@medlevo/shared';
 import type { GeneratedQuestion, ModelSentence } from './schema';
+import { hasPseudoCitation } from '../../evidence/services';
+import { isConnectiveText } from '../../studybook/publish';
 
 export interface Issue {
   check:
@@ -92,6 +94,11 @@ export function deterministicIssues(q: GeneratedQuestion): Issue[] {
     fail('stem_complete', 'الحالة السريرية ناقصة المعطيات (لا مريض/عمر/عرض كافٍ لحل السؤال).');
   }
 
+  // G2 / AC-06: the question text never «cites» a page / slide / evidence alias — citations are evidence links only
+  if ([q.stem, ...q.options.map((o) => o.text)].some((t) => hasPseudoCitation(t))) {
+    fail('evidence_supported', 'نص السؤال أو أحد خياراته يذكر صفحة أو دليلًا داخل النص؛ الاستشهاد يكون بروابط الأدلة التي ينشئها التطبيق فقط.');
+  }
+
   // explanations: best answer + EVERY distractor, evidence-backed, not generic
   if (!hasClaimWithEvidence(q.explanation)) fail('distractors_explained', 'تفسير الإجابة الصحيحة بلا دليل مرفق.');
   const byOption = new Map(q.distractors.map((d) => [d.option.toUpperCase(), d.explanation]));
@@ -106,5 +113,19 @@ export function deterministicIssues(q: GeneratedQuestion): Issue[] {
     if (GENERIC.test(text) || text.length < 25) fail('distractors_explained', `تفسير المشتت ${o.key} عام («غير صحيح») ولا يذكر السبب الفاصل.`);
     else if (!hasClaimWithEvidence(ex)) fail('distractors_explained', `تفسير المشتت ${o.key} بلا دليل من المصادر.`);
   });
+
+  // G5 / AC-18: a sentence sent WITHOUT a claim is not checked against any evidence — the evidence module keeps it as
+  // connective text unless it carries a value. A generator could thus publish knowledge from outside the material
+  // («In pregnant women CT is the first test», «الزائدة الملتهبة لا تحتاج جراحة») just by omitting its claim. As in the
+  // Study Book (studybook/publish.ts isConnectiveText), only a question to the learner or a short connective phrase may
+  // stand without evidence; anything else blocks publication (repair → review).
+  const explained: Array<[string, ModelSentence[]]> = [['تفسير الإجابة الصحيحة', q.explanation], ...q.distractors.map((d): [string, ModelSentence[]] => [`تفسير المشتت ${d.option.toUpperCase()}`, d.explanation])];
+  for (const [where, sentences] of explained) {
+    for (const s of sentences) {
+      if (!s.claim && !isConnectiveText(s.text)) {
+        fail('evidence_supported', `${where}: جملة بلا دليل مرفق قد تحمل معلومة من خارج المادة — «${s.text.slice(0, 120)}»`);
+      }
+    }
+  }
   return issues;
 }

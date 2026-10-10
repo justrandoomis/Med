@@ -232,20 +232,18 @@ with exit 2 → server started on the restored directory: old cookie 401, login 
 
 ## 4. Not done / limits / follow-ups for other tracks
 
-* **Study Book view offline (workspace track):** `features/workspace/studybook/useStudyBook.ts`
-  (`useStudyBook`, `useStudyBookAvailability`) returns «كتاب الدراسة يُقرأ من الخادم؛ لا يوجد اتصال الآن.» as soon
-  as the browser is offline, without asking. The download does store `GET /api/studybook/books?source_id=…` and
-  `GET /api/studybook/books/:id`, and the offline transport serves them. The fix is to try the request when offline
-  and keep the message only when it fails. Until then, the Study Book is downloaded but not readable offline in the
-  reader.
-* **Image-only pages offline:** the workspace renders image pages with `<img src="/api/files/:id">`. Image requests do
-  not go through the API transport, and the service worker has no runtime route for `/api/files`. A downloaded
-  scanned lecture therefore shows its text layer but not its page images. Fix in the workspace (blob URL from
-  `blobs`) or in `vite.config.ts` (a SW route). Neither is owned here.
-* **Navigation:** `/offline` is reachable from the update banner and by URL. A nav entry and mounting
-  `OfflineDownloadButton` in the library or workspace belong to the shell, library and workspace owners.
-* `.env.example` does not yet mention `MEDLEVO_SETUP_TOKEN` (not owned). It is documented here and in the setup
-  screen hint.
+* ~~Study Book view offline~~ — **fixed in the integration round I1**: `useStudyBook` / `useStudyBookAvailability`
+  read the downloaded answers straight from `apiCache` (`readOfflineAnswer`) when offline or when the server cannot
+  be reached, mark the view «تقرأ النسخة المحمّلة على هذا الجهاز» and offer no action that needs the server. A source
+  that was not downloaded, or whose Study Book is built on another version, says so.
+* ~~Image-only pages offline~~ — **fixed in I1**: page images, thumbnails and the Source Inspector's page image use
+  `useFileSrc` (object URL from `blobs`, revoked on unmount; the file route otherwise). An image that is not on the
+  device says «صورة هذه الصفحة غير محمّلة على هذا الجهاز» while offline.
+* ~~Navigation~~ — **fixed in I1**: «على هذا الجهاز» badge on library rows, «نزّل للعمل دون اتصال…» in the row menu
+  and in the workspace overflow menu (`features/offline/OnDevice.tsx`), `OfflineDownloadButton` on the source screen,
+  and «بياناتك» linked from Settings (the Control Center storage section already linked it). Global nav unchanged.
+* ~~`.env.example` lacks `MEDLEVO_SETUP_TOKEN`~~ — **fixed in I1** (with a test that every variable the server reads
+  is documented).
 * No DOCX export. PDF only via browser printing. No server-side PDF.
 * Question-source files (the PDF a question was extracted from) are not part of a lecture download. Download the
   question source itself.

@@ -29,28 +29,32 @@ export function useNotes(pageKeys: readonly string[]): WorkspaceNoteRow[] {
   );
 }
 
-/** Live annotations of a kind on the given pages. */
+/**
+ * Live annotations of a kind on the given pages. Indexed by [targetKey+kind] (local schema v2): only rows of that kind
+ * are read, and writes of other kinds (ink strokes) do not re-run the query (I2, docs/PERFORMANCE.md).
+ */
 export function useAnnotationsOfKind(pageKeys: readonly string[], kind: string): AnnotationRow[] {
   const key = pageKeys.join('|');
   return useLive(
     async () => {
       if (pageKeys.length === 0) return [];
-      const rows = await getDb().annotations.where('targetKey').anyOf([...pageKeys]).toArray();
-      return rows.filter((a) => a.kind === kind && !a.deletedAt).sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
+      const rows = await getDb().annotations.where('[targetKey+kind]').anyOf(pageKeys.map((k) => [k, kind])).toArray();
+      return rows.filter((a) => !a.deletedAt).sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
     },
     [key, kind],
     [],
   );
 }
 
-/** Local annotations flagged «تحتاج إعادة ربط» on the given pages. */
+/** Local annotations flagged «تحتاج إعادة ربط» on the given pages (indexed by anchorStatus: flagged rows only). */
 export function useLocalNeedsReanchor(pageKeys: readonly string[]): AnnotationRow[] {
   const key = pageKeys.join('|');
   return useLive(
     async () => {
       if (pageKeys.length === 0) return [];
-      const rows = await getDb().annotations.where('targetKey').anyOf([...pageKeys]).toArray();
-      return rows.filter((a) => a.anchorStatus === 'needs_reanchor' && !a.deletedAt);
+      const keys = new Set(pageKeys);
+      const rows = await getDb().annotations.where('anchorStatus').equals('needs_reanchor').toArray();
+      return rows.filter((a) => keys.has(a.targetKey) && !a.deletedAt);
     },
     [key],
     [],

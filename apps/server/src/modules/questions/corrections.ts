@@ -14,7 +14,7 @@ import type { AppContext } from '../../context';
 import { fromJson, toJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
 import { newId } from '../../lib/ids';
-import { keyChangeImpact, refreshQuestion } from './lifecycle';
+import { keyChangeImpact, questionCorrectionAlert, refreshQuestion } from './lifecycle';
 import { resolveOpenItems } from './review';
 import {
   correctOptionKeys,
@@ -95,6 +95,8 @@ export function correctQuestion(ctx: AppContext, questionId: string, body: Quest
       note: body.note?.trim() || `صححتَ: ${changed.map((c) => FIELD_AR[c] ?? c).join('، ')}.`,
     });
     setCurrentVersion(ctx, q.id, d.versionId);
+    // a corrected FACT in the question: whatever was built on the previous version is named in one alert (AC-26)
+    questionCorrectionAlert(ctx, q.id, cur.id, changed.map((c) => FIELD_AR[c] ?? c).join('، '));
     if (q.status === 'retired' || q.status === 'draft') ctx.db.run(`UPDATE question SET status = 'needs_review' WHERE id = ?`, [q.id]);
     // the owner's decision is recorded on the open items BEFORE re-validation (which drops open items that no longer apply)
     resolveOpenItems(ctx, 'question', q.id, 'corrected', body.note ?? null, [...TEXT_REVIEW_KINDS]);

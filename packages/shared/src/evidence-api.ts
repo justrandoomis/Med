@@ -133,6 +133,9 @@ export const DEPENDENT_TYPE_LABELS_AR: Record<string, string> = {
   exam: 'اختبار',
   message: 'رسالة محادثة',
   content_block: 'فقرة من كتاب الدراسة',
+  // G8 (AC-26): key / question corrections list the attempts on the old version; generated cases depend on sources
+  question_attempt: 'محاولة إجابة',
+  case: 'حالة سريرية',
 };
 
 export interface ContentAlertItemView {
@@ -143,8 +146,10 @@ export interface ContentAlertItemView {
   /** kept on its version on purpose (artifact frozen or Source Freeze): shown with a warning, never changed */
   frozen: boolean;
   reason_ar: string | null;
-  /** human title when known (artifact title / kind) */
+  /** human title when known (artifact title, question stem, card front, exam title, case title) */
   title: string | null;
+  /** (G8, AC-26) where the owner opens the affected item in the app (route path), when it still exists */
+  href?: string | null;
 }
 
 export interface ContentAlertView {

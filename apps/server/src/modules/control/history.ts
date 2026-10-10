@@ -1,8 +1,12 @@
 // Audit history viewer (§48, §56): the owner-visible change log in words — what changed, by whom (you / a job /
 // the system), when, and the before → after facts. Secret-looking fields are redacted by the audit log itself.
 import {
+  ANSWER_STATUS_LABELS_AR,
+  GENERATION_DIFFICULTY_LABELS_AR,
   LECTURE_KIND_LABELS_AR,
   LIBRARY_NODE_KIND_LABELS_AR,
+  MISTAKE_TYPE_LABELS_AR,
+  QUESTION_TYPE_LABELS_AR,
   REVIEW_ITEM_STATUS_LABELS_AR,
   SOURCE_TYPE_LABELS_AR,
   type HistoryEntryView,
@@ -48,9 +52,26 @@ const FIELD_LABELS_AR: Record<string, string> = {
   source_type_origin: 'مصدر نوع المصدر',
   duplicate_of: 'نسخة مطابقة لـ',
   kind: 'النوع',
-  page_indexes: 'الصفحات',
+  page_indexes: 'صفحات الملف',
   username: 'اسم المستخدم',
   device_label: 'الجهاز',
+  // counts and codes recorded by other modules (critic round: they used to appear as raw English keys)
+  answer_status: 'حالة الإجابة',
+  mistake_type: 'نوع الخطأ',
+  qtype: 'نوع السؤال',
+  difficulty: 'الصعوبة',
+  stem: 'نص السؤال',
+  label: 'التسمية',
+  version_no: 'رقم الإصدار',
+  count: 'العدد',
+  items: 'عدد الأسئلة',
+  questions: 'أسئلة مستخرجة',
+  new_questions: 'أسئلة جديدة',
+  attached: 'أُلحقت بأسئلة موجودة',
+  keys_bound: 'مفاتيح رُبطت بأسئلتها',
+  keys_unbound: 'مفاتيح لم تُربط',
+  created: 'أُنشئ',
+  skipped: 'تُخطّي',
 };
 
 const ORIGIN_AR: Record<string, string> = { auto: 'تلقائي', owner: 'أنت' };
@@ -64,34 +85,55 @@ const VALUE_AR: Record<string, Record<string, string>> = {
   source_type_origin: ORIGIN_AR,
   source_type: SOURCE_TYPE_LABELS_AR,
   kind: { ...LIBRARY_NODE_KIND_LABELS_AR },
+  answer_status: ANSWER_STATUS_LABELS_AR,
+  mistake_type: MISTAKE_TYPE_LABELS_AR,
+  qtype: QUESTION_TYPE_LABELS_AR,
+  difficulty: GENERATION_DIFFICULTY_LABELS_AR,
 };
 
 const MAX_VALUE = 220;
 
-function show(v: unknown): string | null {
+/**
+ * One recorded value in words. Nested objects (an exam's policy, a build report, a settings map) are NOT dumped as
+ * raw JSON — the entry's summary already says what happened in Arabic — so they yield `undefined` (row left out).
+ * Arrays of plain values are listed; `page_indexes` are 0-based file positions, shown as the 1-based page numbers
+ * the owner sees everywhere else.
+ */
+function show(v: unknown, key?: string): string | null | undefined {
   if (v === undefined) return null;
   if (v === null) return '—';
   if (typeof v === 'string') return oneLine(v, MAX_VALUE);
-  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
-  try {
-    return oneLine(JSON.stringify(v), MAX_VALUE);
-  } catch {
-    return null;
+  if (typeof v === 'number') return String(v);
+  if (typeof v === 'boolean') return v ? 'نعم' : 'لا';
+  if (Array.isArray(v) && v.every((x) => typeof x === 'string' || typeof x === 'number')) {
+    if (!v.length) return '—';
+    const items = key === 'page_indexes' ? v.map((x) => (typeof x === 'number' ? String(x + 1) : x)) : v;
+    return oneLine(items.join('، '), MAX_VALUE);
   }
+  return undefined;
 }
 
-/** before/after objects → readable rows of the fields that changed (ids and internal bookkeeping left out). */
+/**
+ * before/after objects → readable rows of the fields that changed. Ids, internal bookkeeping, fields without an
+ * Arabic label and nested objects are left out: the owner-facing log never shows raw keys or raw JSON (§48).
+ */
 export function changesOf(before: unknown, after: unknown): HistoryEntryView['changes'] {
   const b = before && typeof before === 'object' && !Array.isArray(before) ? (before as Record<string, unknown>) : {};
   const a = after && typeof after === 'object' && !Array.isArray(after) ? (after as Record<string, unknown>) : {};
   const keys = [...new Set([...Object.keys(b), ...Object.keys(a)])].filter((k) => !/(^|_)id$|_ids?$|^correction_id$|^alert_id$|^job_id$/.test(k));
   const out: HistoryEntryView['changes'] = [];
-  for (const k of keys) {
+  const valueOf = (k: string, v: unknown): string | null | undefined => {
+    if (k === 'duplicate_of') return v === undefined ? null : v ? 'مصدر موجود في مكتبتك' : '—';
     const map = VALUE_AR[k];
-    const bv = map && typeof b[k] === 'string' ? (map[b[k] as string] ?? show(b[k])) : show(b[k]);
-    const av = map && typeof a[k] === 'string' ? (map[a[k] as string] ?? show(a[k])) : show(a[k]);
-    if (bv === av) continue;
-    out.push({ label: FIELD_LABELS_AR[k] ?? k, before: bv, after: av });
+    return map && typeof v === 'string' ? (map[v] ?? show(v, k)) : show(v, k);
+  };
+  for (const k of keys) {
+    const label = FIELD_LABELS_AR[k];
+    if (!label) continue;
+    const bv = valueOf(k, b[k]);
+    const av = valueOf(k, a[k]);
+    if (bv === undefined || av === undefined || bv === av) continue;
+    out.push({ label, before: bv, after: av });
     if (out.length >= 8) break;
   }
   return out;

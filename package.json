@@ -18,7 +18,7 @@
     "dev:web": "npm run dev -w @medlevo/web",
     "build": "npm run build -w @medlevo/web",
     "start": "npm run start -w @medlevo/server",
-    "typecheck": "tsc -p packages/shared --noEmit && tsc -p apps/server --noEmit && tsc -p apps/web --noEmit",
+    "typecheck": "tsc -p packages/shared --noEmit && tsc -p apps/server --noEmit && tsc -p apps/web --noEmit && tsc -p e2e --noEmit",
     "lint": "eslint .",
     "test": "npm test -w @medlevo/shared && npm test -w @medlevo/server && npm test -w @medlevo/web",
     "e2e": "playwright test",

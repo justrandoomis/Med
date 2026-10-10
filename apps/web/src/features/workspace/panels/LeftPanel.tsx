@@ -4,7 +4,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ListTree } from 'lucide-react';
 import type { AnnotationAnchor, SourcePageView } from '@medlevo/shared';
 import { EmptyState, LoadingState, Tab, TabList, TabPanel, Tabs, cx } from '../../../design';
-import { fetchRegions, fileUrl } from '../data/api';
+import { useFileSrc } from '../../../lib/offline';
+import { fetchRegions } from '../data/api';
 import type { SourceDocument } from '../data/useSourceDocument';
 import { folio, fullPageLabel } from '../model/pages';
 import { BookmarksSection } from './MineTab';
@@ -109,6 +110,8 @@ function ThumbImage({ doc, page, show }: { doc: SourceDocument; page: SourcePage
   const [failed, setFailed] = useState(false);
   const ratio = page.width && page.height ? page.height / page.width : 1.414;
   const imgId = page.thumbnail_file_id ?? (doc.mode === 'image' ? page.render_file_id : null);
+  // downloaded thumbnails come from this device (object URL only while the thumbnail is visible)
+  const imgSrc = useFileSrc(show ? imgId : null);
   useEffect(() => {
     if (!show || imgId || !doc.pdf) return;
     let cancelled = false;
@@ -133,7 +136,7 @@ function ThumbImage({ doc, page, show }: { doc: SourceDocument; page: SourcePage
   return (
     <span className="wk-thumb__frame" style={{ aspectRatio: `1 / ${ratio}` }}>
       {!show ? null : imgId && !failed ? (
-        <img src={fileUrl(imgId)} alt="" loading="lazy" onError={() => setFailed(true)} />
+        imgSrc && <img src={imgSrc} alt="" loading="lazy" onError={() => setFailed(true)} />
       ) : doc.pdf && !failed ? (
         <canvas ref={canvasRef} aria-hidden="true" />
       ) : null}

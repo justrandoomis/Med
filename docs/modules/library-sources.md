@@ -190,3 +190,19 @@ Reviewed adversarially (server + web), probed against the real modules, then fix
   the web uploads sequentially, so only parallel clients hit it.
 * An offline device that later pushes edits for annotations of a purged page could re-create them (annotations track).
 * More than 50 files in ONE request answers 413 with a size message (the web always sends one file per request).
+
+## G5 acceptance fix (2026-10-10, AC-16)
+* `service.ts enqueueQuestionRefresh`: moving a processed source to another folder / course (PATCH `node_id`, `move`,
+  `restore` into another folder) or changing its `source_type` queues the questions module's `match_questions` (or
+  `extract_questions` when it became a question source / previous exam). Guarded by `ctx.jobs.isRegistered`, wrapped in
+  try/catch (never fails the edit), skipped while the version is still processing (the processing hook does it then).
+  Test: `apps/server/test/acceptance/g5-ac16.test.ts`.
+
+
+## G8 acceptance fix (zip bombs, 2026-10-10)
+* **OOXML containers are measured, not trusted** (`upload.ts inspectZip`, `lib/safe-zip.ts` mode `measure`): a DOCX / PPTX
+  passed the upload check on the sizes its zip headers DECLARE; a package that lies (a 40 MB part declared as 4 KB, a
+  ~50 KB upload) was accepted and would have been inflated whole by the parser (mammoth / JSZip check the size only
+  after inflating everything). Every office upload is now inflated once under the zip limits (total, per entry,
+  measured ratio), keeping nothing, before it is accepted; lying, bombed or corrupt packages are refused with an Arabic
+  reason and no processing job. Test: `apps/server/test/acceptance/g8-security.test.ts`.

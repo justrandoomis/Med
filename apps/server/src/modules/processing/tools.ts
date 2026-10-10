@@ -139,6 +139,16 @@ export interface RenderOptions {
   tmpRoot: string;
   timeoutMs?: number;
   signal?: AbortSignal;
+  /** receives poppler's stderr (it reports damaged content there while still exiting 0) */
+  onDiagnostics?: (stderr: string) => void;
+}
+
+/**
+ * Whether poppler's diagnostics say the page content could not be decoded (e.g. «Syntax Error (125734): Unknown
+ * compression method in flate stream», «Syntax Error: XObject 'Im0' is unknown»). Warnings do not count.
+ */
+export function popplerReportsDamage(stderr: string): boolean {
+  return stderr.split('\n').some((l) => /\berror\b/i.test(l) && !/warning/i.test(l));
 }
 
 /** Render one PDF page (or a crop of it) to PNG with poppler. */
@@ -157,7 +167,8 @@ export async function renderPdfPage(o: RenderOptions): Promise<Buffer> {
       );
     }
     args.push(o.pdfPath, outPrefix);
-    await runCommand(o.pdftoppm, args, { timeoutMs: o.timeoutMs ?? 120_000, signal: o.signal });
+    const { stderr } = await runCommand(o.pdftoppm, args, { timeoutMs: o.timeoutMs ?? 120_000, signal: o.signal });
+    o.onDiagnostics?.(stderr);
     try {
       return await readFile(`${outPrefix}.png`);
     } catch {
@@ -177,8 +188,48 @@ export interface ConvertOptions {
 }
 
 /**
+ * LibreOffice must never reach the network for an uploaded document (§49, G8 security): a DOC / PPT / PPTX can hold a
+ * picture that is only a LINK (`r:link`, `TargetMode="External"`, INCLUDEPICTURE) to any host — LibreOffice fetched it
+ * while converting (an SSRF from an uploaded file: internal addresses, metadata services). Every conversion therefore
+ * runs with a fresh profile whose settings block untrusted referer links and send all HTTP(S) through a proxy on a
+ * closed loopback port, and with the same proxy in the environment (LibreOffice's «system» proxy reads it).
+ */
+const NO_NETWORK_PROXY = 'http://127.0.0.1:1';
+const NO_NETWORK_XCU = `<?xml version="1.0" encoding="UTF-8"?>
+<oor:items xmlns:oor="http://openoffice.org/2001/registry" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="BlockUntrustedRefererLinks" oor:op="fuse"><value>true</value></prop></item>
+<item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="MacroSecurityLevel" oor:op="fuse"><value>3</value></prop></item>
+<item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="DisableMacrosExecution" oor:op="fuse"><value>true</value></prop></item>
+<item oor:path="/org.openoffice.Inet/Settings"><prop oor:name="ooInetProxyType" oor:op="fuse"><value>2</value></prop></item>
+<item oor:path="/org.openoffice.Inet/Settings"><prop oor:name="ooInetHTTPProxyName" oor:op="fuse"><value>127.0.0.1</value></prop></item>
+<item oor:path="/org.openoffice.Inet/Settings"><prop oor:name="ooInetHTTPProxyPort" oor:op="fuse"><value>1</value></prop></item>
+<item oor:path="/org.openoffice.Inet/Settings"><prop oor:name="ooInetHTTPSProxyName" oor:op="fuse"><value>127.0.0.1</value></prop></item>
+<item oor:path="/org.openoffice.Inet/Settings"><prop oor:name="ooInetHTTPSProxyPort" oor:op="fuse"><value>1</value></prop></item>
+<item oor:path="/org.openoffice.Inet/Settings"><prop oor:name="ooInetNoProxy" oor:op="fuse"><value></value></prop></item>
+</oor:items>
+`;
+
+/** Environment of a LibreOffice run: no inherited variables, every proxy variable pointing at a closed port. */
+export function officeEnv(dir: string): NodeJS.ProcessEnv {
+  return {
+    PATH: process.env.PATH ?? '/usr/bin:/bin',
+    HOME: dir,
+    LANG: 'C.UTF-8',
+    TMPDIR: dir,
+    http_proxy: NO_NETWORK_PROXY,
+    https_proxy: NO_NETWORK_PROXY,
+    HTTP_PROXY: NO_NETWORK_PROXY,
+    HTTPS_PROXY: NO_NETWORK_PROXY,
+    ftp_proxy: NO_NETWORK_PROXY,
+    no_proxy: '',
+    NO_PROXY: '',
+  };
+}
+
+/**
  * Convert an office document to PDF with LibreOffice headless, in an isolated temp dir with its own
  * user profile (-env:UserInstallation) so concurrent/previous runs and the owner's profile never interfere.
+ * The profile is pre-seeded so the conversion never fetches anything (see NO_NETWORK_XCU).
  */
 export async function convertToPdf(o: ConvertOptions): Promise<Buffer> {
   return withTempDir(o.tmpRoot, 'lo-', async (dir) => {
@@ -187,7 +238,8 @@ export async function convertToPdf(o: ConvertOptions): Promise<Buffer> {
     const profile = join(dir, 'profile');
     await mkdir(inDir, { mode: 0o700 });
     await mkdir(outDir, { mode: 0o700 });
-    await mkdir(profile, { mode: 0o700 });
+    await mkdir(join(profile, 'user'), { recursive: true, mode: 0o700 });
+    await writeFile(join(profile, 'user', 'registrymodifications.xcu'), NO_NETWORK_XCU, { mode: 0o600 });
     const inputPath = join(inDir, `source.${o.inputExt}`);
     await writeFile(inputPath, o.input, { mode: 0o600 });
     await runCommand(
@@ -211,7 +263,7 @@ export async function convertToPdf(o: ConvertOptions): Promise<Buffer> {
         timeoutMs: o.timeoutMs ?? 180_000,
         signal: o.signal,
         cwd: dir,
-        env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: dir, LANG: 'C.UTF-8', TMPDIR: dir },
+        env: officeEnv(dir),
       },
     );
     try {

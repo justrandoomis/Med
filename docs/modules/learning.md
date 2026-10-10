@@ -342,3 +342,22 @@ Commands (repo root unless noted, `NODE_OPTIONS='--disable-warning=ExperimentalW
 | `npx tsc -p apps/server --noEmit` / `npx tsc -p apps/web --noEmit` | exit 0 / exit 0 |
 | `npm run build -w @medlevo/web` | exit 0 |
 
+
+## 15. Acceptance round G7 — AC-24 (2026-10-10)
+* `flashcard` sync (`sync.ts`): a stale card edit re-sent under a new op id no longer creates a second identical
+  conflict copy (`existingConflictCopy`; a copy's `note_id` is not compared because a copy stands alone). Test:
+  `apps/server/test/acceptance/g7-ac24.test.ts` («concurrent card edits …»). Review events sent twice (same op id, a
+  new op id, and the REST `POST /reviews`) stay one event — verified there and in `e2e/g7-ac24-two-devices.spec.ts`
+  (push answer lost after the server applied it → re-sent → `duplicate`, reps = 1).
+
+
+## G8 acceptance fixes (AC-26, AC-27, 2026-10-10)
+* **Re-classifying after a reset** (`mistakes.ts classificationVisible`, used by the genome and the weakness signals):
+  after «reset the mistake types» an owner who classified an OLDER mistake again saw the edit accepted but ignored
+  (hidden by the cut-off). A type the owner sets after the reset now counts (`mistake_origin = 'owner'`,
+  `updated_at ≥ reset`).
+* **Option corrections reach cards from mistakes** (`store.ts questionChange`): the card's front lists the options and its
+  back names the answer by its text, but only key / explanation / stem changes flagged it (`question_changed`). An
+  option-only correction now does too. Alerts about a corrected question (key / text) are not turned into a second
+  `source_changed` impact for the same card.
+* Tests: `apps/server/test/acceptance/g8-ac27.test.ts`, `g8-ac26.test.ts`; `e2e/g8-ac27-mastery.spec.ts`.

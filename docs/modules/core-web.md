@@ -24,7 +24,7 @@ Track: **Web core + design system**. Owns `apps/web/**` (config, `src/main.tsx`,
 | Router & shell | `src/app/*` | `createBrowserRouter`; route table `routes.tsx`; owner gate loader; `AppShell` (phone bottom tabs / wide slim top bar, search entry, offline indicator, global save status with details popover, skip link, focus-on-navigate, `/` and Ctrl/⌘K → search); PWA update prompt; route error + 404 screens. |
 | Auth screens | `src/features/auth/*` | Setup (owner account, password checklist from the server's `password_min_length`, 10 recovery codes shown once with copy / print / download, required confirmation, unload guard), Login (expired / recovered notices, offline notice), Recover (one-time code → new password → all sessions revoked → login). |
 | Settings screen | `src/features/settings/*` | Appearance (theme, text size, paper texture, reduce motion, live bidi preview), Reading & explanation defaults (level, dialect, answer style, Socratic, check-question density, margin density, custom instruction) with the real AI capability reason, Time (timezone + live preview), Security (sessions with revoke + impact confirmation, change password, regenerate recovery codes behind password + impact text, logout), About (versions, AI provider state, real storage estimate). |
-| Placeholders | `src/features/{home,library,upload,workspace,questions,exams,review,weakness,planner,search,control}/routes.tsx` | Honest «هذه الشاشة قيد البناء» screens listing what each will contain (no sample data, no dead buttons). **Other tracks replace these files.** |
+| Placeholders | (removed in the integration round I1) | Round 1 shipped honest «هذه الشاشة قيد البناء» screens; every feature track replaced its `routes.tsx` with real screens, and the unused `features/shell/PlaceholderScreen.tsx` (+ its CSS) was deleted. `test/no-placeholders.test.ts` guards that none comes back; unfinished parts are disabled with a reason through capabilities. |
 | Dev tooling | `dev/gallery.html` (+`.tsx/.css`), `scripts/visual-check.mjs`, `scripts/gallery-check.mjs`, `scripts/real-server-check.mjs` | Dev-only component gallery (served by `vite`, not built). Screenshot/E2E scripts (Playwright; mocks live only in the scripts). |
 
 ## 2. Contracts for other tracks
@@ -198,3 +198,10 @@ now per-weight files, verified: only Arabic + Latin subsets load).
   NVDA screen-reader passes, axe/Lighthouse audits, ESLint (no ESLint config exists in the repo yet).
 * Server-side entity handlers (notes, annotations, …) don't exist yet, so `/api/sync/push` was exercised only with
   mocked transports in tests; the real-server check covered `/api/sync/pull`.
+
+## 8. Acceptance round G7 — AC-23 (2026-10-10)
+* `resolveFeature` (`lib/capabilities.tsx`): offline, a network-bound feature that the server last reported as
+  `requires_configuration` (e.g. AI without a key) is now `requires_connection` with «تحتاج هذه الميزة اتصالًا بالإنترنت.
+  آخر ما عرفه هذا الجهاز من الخادم: …» — before, the offline reader said only «needs a server setting», which is stale
+  information the device cannot check offline. `not_implemented` / `disabled_by_owner` / `requires_native` are unchanged.
+  Tests: `test/lib.test.ts`, `e2e/g7-ac23-offline.spec.ts`.

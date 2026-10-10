@@ -100,3 +100,25 @@ Open (minor, not fixed):
 * The default SSRF transport (`node:https` pinned to the validated IP) is not exercised against the real network in tests (no outbound network in CI); redirect/IP logic is tested through an injected transport and resolver.
 * Not run: the zip-bomb tests use in-memory synthetic archives (no real-world bombs); scrypt cost in tests is lowered to 2^12 via `MEDLEVO_SCRYPT_LOG_N` for speed (production default 2^15).
 * Jobs of a kind that no module registers stay `queued` (they are listed in the API); a handler that ignores its `AbortSignal` keeps running in the background after a timeout/cancel (its later `progress()` calls are ignored; checkpoints are idempotent).
+
+## Integration round I1 (2026-10-10)
+* **Settings PATCH merges `source_priority` per purpose.** A PATCH with a partial `source_priority` object used to
+  reset the omitted purposes to their defaults (zod defaults on `{ ...before, ...patch }`). Server and web store now
+  use the shared `mergeSettingsPatch` (`packages/shared/src/settings.ts`, `NESTED_SETTING_KEYS`). The web store also
+  merges the pending (unsent) patch per purpose, so two quick edits to different purposes both reach the server.
+  Tests: server `test/app.test.ts`, web `test/stores.test.ts`.
+* `.env.example` now documents `MEDLEVO_SETUP_TOKEN` and `MEDLEVO_SOFFICE_AVAILABLE`; `test/env-example.test.ts`
+  fails when the server reads a `MEDLEVO_*`/`ANTHROPIC_*` variable the example does not name, or when the example
+  carries a value for a secret.
+
+## Integration round I2 — crash resume latency (2026-10-10)
+* **After a crash the job sat «running» for a minute.** A SIGKILL of a real server mid-processing (300-page lecture)
+  left the job `running` with a fresh heartbeat; the restarted server waited for `staleAfterMs` (60 s) before
+  resuming — measured 61.6 s from restart to resume. The queue now records the claiming process in
+  `processing_job.worker_id` (`<hostname>/<pid>/<boot nonce>`, migration `0030_job_worker.sql`) and re-queues at once a
+  job whose claimer is provably gone (same host and the pid no longer exists, or the same pid with another boot nonce —
+  a restarted container's pid 1). Unknown owners (NULL, another host, a live pid) keep the heartbeat rule, so two live
+  servers never take each other's jobs. Measured after: resume 1.8 s after the restart (boot 1.6 s), integrity
+  unchanged (no duplicated regions / review items / assets; checkpointed pages not redone).
+  Tests: `test/jobs-crash.test.ts` (4 of 5 fail on the old code; the 5th is the safety property),
+  `test/perf/crash-resume.perf.test.ts` (real process, `MEDLEVO_PERF=1`).

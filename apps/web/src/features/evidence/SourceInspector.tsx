@@ -7,6 +7,7 @@ import { FileSearch } from 'lucide-react';
 import { normBoxToView, type EvidenceView, type NormBox, type PageRegionsResponse, type QuarterTurn, type SourceDetail, type SourcePagesResponse } from '@medlevo/shared';
 import { Button, ErrorState, LoadingState, Sheet } from '../../design';
 import { api, errorMessage } from '../../lib/api';
+import { useFileSrc } from '../../lib/offline';
 import { loadPdfHandle } from '../workspace/reader/pdfDoc';
 import { BidiText } from './BidiText';
 import { EvidencePeek, type CitationContext } from './CitationChip';
@@ -106,10 +107,12 @@ function PdfPage({ fileId, pageIndex, bbox, label }: { fileId: string; pageIndex
 }
 
 function ImagePage({ fileId, bbox, label }: { fileId: string; bbox: NormBox | null; label: string }) {
+  // a downloaded page image is shown from this device (works offline); otherwise the authenticated file route
+  const src = useFileSrc(fileId);
   return (
     <div className="ev-inspect__page">
       <div className="ev-inspect__stage ev-inspect__stage--image">
-        <img src={`/api/files/${encodeURIComponent(fileId)}`} alt="صورة الصفحة الأصلية" />
+        {src && <img src={src} alt="صورة الصفحة الأصلية" />}
         {bbox && (
           <div
             className="ev-inspect__box"
@@ -168,7 +171,8 @@ export function SourceInspector({ evidence, context, open, onClose }: SourceInsp
                   هذا المصدر بلا صفحات ثابتة؛ يُعرض نص المقطع وموضع الدليل فيه.
                 </p>
                 {loaded.render.regions
-                  .filter((r) => r.text && r.kind !== 'table_cell')
+                  // a region superseded by the owner's correction is not listed — unless it is the cited one itself
+                  .filter((r) => r.text && r.kind !== 'table_cell' && (r.status !== 'rejected' || r.id === evidence.region_id))
                   .map((r) => (
                     <BidiText key={r.id} text={r.text!} className={r.id === evidence.region_id ? 'ev-inspect__region ev-inspect__region--cited' : 'ev-inspect__region'} />
                   ))}

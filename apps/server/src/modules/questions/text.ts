@@ -217,10 +217,29 @@ export function normPhrase(text: string): string {
     .trim();
 }
 
+/**
+ * G5 / AC-17: symbols that are not letters or digits but change the medical meaning, spelled out before
+ * `normPhrase` drops them — «base excess −8» (U+2212, also what NFKC makes of a superscript «⁻») is not «base excess 8»,
+ * «♀» is not «♂», «A → B» is not «A ← B». A dash used as a sign («–8», «–ve») is a minus; a dash between two numbers
+ * («5–10») stays a range.
+ */
+function meaningfulSymbols(text: string): string {
+  return normalizeForSearch(stripBidiControls(text))
+    .replace(/−/g, '-')
+    .replace(/(?<![\p{L}\p{N}])[‒–—﹣－](?=\s?(?:\p{N}|ve\b))/gu, '-')
+    .replace(/♀/g, ' female ')
+    .replace(/♂/g, ' male ')
+    .replace(/[↔⇔⟷⟺]/g, ' <-> ')
+    .replace(/[→⇒⟶⟹➔➜]/g, ' -> ')
+    .replace(/[←⇐⟵⟸]/g, ' <- ')
+    .replace(/~/g, '≈');
+}
+
 /** Exact duplicate identity: normalized stem + the SET of normalized options (order-insensitive, AC-17). */
 export function fingerprint(stem: string, options: string[]): string {
-  const opts = options.map(normPhrase).sort();
-  return sha256(`${normPhrase(stem)}\u0001${opts.join('\u0002')}`);
+  const norm = (t: string) => normPhrase(meaningfulSymbols(t));
+  const opts = options.map(norm).sort();
+  return sha256(`${norm(stem)}\u0001${opts.join('\u0002')}`);
 }
 
 // ───────── rich text with emphasized negation ─────────

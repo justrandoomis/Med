@@ -1,5 +1,7 @@
 // Question Vault server calls (/api/questions). Shapes come from @medlevo/shared (questions.ts, questions-api.ts).
 import type {
+  AnswerCheckRequest,
+  AnswerCheckResponse,
   ConceptListResponse,
   DuplicateDetail,
   ExtractionSummaryView,
@@ -61,4 +63,6 @@ export const questionsApi = {
   quickAddImage: (form: FormData) => api.post<QuickAddResponse>('/questions/quick-add', form, { timeoutMs: 120_000 }),
   concepts: (sourceId: string) => api.get<ConceptListResponse>('/questions/concepts', { query: { source_id: sourceId } }),
   decideConcept: (id: string, status: 'accepted' | 'rejected') => api.patch<{ ok: true }>(`/questions/concepts/${enc(id)}`, { status }),
+  /** §34 / AC-14, AC-15: AI answer check against the linked lecture (409 AI_NOT_CONFIGURED without a provider) */
+  answerCheck: (id: string, body: AnswerCheckRequest = {}) => api.post<AnswerCheckResponse>(`/questions/${enc(id)}/answer-check`, body, { timeoutMs: 180_000 }),
 };

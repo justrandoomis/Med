@@ -90,6 +90,21 @@ describe('settings', () => {
     const fallback = await t.app.inject({ method: 'GET', url: '/api/settings', headers: h });
     expect(fallback.json().settings).toMatchObject({ theme: 'system', text_scale: 1.2 });
   });
+
+  it('a partial source_priority changes only the purposes it names (I1 #7)', async () => {
+    // Regression: zod filled the omitted purposes with their defaults, so changing one purpose reset the others.
+    const custom = ['textbook', 'lecture'];
+    const first = await t.app.inject({ method: 'PATCH', url: '/api/settings', headers: h, payload: { source_priority: { clinical_expansion: custom } } });
+    expect(first.statusCode).toBe(200);
+    const second = await t.app.inject({ method: 'PATCH', url: '/api/settings', headers: h, payload: { source_priority: { lecture_explanation: ['course_reference', 'lecture'] } } });
+    expect(second.statusCode).toBe(200);
+    const sp = (await t.app.inject({ method: 'GET', url: '/api/settings', headers: h })).json().settings.source_priority;
+    expect(sp).toEqual({
+      lecture_explanation: ['course_reference', 'lecture'],
+      source_question_practice: DEFAULT_OWNER_SETTINGS.source_priority.source_question_practice,
+      clinical_expansion: custom,
+    });
+  });
 });
 
 describe('audit log', () => {

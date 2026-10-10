@@ -1,6 +1,6 @@
 // React hooks over the local learning store: the cached SRS configuration (+ parity verdict) and live card / event
-// rows from IndexedDB (Dexie liveQuery — updates when a pull, a push answer or another tab writes).
-import { liveQuery } from 'dexie';
+// rows from IndexedDB (updates when a pull, a push answer, a local write or another tab writes — Dexie storagemutated).
+import Dexie, { type ObservabilitySet } from 'dexie';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { SrsConfigView } from '@medlevo/shared';
 import { getDb } from '../../../lib/localdb';
@@ -58,17 +58,75 @@ export interface LocalCardsState {
   ready: boolean;
 }
 
-/** Live rows from IndexedDB. */
+/**
+ * Re-read window during bursts of writes. Consumers re-fold EVERY card (FSRS replay) on each new set of rows: with two
+ * whole-table live queries, a first sync of 3 000 cards + 12 000 events re-read both tables and re-folded all cards
+ * after almost every pulled change — over half of the main thread in Chromium (I2, docs/PERFORMANCE.md).
+ */
+export const LOCAL_CARDS_RELOAD_MS = 400;
+
+/**
+ * Live rows from IndexedDB. The first write after a quiet period is reflected at once (a rating, an edit); a burst of
+ * writes (a sync pull) is coalesced into at most one re-read per LOCAL_CARDS_RELOAD_MS, plus one after the burst.
+ */
 export function useLocalCards(): LocalCardsState {
   const [cards, setCards] = useState<LocalCardRow[] | null>(null);
   const [events, setEvents] = useState<LocalEventRow[] | null>(null);
   useEffect(() => {
     const db = getDb();
-    const a = liveQuery(() => db.flashcards.toArray()).subscribe({ next: (rows) => setCards(rows as LocalCardRow[]), error: () => setCards([]) });
-    const b = liveQuery(() => db.reviewEvents.toArray()).subscribe({ next: (rows) => setEvents(rows as LocalEventRow[]), error: () => setEvents([]) });
+    let cancelled = false;
+    let running = false;
+    let again = false;
+    let lastStart = -Infinity;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const load = async () => {
+      if (running) {
+        again = true;
+        return;
+      }
+      running = true;
+      lastStart = Date.now();
+      try {
+        const [c, e] = await Promise.all([db.flashcards.toArray(), db.reviewEvents.toArray()]);
+        if (!cancelled) {
+          setCards(c as LocalCardRow[]);
+          setEvents(e as LocalEventRow[]);
+        }
+      } catch {
+        if (!cancelled) {
+          setCards((x) => x ?? []);
+          setEvents((x) => x ?? []);
+        }
+      } finally {
+        running = false;
+        if (again && !cancelled) {
+          again = false;
+          schedule();
+        }
+      }
+    };
+    const schedule = () => {
+      if (cancelled || timer !== undefined) return;
+      const wait = Math.max(0, lastStart + LOCAL_CARDS_RELOAD_MS - Date.now());
+      if (wait === 0 && !running) {
+        void load();
+        return;
+      }
+      timer = setTimeout(() => {
+        timer = undefined;
+        void load();
+      }, wait);
+    };
+    const tables = [`idb://${db.name}/flashcards/`, `idb://${db.name}/reviewEvents/`];
+    const onMutated = (parts: ObservabilitySet) => {
+      if (Object.keys(parts).some((k) => tables.some((t) => k.startsWith(t)))) schedule();
+    };
+    Dexie.on.storagemutated.subscribe(onMutated);
+    void load();
     return () => {
-      a.unsubscribe();
-      b.unsubscribe();
+      cancelled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      Dexie.on.storagemutated.unsubscribe(onMutated);
     };
   }, []);
   const byCard = useMemo(() => {

@@ -10,6 +10,7 @@ import { canMoveInto, childrenOf, type LibraryIndex } from '../model';
 import { MoveDialog } from './FolderPicker';
 import { NodeDialog } from './NodeDialog';
 import { TagsDialog } from './TagsDialog';
+import { useOfflineDownloadAction } from '../../offline/OnDevice';
 
 export function ImpactList({ report }: { report: ImpactReport | null }) {
   if (!report) return <p>جارٍ حساب الأثر…</p>;
@@ -143,6 +144,7 @@ export function SourceMenu({ source, index }: { source: SourceSummary; index: Li
   const toast = useToast();
   const [dialog, setDialog] = useState<null | 'move' | 'tags'>(null);
   const trash = useTrashFlow('source', source.id, source.title);
+  const offline = useOfflineDownloadAction(source.id, source.title);
   const run = async (fn: () => Promise<unknown>, done?: string) => {
     try {
       await mutate(fn);
@@ -166,6 +168,7 @@ export function SourceMenu({ source, index }: { source: SourceSummary; index: Li
         >
           {source.is_favorite ? 'إزالة من المفضلة' : 'إضافة إلى المفضلة'}
         </MenuItem>
+        {offline.item}
         <MenuSeparator />
         <MenuItem
           icon={source.archived_at ? <ArchiveRestore size={16} /> : <Archive size={16} />}
@@ -191,6 +194,7 @@ export function SourceMenu({ source, index }: { source: SourceSummary; index: Li
         onClose={() => setDialog(null)}
       />
       <TagsDialog open={dialog === 'tags'} entity={{ type: 'source', id: source.id, title: source.title, tags: source.tags }} onClose={() => setDialog(null)} />
+      {offline.dialog}
       {trash.dialog}
     </>
   );

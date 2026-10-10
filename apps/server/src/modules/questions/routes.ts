@@ -17,11 +17,13 @@
 //   POST   /:id/key                        owner key → new version + impact + content alert
 //   POST   /:id/review                     accept (owner_reviewed) / reject (retired)
 //   POST   /:id/links                      owner-made lecture link
+//   POST   /:id/answer-check               check the answer against the linked lecture (AI; §34, AC-14, AC-15)
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
   ANSWER_STATUSES,
   EXTRACT_QUESTIONS_JOB_KIND,
+  type AnswerCheckResponse,
   LECTURE_LINK_RELATIONS,
   MATCH_QUESTIONS_JOB_KIND,
   QUESTION_TYPES,
@@ -53,6 +55,7 @@ import type { AppContext } from '../../context';
 import { fromJson, toJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
 import { parseBody, parseParams, parseQuery, RATE_LIMITS } from '../../lib/http';
+import { answerCheckClaims, checkAnswer } from './answercheck';
 import { conceptViews, decideConcept } from './concepts';
 import { correctKey, correctQuestion, decideLink, ownerLink, reviewQuestion } from './corrections';
 import { decideDuplicate } from './duplicates';
@@ -338,8 +341,8 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.get('/for-lecture/:sourceId', async (req): Promise<LectureQuestionsResponse> => {
     const { sourceId } = parseParams(z.object({ sourceId: id }), req);
     const { page_id } = parseQuery(forLectureQuery, req);
-    const src = ctx.db.get<{ id: string; title: string; current_version_id: string | null; frozen_version_id: string | null; deleted_at: number | null; source_type: string }>(
-      'SELECT id, title, current_version_id, frozen_version_id, deleted_at, source_type FROM source WHERE id = ?',
+    const src = ctx.db.get<{ id: string; title: string; current_version_id: string | null; frozen_version_id: string | null; deleted_at: number | null; source_type: string; grp: string | null }>(
+      'SELECT id, title, current_version_id, frozen_version_id, deleted_at, source_type, COALESCE(course_node_id, subject_node_id, node_id) AS grp FROM source WHERE id = ?',
       [sourceId],
     );
     if (!src || src.deleted_at !== null) throw new AppError('NOT_FOUND', 'المصدر غير موجود.', 404);
@@ -356,9 +359,11 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
       const q = getQuestionRow(ctx, r.question_id);
       const v = ctx.db.get<VersionRow>('SELECT * FROM question_version WHERE id = ?', [q.current_version_id])!;
       const occRow = ctx.db.get<OccurrenceRow & { source_title: string; source_type: string }>(
+        // G5 / AC-16: the question printed in several banks is shown from THIS lecture's course (its file and page)
         `SELECT o.*, s.title AS source_title, s.source_type FROM question_occurrence o JOIN source s ON s.id = o.source_id
-          WHERE o.question_id = ? AND s.deleted_at IS NULL ORDER BY o.status = 'current' DESC, o.created_at LIMIT 1`,
-        [q.id],
+          WHERE o.question_id = ? AND s.deleted_at IS NULL
+          ORDER BY o.status = 'current' DESC, COALESCE(s.course_node_id, s.subject_node_id, s.node_id) IS ? DESC, o.created_at LIMIT 1`,
+        [q.id, src.grp],
       );
       const occ = occRow ? occurrenceView(ctx, occRow) : null;
       const box = occRow ? (fromJson<OccurrenceBox[]>(occRow.boxes_json, []) ?? [])[0] : undefined;
@@ -565,6 +570,7 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
       occurrence_boxes,
       scorable: s.scorable,
       unscorable_reason_ar: s.reason_ar,
+      answer_check_claims: answerCheckClaims(ctx, cur),
     };
   });
 
@@ -630,6 +636,11 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.post('/:id/review', async (req): Promise<QuestionMutationResponse> => {
     const p = parseParams(idParams, req);
     return reviewQuestion(ctx, p.id, parseBody(reviewBody, req));
+  });
+
+  app.post('/:id/answer-check', { config: { rateLimit: RATE_LIMITS.ai } }, async (req): Promise<AnswerCheckResponse> => {
+    const p = parseParams(idParams, req);
+    return checkAnswer(ctx, p.id, req.body);
   });
 
   app.post('/:id/links', async (req) => {

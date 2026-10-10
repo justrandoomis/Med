@@ -238,6 +238,8 @@ export function insertQuestionAttempt(
 export function setMistakeType(db: Db, attemptId: string, type: MistakeType | null, now: number, touch: (t: string, id: string) => void): QuestionAttemptRow {
   const r = findQuestionAttempt(db, attemptId);
   if (!r) throw new AppError('NOT_FOUND', 'المحاولة غير موجودة على الخادم بعد؛ ستُرسل التعديلات بعد مزامنتها.', 404);
+  // only a wrong answer has a mistake type — the same rule on every path (learning PATCH, exams PATCH, sync upsert)
+  if (type !== null && r.is_correct !== 0) throw new AppError('CONFLICT', 'لا يُصنَّف إلا الخطأ: هذه الإجابة ليست خاطئة.', 409);
   if (r.mistake_type === type && r.mistake_origin === 'owner') return r;
   db.run('UPDATE question_attempt SET mistake_type = ?, mistake_origin = ?, rev = rev + 1, updated_at = ? WHERE id = ?', [type, 'owner', now, attemptId]);
   touch('question_attempt', attemptId);

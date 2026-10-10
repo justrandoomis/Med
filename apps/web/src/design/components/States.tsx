@@ -26,12 +26,12 @@ export interface EmptyStateProps {
   /** One clear next step (an empty screen is an invitation to act). */
   actions?: ReactNode;
   className?: string;
-  /** heading level for the title inside the page outline */
-  headingLevel?: 2 | 3;
+  /** heading level for the title inside the page outline (1 when the empty state IS the page, e.g. «not found») */
+  headingLevel?: 1 | 2 | 3;
 }
 
 export function EmptyState({ icon, title, description, actions, className, headingLevel = 2 }: EmptyStateProps) {
-  const H = headingLevel === 2 ? 'h2' : 'h3';
+  const H = headingLevel === 1 ? 'h1' : headingLevel === 2 ? 'h2' : 'h3';
   return (
     <section className={cx('ml-state', 'ml-state--empty', className)}>
       {icon && (

@@ -48,8 +48,9 @@ export interface OcrRequest {
   timeoutMs?: number;
   /** restrict recognition to a pixel rectangle */
   rectangle?: { left: number; top: number; width: number; height: number };
-  /** 'auto' (page) or 'sparse' (scattered labels in a figure) */
-  mode?: 'auto' | 'sparse';
+  /** 'auto' (page, PSM 3), 'sparse' (scattered labels in a figure, PSM 11) or 'block' (one uniform block of text,
+   *  PSM 6 — the re-read when the automatic segmentation skipped lines, G3 / AC-08) */
+  mode?: 'auto' | 'sparse' | 'block';
 }
 
 function modelSource(lang: string): string | null {
@@ -143,7 +144,7 @@ export class OcrEngine {
     const run = async (state: { abandoned: boolean }): Promise<OcrResult> => {
       const worker = await this.getWorker();
       if (state.abandoned) throw new OcrTimeoutError();
-      await worker.setParameters({ tessedit_pageseg_mode: (req.mode === 'sparse' ? '11' : '3') as never });
+      await worker.setParameters({ tessedit_pageseg_mode: (req.mode === 'sparse' ? '11' : req.mode === 'block' ? '6' : '3') as never });
       const options = req.rectangle ? { rectangle: req.rectangle } : {};
       if (state.abandoned) throw new OcrTimeoutError();
       const res = await worker.recognize(req.image, options, { blocks: true, text: false });

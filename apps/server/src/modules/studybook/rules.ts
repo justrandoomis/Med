@@ -22,7 +22,7 @@ import { fromJson } from '../../db/db';
 import { sha256 } from '../../lib/hash';
 
 /** Bump when the prompt builder / post-checks change (part of every cache key). */
-export const GENERATOR_VERSION = 'studybook-gen-1';
+export const GENERATOR_VERSION = 'studybook-gen-3'; // gen-2 (G2 / AC-06): no page / alias references inside the text; gen-3 (G3 / AC-08): arrow direction in words, uncertain-only claims need review
 const RULES_ENGINE_VERSION = 'rules-engine-1';
 
 export const TEMPLATE_KEYS = Object.keys(EXPLANATION_TEMPLATES) as ExplanationTemplateKey[];
@@ -199,6 +199,7 @@ const CONTRACT = [
   '- Every sentence that states a medical fact (definition, mechanism, sign, value, investigation, treatment, relation, …) MUST carry "claim": {"support_type": …, "evidence": ["E…"]} citing ONLY aliases given in this request. Never cite page numbers, titles, URLs, R-aliases or anything else as evidence.',
   '- support_type: "directly_stated" (the excerpt says it), "derived" (directly follows from one excerpt), "synthesized" (combines several excerpts). Never use "externally_supplemented": there is no external evidence in this scope.',
   '- Sentences without medical content (headings, transitions, questions to the learner) have "claim": null.',
+  '- Never write page, slide or paragraph numbers, alias markers such as [E1], or source titles with pages INSIDE any text (sentences, headings, notes, table headers): the application attaches the verified citations itself; text that names a page is removed.',
   '- If the evidence does not cover something, do NOT write it — no outside knowledge, no guessing, no softening into "may be". Mention what is missing in "coverage_note".',
   '- Keep negations (NOT, except, لا، ليس), numbers, units, doses, thresholds, ages and exceptions EXACTLY as the evidence states them.',
   '- "original_quote": true only for text copied verbatim from an excerpt (same language, same characters). A translation or paraphrase is never an original quote.',

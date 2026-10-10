@@ -45,3 +45,26 @@ export function toFtsQuery(input: string, opts: { prefix?: boolean; mode?: 'and'
   });
   return quoted.join(opts.mode === 'or' ? ' OR ' : ' ');
 }
+
+function passageTokens(text: string): Set<string> {
+  return new Set(normalizeForSearch(text).split(/[^\p{L}\p{N}]+/u).filter(Boolean));
+}
+
+/**
+ * Is `now` still the paragraph an owner's note was written on (`then`)? (§25, AC-22.) Identical text after search
+ * normalization, or a light rewording: Dice coefficient of the two word sets ≥ 0.6. A false «no» only lists the note
+ * for re-anchoring; a false «yes» would show it over another paragraph, so the bar sits on the strict side.
+ * `thenIsPrefix`: `then` is a quote cut from the START of the paragraph (it may end with «…»).
+ */
+export function samePassage(then: string, now: string, thenIsPrefix = false): boolean {
+  const q = normalizeForSearch(then.replace(/…$/, '')).replace(/\s+/g, ' ').trim();
+  const n = normalizeForSearch(now).replace(/\s+/g, ' ').trim();
+  if (!q) return true; // nothing to compare against: the anchor key decides
+  if (q === n || (thenIsPrefix && n.startsWith(q))) return true;
+  const a = passageTokens(q);
+  const b = passageTokens(thenIsPrefix ? n.slice(0, q.length + 40) : n);
+  if (!a.size || !b.size) return false;
+  let common = 0;
+  for (const t of a) if (b.has(t)) common++;
+  return (2 * common) / (a.size + b.size) >= 0.6;
+}

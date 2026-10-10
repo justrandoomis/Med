@@ -56,11 +56,13 @@ export function BoxesLayer({ boxes, current, className }: { boxes: NormBox[]; cu
 export function TextHighlightsLayer({ targetKey }: { targetKey: string }) {
   const [rows, setRows] = useState<AnnotationRow[]>([]);
   useEffect(() => {
+    // indexed by [targetKey+kind]: reads only this page's highlights (never its ink strokes), and is not re-run by
+    // ink writes — with 5 000 strokes on a page the old targetKey scan re-read every stroke on every write (I2)
     const sub = liveQuery(() =>
       getDb()
-        .annotations.where('targetKey')
-        .equals(targetKey)
-        .filter((a) => a.kind === 'text_highlight' && !a.deletedAt)
+        .annotations.where('[targetKey+kind]')
+        .equals([targetKey, 'text_highlight'])
+        .filter((a) => !a.deletedAt)
         .toArray(),
     ).subscribe({ next: setRows, error: () => setRows([]) });
     return () => sub.unsubscribe();

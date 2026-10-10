@@ -169,6 +169,26 @@ describe('transcript', () => {
     expect((await t.app.inject({ method: 'GET', url: '/api/search?q=periumbilical&types=transcripts', headers: h })).json().results).toHaveLength(0);
   });
 
+  it('transcript hits carry the segment’s REAL origin: imported / typed by the owner / machine-recognized (I1 #6)', async () => {
+    // Regression: every transcript hit was labelled «مقروء آليًا» (recognized), even typed or imported text.
+    const id = await audioId();
+    const search = async (q: string) => (await t.app.inject({ method: 'GET', url: `/api/search?q=${encodeURIComponent(q)}&types=transcripts`, headers: h })).json().results as Array<{ origin: string }>;
+    await t.app.inject({ method: 'POST', url: `/api/media/audio/${id}/import`, headers: h, payload: { text: 'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nrebound tenderness imported cue\n' } });
+    expect((await search('imported cue')).map((r) => r.origin)).toEqual(['imported']);
+    const typed = (await t.app.inject({ method: 'POST', url: `/api/media/audio/${id}/segments`, headers: h, payload: { start_ms: 4000, end_ms: 6000, text: 'guarding typed by the owner' } })).json();
+    expect((await search('guarding typed')).map((r) => r.origin)).toEqual(['owner_typed']);
+    // a machine transcription (no AI here: the row is written as the transcription job would write it)
+    const auto = newId();
+    t.ctx.db.run(`INSERT INTO transcript_segment (id, audio_id, start_ms, end_ms, text, origin, created_at) VALUES (?, ?, 7000, 9000, 'psoas sign machine heard', 'transcription', ?)`, [auto, id, now()]);
+    const { indexSegment, getSegmentRow } = await import('../../src/modules/media/transcripts');
+    indexSegment(t.ctx, getSegmentRow(t.ctx, auto));
+    expect((await search('psoas sign machine')).map((r) => r.origin)).toEqual(['recognized']);
+    // corrected by the owner → the shown (and searched) text is the owner's
+    await t.app.inject({ method: 'PATCH', url: `/api/media/segments/${auto}`, headers: h, payload: { base_rev: 1, corrected_text: 'psoas sign corrected by me' } });
+    expect((await search('psoas sign corrected')).map((r) => r.origin)).toEqual(['owner_typed']);
+    expect(typed.origin).toBe('manual');
+  });
+
   it('links: manual links are labelled manual; an AUTO link (no matcher exists — inserted as a fixture) is labelled auto, can be confirmed or removed', async () => {
     const id = await audioId();
     const page = lecturePage();

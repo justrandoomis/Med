@@ -249,3 +249,23 @@ Commands run for the review (results at the time of writing): see the review rep
 `npx vitest run test/ink` 11 files / 108 tests passed; `npm test -w @medlevo/web` all passed;
 `npx tsc -p apps/web --noEmit` clean; `npm run build -w @medlevo/web` success;
 `npx playwright test -c apps/web/test/ink/playwright.config.ts` 4/4 passed (Chromium, mouse).
+
+## Integration round I2 — 5 000 strokes on one page (2026-10-10)
+* The pull applier no longer rewrites a stroke this device already holds at the same server revision (synced, same
+  rev, same deletion state): after the reader's download seeded the page, the pull re-delivered every stroke and each
+  rewrite cost a repaint and a notification. Newer revisions, tombstones and conflict rows are applied as before.
+  Test: `src/features/workspace/data/annotationsAtScale.test.tsx`. Related workspace fixes (indexed highlight /
+  bookmark views, one page reload after the download) and the browser numbers: `docs/modules/workspace.md`,
+  [`docs/PERFORMANCE.md`](../PERFORMANCE.md). Still mouse input in headless Chromium only — no Pencil latency claim.
+
+## G6 acceptance (2026-10-10, AC-21 / AC-28) — see `docs/ACCEPTANCE.md`
+* AC-21 verified in the REAL app against the real server (`e2e/g6-ac21-ink-position.spec.ts`, phone + desktop): a pen
+  stroke written by mouse across a printed word stays on that word (painted pixels vs the word's text-layer box) after
+  zoom ×2, view rotation 90°, close/reopen, reload, and on a second browser context with another viewport and pixel
+  density (empty local storage — the ink comes from the server); a second stroke written zoomed AND rotated lands on its
+  line on the other device; the same on a page with an intrinsic `/Rotate 90` (`fixtures/acceptance/g6_rotated_page.pdf`).
+  Stored points lie inside the processed region of the word (unrotated page space). Mouse input only.
+* AC-28 (`e2e/g6-ac28-pencil.spec.ts`): the panel with mouse input and with a CDP-simulated pen (constant 0.5 pressure)
+  never reports pressure / tilt / hover as supported; a mouse stroke is stored with `input.pointer_type = 'mouse'`,
+  `pressure_available: false` and 3-value points. The Control Center pen summary no longer says pressure / tilt / hover
+  «تعمل» (they only ran with simulated events).

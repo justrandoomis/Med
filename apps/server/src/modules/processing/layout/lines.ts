@@ -27,7 +27,70 @@ export function groupRows(items: TextItem[]): TextItem[][] {
     else loose.push(it);
   }
   const lineRows = [...byLine.values()].map((r) => r.sort((a, b) => a.x0 - b.x0));
-  return [...lineRows, ...groupRowsGeometric(loose)];
+  return [...lineRows, ...groupRowsGeometric(attachScripts(loose))];
+}
+
+const SUPERSCRIPT: Record<string, string> = {
+  '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴', '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹', '+': '⁺', '-': '⁻', '−': '⁻', '–': '⁻', '=': '⁼', '(': '⁽', ')': '⁾', n: 'ⁿ',
+};
+const SUBSCRIPT: Record<string, string> = {
+  '0': '₀', '1': '₁', '2': '₂', '3': '₃', '4': '₄', '5': '₅', '6': '₆', '7': '₇', '8': '₈', '9': '₉', '+': '₊', '-': '₋', '−': '₋', '–': '₋', '=': '₌', '(': '₍', ')': '₎',
+};
+
+/**
+ * Superscripts and subscripts typed with a font effect (Word / LibreOffice «10<sup>9</sup>», «PaCO<sub>2</sub>»,
+ * «Ca<sup>2+</sup>») are separate, smaller, raised / lowered text runs in the PDF. Read as plain runs they changed the
+ * VALUE («11.5 × 10⁹/L» became «11.5 × 109/L») or fell off their line («PaCO 52 mmHg» + a stray «2» paragraph)
+ * (G4 / AC-11). A short run that is clearly smaller than the run it touches and sits on a raised / lowered baseline
+ * is written with the Unicode super/subscript characters when every character has one, and joins its host's line.
+ */
+export function attachScripts(items: TextItem[]): TextItem[] {
+  if (items.length < 2) return items;
+  const maxSize = Math.max(...items.map((i) => (i.size > 0 ? i.size : 0)));
+  // a host overlaps the run vertically: only the items whose top lies within one tall line above it are scanned
+  // (dense pages stay linear-ish), found by binary search on the items sorted by top
+  const byTop = items.filter((h) => h.size > 0 && h.text.trim().length > 0).sort((a, b) => a.top - b.top);
+  const maxH = Math.max(0, ...byTop.map((h) => h.bottom - h.top));
+  const firstAtOrAfter = (y: number) => {
+    let lo = 0;
+    let hi = byTop.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (byTop[mid]!.top < y) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  };
+  const out = items.slice();
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i]!;
+    const t = it.text.trim();
+    if (!t || [...t].length > 4 || !(it.size > 0) || it.size > 0.85 * maxSize) continue;
+    let host: TextItem | null = null;
+    let hostGap = Infinity;
+    for (let k = firstAtOrAfter(it.top - maxH); k < byTop.length && byTop[k]!.top < it.bottom; k++) {
+      const h = byTop[k]!;
+      if (h === it || it.size > 0.85 * h.size) continue;
+      const gap = Math.min(Math.abs(it.x0 - h.x1), Math.abs(h.x0 - it.x1));
+      if (gap > 0.3 * h.size || overlap1d(it.top, it.bottom, h.top, h.bottom) <= 0) continue;
+      if (gap < hostGap) {
+        host = h;
+        hostGap = gap;
+      }
+    }
+    if (!host) continue;
+    // raised: it ends well above the host's bottom; lowered: it starts well below the host's top. Producers differ
+    // (reportlab moves the baseline by ~40 %, LibreOffice keeps a superscript's top / a subscript's bottom on the
+    // host's line), both pass; a smaller run on the SAME baseline (small caps, a smaller word) passes neither.
+    const raised = host.bottom - it.bottom > 0.3 * host.size;
+    const lowered = !raised && it.top - host.top > 0.4 * host.size && it.bottom >= host.bottom - 0.1 * host.size;
+    if (!raised && !lowered) continue;
+    const map = raised ? SUPERSCRIPT : SUBSCRIPT;
+    const chars = [...t];
+    const text = chars.every((c) => map[c] !== undefined) ? chars.map((c) => map[c]).join('') : t;
+    out[i] = { ...it, text, top: host.top, bottom: host.bottom, size: host.size };
+  }
+  return out;
 }
 
 function groupRowsGeometric(items: TextItem[]): TextItem[][] {

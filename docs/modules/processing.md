@@ -104,6 +104,11 @@ Region `confidence` is stored on a **0–1 scale** (page `ocr_confidence` too). 
 word is < 60 % (the reason lists the weak words). Scan quality (`png.ts`, PNG only): contrast (paper vs darkest 0.2 %)
 < 90 or edge sharpness < 0.4 → page `needs_review`, `error_code LOW_QUALITY_SCAN`, one page-level `ocr_error` item.
 OCR finding nothing on a PDF page → `no_text_found` + `unreadable_page` item (never "empty").
+**Coverage check (G3, `coverage.ts`)**: on image pages and pure scans (PNG), text-like ink that no OCR word covers is
+found (line bands → ink segments; pictures, rules, borders ignored). Then the page is read again as one block (PSM 6)
+and only the words that fall where the first reading read nothing are added; writing still unread → page
+`needs_review`, `error_code TEXT_NOT_READ`, an `ocr_error` item with the places (`details.not_read`). Found by AC-13:
+PSM 3 read the stem of an Arabic question photo and silently dropped its four options. Not done for JPEG (no decoder).
 
 ### Index (`chunks.ts`, `chunk-v1`) and search
 * Chunks: paragraph/list groups under one heading path (≤ ~1200 chars), each table (serialized with header context:
@@ -263,3 +268,54 @@ Commands (real results, after the fixes):
 * `npx tsc -p apps/server --noEmit` → exit 0; `--noUnusedLocals --noUnusedParameters` → nothing in processing/db.ts.
 * `npx tsc -p packages/shared --noEmit` → exit 0; `npm test -w @medlevo/shared` → 37 passed; `npx tsc -p apps/web --noEmit` → exit 0;
   `npm run build -w @medlevo/web` → exit 0.
+
+## G1 acceptance fix (2026-10-10, AC-02 / AC-03)
+* **A PDF page with damaged content was stored as a «ready» empty page.** A page whose content stream cannot be decoded
+  (or references a missing image object) renders blank, so the blank-page check called it empty: page `ready`, version
+  `ready`, `coverage_complete=true` — the stumble was invisible. Poppler reports the damage on stderr while exiting 0.
+  `tools.ts`: `renderPdfPage({ onDiagnostics })` + `popplerReportsDamage(stderr)` (errors count, warnings do not);
+  `pipeline.ts`: such a page is `needs_review`, `text_status='no_text_found'`, `error_code='PAGE_CONTENT_DAMAGED'`, an
+  `unreadable_page` review item and a specific Arabic reason. A genuinely blank page stays `ready`.
+  Tests: `apps/server/test/acceptance/g1-ac03.test.ts` (fixture `fixtures/acceptance/g1_damaged_page.pdf`), also the
+  real image-set failure path (`g1_partial_images.zip`, truncated PNG → `OCR_FAILED`, version `partial`). See `docs/ACCEPTANCE.md`.
+
+## Integration round I2 — performance & resilience (2026-10-10)
+Measured with generated large fixtures (see [`docs/PERFORMANCE.md`](../PERFORMANCE.md); suite `apps/server/test/perf/`,
+`MEDLEVO_PERF=1`). One hot spot fixed here:
+* **A page photo above the OCR pixel budget was still fully decoded** for quality metrics it never uses (the metrics
+  only qualify OCR text, and such a page is never OCR'd): a 6000×8000 RGB PNG cost 2.6 s and +568 MB of process memory
+  (high-water 226 → 793 MB). `processImagePage` now checks the pixel count first and skips the decode above
+  `MAX_OCR_PIXELS` (13 ms, +1 MB). Outcome unchanged (`IMAGE_TOO_LARGE`, figure region, review item).
+  Test: `test/processing/large-image.test.ts` (fails on the old code).
+* Measured, not changed: 300-page digital lecture 22.7 s (≈ 31 ms per text page, ≈ 87 ms per dense two-column page),
+  live heap flat at ≈ 149 MB after GC from page 50 to 300; scanned pages ≈ 7.6 s each (tesseract eng+ara, one worker);
+  a SIGKILL of the server mid-run resumes from the page checkpoints with no duplicated rows (see core-server notes).
+
+## Acceptance round G4 — AC-11 (2026-10-10)
+
+Three text-layer defects found with `fixtures/acceptance/g4_*.pdf` (reportlab and Word → LibreOffice exports) and fixed;
+regressions in `apps/server/test/acceptance/g4-ac11.test.ts` (8 of its 12 tests fail with the fixes disabled):
+
+* **Super/subscripts typed as font effects** (`layout/lines.ts attachScripts`, called by `groupRows` for digital runs):
+  pdf.js gives «10<sup>9</sup>» / «PaCO<sub>2</sub>» as separate smaller runs on a raised / lowered baseline. They were stored
+  as «11.5 × 109/L» (another value) and «PaCO 52 mmHg» + a stray «2» paragraph. A run of ≤ 4 characters, ≤ 85 % of the
+  size of the run it touches (gap ≤ 0.3 × size), ending ≥ 30 % of the host size above its bottom (raised) or starting
+  ≥ 40 % below its top (lowered), is written with Unicode super/subscripts when every character has one (digits, + − = ( ) n)
+  and joins its host's line. A smaller run on the same baseline is untouched.
+* **«×» / «÷» were strong LTR** (`text.ts STRONG_LTR_RE` covered U+00C0–U+024F, which includes U+00D7 / U+00F7): inside an
+  Arabic line «11.5 ×10⁹/L.» was stored «11.5 L/10⁹× .». They are neutral now.
+* **Reversed negation words** (`text.ts fixReversedLamAlef`): the stand-alone «لا» came out as «ال» and «إلا» / «ألا» as
+  «إال» / «أال» (reversed lam-alef ligature) — the negation vanished without any flag. Whole-word repair: «ال» / «وال»
+  followed by an Arabic word → «لا» / «ولا»; «إال» / «أال» → «إلا» / «ألا». Counts as a ligature fix (the document is then
+  treated as reversing ligatures, so ambiguous inner «ال» words are flagged as before).
+
+
+## G8 acceptance fixes (security, 2026-10-10)
+* **LibreOffice never reaches the network** (`tools.ts convertToPdf`, `officeEnv`): a PPTX (fixed slide rendering) or a
+  legacy .doc / .ppt (conversion) whose picture is only a LINK (`r:link` / `TargetMode="External"` / INCLUDEPICTURE) made
+  LibreOffice fetch that URL — any host, internal addresses included (an SSRF from an uploaded file; confirmed with a
+  local trap: 3 requests per conversion). Every conversion now runs with a pre-seeded profile
+  (`registrymodifications.xcu`: `BlockUntrustedRefererLinks`, macros off, manual HTTP/HTTPS proxy on the closed
+  loopback port 1, empty no-proxy list) and the same proxy in its environment. Tests:
+  `apps/server/test/acceptance/g8-security.test.ts` (PPTX + DOC → zero requests to the trap, the rendering / conversion
+  still produced), `e2e/g8-security.spec.ts` (real server). Fixtures: `fixtures/acceptance/g8_linked_image.{pptx,doc}`.

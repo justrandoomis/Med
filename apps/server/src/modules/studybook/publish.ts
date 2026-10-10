@@ -30,7 +30,9 @@ import type { AppContext } from '../../context';
 import { toJson } from '../../db/db';
 import { sha256 } from '../../lib/hash';
 import { newId } from '../../lib/ids';
-import { recordDependencies, validateClaims, type AliasMap, type SentenceResult } from '../evidence/services';
+import { inventedCitations, recordDependencies, stripPseudoCitations, validateClaims, type AliasMap, type SentenceResult } from '../evidence/services';
+
+export { hasPseudoCitation, stripPseudoCitations } from '../evidence/services';
 import type { GeneratedBlockOut, GeneratedContentOut } from './schema';
 import { labelParagraph, paragraphOf, richText, type SentencePiece } from './text';
 
@@ -158,6 +160,9 @@ function isAspectLabel(text: string): boolean {
   return wordCount(text) <= 6 && !/[0-9٠-٩۰-۹]/.test(text);
 }
 
+const PSEUDO_CITATION_REASON =
+  'تذكر الجملة صفحة أو دليلًا داخل النص لم يُتحقق منه (الاستشهاد يكون بروابط الأدلة التي ينشئها التطبيق فقط)؛ حُذفت حتى لا تبدو استشهادًا صالحًا.';
+
 const LABELS: Partial<Record<ContentBlockView['kind'], string>> = {
   example: `${GENERATED_EXAMPLE_LABEL_AR} — مؤلَّف للتعليم، ليس من المصدر ولا لمريض حقيقي`,
   memory_hook: MEMORY_HOOK_LABEL_AR,
@@ -222,6 +227,7 @@ export async function processGenerated(ctx: AppContext, content: GeneratedConten
   const removed: ProcessResult['removed'] = [];
   const counts: ProcessResult['counts'] = { pending: 0, linked: 0, needs_review: 0, conflict: 0, rejected: 0, owner_reviewed: 0, not_applicable: 0 };
   const evidenceRegion = new Map(o.pack.views.map((v) => [v.id, v.region_id]));
+  const quoteById = new Map(o.pack.views.map((v) => [v.id, v.quote]));
   let entailment: ProcessResult['entailment'] = { used: false, model: null, reason_ar: null };
 
   // 1) rules post-filter
@@ -232,6 +238,32 @@ export async function processGenerated(ctx: AppContext, content: GeneratedConten
       const keep = b.sentences.filter((s) => s.original_quote && s.claim);
       for (const s of b.sentences) if (!(s.original_quote && s.claim)) removed.push({ text: s.text, reason_ar: LITERAL_REASON });
       return { ...b, kind: 'original_quote' as const, sentences: keep, table: null };
+    })
+    // G2 / AC-06: no page / slide / alias reference written into the text, in any block (claims included) —
+    // unless the sentence's own cited excerpt says it (a faithful quote of the source)
+    .map((b) => {
+      const quotesOf = (s: GeneratedSentence): string[] =>
+        (s.claim?.evidence ?? []).map((a) => (Object.prototype.hasOwnProperty.call(o.pack.aliasMap, a) ? quoteById.get(o.pack.aliasMap[a]!) : undefined)).filter((x): x is string => !!x);
+      const invented = (s: GeneratedSentence) => inventedCitations(s.text, quotesOf(s)).length > 0;
+      const sentences = b.sentences.filter((s) => {
+        if (!invented(s)) return true;
+        removed.push({ text: s.text, reason_ar: PSEUDO_CITATION_REASON });
+        return false;
+      });
+      const table = b.table
+        ? {
+            header: b.table.header.map((h) => stripPseudoCitations(h)),
+            rows: b.table.rows.map((row) =>
+              row.map((cell, c) => {
+                if (!invented(cell)) return cell;
+                if (c === 0 && !cell.claim) return { ...cell, text: stripPseudoCitations(cell.text) || CELL_REMOVED };
+                removed.push({ text: cell.text, reason_ar: PSEUDO_CITATION_REASON });
+                return { text: CELL_REMOVED, claim: null };
+              }),
+            ),
+          }
+        : b.table;
+      return { ...b, sentences, table };
     })
     // claim-less sentences inside medical content: only questions / short connective phrases (see isConnectiveText);
     // «original quotes» without a claim are left to validateClaims, which rejects them with its own reason

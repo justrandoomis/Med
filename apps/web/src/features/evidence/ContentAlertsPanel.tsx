@@ -3,6 +3,7 @@
 // silently). Layout-only changes are told apart from fact / answer changes. The owner acknowledges or
 // closes an alert explicitly.
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { BellRing, CircleCheck, Lock } from 'lucide-react';
 import { DEPENDENT_TYPE_LABELS_AR, type AlertImpact, type ContentAlertView } from '@medlevo/shared';
 import { Button, EmptyState, ErrorState, LoadingState, StatusPill, type StatusTone } from '../../design';
@@ -81,8 +82,14 @@ export function AlertCard({ alert, onChanged }: { alert: ContentAlertView; onCha
           <ul>
             {alert.items.map((i) => (
               <li key={`${i.type}:${i.id}`} className="ev-alert__item">
-                <span className="ev-alert__item-type">{DEPENDENT_TYPE_LABELS_AR[i.type] ?? i.type}</span>
-                {i.title && <BidiText as="span" dir="rtl" className="ev-alert__item-title" text={i.title} />}
+                <span className="ev-alert__item-type">{DEPENDENT_TYPE_LABELS_AR[i.type] ?? 'عنصر مشتق'}</span>
+                {i.title && i.href ? (
+                  <Link to={i.href} className="ev-alert__item-title ev-alert__item-link">
+                    <BidiText as="span" dir="rtl" text={i.title} />
+                  </Link>
+                ) : i.title ? (
+                  <BidiText as="span" dir="rtl" className="ev-alert__item-title" text={i.title} />
+                ) : null}
                 <StatusPill tone={IMPACT_TONE[i.impact]} icon={i.impact === 'still_valid' ? <CircleCheck size={14} /> : undefined}>
                   {i.impact_label_ar}
                 </StatusPill>

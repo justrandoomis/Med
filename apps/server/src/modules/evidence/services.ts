@@ -5,6 +5,7 @@ export { resolveScope, toResolvedScope, inScope, describeScopeAr, externalEviden
 export {
   retrieve,
   abstainFor,
+  suggestWiderScope,
   searchedReport,
   priorityTiers,
   pagesAr,
@@ -44,3 +45,4 @@ export {
 } from './dependencies';
 export { buildQuery, type BuiltQuery, type Expansion } from './terms';
 export { cacheKey, canReuse, type CacheKeyInput, type ReuseCheck } from './cache';
+export { hasPseudoCitation, inventedCitations, pseudoCitations, stripPseudoCitations } from './textcite';

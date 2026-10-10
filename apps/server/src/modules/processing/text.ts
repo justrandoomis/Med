@@ -8,7 +8,10 @@ import { normalizeForSearch, stripBidiControls } from '@medlevo/shared';
 const AR_LETTER = '\\u0621-\\u063A\\u0641-\\u064A\\u066E-\\u06D3\\u06FA-\\u06FF\\u0750-\\u077F\\u08A0-\\u08C9';
 const AR_LETTER_RE = new RegExp(`[${AR_LETTER}]`);
 const STRONG_RTL_RE = /[\u0590-\u05FF\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFC]/;
-const STRONG_LTR_RE = /[A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF\u00B5]/;
+// Latin letters (incl. Latin-1 / Extended-A/B), Greek, Cyrillic, micro sign. U+00D7 \u00AB\u00D7\u00BB and U+00F7 \u00AB\u00F7\u00BB sit inside
+// the Latin-1 letter range but are math symbols (bidi class ON): counted as strong LTR they turned \u00AB11.5 \u00D710\u2079/L\u00BB
+// inside an Arabic line into \u00AB11.5 L/10\u2079\u00D7\u00BB (G4 / AC-11).
+const STRONG_LTR_RE = /[A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u024F\u0370-\u03FF\u0400-\u04FF\u00B5]/;
 
 export type CharDir = 'R' | 'L' | 'N';
 
@@ -71,19 +74,36 @@ export function squashSpaces(text: string): string {
 // (see detectSuspicious(…, { reversedLigatures: true })).
 const REVERSED_LAM_ALEF = new RegExp(`(?<![${AR_LETTER}\\u0640])([وفبك]{0,2})ا([اأإآ])ل`, 'g');
 const REVERSED_LAM_ALEF_TEST = new RegExp(REVERSED_LAM_ALEF.source);
+// The negation words themselves (G4 / AC-11): the stand-alone «لا» is extracted as «ال» and «إلا» / «ألا» as «إال» /
+// «أال» — the negation silently disappeared from the text («أي مما يلي ال يعد …»), so the NOT/EXCEPT check and the
+// emphasis never saw it. A bare article «ال» never stands alone before a word, and «إال» / «أال» are not words, so
+// these whole-word forms are repaired: «ال» / «وال» only when another Arabic word follows; «إال» / «أال» anywhere.
+const AR_MARKS = '\\u064B-\\u0652\\u0670';
+const REVERSED_LA_WORD = new RegExp(`(?<![${AR_LETTER}${AR_MARKS}\\u0640])(و?)ال(?=\\s+[${AR_MARKS}]*[${AR_LETTER}])`, 'g');
+const REVERSED_ILLA_WORD = new RegExp(`(?<![${AR_LETTER}${AR_MARKS}\\u0640])([إأ])ال(?![${AR_LETTER}${AR_MARKS}\\u0640])`, 'g');
 
 export function fixReversedLamAlef(text: string): { text: string; fixes: number } {
   let fixes = 0;
-  const out = text.replace(REVERSED_LAM_ALEF, (_m, proclitics: string, alef: string) => {
-    fixes++;
-    return `${proclitics}ال${alef}`;
-  });
+  const out = text
+    .replace(REVERSED_LAM_ALEF, (_m, proclitics: string, alef: string) => {
+      fixes++;
+      return `${proclitics}ال${alef}`;
+    })
+    .replace(REVERSED_LA_WORD, (_m, waw: string) => {
+      fixes++;
+      return `${waw}لا`;
+    })
+    .replace(REVERSED_ILLA_WORD, (_m, hamza: string) => {
+      fixes++;
+      return `${hamza}لا`;
+    });
   return { text: out, fixes };
 }
 
 /** Whether raw extracted text shows the reversed lam-alef defect (the font reverses its ligatures). */
 export function hasReversedLamAlef(text: string): boolean {
-  return REVERSED_LAM_ALEF_TEST.test(cleanRun(text));
+  const t = cleanRun(text);
+  return REVERSED_LAM_ALEF_TEST.test(t) || new RegExp(REVERSED_LA_WORD.source).test(t) || new RegExp(REVERSED_ILLA_WORD.source).test(t);
 }
 
 const AR_WORD = new RegExp(`[${AR_LETTER}]+`, 'g');

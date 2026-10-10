@@ -21,6 +21,14 @@ areas listed in §00 are not installed skills; they are just areas we looked for
 
 Round 5 (integration and acceptance) adds rows below once its agents report.
 
+* R5 critic (completeness critique, 2026-10-10): `anthropic-skills:webapp-testing` — real-server screen sweep
+  `e2e/critic-screens.spec.ts` (every top-level screen at 390 / 1280 px, light + dark, screenshots inspected);
+  `design:accessibility-review` — WCAG 2.1 AA checklist turned into heading, accessible-name, `alt`, contrast and 44 px
+  touch-target probes (fixes in `docs/ACCEPTANCE.md` «Critic»).
+* R5 docs (requirement matrix, test log, README, 2026-10-10): `engineering:documentation` — reader-first structure
+  for `docs/REQUIREMENTS_MATRIX.md`, `docs/TEST_LOG.md` and `README.md` (most useful information first, commands shown,
+  link instead of duplicating the module notes).
+
 ## Considered but not used
 
 | Skill | Why it was not used |

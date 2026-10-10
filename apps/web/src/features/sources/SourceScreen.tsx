@@ -13,6 +13,7 @@ import { SourceMenu } from '../library/components/ItemMenus';
 import { formatIcon, ProcessingPill, SourceSubtitle } from '../library/labels';
 import { OfflineNotice } from '../library/shared';
 import { useLibrary } from '../library/useLibrary';
+import { OfflineDownloadButton } from '../offline/OfflineDownloadButton';
 import { LinksPanel } from './LinksPanel';
 import { MetadataForm } from './MetadataForm';
 import { PagesPanel } from './PagesPanel';
@@ -102,6 +103,7 @@ export function SourceScreen() {
                 )
               }
             </FeatureGate>
+            {d.deleted_at === null && <OfflineDownloadButton sourceId={d.id} title={d.title} />}
             {!readOnly && summary && lib.index && <SourceMenu source={summary} index={lib.index} />}
           </div>
         </div>

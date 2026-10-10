@@ -27,13 +27,19 @@ export const SEARCH_RESULT_TYPE_LABELS_AR: Record<SearchResultType, string> = {
   transcripts: 'التفريغ الصوتي',
 };
 
-export type SearchOrigin = 'source' | 'owner_note' | 'generated' | 'recognized';
+/**
+ * Where the text of a hit comes from. Transcript segments carry their real origin: typed by the owner (or corrected
+ * by the owner — the shown text is then the owner's), imported from a subtitle file, or machine-recognized.
+ */
+export type SearchOrigin = 'source' | 'owner_note' | 'generated' | 'recognized' | 'imported' | 'owner_typed';
 
 export const SEARCH_ORIGIN_LABELS_AR: Record<SearchOrigin, string> = {
   source: 'من المصدر',
   owner_note: 'ملاحظتي',
   generated: 'مولَّد — ليس دليلًا',
   recognized: 'مقروء آليًا',
+  imported: 'مستورد من ملف ترجمة',
+  owner_typed: 'كتبته بنفسك',
 };
 
 export interface SearchHighlight {

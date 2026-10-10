@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import type { AttemptFeedbackView, ExamSessionView, HintView, RichText } from '@medlevo/shared';
+import { EXAM_ITEM_ORIGIN_LABELS_AR, type AttemptFeedbackView, type ExamSessionView, type HintView, type RichText } from '@medlevo/shared';
 import { ToastProvider } from '../../design';
 import { setFetchImpl } from '../../lib/api';
 import { getDb } from '../../lib/localdb';
@@ -57,6 +57,8 @@ function sessionFor(mode: 'practice' | 'exam', policy: Partial<ExamSessionView['
         negation_terms: [],
         media: [],
         scored: true,
+        origin_type: 'source',
+        origin_label_ar: EXAM_ITEM_ORIGIN_LABELS_AR.source,
       },
       {
         index: 1,
@@ -73,6 +75,8 @@ function sessionFor(mode: 'practice' | 'exam', policy: Partial<ExamSessionView['
         negation_terms: [],
         media: [],
         scored: true,
+        origin_type: 'generated',
+        origin_label_ar: EXAM_ITEM_ORIGIN_LABELS_AR.generated,
       },
     ],
     media_expires_at: null,
@@ -187,6 +191,9 @@ describe('exam runner (assessed)', () => {
     expect(screen.queryByRole('button', { name: /تلميح/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /اعرض الحل/ })).toBeNull();
 
+    // the keyboard listener is (re)attached in a passive effect after the question is painted: flush effects first,
+    // or a key pressed in that window reaches the listener of the loading render (flaky under a loaded machine)
+    await act(async () => {});
     fireEvent.keyDown(window, { key: '2' });
     await waitFor(() => expect(screen.getByRole('radio', { name: /McBurney/ }).getAttribute('aria-checked')).toBe('true'));
     await waitFor(async () => {
@@ -209,6 +216,17 @@ describe('exam runner (assessed)', () => {
     expect(screen.getByRole('button', { name: 'السؤال 2، مُجاب، الحالي' })).toBeTruthy();
     // no answer / feedback calls during an exam
     expect(calls.some((c) => c.url.includes('/answer') || c.url.includes('/feedback') || c.url.includes('/hint'))).toBe(false);
+  });
+
+  it('during the attempt a generated item is visibly generated; a source item shows no origin (I1 #5)', async () => {
+    mockServer(sessionFor('exam'));
+    renderRunner();
+    expect(await screen.findByText('السؤال 1 من 2')).toBeTruthy();
+    expect(screen.queryByText(/سؤال مولد بواسطة MedLevo/)).toBeNull();
+    expect(screen.queryByText(EXAM_ITEM_ORIGIN_LABELS_AR.source)).toBeNull();
+    fireEvent.keyDown(window, { key: 'ArrowLeft' });
+    expect(await screen.findByText('السؤال 2 من 2')).toBeTruthy();
+    expect(screen.getByText(EXAM_ITEM_ORIGIN_LABELS_AR.generated).textContent).toContain('سؤال مولد بواسطة MedLevo');
   });
 
   it('resumes after a reload from the local copy (unsynced answers are never lost)', async () => {

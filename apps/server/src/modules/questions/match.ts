@@ -383,7 +383,30 @@ function questionsOfSources(ctx: AppContext, sourceIds: string[]): string[] {
     .map((r) => r.id);
 }
 
-/** A (new / re-processed) lecture: match every question of its course. */
+/**
+ * G5 / AC-16: links this matcher made earlier that are out of scope now — the lecture or the question source moved to
+ * another course, or the source is no longer a lecture. Only the matcher's own pending suggestions are dropped: the
+ * owner's decisions and links other modules made (a generated question's lecture, `matcher_version` NULL) are kept.
+ */
+function staleAutoLinks(ctx: AppContext, where: string, params: unknown[], keep: (l: { question_id: string; lecture_source_id: string }) => boolean): number {
+  const rows = ctx.db.all<{ id: string; question_id: string; lecture_source_id: string }>(
+    `SELECT id, question_id, lecture_source_id FROM question_lecture_link
+      WHERE ${where} AND origin = 'auto' AND status = 'suggested' AND matcher_version IS NOT NULL`,
+    params,
+  );
+  let removed = 0;
+  ctx.db.tx(() => {
+    for (const l of rows) {
+      if (keep(l)) continue;
+      ctx.db.run(`DELETE FROM review_queue_item WHERE entity_type = 'question_lecture_link' AND entity_id = ? AND status = 'open'`, [l.id]);
+      ctx.db.run('DELETE FROM question_lecture_link WHERE id = ?', [l.id]);
+      removed++;
+    }
+  });
+  return removed;
+}
+
+/** A (new / re-processed / moved) lecture: match every question of its course. */
 export function matchLecture(ctx: AppContext, lectureSourceId: string): MatchStats {
   const all = liveSources(ctx);
   const lec = all.find((s) => s.id === lectureSourceId);
@@ -395,7 +418,9 @@ export function matchLecture(ctx: AppContext, lectureSourceId: string): MatchSta
   if (lec.course_node_id) {
     for (const r of ctx.db.all<{ id: string }>(`SELECT id FROM question WHERE origin_type = 'owner' AND course_node_id = ? AND deleted_at IS NULL`, [lec.course_node_id])) qids.add(r.id);
   }
-  return run(ctx, new Map([[lec.id, qids]]));
+  const stats = run(ctx, new Map([[lec.id, qids]]));
+  stats.removed += staleAutoLinks(ctx, 'lecture_source_id = ?', [lec.id], (l) => qids.has(l.question_id));
+  return stats;
 }
 
 /** Questions (of a new question source, or quick-added) against the lectures of their course. */
@@ -410,16 +435,22 @@ export function matchQuestions(ctx: AppContext, questionIds: string[]): MatchSta
     set.add(qid);
     pairs.set(lectureId, set);
   };
+  const inScope = new Map<string, Set<string>>();
   for (const qid of questionIds) {
     const q = liveQuestion(ctx, qid);
     if (!q) continue;
     const srcIds = ctx.db.all<{ source_id: string }>(`SELECT DISTINCT source_id FROM question_occurrence WHERE question_id = ? AND status = 'current'`, [qid]).map((r) => r.source_id);
     const groups = new Set(srcIds.map((id) => byId.get(id)).filter((s): s is SrcLite => !!s).map(groupKey));
     if (q.origin_type === 'owner' && q.course_node_id) groups.add(q.course_node_id);
-    for (const l of lectures) if (groups.has(groupKey(l))) add(l.id, qid);
-    for (const l of links) if (srcIds.includes(l.from) && byId.get(l.to) && LECTURE_TYPES.includes(byId.get(l.to)!.source_type)) add(l.to, qid);
+    const mine = new Set<string>();
+    for (const l of lectures) if (groups.has(groupKey(l))) mine.add(l.id);
+    for (const l of links) if (srcIds.includes(l.from) && byId.get(l.to) && LECTURE_TYPES.includes(byId.get(l.to)!.source_type)) mine.add(l.to);
+    for (const lectureId of mine) add(lectureId, qid);
+    inScope.set(qid, mine);
   }
-  return run(ctx, pairs);
+  const stats = run(ctx, pairs);
+  for (const [qid, mine] of inScope) stats.removed += staleAutoLinks(ctx, 'question_id = ?', [qid], (l) => mine.has(l.lecture_source_id));
+  return stats;
 }
 
 export function matchSourceVersion(ctx: AppContext, versionId: string): MatchStats & { kind: 'lecture' | 'questions' | 'none' } {
@@ -432,7 +463,10 @@ export function matchSourceVersion(ctx: AppContext, versionId: string): MatchSta
     extractConceptCandidates(ctx, versionId);
     return { ...matchLecture(ctx, v.source_id), kind: 'lecture' };
   }
-  return { ...matchQuestions(ctx, questionsOfSources(ctx, [v.source_id])), kind: 'questions' };
+  // a source re-typed from «lecture» keeps no matcher suggestions as a lecture (G5 / AC-16)
+  const dropped = staleAutoLinks(ctx, 'lecture_source_id = ?', [v.source_id], () => false);
+  const stats = matchQuestions(ctx, questionsOfSources(ctx, [v.source_id]));
+  return { ...stats, removed: stats.removed + dropped, kind: 'questions' };
 }
 
 /** Whether any question source shares the lecture's course (for the honest empty state). */

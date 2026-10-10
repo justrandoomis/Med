@@ -110,7 +110,10 @@ History: newest first, scores hidden for unfinished assessed attempts.
    Generator **and** independent validator must be available, else 409 `AI_NOT_CONFIGURED` with the reason.
 2. C1 retrieval inside the stored resolved scope → `abstainFor` → pack. Fewer distinct citable excerpts than the
    difficulty needs (medium 2, hard 3, very hard 4) → **abstained** with a suggestion (lower the difficulty, more
-   pages, or widen the scope explicitly); the generator is not called.
+   pages, or widen the scope explicitly); the generator is not called. G3 (AC-08): the pack is built with
+   `fixedAnswer: true` — excerpts whose region is an uncertain reading (diagram labels read by OCR) or flagged for
+   review (low OCR confidence, suspected extraction defect) are never handed to the generator (said in the run summary
+   / abstention); the written-answer rubric uses the same rule.
 3. `generate_questions` with the evidence as delimited untrusted blocks; a model abstention → abstained.
 4. Per question: server-side normalization (keys, NOT/EXCEPT capitalized) → deterministic checks (4–5 distinct
    options, one best answer key, no «all/none of the above», length / absolute-word / «an» / stem-repeat clues,
@@ -314,3 +317,47 @@ Commands after the fixes (repo root, `NODE_OPTIONS='--disable-warning=Experiment
 | `npx tsc -p apps/server --noEmit` / `npx tsc -p apps/web --noEmit` | exit 0 / exit 0 |
 | `npm run build -w @medlevo/web` | exit 0 |
 | `node apps/web/src/features/exams/real-server-check.mjs` | «OK: 36 checks passed.» |
+
+## 6. Integration round I1 (2026-10-10)
+* **Origin per delivered item.** `ExamSessionView.items` are now `ExamItemDeliveryView` (shared `exams-api.ts`,
+  additive: `ExamItemView` + `origin_type` + `origin_label_ar`). The label is the generic kind only
+  (`EXAM_ITEM_ORIGIN_LABELS_AR`: «سؤال من مصادر أسئلتك» / «سؤال مولد بواسطة MedLevo من المصادر المحددة» / «سؤال
+  أضفته بنفسك»), never a question source's name, year or page (AC-19). The origin is the one pinned in `items_json`
+  at creation (the question row for older records). The runner shows the generated label on each generated item
+  during the attempt; source items show nothing extra. Tests: server `exams.test.ts` (AC-19 key set + no source
+  name), `generation.test.ts` (mixed exam: generated vs source item), web `runner.test.tsx`.
+* `runner.test.tsx` «keyboard answering…» was flaky under a loaded machine (about 1 run in 3 with the whole exams
+  folder in parallel): the key was pressed before the passive effect re-attached the keyboard listener with the loaded
+  state. The test now flushes effects (`await act(async () => {})`) before the key press; 5/5 runs pass.
+
+## G2 acceptance fix (2026-10-10, AC-06)
+* `generation/validate.ts deterministicIssues`: a generated stem or option that writes a page / slide / alias
+  reference into its text («(see lecture p. 12)», «(ص 99)», «[E3]») is a blocking `evidence_supported` issue — repaired
+  or sent to review, never published (citations are evidence links only). Shared detector:
+  `evidence/textcite.ts`. Test: `apps/server/test/acceptance/g2-ac06.test.ts`.
+
+## G5 acceptance fixes (2026-10-10, AC-18, AC-19)
+* **AC-19 — answer marks never delivered** (`delivery.ts withoutAnswerMarks`): a tick «✓» printed next to the keyed
+  option (the parser records it as an unofficial mark but keeps the text), a lone «*», «(correct)» or an «Answer: B» glued
+  to the last option were delivered as option text during assessed exams and practice. The item delivered for answering
+  drops them; the vault keeps the original text.
+* **AC-19 (practice) — the pre-answer reason never names the key** (`delivery.ts unscoredReasons`): an item unscorable
+  because its source key was read with doubt carried «مفتاح المصدر («B» في …) … بثقة منخفضة» next to the question
+  before answering. Key-check blockers now show `KEY_UNDER_REVIEW_AR`; the full reason comes with the feedback.
+* **AC-18 — no knowledge from outside the material without a claim** (`generation/validate.ts deterministicIssues`): the
+  evidence module keeps a claim-less sentence as connective text unless it carries a value, so a generated explanation
+  or distractor explanation could publish «In pregnant women CT abdomen is the first test to order.» or «الزائدة
+  الملتهبة لا تحتاج جراحة …» by omitting its claim. As in the Study Book (`studybook/publish.ts isConnectiveText`), only a
+  question to the learner or a short connective phrase may stand without evidence; anything else is a blocking
+  `evidence_supported` issue (repair → review, never published).
+* Tests: `apps/server/test/acceptance/g5-ac18.test.ts`, `g5-ac19.test.ts`; `e2e/g5-ac17-ac19-exam.spec.ts`.
+
+
+## G8 acceptance fixes (AC-27, 2026-10-10)
+* **More help never earns more credit** (`shared/exams-api.ts masterySignal`): a guessed correct answer given AFTER a hint
+  weighed 0.35 («after a hint») against 0.2 for the same guess without the hint. A guess is now a guess with or without
+  hints (weights are monotone: help or lower confidence never raises the weight).
+* **Only a wrong answer has a mistake type — on every path** (`attempts.ts setMistakeType`): the learning PATCH refused a
+  type on a correct answer, but `PATCH /question-attempts/:id/mistake` and the sync `upsert` accepted it. All three
+  refuse now (409 / sync `rejected` with the Arabic reason).
+* Tests: `apps/server/test/acceptance/g8-ac27.test.ts`.

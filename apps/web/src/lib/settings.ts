@@ -2,7 +2,7 @@
 // for UI preferences): a change applies locally at once, is kept as a pending patch on this device
 // and is sent to the server; if the server is unreachable the patch is retried when back online.
 import { useSyncExternalStore } from 'react';
-import { DEFAULT_OWNER_SETTINGS, type OwnerSettings, type SettingsResponse } from '@medlevo/shared';
+import { DEFAULT_OWNER_SETTINGS, mergeSettingsPatch, type OwnerSettings, type SettingsResponse } from '@medlevo/shared';
 import { api, isApiError } from './api';
 import { setOwnerTimeZone } from './time';
 import { appearanceStore, type AppearancePrefs } from '../design/ThemeProvider';
@@ -97,8 +97,9 @@ class SettingsStore {
   /** Apply now, persist locally, send to the server. */
   update(patch: Partial<OwnerSettings>): Promise<void> {
     this.hookOnline();
-    const settings = { ...this.state.settings, ...patch };
-    this.pending = { ...this.pending, ...patch };
+    // a partial source_priority changes only the purposes it names (same merge as the server's PATCH)
+    const settings = mergeSettingsPatch(this.state.settings, patch);
+    this.pending = mergeSettingsPatch(this.pending, patch);
     write(PENDING_KEY, this.pending);
     this.set({ settings });
     if ('timezone' in patch) setOwnerTimeZone(settings.timezone);

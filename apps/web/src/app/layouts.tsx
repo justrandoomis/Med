@@ -6,8 +6,10 @@ import { setUnauthenticatedHandler } from '../lib/api';
 import { forgetAuth } from '../lib/auth';
 import { capabilitiesStore } from '../lib/capabilities';
 import { settingsStore } from '../lib/settings';
+import { getDb } from '../lib/localdb';
 import { installOfflineTransport } from '../lib/offline';
 import { getSyncEngine } from '../lib/sync';
+import { recoverNoteDrafts } from '../features/workspace/data/noteDrafts';
 import { usePageTitle } from '../lib/usePageTitle';
 import { PwaUpdatePrompt } from './PwaUpdatePrompt';
 
@@ -46,6 +48,8 @@ export function OwnerLayout() {
   useEffect(() => {
     const engine = getSyncEngine();
     engine.start();
+    // note text typed right before a reload / crash is backed up synchronously; save it now (I2, noteDrafts.ts)
+    void recoverNoteDrafts(getDb()).catch(() => undefined);
     void settingsStore.load();
     void capabilitiesStore.refresh();
     return () => engine.stop();
@@ -103,6 +107,7 @@ export function NotFoundScreen() {
   return (
     <div className="ml-page">
       <EmptyState
+        headingLevel={1}
         icon={<Compass size={28} />}
         title="هذه الصفحة غير موجودة"
         description="ربما تغيّر الرابط أو نُقل العنصر. ابدأ من الرئيسية أو من المكتبة."

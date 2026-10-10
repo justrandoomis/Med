@@ -27,7 +27,7 @@ export const SELECTION_AI_ACTIONS: readonly PendingAction[] = [
   { id: 'translate', label: 'ترجم', term: 'Translate', feature: 'ai.explain', wired: true },
   { id: 'ask', label: 'اسأل عن التحديد', term: 'Ask', feature: 'ai.chat', wired: true },
   { id: 'compare', label: 'قارن', term: 'Compare', feature: 'ai.summaries', wired: true },
-  { id: 'mcq', label: 'أنشئ سؤال اختيار من متعدد', term: 'Create MCQ', feature: 'ai.generate_questions', wired: false, notWiredReason: 'إنشاء الأسئلة من التحديد يصل مع مرحلة الأسئلة المولَّدة؛ لم يُربط بالقارئ بعد.' },
+  { id: 'mcq', label: 'أنشئ سؤال اختيار من متعدد', term: 'Create MCQ', feature: 'ai.generate_questions', wired: false, notWiredReason: 'إنشاء سؤال من النص المحدد لم يُربط بالقارئ بعد. الأسئلة المولَّدة متاحة من «التدريب والامتحانات» ← «توليد أسئلة صعبة»، حيث تختار هذه المحاضرة وصفحاتها.' },
   { id: 'flashcard', label: 'أنشئ بطاقة مراجعة', term: 'Create Flashcard', feature: 'flashcards', wired: true },
   { id: 'revision', label: 'أضف إلى المراجعة', term: 'Add to Revision', feature: 'planner', wired: true },
   { id: 'explain_image', label: 'اشرح الصورة', term: 'Explain Image', feature: 'ai.figure_explain', wired: true },

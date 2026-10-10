@@ -35,7 +35,13 @@
 | Local-first | **Dexie (IndexedDB)** for ink, notes, attempts, review events, sessions, outbox, offline blobs | writing never waits for the network (§26, §47) |
 | Rendering | `pdfjs-dist` in the browser (canvas + text layer), SVG/canvas ink layer | selectable text, accessible text layer |
 | Icons / fonts | `lucide-react`; IBM Plex Sans Arabic + Noto Naskh Arabic via `@fontsource` (bundled, offline) | consistent Arabic/Latin typesetting |
-| Tests | Vitest (unit/integration), Playwright (E2E, Chromium at 390px / tablet / desktop) | |
+| Validation | `zod` 4 schemas in `packages/shared` (request bodies, settings, AI output contracts) | one contract for server, web and model output |
+| Tests | Vitest 5 (unit/integration; web with jsdom + fake-indexeddb), Playwright 1.64 (E2E against the real server serving the built app; Chromium projects `phone` 390×844 and `desktop` 1280×800; tablet widths only in layout unit tests) | see `docs/TEST_LOG.md` |
+
+Versions in use (2026-10-10): Node 22.22, Fastify 5.12, React 19.3, Vite 8.3, React Router 7.18, pdfjs-dist 6.4 (legacy
+build in the browser), tesseract.js 7, ts-fsrs 5, Dexie 4.4, vite-plugin-pwa 2, TypeScript 6.0. The Anthropic adapter
+exists (`modules/ai/providers/anthropic.ts`, ADR-0002); no embeddings, speech-to-text, vision-for-processing or external
+search provider is built.
 
 ## 2. Repository layout & module ownership
 
@@ -50,43 +56,60 @@ apps/server/src/
   db/migrations/NNNN_*.sql  migrations (0001 core). Module migrations use their range (below)
   lib/                      errors, hashing, http helpers, safe-zip, ssrf-guard, text utils
   modules/<module>/         one folder per module: index.ts (Fastify plugin), service files, routes
-  cli/                      backup / restore-verify CLIs
-apps/server/test/           vitest tests; test/helpers/ (createTestApp, fixtures, fake AI provider)
+                            (21 modules, registered in modules/index.ts)
+  cli/                      backup / restore-verify CLIs (`npm run backup`, `npm run restore:verify`)
+apps/server/test/           vitest tests; test/helpers/ (createTestApp, fixtures, fake AI provider);
+                            test/acceptance/ (AC-01…AC-30 groups G1–G8); test/perf/ (opt-in, MEDLEVO_PERF=1)
 apps/web/src/
   main.tsx, app/            router, providers, shell (nav), route table
   design/                   design system (tokens.css + components) — the ONLY place for base UI primitives
-  lib/                      api client, localdb (Dexie), outbox/sync engine, capabilities, study context
-  features/<feature>/       screens & feature components; each exports `routes` from routes.tsx
-fixtures/golden/            Golden Set fixture files (synthetic structural test documents) + README
-e2e/                        Playwright specs
-docs/                       architecture, ADRs, requirement/capability matrices, skills audit, test log
+  lib/                      api client, localdb (Dexie), outbox/sync engine, offline download manager, capabilities
+  features/<feature>/       screens & feature components; each exports `routes` from routes.tsx (18 features)
+apps/web/test/              web vitest tests (core, ink, learning) + the ink Playwright harness (test/ink/)
+fixtures/golden/            Golden Set fixture files (synthetic structural test documents) + README + expected.json
+fixtures/acceptance/        derived synthetic fixtures of the acceptance groups (make_g*_fixtures scripts) + README
+tools/fixtures/             Golden Set generator (`npm run fixtures`)
+scripts/dev.mjs             runs the API and the Vite dev server together (`npm run dev`)
+e2e/                        Playwright specs against the real server; e2e/support/ (global setup, API helpers)
+docs/                       architecture, ADRs, module notes, requirement & capability matrices, acceptance,
+                            performance, backup/restore, skills audit, test log
 ```
 
 **Module map** (§50): Library · Sources · Document Processing · Evidence · Study Book · Ink · Questions ·
 Learning · Sync · AI Orchestration · Personal Settings · Observability.
 
-| Module (server dir) | Owns tables | Migration range | Web feature dirs |
+All 21 server modules are mounted under `/api/<name>` (`settings` owns `/api/settings` and `/api/capabilities`). The
+base schema is `0001_core.sql`; the «files» column lists the migration files that exist (2026-10-10).
+
+| Module (server dir) | Owns tables | Migration range · files | Web feature dirs |
 |---|---|---|---|
-| `auth` | owner, auth_session, login_attempt | 0010–0019 | `features/auth` |
-| `settings` | owner_setting | 0020–0029 | `features/settings`, `features/control` |
+| `auth` | owner, auth_session, login_attempt | 0010–0019 · — | `features/auth` |
+| `settings` | owner_setting | 0020–0029 · — | `features/settings`, `features/control` |
 | `audit` | change_log | — | (control center history) |
 | `files` | stored_file | — | — |
-| `jobs` | processing_job, job_checkpoint | 0030–0039 | (control → processing) |
-| `sync` | sync_operation, sync_change | 0040–0049 | `lib/sync.ts`, `features/offline` |
-| `library` | library_node, tag, tag_link, topic, topic_link | 0100–0149 | `features/library`, `features/home` |
-| `sources` | source, source_link, source_version, source_page, source_region | 0150–0199 | `features/upload`, `features/sources` |
-| `processing` | document_chunk, chunk_fts, image_asset | 0200–0249 | (processing status UI) |
-| `annotations` | note_page, annotation, annotation_target, note, ink_recognition, study_session, source_progress | 0250–0299 | `features/workspace` |
-| `evidence` | evidence, claim, citation, verification_result, artifact_dependency, content_alert, concept*, medical_term | 0300–0349 | `features/evidence` (Source Inspector) |
-| `search` | (chunk_fts, question_fts, owner_content_fts, chunk_embedding) | 0350–0399 | `features/search` |
-| `ai` | usage_record | 0400–0449 | (control → intelligence) |
-| `studybook` | artifact, content_block, contextual_thread, message | 0450–0499 | `features/studybook` |
-| `questions` | question*, answer_key_entry, answer_evidence, question_lecture_link, question_duplicate, question_fts | 0500–0549 | `features/questions` |
-| `exams` | exam, exam_attempt, question_attempt, written_attempt, clinical_case, case_attempt | 0550–0599 | `features/exams`, `features/cases` |
-| `learning` | flashcard, review_event, review_state, weakness, study_plan, plan_task | 0600–0649 | `features/review`, `features/weakness`, `features/planner` |
-| `media` | media_overlay, audio_asset, transcript_segment, media_region_link | 0650–0699 | `features/media` |
-| `backup` / `export` | — | — | control → storage |
-| `control` | review_queue_item, evaluation_case | 0700–0749 | `features/control` |
+| `jobs` | processing_job (+ `worker_id`), job_checkpoint | 0030–0039 · `0030_job_worker` | (control → processing) |
+| `sync` | sync_operation, sync_change | 0040–0049 · — | `lib/sync.ts`, `features/offline` |
+| `library` | library_node, tag, tag_link, topic, topic_link | 0100–0149 · `0100_library_trash` | `features/library`, `features/home` |
+| `sources` | source, source_link, source_version, source_page, source_region | 0150–0199 · `0150_sources_registry` | `features/upload`, `features/sources` |
+| `processing` | document_chunk, chunk_fts, image_asset | 0200–0249 · `0200_processing` | (processing status: sources page, control → processing) |
+| `annotations` | note_page, annotation, annotation_target, note, ink_recognition, study_session, source_progress | 0250–0299 · `0250_annotations` | `features/workspace` |
+| `evidence` | evidence, claim, citation, verification_result, artifact_dependency, content_alert, content_alert_item, content_alert_job, concept*, medical_term | 0300–0349 · `0300_evidence` | `features/evidence` (Source Inspector) |
+| `search` | (chunk_fts, question_fts, owner_content_fts, chunk_embedding) | 0350–0399 · — | `features/search` |
+| `ai` | usage_record | 0400–0449 · — | (control → intelligence) |
+| `studybook` | artifact, artifact_section, content_block, contextual_thread, message, explanation_rule_override, artifact_reanchor | 0450–0499 · `0450_studybook` | `features/studybook`, `features/workspace/studybook` |
+| `questions` | question*, answer_key_entry(_v2), answer_evidence, question_lecture_link, question_duplicate, question_extraction, question_fts | 0500–0549 · `0500_questions`, `0510_question_occurrence_lookup` | `features/questions` |
+| `exams` | exam, exam_attempt, question_attempt, written_attempt, exam_item_event, question_generation_run, generated_question_candidate | 0550–0599 · `0550_exams` | `features/exams` |
+| `learning` | flashcard, review_event, review_state, review_reset, flashcard_impact, flashcard_duplicate_decision, weakness, learning_profile, study_plan, plan_task, revision_session | 0600–0649 · `0600_learning` | `features/review`, `features/weakness`, `features/planner`, `features/home` |
+| `media` | media_overlay, audio_asset, transcript_segment, transcript_revision, transcript_import, media_region_link, image_meta, image_quiz, image_quiz_answer | 0650–0699 · `0650_media` | `features/media` |
+| `control` | review_queue_item, control_region_correction, evaluation_case | 0700–0749 · `0700_control` | `features/control` |
+| `data` (offline packages, export, backup / restore) | data_server_epoch, data_backup | 0750–0769 · `0750_data` | `features/offline`, `lib/offline.ts` |
+| `cases` | clinical_case, clinical_case_version, case_attempt, case_event | 0770–0799 · `0770_cases` | `features/cases` |
+
+Shared writers (documented in the module notes): `review_queue_item` rows are written by processing, evidence,
+questions, studybook and exams with their own `kind`; `concept` / `concept_mention` candidates are written by questions; the
+sources purge deletes rows of other modules in one transaction (`docs/modules/library-sources.md`). Created but never
+written yet: `chunk_embedding` (no embeddings provider), `evaluation_case` (§57 store not built), `concept_relation`
+(Course Brain not built) — see `docs/REQUIREMENTS_MATRIX.md`.
 
 A module may READ any table. It WRITES only its own tables, or calls the owning module's service
 functions. Adding a column/table → new migration file in the module's range (never edit 0001 after it ships).
@@ -149,7 +172,8 @@ JobRun<I> = { id, input, attempt, signal: AbortSignal, log,
 throw new JobError(code, messageAr, { retryable })  // retryable → backoff (exponential, capped); not retryable → failed
 ```
 States: `queued → running → (completed | partial | failed | cancelled | waiting_for_input)`. `partial` ≠ `completed`.
-Cancel never deletes completed checkpoints/outputs. On boot, `running` jobs with stale heartbeat are re-queued.
+Cancel never deletes completed checkpoints/outputs. On boot, `running` jobs with stale heartbeat are re-queued; a job whose
+claiming process (`processing_job.worker_id` = host/pid/boot nonce) is provably gone is re-queued at once (docs/PERFORMANCE.md).
 
 ### 3.4 Sync (`ctx.sync`, routes under `/api/sync`)
 

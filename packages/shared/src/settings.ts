@@ -47,3 +47,22 @@ export const ownerSettingsSchema = z.object({
 export type OwnerSettings = z.infer<typeof ownerSettingsSchema>;
 
 export const DEFAULT_OWNER_SETTINGS: OwnerSettings = ownerSettingsSchema.parse({});
+
+/**
+ * Settings whose value is a set of independent parts (one ordering per purpose). A PATCH replaces only the parts it
+ * names; the others keep their current value (they are never reset to the defaults).
+ */
+export const NESTED_SETTING_KEYS = ['source_priority'] as const;
+
+/** `{ ...base, ...patch }` with a per-part merge for NESTED_SETTING_KEYS (server PATCH and the web store use it). */
+export function mergeSettingsPatch<T extends object>(base: T, patch: object): T {
+  const b = base as unknown as Record<string, unknown>;
+  const p = patch as unknown as Record<string, unknown>;
+  const out: Record<string, unknown> = { ...b, ...p };
+  for (const k of NESTED_SETTING_KEYS) {
+    const pv = p[k];
+    const bv = b[k];
+    if (pv && typeof pv === 'object' && !Array.isArray(pv) && bv && typeof bv === 'object' && !Array.isArray(bv)) out[k] = { ...bv, ...pv };
+  }
+  return out as unknown as T;
+}

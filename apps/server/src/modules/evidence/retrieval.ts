@@ -406,23 +406,32 @@ export function abstainFor(ctx: AppContext, result: RetrieveResult, scope: Resol
     reason_ar: ABSTAIN_REASON_LABELS_AR.not_found_in_scope,
     detail: `${s.summary_ar}${s.pages_unreadable + s.pages_unprocessed > 0 ? ' قد تكون المعلومة في الصفحات غير المقروءة.' : ''}`,
   };
-  if (scope.mode === 'lecture_only' && scope.sourceIds[0]) {
-    const lecture = scope.sourceIds[0];
-    // the lecture's references only (incoming «R reference_for lecture» links, same rule as resolveScope)
-    const refs = ctx.db.all<{ other: string }>(
-      `SELECT l.from_source_id AS other FROM source_link l JOIN source o ON o.id = l.from_source_id
-        WHERE l.relation = 'reference_for' AND l.to_source_id = ? AND o.deleted_at IS NULL ORDER BY l.created_at`,
-      [lecture],
-    );
-    if (refs.length > 0) {
-      decision.suggest_scope = {
-        mode: 'lecture_plus_references',
-        lecture_source_id: lecture,
-        reference_source_ids: refs.map((r) => r.other),
-        version_pins: { ...scope.versionBySource },
-        include_my_notes: false,
-      };
-    }
-  }
+  const suggest = suggestWiderScope(ctx, scope);
+  if (suggest) decision.suggest_scope = suggest;
   return decision;
+}
+
+/**
+ * §08: under «Lecture Only», when the answer is not in the lecture, offer «المحاضرة + المراجع» (the lecture's
+ * own references) as an EXPLICIT owner action — never applied automatically. Used by `abstainFor` (nothing
+ * retrieved) and by generators when the model / the claim verification found no support in the lecture
+ * (G2 AC-05: a question asked from a lecture page always retrieves that page, so the abstention comes later).
+ */
+export function suggestWiderScope(ctx: AppContext, scope: ResolvedScope): SourceScope | undefined {
+  if (scope.mode !== 'lecture_only' || !scope.sourceIds[0]) return undefined;
+  const lecture = scope.sourceIds[0];
+  // the lecture's references only (incoming «R reference_for lecture» links, same rule as resolveScope)
+  const refs = ctx.db.all<{ other: string }>(
+    `SELECT l.from_source_id AS other FROM source_link l JOIN source o ON o.id = l.from_source_id
+      WHERE l.relation = 'reference_for' AND l.to_source_id = ? AND o.deleted_at IS NULL ORDER BY l.created_at`,
+    [lecture],
+  );
+  if (refs.length === 0) return undefined;
+  return {
+    mode: 'lecture_plus_references',
+    lecture_source_id: lecture,
+    reference_source_ids: refs.map((r) => r.other),
+    version_pins: { ...scope.versionBySource },
+    include_my_notes: false,
+  };
 }

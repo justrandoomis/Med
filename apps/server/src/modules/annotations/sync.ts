@@ -23,7 +23,7 @@ import {
   type SyncOp,
 } from '@medlevo/shared';
 import type { z } from 'zod';
-import type { Db } from '../../db/db';
+import { fromJson, type Db } from '../../db/db';
 import { AppError } from '../../lib/errors';
 import { zodIssuesToFields } from '../../lib/http';
 import type { SyncApplyResult, SyncEntityHandler, SyncTx } from '../sync/registry';
@@ -43,6 +43,7 @@ import {
   type AnnotationRow,
   type NotePageRow,
   type NoteRow,
+  type StudySessionRow,
 } from './repo';
 import {
   annotationPayloadSchema,
@@ -263,6 +264,15 @@ export function annotationHandler(db: Db): SyncEntityHandler {
       if (annotationContentKey(fields) === rowContentKey(existing)) {
         return { result: 'duplicate', entity: toAnnotationDTO(existing) };
       }
+      // the same stale edit arriving again under a new op id (G7 / AC-24: a «retry» re-built on the device) is
+      // already kept as a copy next to the original — never a second identical copy
+      const incomingKey = annotationContentKey(fields);
+      const sameCopy = tx.db
+        .all<AnnotationRow>('SELECT * FROM annotation WHERE conflict_of_id = ? AND deleted_at IS NULL', [existing.id])
+        .find((c) => rowContentKey(c) === incomingKey);
+      if (sameCopy) {
+        return { result: 'duplicate', entity: toAnnotationDTO(existing), detail: 'هذا التعديل محفوظ مسبقًا كعنصر منفصل بجانب نسخة الخادم؛ لم تُنشأ نسخة مكررة.' };
+      }
       // stale edit: keep both — the incoming edit becomes a new annotation next to the server version
       const copyId = newId(tx.now);
       insertAnnotation(tx, copyId, fields, tx.now, existing.id);
@@ -427,6 +437,14 @@ export function noteHandler(db: Db): SyncEntityHandler {
       if (noteContentKey(fields) === noteRowContentKey(existing)) {
         return { result: 'duplicate', entity: toNoteDTO(existing) };
       }
+      // the same concurrent edit arriving again under a new op id (G7 / AC-24) is already saved as a separate note
+      const incomingKey = noteContentKey(fields);
+      const sameCopy = tx.db
+        .all<NoteRow>('SELECT * FROM note WHERE conflict_of_id = ? AND deleted_at IS NULL', [existing.id])
+        .find((c) => noteRowContentKey(c) === incomingKey);
+      if (sameCopy) {
+        return { result: 'duplicate', entity: toNoteDTO(existing), detail: 'نصك محفوظ مسبقًا كملاحظة منفصلة بجانب الأصل؛ لم تُنشأ نسخة مكررة.' };
+      }
       // concurrent edit: the incoming text is saved as a separate note that points at the original
       const copyId = newId(tx.now);
       insertNote(tx, copyId, fields, tx.now, baseRev, existing.id);
@@ -532,6 +550,15 @@ export function notePageHandler(db: Db): SyncEntityHandler {
 }
 
 // ───────────────────────────── study_session ─────────────────────────────
+/** The same reading place: source, version, view and the page (by id, else index) / Study Book block. */
+function samePlace(existing: StudySessionRow, sourceId: string | null, versionId: string | null, view: string, loc: { page_id?: string; page_index?: number; block_key?: string }): boolean {
+  const cur = (fromJson<{ page_id?: string; page_index?: number; block_key?: string }>(existing.location_json) ?? {}) as { page_id?: string; page_index?: number; block_key?: string };
+  if (existing.source_id !== sourceId || existing.version_id !== versionId || existing.view !== view) return false;
+  if ((cur.block_key ?? null) !== (loc.block_key ?? null)) return false;
+  if (cur.page_id && loc.page_id) return cur.page_id === loc.page_id;
+  return (cur.page_index ?? null) === (loc.page_index ?? null) && (cur.page_id ?? null) === (loc.page_id ?? null);
+}
+
 export function studySessionHandler(db: Db): SyncEntityHandler {
   const serialize = (id: string) => {
     const r = getSession(db, id);
@@ -564,14 +591,23 @@ export function studySessionHandler(db: Db): SyncEntityHandler {
         tx.touch('study_session', op.entity_id);
         return { result: 'applied', entity: serialize(op.entity_id) };
       }
-      if (op.base_rev != null && op.base_rev === existing.rev) {
+      const write = () => {
         tx.db.run(
           `UPDATE study_session SET source_id = ?, version_id = ?, mode = ?, view = ?, location_json = ?, scope_json = ?, device_id = ?,
                   rev = rev + 1, updated_at = ? WHERE id = ?`,
           [sourceId, versionId, p.mode, p.view, toJson(p.location), scope, tx.deviceId, tx.now, op.entity_id],
         );
         tx.touch('study_session', op.entity_id);
+      };
+      if (op.base_rev != null && op.base_rev === existing.rev) {
+        write();
         return { result: 'applied', entity: serialize(op.entity_id) };
+      }
+      if (samePlace(existing, sourceId, versionId, p.view, p.location)) {
+        // G7 / AC-24: both devices are at the same place — nothing to choose between, so the owner is not asked. The
+        // newer view preferences (zoom, rail, layout) are taken: preferences are last-write-wins (ARCHITECTURE §3.4).
+        write();
+        return { result: 'merged', entity: serialize(op.entity_id), detail: 'الجهازان عند الموضع نفسه؛ حُفظت إعدادات العرض الأحدث.' };
       }
       // another device saved a newer position since this device last synced: never overwrite it silently (§46)
       return {

@@ -11,7 +11,7 @@
 // origin under storage pressure, which is why the owner can ask for persistent storage (on their action only).
 // A downloaded copy is a cache, not a backup.
 import { liveQuery } from 'dexie';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import {
   normalizeOfflinePath,
   type OfflineBundleResponse,
@@ -371,6 +371,39 @@ export function useDownloads(db: MedLevoDB = getDb()): OfflineDownload[] | null 
   return rows;
 }
 
+// One shared live query for the per-row «on this device» state (a library list can show hundreds of rows).
+let sharedRows: OfflineDownload[] | null = null;
+let sharedSub: { unsubscribe(): void } | null = null;
+const sharedListeners = new Set<() => void>();
+
+function subscribeShared(cb: () => void): () => void {
+  sharedListeners.add(cb);
+  if (!sharedSub) {
+    const notify = (rows: OfflineDownload[]) => {
+      sharedRows = rows;
+      for (const l of sharedListeners) l();
+    };
+    sharedSub = liveQuery(() => listDownloads()).subscribe({ next: notify, error: () => notify([]) });
+  }
+  return () => {
+    sharedListeners.delete(cb);
+    if (sharedListeners.size === 0 && sharedSub) {
+      sharedSub.unsubscribe();
+      sharedSub = null;
+      sharedRows = null;
+    }
+  };
+}
+
+/** The download record of one source on this device: `undefined` while loading, `null` when not downloaded. */
+export function useDownloadRecord(sourceId: string): OfflineDownload | null | undefined {
+  return useSyncExternalStore(
+    subscribeShared,
+    () => (sharedRows === null ? undefined : (sharedRows.find((r) => r.sourceId === sourceId) ?? null)),
+    () => undefined,
+  );
+}
+
 /** Compares a download with the server's current content (needs a connection). */
 export async function checkForUpdate(rec: OfflineDownload): Promise<'current' | 'changed' | 'version_changed'> {
   const m = await fetchOfflineManifest(rec.sourceId, { includeSolutions: rec.includeSolutions });
@@ -408,6 +441,61 @@ async function offlineCopy(db: MedLevoDB, input: string): Promise<Response | nul
   } catch {
     return null;
   }
+}
+
+/**
+ * The stored answer of one downloaded GET (`/api/...` path, any query order), read straight from IndexedDB without
+ * touching the network. `null` when no download holds it — the caller must then say that it is not on this device.
+ */
+export async function readOfflineAnswer<T>(path: string, db: MedLevoDB = getDb()): Promise<{ value: T; storedAt: number } | null> {
+  try {
+    const row = await db.apiCache.get(apiKeyFor(path));
+    return row ? { value: row.value as T, storedAt: row.storedAt } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A downloaded file (display PDF, page image…) as a Blob, or null when it is not on this device. */
+export async function readOfflineFile(fileId: string, db: MedLevoDB = getDb()): Promise<Blob | null> {
+  try {
+    const rec = (await db.blobs.get(blobKeyFor(fileId))) ?? (await db.blobs.get(fileId));
+    return rec?.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `src` for an `<img>` of a stored file (page image, thumbnail). Image requests never pass through the API transport,
+ * so a downloaded file is shown from IndexedDB through an object URL (revoked when the component unmounts or the file
+ * changes); otherwise the authenticated file route is used. `null` while the local lookup runs (a few ms).
+ */
+export function useFileSrc(fileId: string | null | undefined, db?: MedLevoDB): string | null {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    if (!fileId) {
+      setSrc(null);
+      return;
+    }
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    setSrc(null);
+    void readOfflineFile(fileId, db ?? getDb()).then((blob) => {
+      if (cancelled) return;
+      if (blob && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+        objectUrl = URL.createObjectURL(blob);
+        setSrc(objectUrl);
+      } else {
+        setSrc(`/api/files/${encodeURIComponent(fileId)}`);
+      }
+    });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [fileId, db]);
+  return src;
 }
 
 /**

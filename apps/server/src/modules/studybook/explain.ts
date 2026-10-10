@@ -331,28 +331,44 @@ function findFigure(ctx: AppContext, anchor: SelectionAnchor, regions: RegionLit
 const VISUAL_LABEL_AR = 'قراءة بصرية مولَّدة للشكل — ليست دليلًا من المصدر. العناصر «غير المؤكدة» لا تُعتمد إجابةً امتحانية.';
 const VISUAL_KIND_AR: Record<FigureOutput['visual_items'][number]['kind'], string> = { label: 'تسمية', arrow: 'سهم', region: 'منطقة', relation: 'علاقة', other: 'عنصر' };
 
+const VISUAL_ITEMS_SHOWN = 40;
+function hiddenItemsAr(n: number): string {
+  if (n === 1) return 'عنصر واحد آخر';
+  if (n === 2) return 'عنصران آخران';
+  return n <= 10 ? `${n} عناصر أخرى` : `${n} عنصرًا آخر`;
+}
+
 /** Visual reading → one 'figure' block. A label counts as readable only when the OCR text of the figure has it too. */
 export function visualBlock(ctx: AppContext, items: FigureOutput['visual_items'], fc: FigureContext, ord: number, visionUsed: boolean): PreparedBlock | null {
   if (items.length === 0) return null;
   const ocr = ` ${normalizeForSearch([fc.caption?.text ?? '', ...fc.labels.map((l) => l.text ?? '')].join(' ')).replace(/\s+/g, ' ')} `;
   const readable = (s: string | null) => !!s && s.trim().length > 1 && ocr.includes(` ${normalizeForSearch(s).replace(/\s+/g, ' ').trim()} `);
   let uncertain = 0;
-  const paras = items.slice(0, 40).map((it) => {
+  const shown = items.slice(0, VISUAL_ITEMS_SHOWN);
+  const paras = shown.map((it) => {
     const confirmedByText = it.kind === 'label' ? readable(it.label_text) : false;
     const isUncertain = !(it.certainty === 'clear' && confirmedByText);
     if (isUncertain) uncertain++;
     const status = isUncertain ? 'غير مؤكد' : 'مقروء نصيًا أيضًا';
-    const arrow = it.kind === 'arrow' || it.kind === 'relation' ? (it.from && it.to ? ` (${shorten(it.from, 80)} → ${shorten(it.to, 80)})` : '') : '';
+    // G3 / AC-08: the direction is stated in WORDS. A bare «A → B» inside an RTL paragraph is displayed with the arrow
+    // pointing back at A whenever a label is Arabic (Unicode bidi: «→» is not mirrored), i.e. the arrow reverses.
+    const arrow = it.kind === 'arrow' || it.kind === 'relation' ? (it.from && it.to ? ` من «${shorten(it.from, 80)}» إلى «${shorten(it.to, 80)}»` : '') : '';
     const label = it.label_text ? ` «${shorten(it.label_text, 120)}»` : '';
     return paragraphOf([{ text: `[${VISUAL_KIND_AR[it.kind]} — ${status}]${label}${arrow}: ${shorten(it.description, 400)}` }], 'li');
   });
+  // never drop branches silently: what is not displayed is counted, said, and treated as uncertain
+  const hidden = items.length - shown.length;
+  if (hidden > 0) {
+    uncertain += hidden;
+    paras.push(paragraphOf([{ text: `… و${hiddenItemsAr(hidden)} من القراءة البصرية لم تُعرض هنا؛ تُعامل كلها كغير مؤكدة. اطلب شرح جزء من الشكل لتراها.` }], 'li'));
+  }
   const regionIds = fc.figure ? [fc.figure.id] : [];
   const pages = regionPages(ctx, regionIds);
   const meta: StudyBlockMeta = {
     label_ar: VISUAL_LABEL_AR,
     page_ids: pages.page_ids,
     page_indexes: pages.page_indexes,
-    visual: { items: paras.length, uncertain, vision_used: visionUsed },
+    visual: { items: items.length, uncertain, vision_used: visionUsed },
     not_for_exam_answer: uncertain > 0,
   };
   return {

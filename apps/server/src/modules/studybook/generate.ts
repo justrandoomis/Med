@@ -24,6 +24,7 @@ import {
   abstainFor,
   packFromCandidates,
   retrieve,
+  suggestWiderScope,
   VERIFIER_VERSION,
   type RetrievalAnchor,
   type RetrievalCandidate,
@@ -31,7 +32,7 @@ import {
   type ScopeReport,
 } from '../evidence/services';
 import { abstainView, artifactView, storedScope, type AbstainView, type ArtifactKind } from './artifacts';
-import { indexArtifact, processGenerated, recordBlockDependencies, writeBlocks, type PackContext, type PreparedBlock, type ProcessResult } from './publish';
+import { indexArtifact, processGenerated, recordBlockDependencies, stripPseudoCitations, writeBlocks, type PackContext, type PreparedBlock, type ProcessResult } from './publish';
 import { buildExplanationPrompt, GENERATOR_VERSION } from './rules';
 import { generatedContentSchema, type GeneratedContentOut } from './schema';
 import { terminologyVersion } from './terms';
@@ -162,7 +163,7 @@ export function retrieveAndPack(ctx: AppContext, scope: ScopeReport, spec: Retri
   const p = packFromCandidates(ctx, scope, r.candidates, { maxItems: spec.maxEvidence ?? 24 });
   if (p.forModel.length === 0) {
     const why = p.refused.map((x) => x.reason_ar);
-    return { kind: 'abstain', abstain: abstainView('not_found_in_scope', [r.searched.summary_ar, ...new Set(why)].join(' ')) };
+    return { kind: 'abstain', abstain: abstainView('not_found_in_scope', [r.searched.summary_ar, ...new Set(why)].join(' '), suggestWiderScope(ctx, scope) ?? null) };
   }
   const pack: PackContext = { aliasMap: p.aliasMap, regionAliases: {}, views: p.views };
   return {
@@ -244,7 +245,7 @@ export async function generateSingleShot(ctx: AppContext, input: SingleShotInput
 export async function publishGenerated(ctx: AppContext, input: SingleShotInput, packed: PackedEvidence, content: GeneratedContentOut, model: string): Promise<StudyArtifactView> {
   if (content.abstain && content.blocks.length === 0) {
     const reason = MODEL_ABSTAIN.has(content.abstain.reason) ? content.abstain.reason : 'insufficient_evidence';
-    return publishAbstention(ctx, input, abstainView(reason, content.abstain.detail ? shorten(content.abstain.detail, 600) : null));
+    return publishAbstention(ctx, input, abstainView(reason, content.abstain.detail ? shorten(stripPseudoCitations(content.abstain.detail), 600) || null : null, widerScopeFor(ctx, input.scope, reason)));
   }
   input.onPhase?.('verifying');
   const processed = await processGenerated(ctx, content, {
@@ -265,10 +266,12 @@ export async function publishGenerated(ctx: AppContext, input: SingleShotInput, 
   if (processed.keptMedical === 0 && substantiveExtra.length === 0) {
     // nothing medical survived verification → an honest abstention, the removed sentences on demand
     const detail = processed.removed.length ? `حُذفت ${processed.removed.length} جملة لأنها لم تجتز التحقق من الأدلة؛ لا يُعرض جواب غير مدعوم.` : null;
-    return publishAbstention(ctx, input, abstainView('insufficient_evidence', detail), processed.removed);
+    return publishAbstention(ctx, input, abstainView('insufficient_evidence', detail, widerScopeFor(ctx, input.scope, 'insufficient_evidence')), processed.removed);
   }
   const missing = processed.droppedHeadings.map((h) => `لم تذكر المصادر المسموحة: ${h}`);
-  if (content.coverage_note) missing.push(shorten(content.coverage_note, 400));
+  // model free text: never a page / alias «citation» (G2 / AC-06)
+  const note = content.coverage_note ? stripPseudoCitations(content.coverage_note) : '';
+  if (note) missing.push(shorten(note, 400));
   const pagesCovered = new Set(blocks.flatMap((b) => b.meta?.page_ids ?? []));
   const coverage = { pages_covered: pagesCovered.size, ...(missing.length ? { missing_ar: missing } : {}) };
   const id = ctx.db.tx(() => {
@@ -281,6 +284,17 @@ export async function publishGenerated(ctx: AppContext, input: SingleShotInput, 
     return aid;
   });
   return artifactView(ctx, id);
+}
+
+/**
+ * §08 / AC-05: an answer that is not in the locked lecture is said so AND the owner is offered «المحاضرة + المراجع»
+ * as an explicit action — also when the abstention comes from the model or from the claim verification (a question
+ * asked from a lecture page always retrieves that page, so retrieval alone never abstains there). Never applied
+ * automatically; only for «not found» / «not supported» outcomes (not for conflicts, unreadable pages or patients).
+ */
+function widerScopeFor(ctx: AppContext, scope: ScopeReport, reason: AbstainReason): SourceScope | null {
+  if (reason !== 'not_found_in_scope' && reason !== 'insufficient_evidence') return null;
+  return suggestWiderScope(ctx, scope) ?? null;
 }
 
 /** Scope check for a selection anchor: its version must be the version the resolved lock uses (AC-05). */
