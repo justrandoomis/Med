@@ -4,7 +4,6 @@ import { House, Layers, Library, Search, Settings } from 'lucide-react';
 import { IconButton, Kbd } from '../design';
 import { BrandMark } from './BrandMark';
 import { GlobalSaveStatus, OfflineIndicator } from './SyncIndicators';
-import { PwaUpdatePrompt } from './PwaUpdatePrompt';
 import { isSearchShortcut } from './shortcuts';
 
 export const PRIMARY_DESTINATIONS = [
@@ -104,7 +103,7 @@ export function AppShell() {
           </NavLink>
         ))}
       </nav>
-      <PwaUpdatePrompt />
+      {/* the PWA update prompt is mounted in RootLayout (layouts.tsx) so it also shows on /study and /login */}
     </div>
   );
 }

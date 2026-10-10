@@ -22,3 +22,8 @@ export * from './questions-api';
 export * from './studybook-api';
 export * from './exams-api';
 export * from './learning';
+export * from './data-api';
+export * from './learning-api';
+export * from './control-api';
+export * from './cases-api';
+export * from './media-api';

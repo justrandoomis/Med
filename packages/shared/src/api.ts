@@ -29,6 +29,12 @@ export interface AuthStatusResponse {
   /** only when authenticated */
   remaining_recovery_codes?: number;
   password_min_length: number;
+  /**
+   * (track D1, additive) true while no owner exists AND setup needs a setup token: the server listens on a
+   * non-loopback address / behind a proxy, or MEDLEVO_SETUP_TOKEN is set. The token is MEDLEVO_SETUP_TOKEN or a
+   * one-time token printed to the server log at boot (never stored in the database).
+   */
+  setup_token_required?: boolean;
 }
 
 export interface SetupRequest {
@@ -36,6 +42,8 @@ export interface SetupRequest {
   password: string;
   device_label?: string;
   device_id?: string;
+  /** (track D1, additive) required when AuthStatusResponse.setup_token_required */
+  setup_token?: string;
 }
 export interface LoginRequest {
   username: string;
@@ -187,9 +195,22 @@ export interface SyncOpResult {
   detail?: string;
   /** true → the server failed transiently; keep the op in the outbox and retry later */
   retryable?: boolean;
+  /**
+   * (track D1, additive) change-feed head right after this op was recorded. A client keeps it with the
+   * acknowledged op: after a server restore (new server_epoch whose epoch_base_seq is below it) the op is not
+   * in the restored data and is sent again.
+   */
+  server_seq?: number;
 }
 export interface SyncPushRequest {
   ops: SyncOp[];
+  /**
+   * (track D1, additive) the server data epoch this device last pulled from. When the server's current epoch is
+   * different (its data was restored from a backup), the push is refused with 409 CONFLICT
+   * `details.server_epoch_changed` and NOTHING is applied: the device first resets its pull cursor and re-queues
+   * the writes the restored server lacks, then pushes again. Omitted by older clients (no check).
+   */
+  server_epoch?: string;
 }
 export interface SyncPushResponse {
   results: SyncOpResult[];
@@ -207,6 +228,16 @@ export interface SyncPullResponse {
   changes: SyncChange[];
   next_since: number;
   has_more: boolean;
+  /**
+   * (track D1, additive) id of the server's data epoch. It changes when the server's data is replaced by a
+   * restore: the client then resets its pull cursor (a restored server may be BEHIND the client's cursor) and
+   * pulls everything again.
+   */
+  server_epoch?: string;
+  /** change-feed head when this epoch started (0 for a server that was never restored) */
+  epoch_base_seq?: number;
+  /** current change-feed head (a client cursor above it means the server's data went back in time) */
+  head_seq?: number;
 }
 
 // ───────── ai (/api/ai) ─────────

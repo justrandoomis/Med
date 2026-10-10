@@ -1,8 +1,10 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useLoaderData, useNavigate } from 'react-router-dom';
-import { Button, ErrorState, PasswordField, TextField } from '../../design';
-import { errorMessage, fieldErrors } from '../../lib/api';
-import { setupOwner } from '../../lib/auth';
+import type { SetupResponse } from '@medlevo/shared';
+import { Bidi, Button, ErrorState, PasswordField, TextField } from '../../design';
+import { api, errorMessage, fieldErrors, isApiError } from '../../lib/api';
+import { fetchAuthStatus, invalidateAuthStatus, setupOwner } from '../../lib/auth';
+import { describeDevice, getDeviceId } from '../../lib/deviceId';
 import { usePageTitle } from '../../lib/usePageTitle';
 import type { PublicGateData } from '../../app/guards';
 import { AuthLayout, PasswordChecklist } from './AuthLayout';
@@ -22,7 +24,23 @@ export function SetupScreen() {
   const [codes, setCodes] = useState<{ list: string[]; notice: string } | null>(null);
   const [saved, setSaved] = useState(false);
   const [touched, setTouched] = useState(false);
+  // track D1: a server reachable from the network asks for a one-time setup token (printed in its log at boot)
+  const [tokenRequired, setTokenRequired] = useState(false);
+  const [setupToken, setSetupToken] = useState('');
   usePageTitle(codes ? 'رموز الاسترداد' : 'الإعداد الأولي');
+
+  useEffect(() => {
+    if (gate.offline) return;
+    let alive = true;
+    void fetchAuthStatus()
+      .then((r) => {
+        if (alive && r.kind === 'online') setTokenRequired(r.status.setup_token_required === true);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [gate.offline]);
 
   const min = gate.passwordMinLength;
   const rules = [
@@ -31,7 +49,7 @@ export function SetupScreen() {
     { ok: confirm.length > 0 && confirm === password, label: 'التأكيد مطابق لكلمة المرور' },
   ];
   const usernameError = touched && !USERNAME_RE.test(username.trim()) ? 'من 3 إلى 64 حرفًا أو رقمًا، ويمكن استخدام . _ - دون مسافات.' : fields.username;
-  const canSubmit = USERNAME_RE.test(username.trim()) && rules.every((r) => r.ok) && !gate.offline;
+  const canSubmit = USERNAME_RE.test(username.trim()) && rules.every((r) => r.ok) && !gate.offline && (!tokenRequired || setupToken.trim().length > 0);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -41,13 +59,16 @@ export function SetupScreen() {
     setError(null);
     setFields({});
     try {
-      const res = await setupOwner(username.trim(), password);
+      const res = tokenRequired ? await setupWithToken(username.trim(), password, setupToken.trim()) : await setupOwner(username.trim(), password);
+      setSetupToken('');
       setPassword('');
       setConfirm('');
       setCodes({ list: res.recovery_codes, notice: res.notice_ar });
     } catch (err) {
       setFields(fieldErrors(err));
       setError(errorMessage(err));
+      // the server asks for a setup token we did not know about (status could not be read): show the field now
+      if (isApiError(err) && (err.details as { setup_token_required?: unknown } | null | undefined)?.setup_token_required === true) setTokenRequired(true);
     } finally {
       setBusy(false);
     }
@@ -118,6 +139,26 @@ export function SetupScreen() {
           required
         />
         <PasswordChecklist rules={rules} />
+        {tokenRequired && (
+          <TextField
+            label="رمز الإعداد"
+            name="setup-token"
+            autoComplete="one-time-code"
+            autoCapitalize="characters"
+            spellCheck={false}
+            dir="ltr"
+            value={setupToken}
+            onChange={(e) => setSetupToken(e.target.value)}
+            error={fields.setup_token}
+            hint={
+              <>
+                الخادم متاح من الشبكة، لذلك يطلب الإعداد الأول رمزًا لمرة واحدة يُطبع في سجل تشغيل الخادم (أو قيمة <Bidi dir="ltr">MEDLEVO_SETUP_TOKEN</Bidi> إن
+                ضبطتها). هذا يمنع أي شخص آخر من إنشاء الحساب قبلك.
+              </>
+            }
+            required
+          />
+        )}
         {error && <ErrorState inline title="تعذّر إنشاء الحساب" message={error} />}
         <Button type="submit" variant="primary" size="lg" fullWidth loading={busy} loadingLabel="جارٍ إنشاء الحساب…" disabled={!canSubmit}>
           إنشاء الحساب
@@ -125,4 +166,21 @@ export function SetupScreen() {
       </form>
     </AuthLayout>
   );
+}
+
+/** POST /api/auth/setup with the setup token (track D1). Same request as lib/auth setupOwner + `setup_token`. */
+async function setupWithToken(username: string, password: string, setupToken: string): Promise<SetupResponse> {
+  let device_id: string | undefined;
+  try {
+    device_id = await getDeviceId();
+  } catch {
+    device_id = undefined;
+  }
+  const res = await api.post<SetupResponse>(
+    '/auth/setup',
+    { username, password, device_id, device_label: describeDevice(), setup_token: setupToken },
+    { skipAuthRedirect: true },
+  );
+  invalidateAuthStatus();
+  return res;
 }

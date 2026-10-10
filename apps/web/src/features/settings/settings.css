@@ -152,3 +152,12 @@
     justify-content: flex-end;
   }
 }
+
+/* (track D2) link to the Personal Control Center */
+.ml-settings__control {
+  margin-top: var(--ml-space-4);
+  max-width: 44rem;
+}
+.ml-settings__control .ml-list-item__subtitle {
+  white-space: normal;
+}

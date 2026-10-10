@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouteLoaderData } from 'react-router-dom';
-import { BookOpenText, Clock, Info, Monitor, Moon, Palette, Shield, Sun } from 'lucide-react';
+import { BookOpenText, ChevronLeft, Clock, Info, Monitor, Moon, Palette, Shield, SlidersHorizontal, Sun } from 'lucide-react';
 import { richTextFromPlain, type OwnerSettings } from '@medlevo/shared';
 import {
   Bidi,
   ErrorState,
+  ListItem,
   RichTextView,
   SegmentedControl,
   Select,
@@ -143,6 +144,17 @@ export function SettingsScreen() {
         <SaveIndicator />
       </header>
       {loadError && <ErrorState inline title="تعذّر تحميل إعداداتك من الخادم" message={`${loadError} تُعرض آخر نسخة محفوظة على هذا الجهاز.`} onRetry={() => void reload()} />}
+
+      {/* (track D2) the Personal Control Center: review queue, processing, AI & estimated cost, storage, conflicts, history */}
+      <ul role="list" className="ml-list ml-settings__control">
+        <ListItem
+          to="/control"
+          leading={<SlidersHorizontal size={20} />}
+          title="مركز التحكم"
+          subtitle="قائمة المراجعة، والمعالجة، والذكاء الاصطناعي وتكلفته التقديرية، والتخزين، وتعارضات المزامنة، والسجل."
+          trailing={<ChevronLeft size={18} aria-hidden="true" />}
+        />
+      </ul>
 
       <div className="ml-settings__layout">
         <nav aria-label="أقسام الإعدادات" className="ml-settings__nav">

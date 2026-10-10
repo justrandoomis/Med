@@ -1,27 +1,24 @@
-// PLACEHOLDER — owned by another track; replace this file's contents when the feature is built.
-// Shows honestly that the screen is not built yet (§61) and what it will contain.
-import { Settings2 } from 'lucide-react';
+// Personal Control Center routes (§48): /control and its sections, inside the app shell. Screens are lazy chunks.
 import type { FeatureRoutes } from '../../app/routeTypes';
-import { PlaceholderScreen } from '../shell/PlaceholderScreen';
-
-function ControlPlaceholder() {
-  return (
-    <PlaceholderScreen
-      title="مركز التحكم"
-      purpose="المصادر والوظائف والنماذج والتكلفة والتخزين وقائمة المراجعة."
-      spec="§48"
-      icon={<Settings2 size={22} />}
-      willContain={[
-      'المصادر وحالات المعالجة والوظائف الجارية.',
-      'النماذج المستخدمة والتكلفة التقديرية.',
-      'التخزين والنسخ الاحتياطي واختبار الاستعادة.',
-      'قائمة المراجعة: صفحات غير مقروءة، مفاتيح متعارضة، روابط غير مؤكدة.',
-      'تعارضات المزامنة التي تحتاج قرارك.',
-      ]}
-    />
-  );
-}
 
 export const routes: FeatureRoutes = {
-  shell: [{ path: 'control/*', element: <ControlPlaceholder /> }],
+  shell: [
+    {
+      path: 'control',
+      lazy: () => import('./ControlLayout').then((m) => ({ Component: m.ControlLayout })),
+      children: [
+        { index: true, lazy: () => import('./ControlIndex').then((m) => ({ Component: m.ControlIndex })) },
+        { path: 'review', lazy: () => import('./ReviewQueueScreen').then((m) => ({ Component: m.ReviewQueueScreen })) },
+        { path: 'review/:itemId', lazy: () => import('./ReviewItemScreen').then((m) => ({ Component: m.ReviewItemScreen })) },
+        { path: 'alerts', lazy: () => import('./AlertsScreen').then((m) => ({ Component: m.AlertsScreen })) },
+        { path: 'sync', lazy: () => import('./SyncScreen').then((m) => ({ Component: m.SyncScreen })) },
+        { path: 'processing', lazy: () => import('./ProcessingScreen').then((m) => ({ Component: m.ProcessingScreen })) },
+        { path: 'sources', lazy: () => import('./SourcesScreen').then((m) => ({ Component: m.SourcesScreen })) },
+        { path: 'intelligence', lazy: () => import('./IntelligenceScreen').then((m) => ({ Component: m.IntelligenceScreen })) },
+        { path: 'storage', lazy: () => import('./StorageScreen').then((m) => ({ Component: m.StorageScreen })) },
+        { path: 'capabilities', lazy: () => import('./CapabilitiesScreen').then((m) => ({ Component: m.CapabilitiesScreen })) },
+        { path: 'history', lazy: () => import('./HistoryScreen').then((m) => ({ Component: m.HistoryScreen })) },
+      ],
+    },
+  ],
 };

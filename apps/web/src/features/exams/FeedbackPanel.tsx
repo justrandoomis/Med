@@ -2,7 +2,7 @@
 // who stands behind the key, explanation and distractor explanations with evidence chips, origin and occurrences,
 // lecture pages, AC-27 signal, and the editable mistake type (auto suggestion kept visible next to the owner's).
 import { useId, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { CircleCheck, CircleHelp, CircleX, FileQuestion, Sparkles } from 'lucide-react';
 import {
   MASTERY_SIGNAL_LABELS_AR,
@@ -98,6 +98,7 @@ export function MistakeEditor({ feedback, onChange }: { feedback: AttemptFeedbac
 }
 
 export function FeedbackPanel({ feedback: fb, onMistakeChange }: FeedbackPanelProps) {
+  const location = useLocation();
   const correct = new Set(fb.correct_option_ids ?? []);
   const chosen = new Set(fb.attempt?.selected_option_ids ?? []);
   const generated = fb.origin_type === 'generated';
@@ -204,6 +205,15 @@ export function FeedbackPanel({ feedback: fb, onMistakeChange }: FeedbackPanelPr
         <Link className="ex-link" to={`/questions/${encodeURIComponent(fb.question_id)}`}>
           افتح السؤال في خزنة الأسئلة
         </Link>
+        {/* learning web track: a review card from this mistake (the server builds it from the question version + key) */}
+        {fb.attempt && fb.attempt.is_correct === false && fb.correct_option_ids && (
+          <Link
+            className="ex-link"
+            to={`/review/cards/new?from=mistake&attempt=${encodeURIComponent(fb.attempt.id)}&back=${encodeURIComponent(location.pathname + location.search)}`}
+          >
+            أنشئ بطاقة من هذا الخطأ
+          </Link>
+        )}
       </section>
 
       {onMistakeChange && <MistakeEditor feedback={fb} onChange={onMistakeChange} />}

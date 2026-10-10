@@ -57,7 +57,8 @@ describe('AI orchestrator', () => {
     expect(caps.features['sync'].state).toBe('available');
     // the library module (track A1) is implemented → honestly available
     expect(caps.features['library']).toMatchObject({ state: 'available' });
-    expect(caps.features['backup'].state).toBe('not_implemented');
+    // the data module (track D1) implements backups → honestly available
+    expect(caps.features['backup'].state).toBe('available');
     expect(caps.ai).toEqual({ configured: false, budget_remaining_usd: null });
     for (const f of Object.values(caps.features) as Array<{ state: string; reason_ar?: string }>) {
       if (f.state !== 'available') expect(f.reason_ar).toBeTruthy();

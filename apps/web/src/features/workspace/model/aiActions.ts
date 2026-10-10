@@ -1,7 +1,9 @@
 // Selection actions (§30). The explanation family (Explain, Simplify, Translate, Ask, Compare, Explain Image) is
 // wired to the «الشرح والسؤال» rail tab: the toolbar hands the selection anchor over through a small store and
-// the workspace opens the tab. Create MCQ / Create Flashcard / Add to Revision belong to later tracks and stay
-// disabled with a specific, honest reason (§12, §61) — or the capability's own reason when the feature is off.
+// the workspace opens the tab. Create Flashcard (→ the card editor prefilled with the quote, whose evidence the server
+// creates) and Add to Revision (→ a «للمراجعة» page mark listed in the Review hub) are wired by the learning web track
+// (features/review). Create MCQ belongs to a later track and stays disabled with a specific, honest reason (§12, §61) —
+// or the capability's own reason when the feature is off.
 import { useSyncExternalStore } from 'react';
 import type { FeatureKey, NormBox, SelectionAnchor } from '@medlevo/shared';
 
@@ -26,8 +28,8 @@ export const SELECTION_AI_ACTIONS: readonly PendingAction[] = [
   { id: 'ask', label: 'اسأل عن التحديد', term: 'Ask', feature: 'ai.chat', wired: true },
   { id: 'compare', label: 'قارن', term: 'Compare', feature: 'ai.summaries', wired: true },
   { id: 'mcq', label: 'أنشئ سؤال اختيار من متعدد', term: 'Create MCQ', feature: 'ai.generate_questions', wired: false, notWiredReason: 'إنشاء الأسئلة من التحديد يصل مع مرحلة الأسئلة المولَّدة؛ لم يُربط بالقارئ بعد.' },
-  { id: 'flashcard', label: 'أنشئ بطاقة مراجعة', term: 'Create Flashcard', feature: 'flashcards', wired: false, notWiredReason: 'البطاقات والمراجعة المتباعدة تصل في مرحلة لاحقة؛ لم تُربط بالقارئ بعد.' },
-  { id: 'revision', label: 'أضف إلى المراجعة', term: 'Add to Revision', feature: 'planner', wired: false, notWiredReason: 'خطة المراجعة تصل في مرحلة لاحقة؛ لم تُربط بالقارئ بعد.' },
+  { id: 'flashcard', label: 'أنشئ بطاقة مراجعة', term: 'Create Flashcard', feature: 'flashcards', wired: true },
+  { id: 'revision', label: 'أضف إلى المراجعة', term: 'Add to Revision', feature: 'planner', wired: true },
   { id: 'explain_image', label: 'اشرح الصورة', term: 'Explain Image', feature: 'ai.figure_explain', wired: true },
 ];
 

@@ -226,6 +226,7 @@ describe('sync pull', () => {
 
   it('returns an empty page with next_since unchanged when nothing is new', async () => {
     const res = await t.app.inject({ method: 'GET', url: '/api/sync/pull?since=999', headers: h });
-    expect(res.json()).toEqual({ changes: [], next_since: 999, has_more: false });
+    // track D1 added server_epoch / epoch_base_seq / head_seq (additive) to the pull answer
+    expect(res.json()).toMatchObject({ changes: [], next_since: 999, has_more: false });
   });
 });

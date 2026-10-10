@@ -11,10 +11,11 @@ import {
   type SessionsResponse,
   type SetupResponse,
 } from '@medlevo/shared';
-import type { ModuleOptions } from '../../context';
+import type { ModuleOptions, ModulePlugin } from '../../context';
 import { fromJson, toJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
 import { parseBody, parseParams, RATE_LIMITS } from '../../lib/http';
+import { createSetupTokenGate, type SetupTokenOptions } from './setup-token';
 import { clearSessionCookie, setSessionCookie } from './guard';
 import { LoginLimiter } from './limiter';
 import { dummyHashFor, generateRecoveryCode, hashSecret, normalizeRecoveryCode, verifySecret } from './password';
@@ -35,7 +36,20 @@ interface OwnerRow {
 
 const normUser = (u: string) => u.normalize('NFC').trim().toLowerCase();
 
-export default async function authModule(app: FastifyInstance, opts: ModuleOptions): Promise<void> {
+export { isLoopbackHost, type SetupTokenOptions } from './setup-token';
+
+/**
+ * The auth module. `createAuthModule({ setupToken, announceSetupToken })` exists for tests; the default export
+ * reads MEDLEVO_SETUP_TOKEN from the environment and prints a generated one-time token to the server log
+ * (track D1: first-run setup token hardening, see ./setup-token.ts).
+ */
+export function createAuthModule(tokenOpts: SetupTokenOptions = {}): ModulePlugin {
+  return (app, opts) => authModule(app, opts, tokenOpts);
+}
+
+export default createAuthModule();
+
+async function authModule(app: FastifyInstance, opts: ModuleOptions, tokenOpts: SetupTokenOptions): Promise<void> {
   const { ctx } = opts;
   const { config, db, clock } = ctx;
   const logN = config.auth.scryptLogN;
@@ -53,7 +67,7 @@ export default async function authModule(app: FastifyInstance, opts: ModuleOptio
   const deviceLabel = z.string().trim().max(100).optional();
   const deviceId = z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/).optional();
 
-  const setupBody = z.object({ username, password, device_label: deviceLabel, device_id: deviceId });
+  const setupBody = z.object({ username, password, device_label: deviceLabel, device_id: deviceId, setup_token: z.string().max(200).optional() });
   const loginBody = z.object({ username: z.string().max(64), password: z.string().max(256), device_label: deviceLabel, device_id: deviceId });
   const passwordBody = z.object({ current_password: z.string().max(256), new_password: password });
   const recoverBody = z.object({ username: z.string().max(64), recovery_code: z.string().max(64), new_password: password });
@@ -61,6 +75,7 @@ export default async function authModule(app: FastifyInstance, opts: ModuleOptio
   const idParams = z.object({ id: z.string().min(1).max(64) });
 
   const getOwner = () => db.get<OwnerRow>(`SELECT * FROM owner WHERE id = 'owner'`) ?? null;
+  const setupGate = createSetupTokenGate(ctx, { ownerExists: getOwner() !== null, ...tokenOpts });
   const clientIp = (req: FastifyRequest) => req.ip ?? 'unknown';
   const requireOwner = (): OwnerRow => {
     const o = getOwner();
@@ -84,6 +99,7 @@ export default async function authModule(app: FastifyInstance, opts: ModuleOptio
       session: auth ? toSessionInfo(auth.session, auth.sessionId) : null,
       password_min_length: minLen,
     };
+    if (owner === null && setupGate.required) res.setup_token_required = true;
     if (auth && owner) res.remaining_recovery_codes = (fromJson<string[]>(owner.recovery_codes_json, []) ?? []).length;
     return res;
   });
@@ -92,6 +108,14 @@ export default async function authModule(app: FastifyInstance, opts: ModuleOptio
     const alreadyMsg = 'تم إعداد حساب المالك مسبقًا. لا يمكن إنشاء حساب آخر؛ سجّل الدخول بدلًا من ذلك.';
     if (getOwner()) throw new AppError('ALREADY_SET_UP', alreadyMsg, 409);
     const body = parseBody(setupBody, req);
+    if (setupGate.required) {
+      // reachable from the network before the owner exists: only the holder of the setup token may claim it
+      const attempt = limiter.begin(clientIp(req));
+      if (!setupGate.check(body.setup_token)) {
+        throw new AppError('FORBIDDEN', setupGate.reasonAr(), 403, { setup_token_required: true });
+      }
+      limiter.succeed(attempt);
+    }
     if (normUser(body.password) === normUser(body.username)) {
       throw new AppError('VALIDATION_FAILED', 'كلمة المرور يجب ألا تطابق اسم المستخدم.', 400, {
         where: 'body',
@@ -112,6 +136,7 @@ export default async function authModule(app: FastifyInstance, opts: ModuleOptio
       ctx.audit.record({ entityType: 'owner', entityId: 'owner', action: 'setup', summary: 'إنشاء حساب المالك' });
       return s;
     });
+    setupGate.consume();
     setSessionCookie(reply, config, created.token, created.session.expires_at);
     return { ok: true, recovery_codes: codes, session: toSessionInfo(created.session, created.session.id), notice_ar: codesNotice };
   });

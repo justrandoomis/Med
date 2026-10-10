@@ -1,0 +1,599 @@
+{
+  "generated_by": "apps/server/src/modules/learning/srs.ts",
+  "library": "ts-fsrs v5.4.2 using FSRS-6.0",
+  "cases": [
+    {
+      "name": "new card, no events",
+      "retention": 0.9,
+      "created_at": 1788247800000,
+      "events": [],
+      "resets": [],
+      "at": 1788334200000,
+      "params": {
+        "request_retention": 0.9,
+        "maximum_interval": 36500,
+        "w": [
+          0.212,
+          1.2931,
+          2.3065,
+          8.2956,
+          6.4133,
+          0.8334,
+          3.0194,
+          0.001,
+          1.8722,
+          0.1666,
+          0.796,
+          1.4835,
+          0.0614,
+          0.2629,
+          1.6483,
+          0.6014,
+          1.8729,
+          0.5425,
+          0.0912,
+          0.0658,
+          0.1542
+        ],
+        "enable_fuzz": false,
+        "enable_short_term": true,
+        "learning_steps": [
+          "1m",
+          "10m"
+        ],
+        "relearning_steps": [
+          "10m"
+        ]
+      },
+      "expected": {
+        "state": "new",
+        "due_at": 1788247800000,
+        "stability": null,
+        "difficulty": null,
+        "reps": 0,
+        "lapses": 0,
+        "last_review_at": null,
+        "retrievability": null
+      },
+      "preview": {
+        "1": 1788334260000,
+        "2": 1788334560000,
+        "3": 1788334800000,
+        "4": 1789025400000
+      },
+      "event_count": 0,
+      "first_review_at": null
+    },
+    {
+      "name": "learning steps then review",
+      "retention": 0.9,
+      "created_at": 1788247800000,
+      "events": [
+        {
+          "id": "01E0000000000000000000000A",
+          "rating": 3,
+          "reviewed_at": 1788247860000
+        },
+        {
+          "id": "01E0000000000000000000000B",
+          "rating": 3,
+          "reviewed_at": 1788248460000
+        },
+        {
+          "id": "01E0000000000000000000000C",
+          "rating": 3,
+          "reviewed_at": 1788593400000
+        }
+      ],
+      "resets": [],
+      "at": 1789111800000,
+      "params": {
+        "request_retention": 0.9,
+        "maximum_interval": 36500,
+        "w": [
+          0.212,
+          1.2931,
+          2.3065,
+          8.2956,
+          6.4133,
+          0.8334,
+          3.0194,
+          0.001,
+          1.8722,
+          0.1666,
+          0.796,
+          1.4835,
+          0.0614,
+          0.2629,
+          1.6483,
+          0.6014,
+          1.8729,
+          0.5425,
+          0.0912,
+          0.0658,
+          0.1542
+        ],
+        "enable_fuzz": false,
+        "enable_short_term": true,
+        "learning_steps": [
+          "1m",
+          "10m"
+        ],
+        "relearning_steps": [
+          "10m"
+        ]
+      },
+      "expected": {
+        "state": "review",
+        "due_at": 1789975800000,
+        "stability": 16.18802274,
+        "difficulty": 2.1043314,
+        "reps": 3,
+        "lapses": 0,
+        "last_review_at": 1788593400000,
+        "retrievability": 0.95332955
+      },
+      "preview": {
+        "1": 1789112400000,
+        "2": 1791703800000,
+        "3": 1792395000000,
+        "4": 1794123000000
+      },
+      "event_count": 3,
+      "first_review_at": 1788247860000
+    },
+    {
+      "name": "lapse and relearning",
+      "retention": 0.9,
+      "created_at": 1788247800000,
+      "events": [
+        {
+          "id": "01E0000000000000000000001A",
+          "rating": 4,
+          "reviewed_at": 1788247920000
+        },
+        {
+          "id": "01E0000000000000000000001B",
+          "rating": 1,
+          "reviewed_at": 1789025400000
+        },
+        {
+          "id": "01E0000000000000000000001C",
+          "rating": 2,
+          "reviewed_at": 1789026000000
+        },
+        {
+          "id": "01E0000000000000000000001D",
+          "rating": 3,
+          "reviewed_at": 1789026900000
+        }
+      ],
+      "resets": [],
+      "at": 1789284600000,
+      "params": {
+        "request_retention": 0.9,
+        "maximum_interval": 36500,
+        "w": [
+          0.212,
+          1.2931,
+          2.3065,
+          8.2956,
+          6.4133,
+          0.8334,
+          3.0194,
+          0.001,
+          1.8722,
+          0.1666,
+          0.796,
+          1.4835,
+          0.0614,
+          0.2629,
+          1.6483,
+          0.6014,
+          1.8729,
+          0.5425,
+          0.0912,
+          0.0658,
+          0.1542
+        ],
+        "enable_fuzz": false,
+        "enable_short_term": true,
+        "learning_steps": [
+          "1m",
+          "10m"
+        ],
+        "relearning_steps": [
+          "10m"
+        ]
+      },
+      "expected": {
+        "state": "review",
+        "due_at": 1789113300000,
+        "stability": 1.44595756,
+        "difficulty": 7.99882227,
+        "reps": 4,
+        "lapses": 1,
+        "last_review_at": 1789026900000,
+        "retrievability": 0.87621578
+      },
+      "preview": {
+        "1": 1789285200000,
+        "2": 1789630200000,
+        "3": 1789716600000,
+        "4": 1789975800000
+      },
+      "event_count": 4,
+      "first_review_at": 1788247920000
+    },
+    {
+      "name": "duplicate ids fold once, ties by id",
+      "retention": 0.9,
+      "created_at": 1788247800000,
+      "events": [
+        {
+          "id": "01E0000000000000000000002B",
+          "rating": 3,
+          "reviewed_at": 1788248100000
+        },
+        {
+          "id": "01E0000000000000000000002A",
+          "rating": 1,
+          "reviewed_at": 1788248100000
+        },
+        {
+          "id": "01E0000000000000000000002B",
+          "rating": 3,
+          "reviewed_at": 1788248100000
+        },
+        {
+          "id": "01E0000000000000000000002C",
+          "rating": 3,
+          "reviewed_at": 1788420600000
+        }
+      ],
+      "resets": [],
+      "at": 1788507000000,
+      "params": {
+        "request_retention": 0.9,
+        "maximum_interval": 36500,
+        "w": [
+          0.212,
+          1.2931,
+          2.3065,
+          8.2956,
+          6.4133,
+          0.8334,
+          3.0194,
+          0.001,
+          1.8722,
+          0.1666,
+          0.796,
+          1.4835,
+          0.0614,
+          0.2629,
+          1.6483,
+          0.6014,
+          1.8729,
+          0.5425,
+          0.0912,
+          0.0658,
+          0.1542
+        ],
+        "enable_fuzz": false,
+        "enable_short_term": true,
+        "learning_steps": [
+          "1m",
+          "10m"
+        ],
+        "relearning_steps": [
+          "10m"
+        ]
+      },
+      "expected": {
+        "state": "review",
+        "due_at": 1788679800000,
+        "stability": 2.63439245,
+        "difficulty": 6.39094132,
+        "reps": 3,
+        "lapses": 0,
+        "last_review_at": 1788420600000,
+        "retrievability": 0.95238701
+      },
+      "preview": {
+        "1": 1788507600000,
+        "2": 1788852600000,
+        "3": 1788939000000,
+        "4": 1789111800000
+      },
+      "event_count": 3,
+      "first_review_at": 1788248100000
+    },
+    {
+      "name": "relearn marker (reset) keeps history",
+      "retention": 0.9,
+      "created_at": 1788247800000,
+      "events": [
+        {
+          "id": "01E0000000000000000000003A",
+          "rating": 3,
+          "reviewed_at": 1788247860000
+        },
+        {
+          "id": "01E0000000000000000000003B",
+          "rating": 4,
+          "reviewed_at": 1788507000000
+        },
+        {
+          "id": "01E0000000000000000000003C",
+          "rating": 3,
+          "reviewed_at": 1789975800000
+        }
+      ],
+      "resets": [
+        1789111800000,
+        1789975800000
+      ],
+      "at": 1790407800000,
+      "params": {
+        "request_retention": 0.9,
+        "maximum_interval": 36500,
+        "w": [
+          0.212,
+          1.2931,
+          2.3065,
+          8.2956,
+          6.4133,
+          0.8334,
+          3.0194,
+          0.001,
+          1.8722,
+          0.1666,
+          0.796,
+          1.4835,
+          0.0614,
+          0.2629,
+          1.6483,
+          0.6014,
+          1.8729,
+          0.5425,
+          0.0912,
+          0.0658,
+          0.1542
+        ],
+        "enable_fuzz": false,
+        "enable_short_term": true,
+        "learning_steps": [
+          "1m",
+          "10m"
+        ],
+        "relearning_steps": [
+          "10m"
+        ]
+      },
+      "expected": {
+        "state": "new",
+        "due_at": 1789975800000,
+        "stability": null,
+        "difficulty": null,
+        "reps": 3,
+        "lapses": 0,
+        "last_review_at": 1789975800000,
+        "retrievability": null
+      },
+      "preview": {
+        "1": 1790407860000,
+        "2": 1790408160000,
+        "3": 1790408400000,
+        "4": 1791099000000
+      },
+      "event_count": 3,
+      "first_review_at": 1788247860000
+    },
+    {
+      "name": "desired retention 0.85",
+      "retention": 0.85,
+      "created_at": 1788247800000,
+      "events": [
+        {
+          "id": "01E0000000000000000000004A",
+          "rating": 3,
+          "reviewed_at": 1788247860000
+        },
+        {
+          "id": "01E0000000000000000000004B",
+          "rating": 3,
+          "reviewed_at": 1788248700000
+        },
+        {
+          "id": "01E0000000000000000000004C",
+          "rating": 2,
+          "reviewed_at": 1788766200000
+        },
+        {
+          "id": "01E0000000000000000000004D",
+          "rating": 4,
+          "reviewed_at": 1790839800000
+        }
+      ],
+      "resets": [],
+      "at": 1792135800000,
+      "params": {
+        "request_retention": 0.85,
+        "maximum_interval": 36500,
+        "w": [
+          0.212,
+          1.2931,
+          2.3065,
+          8.2956,
+          6.4133,
+          0.8334,
+          3.0194,
+          0.001,
+          1.8722,
+          0.1666,
+          0.796,
+          1.4835,
+          0.0614,
+          0.2629,
+          1.6483,
+          0.6014,
+          1.8729,
+          0.5425,
+          0.0912,
+          0.0658,
+          0.1542
+        ],
+        "enable_fuzz": false,
+        "enable_short_term": true,
+        "learning_steps": [
+          "1m",
+          "10m"
+        ],
+        "relearning_steps": [
+          "10m"
+        ]
+      },
+      "expected": {
+        "state": "review",
+        "due_at": 1806132600000,
+        "stability": 93.0329403,
+        "difficulty": 2.97863464,
+        "reps": 4,
+        "lapses": 0,
+        "last_review_at": 1790839800000,
+        "retrievability": 0.97762526
+      },
+      "preview": {
+        "1": 1792136400000,
+        "2": 1811489400000,
+        "3": 1814167800000,
+        "4": 1820129400000
+      },
+      "event_count": 4,
+      "first_review_at": 1788247860000
+    },
+    {
+      "name": "many reviews over months",
+      "retention": 0.9,
+      "created_at": 1788247800000,
+      "events": [
+        {
+          "id": "01E00000000000000000005A0",
+          "rating": 3,
+          "reviewed_at": 1788247800000
+        },
+        {
+          "id": "01E00000000000000000005B0",
+          "rating": 3,
+          "reviewed_at": 1788395100000
+        },
+        {
+          "id": "01E00000000000000000005C0",
+          "rating": 4,
+          "reviewed_at": 1788836160000
+        },
+        {
+          "id": "01E00000000000000000005D0",
+          "rating": 2,
+          "reviewed_at": 1789570980000
+        },
+        {
+          "id": "01E00000000000000000005E0",
+          "rating": 3,
+          "reviewed_at": 1790599560000
+        },
+        {
+          "id": "01E00000000000000000005F0",
+          "rating": 1,
+          "reviewed_at": 1791921900000
+        },
+        {
+          "id": "01E00000000000000000005G0",
+          "rating": 3,
+          "reviewed_at": 1793538000000
+        },
+        {
+          "id": "01E00000000000000000005H0",
+          "rating": 3,
+          "reviewed_at": 1795447860000
+        },
+        {
+          "id": "01E00000000000000000005I0",
+          "rating": 4,
+          "reviewed_at": 1797651480000
+        },
+        {
+          "id": "01E00000000000000000005J0",
+          "rating": 3,
+          "reviewed_at": 1800148860000
+        },
+        {
+          "id": "01E00000000000000000005K0",
+          "rating": 2,
+          "reviewed_at": 1802940000000
+        },
+        {
+          "id": "01E00000000000000000005L0",
+          "rating": 3,
+          "reviewed_at": 1806024900000
+        }
+      ],
+      "resets": [],
+      "at": 1822807800000,
+      "params": {
+        "request_retention": 0.9,
+        "maximum_interval": 36500,
+        "w": [
+          0.212,
+          1.2931,
+          2.3065,
+          8.2956,
+          6.4133,
+          0.8334,
+          3.0194,
+          0.001,
+          1.8722,
+          0.1666,
+          0.796,
+          1.4835,
+          0.0614,
+          0.2629,
+          1.6483,
+          0.6014,
+          1.8729,
+          0.5425,
+          0.0912,
+          0.0658,
+          0.1542
+        ],
+        "enable_fuzz": false,
+        "enable_short_term": true,
+        "learning_steps": [
+          "1m",
+          "10m"
+        ],
+        "relearning_steps": [
+          "10m"
+        ]
+      },
+      "expected": {
+        "state": "review",
+        "due_at": 1820712900000,
+        "stability": 169.90635126,
+        "difficulty": 8.17257523,
+        "reps": 12,
+        "lapses": 1,
+        "last_review_at": 1806024900000,
+        "retrievability": 0.89063359
+      },
+      "preview": {
+        "1": 1822808400000,
+        "2": 1843803000000,
+        "3": 1847950200000,
+        "4": 1857022200000
+      },
+      "event_count": 12,
+      "first_review_at": 1788247800000
+    }
+  ]
+}

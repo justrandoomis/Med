@@ -144,6 +144,8 @@ const HANDLED_FKS = new Set([
   'written_attempt.question_version_id',
   'review_event.card_id',
   'review_state.card_id',
+  'review_reset.card_id',
+  'flashcard_impact.card_id',
   'source_progress.source_id',
   'study_session.source_id',
   'study_session.version_id',
@@ -638,6 +640,8 @@ export function executePurge(
 
     // learning + owner writing tied to the purged content
     db.run(`DELETE FROM review_event WHERE card_id IN ${IN('flashcard')}`);
+    db.run(`DELETE FROM review_reset WHERE card_id IN ${IN('flashcard')}`);
+    db.run(`DELETE FROM flashcard_impact WHERE card_id IN ${IN('flashcard')}`);
     db.run(`DELETE FROM review_state WHERE card_id IN ${IN('flashcard')}`);
     db.run(`DELETE FROM flashcard WHERE id IN ${IN('flashcard')}`);
     db.run(`DELETE FROM annotation WHERE id IN ${IN('annotation')}`); // annotation_target cascades

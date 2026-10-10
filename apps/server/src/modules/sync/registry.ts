@@ -125,6 +125,7 @@ export class SyncRegistry {
           if (!isAppError(e)) throw e;
           applied = { result: 'rejected', detail: e.messageAr };
         }
+        const seqAfter = this.headSeq();
         this.db.run(
           `INSERT INTO sync_operation (op_id, device_id, entity_type, entity_id, op, base_rev, payload_json, result, result_detail, client_ts, server_seq, received_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -139,11 +140,12 @@ export class SyncRegistry {
             applied.result,
             applied.detail ?? null,
             op.client_ts ?? null,
-            this.headSeq(),
+            seqAfter,
             now,
           ],
         );
-        const out: SyncOpResult = { op_id: op.op_id, result: applied.result };
+        // server_seq (track D1, additive): a client keeps it with the acknowledged op (see shared SyncOpResult)
+        const out: SyncOpResult = { op_id: op.op_id, result: applied.result, server_seq: seqAfter };
         if (applied.entity !== undefined) out.entity = applied.entity;
         if (applied.detail) out.detail = applied.detail;
         return out;
@@ -156,7 +158,8 @@ export class SyncRegistry {
   }
 
   private duplicateOf(op: SyncOp, row: SyncOperationRow): SyncOpResult {
-    const out: SyncOpResult = { op_id: op.op_id, result: 'duplicate', original_result: row.result };
+    // server_seq (track D1, additive): where the ORIGINAL op landed in the change feed
+    const out: SyncOpResult = { op_id: op.op_id, result: 'duplicate', original_result: row.result, server_seq: row.server_seq };
     if (row.result_detail) out.detail = row.result_detail;
     const handler = this.handlers.get(row.entity_type);
     if (handler) {

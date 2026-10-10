@@ -1,25 +1,12 @@
-// PLACEHOLDER — owned by another track; replace this file's contents when the feature is built.
-// Shows honestly that the screen is not built yet (§61) and what it will contain.
-import { CalendarDays } from 'lucide-react';
+// Study Planner routes (§45): plans, a new plan (with preview + feasibility), editing inputs (a new plan replaces the
+// old one, archived), and one plan's days with check-off and a visible rebalance. Lazy chunks.
 import type { FeatureRoutes } from '../../app/routeTypes';
-import { PlaceholderScreen } from '../shell/PlaceholderScreen';
-
-function PlannerPlaceholder() {
-  return (
-    <PlaceholderScreen
-      title="مخطط الدراسة"
-      purpose="خطة واقعية حتى موعد الامتحان."
-      spec="§45"
-      icon={<CalendarDays size={22} />}
-      willContain={[
-      'المدخلات: موعد الامتحان، المواد، الأيام والوقت المتاح يوميًا.',
-      'خطة يومية تجمع التعلّم والمراجعة والأسئلة والبطاقات.',
-      'إعادة توزيع واقعية عند التأخر، مع إظهار ما تغيّر.',
-      ]}
-    />
-  );
-}
 
 export const routes: FeatureRoutes = {
-  shell: [{ path: 'planner/*', element: <PlannerPlaceholder /> }],
+  shell: [
+    { path: 'planner', lazy: () => import('./PlannerScreen').then((m) => ({ Component: m.PlannerScreen })) },
+    { path: 'planner/new', lazy: () => import('./PlanEditor').then((m) => ({ Component: m.PlanEditor })) },
+    { path: 'planner/:id/edit', lazy: () => import('./PlanEditor').then((m) => ({ Component: m.PlanEditor })) },
+    { path: 'planner/:id', lazy: () => import('./PlanView').then((m) => ({ Component: m.PlanView })) },
+  ],
 };

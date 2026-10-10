@@ -1,0 +1,186 @@
+/* Downloads, backups and export (track D1). Design tokens only; calm lists, no dashboards of counters. */
+.dl-page {
+  display: grid;
+  gap: var(--ml-space-4);
+}
+.dl-page > .ml-page__header {
+  margin-bottom: 0;
+}
+.dl-panel {
+  padding-top: var(--ml-space-4);
+}
+.dl-stack {
+  display: grid;
+  gap: var(--ml-space-5);
+  min-width: 0;
+}
+.dl-lede {
+  margin: 0;
+  color: var(--ml-color-ink-2);
+  line-height: var(--ml-leading-md);
+}
+.dl-section {
+  display: grid;
+  gap: var(--ml-space-3);
+  min-width: 0;
+}
+.dl-section__title {
+  display: flex;
+  align-items: center;
+  gap: var(--ml-space-2);
+  margin: 0;
+  font-size: var(--ml-text-lg);
+  line-height: var(--ml-leading-lg);
+  font-weight: 600;
+}
+.dl-subhead {
+  margin: var(--ml-space-2) 0 0;
+  font-size: var(--ml-text-md);
+  font-weight: 600;
+}
+.dl-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-radius: var(--ml-radius-lg);
+  background: var(--ml-color-paper);
+  box-shadow: var(--ml-shadow-paper);
+  overflow: hidden;
+}
+.dl-row,
+.dl-pick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ml-space-3);
+  padding: var(--ml-space-3) var(--ml-space-4);
+  min-width: 0;
+}
+.dl-row + .dl-row,
+.dl-pick + .dl-pick {
+  border-top: 1px solid var(--ml-color-line);
+}
+.dl-pick {
+  align-items: center;
+}
+.dl-row__text,
+.dl-pick__title {
+  display: grid;
+  gap: var(--ml-space-1);
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+/* status pills in a row may carry a short sentence: let them wrap on phones instead of widening the page */
+.dl-row__text .ml-pill {
+  justify-self: start;
+  max-width: 100%;
+  white-space: normal;
+}
+.dl-row__title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.dl-row__meta,
+.dl-meta {
+  margin: 0;
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-sm);
+  line-height: var(--ml-leading-sm);
+  overflow-wrap: anywhere;
+}
+.dl-row__actions,
+.dl-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-2);
+}
+.dl-lines,
+.dl-notes {
+  display: grid;
+  gap: var(--ml-space-2);
+  margin: 0;
+  padding-inline-start: var(--ml-space-5);
+  line-height: var(--ml-leading-md);
+}
+.dl-notes {
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-sm);
+  line-height: var(--ml-leading-sm);
+}
+.dl-lines li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--ml-space-2);
+}
+.dl-size {
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-sm);
+  white-space: nowrap;
+}
+.dl-manifest,
+.dl-progress,
+.dl-done {
+  display: grid;
+  gap: var(--ml-space-3);
+}
+.dl-progress p,
+.dl-done p {
+  margin: 0;
+}
+.dl-persist {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-2);
+}
+.dl-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ml-space-3);
+  padding: var(--ml-space-3) var(--ml-space-4);
+  border-radius: var(--ml-radius-md);
+  background: var(--ml-color-info-soft);
+  border-inline-start: 3px solid var(--ml-color-info);
+}
+.dl-notice p {
+  margin: 0;
+  flex: 1 1 16rem;
+}
+.dl-error,
+.dl-warn,
+.dl-ok {
+  margin: 0;
+  font-size: var(--ml-text-sm);
+  line-height: var(--ml-leading-sm);
+}
+.dl-error {
+  color: var(--ml-color-danger);
+}
+.dl-warn {
+  color: var(--ml-color-warning);
+}
+.dl-ok {
+  color: var(--ml-color-success);
+}
+.dl-hash code {
+  font-size: var(--ml-text-xs);
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+.dl-code {
+  margin: 0;
+  padding: var(--ml-space-3);
+  border-radius: var(--ml-radius-sm);
+  background: var(--ml-color-paper-2);
+  font-size: var(--ml-text-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  text-align: left;
+}

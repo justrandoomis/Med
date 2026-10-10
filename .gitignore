@@ -7,8 +7,9 @@ coverage/
 .env
 .env.*
 !.env.example
-# runtime data (database, private files, backups) is never committed
-data/
+# runtime data (database, private files, backups) is never committed.
+# Anchored to the repo root: source directories that happen to be named `data/` are code.
+/data/
 apps/server/data/
 backups/
 test-results/
@@ -19,3 +20,4 @@ playwright-report/
 *.db
 *.db-*
 .DS_Store
+

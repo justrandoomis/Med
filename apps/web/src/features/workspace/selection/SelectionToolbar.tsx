@@ -1,7 +1,9 @@
 // Toolbar over a text selection (§26, §30): highlight, underline, copy, add a note — all local-first — and the
 // explanation actions (Explain / Simplify / Translate / Ask / Compare / Explain Image), which hand the selection
-// anchor to the «الشرح والسؤال» rail tab. Learning actions that belong to later tracks stay disabled with reasons.
+// anchor to the «الشرح والسؤال» rail tab. «أنشئ بطاقة مراجعة» opens the card editor with the selected quote (the server
+// makes the exact evidence excerpt); «أضف إلى المراجعة» saves a «للمراجعة» page mark (learning web track).
 import { useLayoutEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { BookOpenText, Copy, Highlighter, NotebookPen, Sparkles, Underline, Eraser } from 'lucide-react';
 import { boxesIntersect, normalizeRotation, type AnnotationAnchor, type NormBox, type TextHighlightData, type TextQuote } from '@medlevo/shared';
 import { Button, Menu, MenuItem, Toolbar, Term, useToast, cx } from '../../../design';
@@ -11,6 +13,8 @@ import { createAnnotation, deleteAnnotation } from '../data/local';
 import { actionDisabledReason, aiRequestStore, SELECTION_AI_ACTIONS, type ExplainActionId } from '../model/aiActions';
 import { clientRectsToNorm, quoteFromText, rangeOffsetsWithin, roundBox } from '../model/textQuote';
 import type { BookSelection } from './useBookSelection';
+import { addRevisionMark } from '../../review/local/revisionMarks';
+import { stashSelectionDraft } from '../../review/selectionDraft';
 
 export interface SelectionToolbarProps {
   selection: BookSelection;
@@ -45,6 +49,8 @@ export function SelectionToolbar({ selection, canvas, textRoot, anchorFor, fixed
   const ref = useRef<HTMLDivElement>(null);
   const toast = useToast();
   const caps = useCapabilities();
+  const navigate = useNavigate();
+  const location = useLocation();
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const [overlapping, setOverlapping] = useState<AnnotationRow[]>([]);
   const page = canvas?.querySelector<HTMLElement>(`[data-page-index="${selection.pageIndex}"]`) ?? null;
@@ -140,6 +146,27 @@ export function SelectionToolbar({ selection, canvas, textRoot, anchorFor, fixed
     onDone();
   };
 
+  /** learning actions: a card from this quote (editor), or a «للمراجعة» mark on this page */
+  const learningAction = async (id: 'flashcard' | 'revision') => {
+    const pageAnchor = anchorFor(selection.pageIndex);
+    if (!pageAnchor || pageAnchor.type !== 'page') return;
+    const text = (highlight?.quote.exact ?? selection.text).trim();
+    const pageLabel = page?.getAttribute('aria-label') ?? null;
+    if (id === 'flashcard') {
+      stashSelectionDraft({ source_id: pageAnchor.source_id, version_id: pageAnchor.version_id, page_id: pageAnchor.page_id, page_index: pageAnchor.page_index, page_label: pageLabel, source_title: null, quote: text, rects: highlight?.rects ?? [] });
+      onDone();
+      navigate(`/review/cards/new?from=selection&back=${encodeURIComponent(location.pathname + location.search)}`);
+      return;
+    }
+    try {
+      await addRevisionMark(getDb(), pageAnchor, { quote: text || null, pageLabel, sourceTitle: null });
+      toast.show({ title: 'أُضيف المقطع إلى قائمة المراجعة (صفحة «المراجعة»). حُفظ على هذا الجهاز.', tone: 'success' });
+      onDone();
+    } catch {
+      toast.show({ title: 'تعذّر حفظ المقطع على هذا الجهاز. تحقق من مساحة التخزين ثم أعد المحاولة.', tone: 'danger' });
+    }
+  };
+
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(selection.text);
@@ -184,7 +211,7 @@ export function SelectionToolbar({ selection, canvas, textRoot, anchorFor, fixed
           {SELECTION_AI_ACTIONS.map((a) => {
             const reason = actionDisabledReason(a, caps.feature(a.feature));
             return (
-              <MenuItem key={a.id} onSelect={() => askRail(a.id as ExplainActionId)} disabled={!!reason} disabledReason={reason ?? undefined}>
+              <MenuItem key={a.id} onSelect={() => (a.id === 'flashcard' || a.id === 'revision' ? void learningAction(a.id) : askRail(a.id as ExplainActionId))} disabled={!!reason} disabledReason={reason ?? undefined}>
                 {a.label} <Term>{a.term}</Term>
               </MenuItem>
             );

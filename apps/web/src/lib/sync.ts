@@ -14,6 +14,17 @@
 //    registered for the entity type, or wait in `syncInbox` until one is registered (lazy routes).
 //  * Multi-tab safe: one push/pull at a time across tabs via the Web Locks API (when available);
 //    server idempotency covers browsers without it.
+//  * Server data epoch (track D1, minimal addition): pull answers carry `server_epoch`. When it differs from
+//    the one this device stored (the server's data was restored from a backup) — or the cursor is above the
+//    server's head — the cursor is reset to 0 and everything is pulled again. Before that, this device's
+//    writes that the server acknowledged AFTER the restored snapshot (`ackSeq > epoch_base_seq`, still kept in
+//    the outbox for the retention period) are queued again as new ops, so the restored server receives them
+//    and the re-pull cannot overwrite them with the older server copy (appliers never overwrite rows that
+//    have local ops). Writes still waiting for those entities are moved after the re-queued copies (history in
+//    order). Pushes carry the stored epoch: a restored server refuses such a push untouched (409
+//    `server_epoch_changed`), so the engine pulls (reset + re-queue) BEFORE it pushes again — a write made while
+//    the server was being restored never lands on revisions the restored data lacks (no blind conflict copies).
+//    The owner is told through kv `sync.server.restore` (lib/offline.ts).
 import Dexie, { liveQuery, type EntityTable, type Table } from 'dexie';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import {
@@ -68,7 +79,12 @@ export const httpTransport: SyncTransport = {
   },
   async pull(since, limit) {
     const res = await api.get<SyncPullResponse>('/sync/pull', { query: { since, limit }, timeoutMs: 60_000, skipAuthRedirect: true });
-    return { changes: Array.isArray(res?.changes) ? res.changes : [], next_since: Number(res?.next_since ?? since), has_more: !!res?.has_more };
+    const out: PullResponse = { changes: Array.isArray(res?.changes) ? res.changes : [], next_since: Number(res?.next_since ?? since), has_more: !!res?.has_more };
+    // server data epoch (track D1): passed through when the server sends it
+    if (typeof res?.server_epoch === 'string') out.server_epoch = res.server_epoch;
+    if (typeof res?.epoch_base_seq === 'number') out.epoch_base_seq = res.epoch_base_seq;
+    if (typeof res?.head_seq === 'number') out.head_seq = res.head_seq;
+    return out;
   },
 };
 
@@ -208,7 +224,21 @@ export interface SyncEngineOptions {
 
 const PULL_CURSOR_KEY = 'sync.pull.since';
 const LAST_SYNC_KEY = 'sync.lastSyncedAt';
+/** server data epoch this device last pulled from (track D1) */
+export const SERVER_EPOCH_KEY = 'sync.server.epoch';
+/** set when a server restore was detected: { at, resent, previous_epoch, epoch } (shown by lib/offline.ts) */
+export const SERVER_RESTORE_NOTICE_KEY = 'sync.server.restore';
+
+/** Outbox op as stored: acknowledged ops also keep the change-feed position the server reported (track D1). */
+type AckedOutboxRecord = OutboxRecord & { ackSeq?: number | null; resentAfterRestore?: boolean };
 const LOCK_NAME = 'medlevo-sync';
+
+/** 409 from POST /api/sync/push: the server's data epoch changed (restore) — nothing in the request was applied. */
+function isServerEpochChanged(e: unknown): boolean {
+  if (!isApiError(e) || e.status !== 409) return false;
+  const d = e.details as { server_epoch_changed?: unknown } | null | undefined;
+  return !!d && typeof d === 'object' && d.server_epoch_changed === true;
+}
 
 export function backoffDelay(attempts: number, base: number, max: number, random: () => number): number {
   const exp = Math.min(max, base * 2 ** Math.max(0, attempts - 1));
@@ -265,6 +295,8 @@ export class SyncEngine {
   private rerun = false;
   /** a caller asked for a pull; consumed by the next run (a push-only run in flight must not swallow it) */
   private wantPull = false;
+  /** a push was refused because the server's data epoch changed (restore): pull (epoch reset) before pushing again */
+  private epochResetPending = false;
   private pushTimer: ReturnType<typeof setTimeout> | undefined;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
   private pollTimer: ReturnType<typeof setInterval> | undefined;
@@ -441,7 +473,11 @@ export class SyncEngine {
           }
           this.patch({ online: true });
           await this.pushAll();
-          if (pull && !this.snapshot.authRequired) await this.pullOnce();
+          // (track D1) a push refused for a changed server epoch: pull first (cursor reset + re-queue of what the
+          // restored server lacks, in order), then push again — never the other way round
+          const epochReset = this.epochResetPending;
+          if ((pull || epochReset) && !this.snapshot.authRequired) await this.pullOnce();
+          if (epochReset && !this.epochResetPending && !this.snapshot.authRequired) await this.pushAll();
         });
       } while (this.rerun && this.running);
     };
@@ -525,8 +561,11 @@ export class SyncEngine {
 
     this.patch({ phase: 'pushing' });
     let results: PushResultItem[];
+    // (track D1) the server epoch this device last pulled from: a restored server refuses the push untouched
+    const knownEpoch = await kvGet<string>(db, SERVER_EPOCH_KEY);
     try {
       results = await this.transport.push({
+        ...(typeof knownEpoch === 'string' ? { server_epoch: knownEpoch } : {}),
         ops: batch.map((o) => ({
           op_id: o.op_id,
           device_id: deviceId,
@@ -539,6 +578,17 @@ export class SyncEngine {
         })),
       });
     } catch (e) {
+      if (isServerEpochChanged(e)) {
+        // nothing was applied: the ops stay pending exactly as they were (not on the wire any more)
+        this.epochResetPending = true;
+        await db.transaction('rw', db.outbox, async () => {
+          for (const op of batch) {
+            const fresh = await db.outbox.get(op.seq!);
+            if (fresh && fresh.status === 'pending') await db.outbox.update(op.seq!, { sentAt: null });
+          }
+        });
+        return { sent: batch.length, failed: true, results: [] };
+      }
       await this.recordFailure(batch, e);
       return { sent: batch.length, failed: true, results: [] };
     }
@@ -579,7 +629,9 @@ export class SyncEngine {
           resultEntity: res.entity ?? null,
           resolvedAt: now,
           lastError: status === 'rejected' ? detailMessage(res.detail) : null,
-        });
+          // change-feed position of the acknowledgement (track D1: re-sent if a restore goes back before it)
+          ackSeq: typeof res.server_seq === 'number' ? res.server_seq : null,
+        } as Partial<AckedOutboxRecord>);
         if (status === 'synced') await this.rebaseFollowing(fresh, res.entity);
         if (res.entity !== undefined && res.entity !== null) toApply.push({ op: fresh, res });
       }
@@ -669,8 +721,18 @@ export class SyncEngine {
     this.patch({ phase: 'pulling' });
     await this.drainInbox();
     try {
+      let epochChecked = false;
       for (let page = 0; page < 50; page++) {
         const res = await this.transport.pull(since, this.pullLimit);
+        if (!epochChecked) {
+          epochChecked = true;
+          if (await this.checkServerEpoch(res, since)) {
+            // the server's data went back in time (restore): this page answered a stale cursor — start over
+            since = 0;
+            page = -1;
+            continue;
+          }
+        }
         for (const ch of res.changes) {
           if ((await this.dispatch(ch, 'pull')) === 'applied') applied++;
           else inboxed++;
@@ -693,6 +755,83 @@ export class SyncEngine {
     if (this.snapshot.pending === 0) await kvSet(this.db, LAST_SYNC_KEY, at);
     this.patch({ pullFailed: false, ...(this.snapshot.pending === 0 ? { lastSyncedAt: at, lastError: null } : {}) });
     return { applied, inboxed };
+  }
+
+  /**
+   * Server data epoch (track D1). Returns true when the cursor was reset: the server's epoch differs from the one
+   * stored on this device, or this device's cursor is above the server's head (its data went back in time).
+   */
+  private async checkServerEpoch(res: PullResponse, since: number): Promise<boolean> {
+    const epoch = res.server_epoch;
+    if (typeof epoch !== 'string') return false; // older server: nothing to compare
+    const stored = await kvGet<string>(this.db, SERVER_EPOCH_KEY);
+    const behind = typeof res.head_seq === 'number' && since > res.head_seq;
+    if (stored === undefined && !behind) {
+      await kvSet(this.db, SERVER_EPOCH_KEY, epoch);
+      return false;
+    }
+    if (stored === epoch && !behind) return false;
+    // what the server still holds: up to the new epoch's base (a restore), or up to its current head (data copied
+    // back without a new epoch) — writes acknowledged above that point are missing there
+    const base = stored !== epoch ? (typeof res.epoch_base_seq === 'number' ? res.epoch_base_seq : 0) : typeof res.head_seq === 'number' ? res.head_seq : 0;
+    const resent = await this.resendAfterRestore(base);
+    await kvSet(this.db, PULL_CURSOR_KEY, 0);
+    await kvSet(this.db, SERVER_EPOCH_KEY, epoch);
+    this.epochResetPending = false;
+    await kvSet(this.db, SERVER_RESTORE_NOTICE_KEY, { at: this.now(), resent, previous_epoch: stored ?? null, epoch });
+    return true;
+  }
+
+  /**
+   * Queues again (as NEW ops: the restored server never saw them, and an answered op_id is never re-applied) every
+   * write of this device the server acknowledged after `baseSeq`. Returns how many were queued.
+   */
+  private async resendAfterRestore(baseSeq: number): Promise<number> {
+    const tables = this.entityTables();
+    let n = 0;
+    const touched: Array<[string, string]> = [];
+    await this.db.transaction('rw', [this.db.outbox, ...tables], async () => {
+      const synced = (await this.db.outbox.where('status').equals('synced').sortBy('seq')) as AckedOutboxRecord[];
+      for (const op of synced) {
+        if (typeof op.ackSeq !== 'number' || op.ackSeq <= baseSeq || op.supersededBy) continue;
+        const now = this.now();
+        const copy: AckedOutboxRecord = {
+          op_id: newId(now),
+          entity_type: op.entity_type,
+          entity_id: op.entity_id,
+          op: op.op,
+          base_rev: op.base_rev ?? null,
+          payload: op.payload,
+          client_ts: op.client_ts,
+          status: 'pending',
+          attempts: 0,
+          nextAttemptAt: 0,
+          sentAt: null,
+          lastError: null,
+          retryOf: op.op_id,
+          resentAfterRestore: true,
+        };
+        await this.db.outbox.add(copy);
+        await this.db.outbox.update(op.seq!, { supersededBy: copy.op_id });
+        touched.push([op.entity_type, op.entity_id]);
+        n++;
+      }
+      // writes still waiting to be sent for those entities were built on top of the re-sent ones: move them after
+      // the copies (same op ids and payloads), so the restored server receives every entity's history in order
+      const keys = new Set(touched.map(([type, id]) => entityKey(type, id)));
+      if (keys.size) {
+        const waiting = (await this.db.outbox.where('status').equals('pending').sortBy('seq')) as AckedOutboxRecord[];
+        for (const w of waiting) {
+          if (w.resentAfterRestore || !keys.has(entityKey(w.entity_type, w.entity_id))) continue;
+          const { seq: oldSeq, ...rest } = w;
+          await this.db.outbox.delete(oldSeq!);
+          await this.db.outbox.add(rest as AckedOutboxRecord);
+        }
+      }
+      await this.mirrorRowStates(touched);
+    });
+    if (n) notifyOutbox(this.db);
+    return n;
   }
 
   /** Routes one server change to its applier, or parks it in syncInbox. */

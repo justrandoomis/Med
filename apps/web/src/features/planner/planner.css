@@ -1,0 +1,299 @@
+/* Study Planner (features/planner) — tokens only, logical properties. Shares learning.css. */
+.lw-planrow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-1);
+  padding: var(--ml-space-3) var(--ml-space-4);
+  color: var(--ml-color-ink);
+  text-decoration: none;
+}
+.lw-planrow:hover {
+  background: var(--ml-color-fill);
+}
+.lw-planrow__title {
+  font-size: var(--ml-text-lg);
+  font-weight: var(--ml-weight-semibold);
+}
+.lw-planrow__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-1) var(--ml-space-3);
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-sm);
+}
+.lw-fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-1);
+  min-width: 0;
+}
+.lw-fieldset legend {
+  margin-bottom: var(--ml-space-2);
+}
+.lw-weekdays {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--ml-space-4);
+}
+.lw-blocked {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--ml-space-2);
+}
+.lw-blocked__input {
+  flex: 1 1 12rem;
+  max-width: 16rem;
+}
+.lw-chips {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ml-space-2);
+}
+.lw-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ml-space-1);
+  padding-inline-start: var(--ml-space-3);
+  border-radius: var(--ml-radius-pill);
+  background: var(--ml-color-fill);
+  font-size: var(--ml-text-sm);
+}
+.lw-feasible {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ml-space-2);
+  margin: 0;
+  font-weight: var(--ml-weight-medium);
+}
+.lw-feasible > svg {
+  flex: none;
+  margin-top: 3px;
+  color: var(--ml-color-success);
+}
+.lw-feasible--no > svg {
+  color: var(--ml-color-warning);
+}
+.lw-behind .lw-sheet__title svg {
+  color: var(--ml-color-warning);
+}
+@media (min-width: 60rem) {
+  .lw-editor--plan {
+    grid-template-columns: minmax(0, 1.5fr) minmax(16rem, 0.7fr);
+  }
+}
+.lw-plan-preview .lw-day {
+  background: var(--ml-color-paper);
+}
+
+/* day list */
+.lw-daylist {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-3);
+}
+.lw-daylist > .lw-head {
+  align-items: center;
+}
+.lw-day {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-1);
+  padding: var(--ml-space-3);
+  border-radius: var(--ml-radius-md);
+  border: 1px solid var(--ml-color-line);
+  scroll-margin-top: calc(var(--ml-topbar-h) + var(--ml-space-3));
+}
+.lw-day--today {
+  border-color: var(--ml-color-accent);
+  border-width: 2px;
+}
+.lw-day--past {
+  opacity: 0.85;
+}
+.lw-day__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-1) var(--ml-space-3);
+}
+.lw-day__title {
+  margin: 0;
+  flex: 1 1 auto;
+  font-size: var(--ml-text-md);
+  font-weight: var(--ml-weight-semibold);
+}
+.lw-day__load {
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-sm);
+  font-variant-numeric: tabular-nums;
+}
+.lw-tasks {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+}
+.lw-task {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ml-space-1) var(--ml-space-2);
+  padding: var(--ml-space-1) 0;
+}
+.lw-task + .lw-task {
+  border-top: 1px solid var(--ml-color-line);
+}
+.lw-task > :first-child {
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+.lw-task--history {
+  color: var(--ml-color-ink-2);
+}
+.lw-task--history .lw-task__text > span:first-child {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+.lw-task[data-status='done'] .ml-checkbox__label {
+  color: var(--ml-color-ink-2);
+}
+.lw-task__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--ml-space-2) 0;
+}
+.lw-task__meta {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-sm);
+}
+.lw-task__end {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-2);
+}
+.lw-task__exam {
+  display: flex;
+  align-items: center;
+  gap: var(--ml-space-2);
+  margin: var(--ml-space-2) 0;
+  font-weight: var(--ml-weight-semibold);
+}
+.lw-past summary {
+  cursor: pointer;
+  min-height: var(--ml-touch-target);
+  display: flex;
+  align-items: center;
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-sm);
+}
+.lw-past[open] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-3);
+}
+
+/* calendar */
+.lw-cal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+}
+.lw-cal__nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ml-space-2);
+}
+.lw-cal__month {
+  margin: 0;
+  font-size: var(--ml-text-md);
+  font-weight: var(--ml-weight-semibold);
+}
+.lw-cal__grid {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 2px;
+  font-size: var(--ml-text-xs);
+}
+.lw-cal__grid th {
+  padding: var(--ml-space-1) 0;
+  color: var(--ml-color-ink-2);
+  font-weight: var(--ml-weight-medium);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lw-cal__cell {
+  height: 3.25rem;
+  padding: 0;
+  vertical-align: top;
+  border-radius: var(--ml-radius-sm);
+  background: var(--ml-color-paper-2);
+  text-align: center;
+}
+.lw-cal__cell--out {
+  background: transparent;
+  color: var(--ml-color-ink-3);
+}
+.lw-cal__cell--today {
+  outline: 2px solid var(--ml-color-accent);
+  outline-offset: -2px;
+}
+.lw-cal__cell--exam {
+  background: var(--ml-color-accent-soft);
+}
+.lw-cal__btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 1px;
+  width: 100%;
+  height: 100%;
+  min-height: var(--ml-touch-target);
+  padding: 4px 2px;
+  border: 0;
+  border-radius: var(--ml-radius-sm);
+  background: transparent;
+  color: var(--ml-color-ink);
+  font: inherit;
+  cursor: pointer;
+}
+.lw-cal__btn:hover {
+  background: var(--ml-color-fill);
+}
+.lw-cal__btn:focus-visible {
+  outline: 2px solid var(--ml-color-focus);
+  outline-offset: 1px;
+}
+.lw-cal__num {
+  display: block;
+  padding-top: 4px;
+  font-weight: var(--ml-weight-medium);
+}
+.lw-cal__btn .lw-cal__num {
+  padding-top: 0;
+}
+.lw-cal__info,
+.lw-cal__done {
+  color: var(--ml-color-ink-2);
+  font-variant-numeric: tabular-nums;
+}

@@ -6,8 +6,14 @@ import { setUnauthenticatedHandler } from '../lib/api';
 import { forgetAuth } from '../lib/auth';
 import { capabilitiesStore } from '../lib/capabilities';
 import { settingsStore } from '../lib/settings';
+import { installOfflineTransport } from '../lib/offline';
 import { getSyncEngine } from '../lib/sync';
 import { usePageTitle } from '../lib/usePageTitle';
+import { PwaUpdatePrompt } from './PwaUpdatePrompt';
+
+// Track D1: GET requests the server cannot answer are served from the explicitly downloaded copy (Download Manager,
+// lib/offline.ts). Installed before any route renders (child effects run before this layout's effects).
+installOfflineTransport();
 
 /** Root layout: wires the global "session expired" handler to the router. */
 export function RootLayout() {
@@ -22,7 +28,14 @@ export function RootLayout() {
     });
     return () => setUnauthenticatedHandler(null);
   }, [navigate, location.pathname, location.search]);
-  return <Outlet />;
+  // Track D1: the update prompt (and the service-worker registration it carries) lives here, so it is active on
+  // EVERY route — the shell, the study workspace and the sign-in screens — not only inside the shell.
+  return (
+    <>
+      <Outlet />
+      <PwaUpdatePrompt />
+    </>
+  );
 }
 
 /**
