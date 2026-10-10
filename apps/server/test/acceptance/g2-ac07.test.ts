@@ -39,7 +39,6 @@ async function explain(gen: (req: ProviderRequest) => unknown): Promise<StudyArt
 }
 const claimWith = (a: StudyArtifactView, needle: string): ClaimView | undefined => Object.values(a.claims).find((c) => c.text.includes(needle));
 const removedWith = (a: StudyArtifactView, needle: string) => a.removed.find((r) => r.text.includes(needle));
-const GALL = 'Ultrasound is the first-line investigation for suspected gallstones';
 const KIDS = 'Ultrasound is the first-line imaging test in children';
 
 describe('G2 AC-07 — similar words are not support', () => {

@@ -16,8 +16,11 @@
 //   POST   /images/:id/overlays · PATCH /overlays/:id · DELETE /overlays/:id
 //   POST   /images/match {request}               AC-09 gate over the owner's images (accepted / excluded with reasons)
 //   POST   /quiz · GET /quiz/:id · GET /quiz/:id/image · POST /quiz/:id/answer · POST /quiz/:id/finish
-// Capabilities: workspace.audio → available (playback, manual transcript, subtitle import, manual links — automatic
-// transcription and in-app recording are not available, said in /status); external.images → not implemented with the
+//   POST   /recordings (multipart: recording_id, started_at, duration_ms?, node_id?, linked_source_id?, title?; file)
+//          in-app recording → my_audio_note source (idempotent by recording_id) · GET /recordings/:id (+ linked strokes)
+//          · GET /recordings?source_id=  (track F4)
+// Capabilities: workspace.audio → available (playback, manual transcript, subtitle import, manual links, in-app
+// recording when the browser supports MediaRecorder — automatic transcription is not available, said in /status); external.images → not implemented with the
 // reason (no image provider; external fetch is off by default) — the validation gate exists for a future provider.
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
@@ -35,13 +38,14 @@ import { answerQuiz, createQuiz, finishQuiz, getQuizView, sendQuizImage } from '
 import { createSegment, deleteSegment, importSubtitles, patchSegment, restoreSegment, segmentRevisions, transcript } from './transcripts';
 import { getImageRow } from './images';
 import { validateImageCandidate } from './validate-image';
+import { getRecordingRow, recordingsForSource, recordingView, uploadRecording } from './recordings';
 
 const id = z.string().trim().min(1).max(64);
 const idParams = z.object({ id });
 
-const AUDIO_REASON_AR = 'التشغيل والتفريغ اليدوي واستيراد ملفات الترجمة (VTT / SRT) والربط اليدوي بالصفحات تعمل؛ التفريغ الآلي والتسجيل داخل التطبيق غير متاحين في هذا الإصدار.';
+const AUDIO_REASON_AR = 'التشغيل والتفريغ اليدوي واستيراد ملفات الترجمة (VTT / SRT) والربط اليدوي بالصفحات والتسجيل داخل التطبيق (عند ضغطك «سجّل» فقط، في متصفح يدعم MediaRecorder) تعمل؛ التفريغ الآلي غير متاح في هذا الإصدار.';
 const TRANSCRIPTION_AR = 'التفريغ الآلي (transcription) غير متاح: لا يوجد مزود تفريغ مضبوط على الخادم (مزود الذكاء الاصطناعي الحالي لا يدعم هذه المهمة). لا يُرسل أي تسجيل إلى مزود دون إجراء صريح منك.';
-const RECORDING_AR = 'التسجيل داخل التطبيق غير مبني في هذا الإصدار، لذلك لا يُشغَّل الميكروفون أبدًا. ارفع تسجيلك كملف من صفحة الرفع.';
+const RECORDING_AR = 'التسجيل داخل التطبيق متاح من مساحة الدراسة («المزيد» ← «سجّل ملاحظة صوتية»): لا يبدأ إلا بضغطك، ويظهر مؤشر التسجيل وزر الإيقاف طوال الوقت، ويُحفظ التسجيل على جهازك أولًا ثم يُرفع كملاحظة صوتية. يحتاج متصفحًا يدعم MediaRecorder وإذنك بالميكروفون.';
 const AUTOLINK_AR = 'الربط التلقائي بين الصوت والصفحات غير مبني: لا تُخترع مطابقة زمنية دون أساس. الربط اليدوي متاح، وأي ربط تلقائي مستقبلي يُوسم «تلقائي» ويمكنك تأكيده أو إزالته.';
 
 function externalImagesReason(ctx: AppContext): string {
@@ -59,7 +63,7 @@ export function mediaStatus(ctx: AppContext): MediaStatusResponse {
     transcription: transcribe.available
       ? { state: 'not_implemented', reason_ar: 'مزود التفريغ متاح لكن ربطه بالتسجيلات لم يُبنَ بعد في هذا الإصدار.' }
       : { state: 'requires_configuration', reason_ar: TRANSCRIPTION_AR },
-    recording: { state: 'not_implemented', reason_ar: RECORDING_AR },
+    recording: { state: 'available', reason_ar: RECORDING_AR },
     auto_linking: { state: 'not_implemented', reason_ar: AUTOLINK_AR },
     image_explorer: { state: 'available' },
     image_quiz: { state: 'available' },
@@ -117,6 +121,18 @@ export default async function register(app: FastifyInstance, { ctx }: ModuleOpti
     const q = parseQuery(z.object({ page_id: id.optional(), region_id: id.optional(), source_id: id.optional() }).strict(), req);
     if (!q.page_id && !q.region_id && !q.source_id) throw new AppError('BAD_REQUEST', 'حدد صفحة أو منطقة أو مصدرًا.', 400);
     return linksTo(ctx, q);
+  });
+
+  // ── in-app recordings (track F4): stored as my_audio_note sources; strokes written meanwhile carry time links ──
+  app.post('/recordings', { config: { rateLimit: { max: 120, timeWindow: 60_000 } } }, async (req, reply) => {
+    const r = await uploadRecording(ctx, req);
+    if (r.created) reply.code(201);
+    return r;
+  });
+  app.get('/recordings/:id', async (req) => ({ recording: recordingView(ctx, getRecordingRow(ctx, parseParams(idParams, req).id)) }));
+  app.get('/recordings', async (req) => {
+    const q = parseQuery(z.object({ source_id: id }).strict(), req);
+    return { recordings: recordingsForSource(ctx, q.source_id) };
   });
 
   // ── images ──

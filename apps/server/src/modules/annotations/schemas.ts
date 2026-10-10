@@ -52,6 +52,12 @@ const inkStyleSchema = z.looseObject({
   width: finite.refine((n) => n > 0 && n <= 0.2, 'سماكة غير صالحة.'),
   opacity: unit.optional(),
 });
+/** (track F4) time link of a stroke to an in-app recording (shared InkAudioLink) */
+export const audioLinkSchema = z.object({
+  recording_id: ID,
+  offset_ms: z.number().int().min(0).max(24 * 3600 * 1000, 'وقت التسجيل خارج المدى.'),
+  origin: z.enum(['auto', 'manual']),
+});
 export const inkDataSchema = z.looseObject({
   v: z.literal(1),
   points: z.array(inkPoint).min(1).max(20_000).refine((pts) => pts.every((p) => p[0]! >= -1 && p[0]! <= 2 && p[1]! >= -1 && p[1]! <= 2), 'نقطة خارج نطاق الصفحة.'),
@@ -59,6 +65,7 @@ export const inkDataSchema = z.looseObject({
   bbox: normBoxSchema,
   pressure_available: z.boolean(),
   tilt_available: z.boolean(),
+  audio_link: audioLinkSchema.optional(),
 });
 const shapeDataSchema = z.looseObject({
   v: z.literal(1),
@@ -68,6 +75,7 @@ const shapeDataSchema = z.looseObject({
   rotation: finite.optional(),
   style: inkStyleSchema,
   recognized_from: inkDataSchema.optional(),
+  audio_link: audioLinkSchema.optional(),
 });
 const textBoxDataSchema = z.looseObject({ v: z.literal(1), box: normBoxSchema, text: richTextSchema, color: z.string().max(40), font_scale: finite });
 const stickyDataSchema = z.looseObject({ v: z.literal(1), at: z.tuple([coord, coord]), text: z.string().max(20_000), color: z.string().max(40), collapsed: z.boolean().optional() });

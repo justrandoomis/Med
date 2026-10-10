@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowRight, FilePlus2, Focus, Link2, X } from 'lucide-react';
-import { normalizeRotation, type AnnotationAnchor, type LinkTarget, type SourceDetail, type TextQuote } from '@medlevo/shared';
+import { EXAM_MODE_HIDDEN_AR, STUDY_MODE_LABELS_AR, normalizeRotation, type StudyMode, type AnnotationAnchor, type LinkTarget, type SourceDetail, type TextQuote } from '@medlevo/shared';
 import { Button, ErrorState, IconButton, LoadingState, MenuItem, Sheet, buttonClass, cx, useResizablePanel, useToast } from '../../design';
 import { useCapabilities } from '../../lib/capabilities';
 import { getDb } from '../../lib/localdb';
@@ -16,6 +16,7 @@ import { describeSyncSnapshot, getSyncEngine, useSyncSnapshot } from '../../lib/
 import { useOnline } from '../../lib/useOnline';
 import { usePageTitle } from '../../lib/usePageTitle';
 import { InkHost, InkProvider, useInk, type InkLinkHost, type LinkChoice } from './ink';
+import { HandwritingHost, RecordMenuItem } from './handwriting/HandwritingHost';
 import { fetchSourceAnnotations, markOpened } from './data/api';
 import { mergeServerAnnotations, registerWorkspaceAppliers } from './data/local';
 import { activeVersionId, useSourceDetail, useVersionDocument, type SourceDocument } from './data/useSourceDocument';
@@ -23,6 +24,9 @@ import { SearchPanel } from './chrome/SearchPanel';
 import { TopBar, type WorkspaceView } from './chrome/TopBar';
 import { canSplit, decidePanels, defaultLeftOpen, effectiveLayout, canShowSpread, RAIL_MAX, RAIL_MIN } from './model/layout';
 import { usePendingAiRequest } from './model/aiActions';
+import { useMcqRequest } from './model/mcqRequest';
+import { arrangementFor } from './modes/arrangement';
+import { StudyModeSwitch } from './modes/StudyModeSwitch';
 import { loadBackStack, popBack, pushBack, saveBackStack, type BackEntry, type ReaderPosition } from './model/backStack';
 import { fullPageLabel } from './model/pages';
 import type { SearchResult } from './model/search';
@@ -240,7 +244,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
   // phones open on the book (§23): sheets are never restored open over it
   const startsOnPhone = width < 768;
   const [railOpen, setRailOpen] = useState(startsOnPhone ? false : (loc0.rail?.open ?? settings.rail_open));
-  const [railTab, setRailTab] = useState<RailTab>((['explain', 'questions', 'sources', 'mine'] as const).find((t) => t === loc0.rail?.tab) ?? 'sources');
+  const [railTab, setRailTab] = useState<RailTab>((['explain', 'questions', 'cases', 'sources', 'mine'] as const).find((t) => t === loc0.rail?.tab) ?? 'sources');
   const [mineTab, setMineTab] = useState<MineTabValue>('notes');
   const [leftOpen, setLeftOpen] = useState(startsOnPhone ? false : (loc0.left_panel?.open ?? defaultLeftOpen(width)));
   const [leftTab, setLeftTab] = useState<LeftTab>(loc0.left_panel?.tab ?? 'thumbnails');
@@ -294,7 +298,17 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
 
   // ── note pages inserted after source pages (track F1): the canvas shows the sequence ──
   const goToNoteRef = useRef<(id: string, frac?: number) => boolean>(() => false);
-  const notes = useReaderNotePages({ sourceId, pages, online, onCreated: (id) => void goToNoteRef.current(id), announce: setAnnouncement });
+  // a page just created is in IndexedDB but not yet in the sequence (the live query answers a moment later): when it
+  // cannot be opened right away, it is opened as soon as it appears (pendingNote, applied by the effect below)
+  const notes = useReaderNotePages({
+    sourceId,
+    pages,
+    online,
+    onCreated: (id) => {
+      if (!goToNoteRef.current(id)) pendingNote.current = { id, frac: 0 };
+    },
+    announce: setAnnouncement,
+  });
   const sheetsRef = useRef(notes.sheets);
   sheetsRef.current = notes.sheets;
   const seqRef = useRef(notes.index);
@@ -450,7 +464,6 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
       const next = layout === 'continuous' ? cur + dir : stepSpread(cur, dir, layout, count);
       if (next !== cur && next >= 0 && next < count) goToSeq(next, 0);
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [layout, goToSeq],
   );
 
@@ -727,6 +740,34 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selection, searchOpen, highlight, focusMode, layout, step, goToPage, goToSeq, toggleLeft, toggleRail, toggleFocus, pages.length, bookOnly]);
 
+  // ── (track F3) study mode (§39): arranges the rail, panels and practice policy; saved with the session ──
+  const studyMode = session.mode;
+  const changeMode = useCallback(
+    (m: StudyMode) => {
+      if (m === session.mode) return;
+      // the current view is saved with the switch (F3 review: a split view was saved as «original»)
+      session.setMode(m, { location: buildLocation(), versionId, view: stateRef.current.split || stateRef.current.splitBook ? 'split' : 'original' });
+      const a = arrangementFor(m);
+      setRailTab(a.defaultTab);
+      if (!panels.phone) {
+        setRailOpen(a.panels.rail);
+        setLeftOpen(a.panels.left);
+      }
+      setAnnouncement(`وضع الدراسة الآن: ${STUDY_MODE_LABELS_AR[m]}.`);
+    },
+    [session, buildLocation, versionId, panels.phone],
+  );
+
+  // ── (track F3) «أنشئ سؤال اختيار من متعدد» from the selection toolbar → the «الأسئلة» section shows the panel ──
+  const pendingMcq = useMcqRequest();
+  useEffect(() => {
+    if (!pendingMcq) return;
+    setRailTab('questions');
+    setRailOpen(true);
+    setLastPanel('rail');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingMcq?.id]);
+
   // ── explanation actions from the selection toolbar → the «الشرح والسؤال» tab (it consumes the request) ──
   const pendingAi = usePendingAiRequest();
   useEffect(() => {
@@ -778,9 +819,14 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
       setBookView(false);
       writePref(VIEW_PREF_KEY(sourceId), null);
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [sourceId, split, showOriginalAt, pages],
   );
+
+  // (F3 review) «امتحن نفسك» hides explanations — the Study Book view too, not only the rail's «الشرح والسؤال»: entering
+  // the mode (or reopening in it) returns to the original, and the view menu names the mode as the reason
+  useEffect(() => {
+    if (studyMode === 'exam' && (bookOnly || splitBookActive)) changeView('original');
+  }, [studyMode, bookOnly, splitBookActive, changeView]);
 
   /** «افتح في المحاضرة» from the full Study Book: the original lecture at that page */
   const changeViewToPage = useCallback(
@@ -959,6 +1005,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
       pageIndex={pageIndex}
       tab={railTab}
       onTab={setRailTab}
+      mode={studyMode}
       mineTab={mineTab}
       onMineTab={setMineTab}
       draft={draft}
@@ -999,6 +1046,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
 
   return (
     <InkHost links={linkHost} currentPage={currentInkPage} notify={(m) => toast.show({ title: m, tone: 'warning' })}>
+    <HandwritingHost sourceId={sourceId} nodeId={detail.node_id ?? null} online={online}>
     <SourceNavigationContext.Provider value={nav}>
       <ReaderPageContext.Provider value={pageCtx}>
         <div
@@ -1029,8 +1077,9 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
               }}
               view={view}
               onView={changeView}
+              modeSwitch={<StudyModeSwitch mode={studyMode} onChange={changeMode} compact={panels.phone} />}
               splitReason={splitReason}
-              studyBookReason={studyBook.reason}
+              studyBookReason={studyMode === 'exam' ? EXAM_MODE_HIDDEN_AR : studyBook.reason}
               searchOpen={searchOpen}
               onToggleSearch={() => {
                 // searching the source text happens in the original (its hits are on the pages)
@@ -1082,6 +1131,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
                     صفحة ملاحظات بعد هذه الصفحة…
                   </MenuItem>
                   {offlineAction.item}
+                  <RecordMenuItem />
                 </>
               }
             />
@@ -1248,6 +1298,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
               textRoot={(i) => textRoots.current.get(i) ?? null}
               anchorFor={anchorFor}
               fixedPages={doc.mode === 'pdf' || doc.mode === 'image'}
+              explainHiddenReason={studyMode === 'exam' ? EXAM_MODE_HIDDEN_AR : null}
               onAddNote={(i, quote: TextQuote | null) => {
                 setDraft({ pageIndex: i, quote });
                 setRailTab('mine');
@@ -1306,6 +1357,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
         </div>
       </ReaderPageContext.Provider>
     </SourceNavigationContext.Provider>
+    </HandwritingHost>
     </InkHost>
   );
 }

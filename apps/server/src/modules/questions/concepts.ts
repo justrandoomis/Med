@@ -52,7 +52,7 @@ function clean(s: string): string {
 function meaningful(name: string): boolean {
   if (name.length < 3 || name.length > 80) return false;
   if (name.split(/\s+/).length > 6) return false;
-  if (/^[0-9\s.,%/×<>≥≤—–\-]+$/.test(name)) return false;
+  if (/^[0-9\s.,%/×<>≥≤—–-]+$/.test(name)) return false;
   const toks = contentTokens(name);
   if (toks.length === 0) return false;
   return toks.some((t) => !GENERIC_HEADING.has(t.stem) && !GENERIC_HEADING.has(t.norm));
@@ -180,12 +180,28 @@ export function lectureConcepts(ctx: AppContext, versionId: string): LectureConc
       WHERE m.version_id = ? AND c.status <> 'rejected' AND c.merged_into_id IS NULL AND m.role LIKE 'candidate%'`,
     [versionId],
   );
+  // one entry per NAME: a concept that carries both an English and an Arabic name (a bilingual heading joined two
+  // candidates in the Course Brain, or the owner named it in both languages) or absorbed another one in a merge (its
+  // names are kept as 'merge' aliases) is matched by any of them — exactly as the single-name candidates were before
+  // they were joined, so a join / merge never drops a name question matching used (review F2)
+  const ids = [...new Set(rows.map((r) => r.id))];
+  const mergedNames = new Map<string, string[]>();
+  if (ids.length) {
+    for (const a of ctx.db.all<{ concept_id: string; alias: string }>(
+      `SELECT concept_id, alias FROM concept_alias WHERE origin = 'merge' AND concept_id IN (${ids.map(() => '?').join(',')})`,
+      ids,
+    ))
+      mergedNames.set(a.concept_id, [...(mergedNames.get(a.concept_id) ?? []), a.alias]);
+  }
   const map = new Map<string, LectureConcept>();
   for (const r of rows) {
-    const name = r.name_en ?? r.name_ar ?? '';
-    const e = map.get(r.id) ?? { id: r.id, name, key: conceptKey(name), status: r.status as 'suggested' | 'accepted', pageIds: [] };
-    if (r.page_id && !e.pageIds.includes(r.page_id)) e.pageIds.push(r.page_id);
-    map.set(r.id, e);
+    const names = [...new Set([r.name_en, r.name_ar, ...(mergedNames.get(r.id) ?? [])].filter((n): n is string => !!n && n.trim().length > 0))];
+    for (const name of names.length ? names : ['']) {
+      const k = `${r.id}|${name}`;
+      const e = map.get(k) ?? { id: r.id, name, key: conceptKey(name), status: r.status as 'suggested' | 'accepted', pageIds: [] };
+      if (r.page_id && !e.pageIds.includes(r.page_id)) e.pageIds.push(r.page_id);
+      map.set(k, e);
+    }
   }
   return [...map.values()].filter((c) => c.key.length > 0);
 }

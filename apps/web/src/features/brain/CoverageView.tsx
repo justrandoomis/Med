@@ -33,8 +33,10 @@ export function CoverageView({ courseNodeId }: { courseNodeId: string }) {
   if (q.error && !q.data) return <ErrorState message={q.error.message} onRetry={() => void q.refresh()} />;
   const data = q.data!;
   if (data.lectures.length === 0) return <EmptyState headingLevel={3} title="لا محاضرات في هذا الكورس بعد" description="بعد رفع المحاضرات ومصادر الأسئلة يظهر هنا ما له أسئلة وما بلا أسئلة." />;
-  const shown = lectureId === 'all' ? data.lectures : data.lectures.filter((l) => l.source_id === lectureId);
-  const totals = lectureId === 'all' ? data.totals : { pages: shown[0]!.totals.pages, concepts: shown[0]!.totals.concepts };
+  // a lecture chosen before a refresh may be gone (trashed / moved): fall back to the whole course, never crash
+  const one = lectureId === 'all' ? undefined : data.lectures.find((l) => l.source_id === lectureId);
+  const shown = one ? [one] : data.lectures;
+  const totals = one ? { pages: one.totals.pages, concepts: one.totals.concepts } : data.totals;
   return (
     <div className="lw-stack">
       {q.fromCache && <p className="lw-note">معروضة من آخر نسخة محفوظة على هذا الجهاز (دون اتصال).</p>}
@@ -42,7 +44,7 @@ export function CoverageView({ courseNodeId }: { courseNodeId: string }) {
         <Select<string>
           label="المحاضرة"
           options={[{ value: 'all', label: 'كل محاضرات الكورس' }, ...data.lectures.map((l) => ({ value: l.source_id, label: l.title }))]}
-          value={lectureId}
+          value={one ? lectureId : 'all'}
           onValueChange={setLectureId}
         />
       </div>

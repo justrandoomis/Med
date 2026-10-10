@@ -186,6 +186,8 @@ export interface ImpactCounts {
   review_events: number;
   /** contextual study conversations about the purged sources (deleted with them) */
   threads: number;
+  /** the owner's note pages (paper pages of a notebook / inserted after a source's pages) deleted with it — track F1 */
+  note_pages: number;
   /** derived things OUTSIDE the purge set that cite it (kept, marked for review) */
   external_dependents: number;
 }
@@ -212,6 +214,7 @@ const NOUNS = {
   flashcards: { one: 'بطاقة واحدة', two: 'بطاقتان', few: 'بطاقات', many: 'بطاقة' },
   review_events: { one: 'مراجعة واحدة', two: 'مراجعتان', few: 'مراجعات', many: 'مراجعة' },
   threads: { one: 'محادثة واحدة', two: 'محادثتان', few: 'محادثات', many: 'محادثة' },
+  note_pages: { one: 'صفحة ملاحظات واحدة', two: 'صفحتا ملاحظات', few: 'صفحات ملاحظات', many: 'صفحة ملاحظات' },
   artifacts: { one: 'شرح أو ملخص مولَّد واحد', two: 'شرحان أو ملخصان مولَّدان', few: 'شروح وملخصات مولَّدة', many: 'شرحًا وملخصًا مولَّدًا' },
   external_dependents: { one: 'عنصر واحد', two: 'عنصران', few: 'عناصر', many: 'عنصرًا' },
 } as const;
@@ -228,7 +231,7 @@ export function impactLinesAr(c: ImpactCounts, mode: 'purge' | 'trash'): string[
     lines.push(`${verb}: ${countAr(c.sources, NOUNS.sources)}${parts.length ? ` (${parts.join('، ')})` : ''}.`);
   }
   if (mode === 'trash') {
-    if (c.annotations + c.notes + c.questions + c.flashcards + c.artifacts + c.threads > 0) {
+    if (c.annotations + c.notes + c.note_pages + c.questions + c.flashcards + c.artifacts + c.threads > 0) {
       lines.push('كتابتك وملاحظاتك وأسئلتك المرتبطة تبقى محفوظة، وتعود كما هي عند الاستعادة.');
     }
     if (lines.length === 0) lines.push('العنصر فارغ.');
@@ -237,6 +240,7 @@ export function impactLinesAr(c: ImpactCounts, mode: 'purge' | 'trash'): string[
   }
   if (c.annotations > 0) lines.push(`كتابتك بالقلم وتعليقاتك على هذه الصفحات: ${countAr(c.annotations, NOUNS.annotations)}.`);
   if (c.notes > 0) lines.push(`ملاحظاتك داخلها أو المرتبطة بها: ${countAr(c.notes, NOUNS.notes)}.`);
+  if (c.note_pages > 0) lines.push(`صفحات ملاحظاتك الورقية (مع ما كتبته وأدرجته عليها): ${countAr(c.note_pages, NOUNS.note_pages)}.`);
   if (c.questions > 0) {
     lines.push(
       `أسئلة لا توجد إلا في هذه المصادر: ${countAr(c.questions, NOUNS.questions)}` +
@@ -397,6 +401,7 @@ function computeCounts(ctx: AppContext): ImpactCounts {
       count(ctx, `SELECT COUNT(*) AS n FROM written_attempt WHERE question_id IN ${IN('question')}`),
     review_events: count(ctx, `SELECT COUNT(*) AS n FROM review_event WHERE card_id IN ${IN('flashcard')}`),
     threads: count(ctx, `SELECT COUNT(*) AS n FROM ${T('thread')}`),
+    note_pages: count(ctx, `SELECT COUNT(*) AS n FROM note_page WHERE id IN ${IN('note_page')} AND deleted_at IS NULL`),
     external_dependents: externalDependents(ctx).length,
   };
 }

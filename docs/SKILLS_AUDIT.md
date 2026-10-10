@@ -28,12 +28,17 @@ Round 5 (integration and acceptance) adds rows below once its agents report.
 * R5 docs (requirement matrix, test log, README, 2026-10-10): `engineering:documentation` — reader-first structure
   for `docs/REQUIREMENTS_MATRIX.md`, `docs/TEST_LOG.md` and `README.md` (most useful information first, commands shown,
   link instead of duplicating the module notes).
+* Track F5 (quality ops, 2026-10-10): `anthropic-skills:docx` — docx-js gotchas for the DOCX export (A4, DXA table
+  widths, `ShadingType.CLEAR`, a numbering config instead of literal bullets, one paragraph per line) and its advice to
+  render the file and look at it: rendering with LibreOffice showed «11 ×10⁹/L» laid out as «L/10⁹× 11» inside an
+  Arabic sentence, which led to the LRI / PDI isolates (`docs/modules/data.md`); `dataviz` — the calm 14-day strips in
+  «صحة النظام»: one hue, `aria-hidden` marks, every count stated in a sentence with its denominator, a table twin.
 
 ## Considered but not used
 
 | Skill | Why it was not used |
 |---|---|
-| `anthropic-skills:docx`, `anthropic-skills:pptx` | DOCX/PPTX are **read** with `mammoth` and `jszip` inside the processing pipeline; these skills are for authoring office files. DOCX export is not implemented (see the requirements matrix). |
+| `anthropic-skills:docx`, `anthropic-skills:pptx` | DOCX/PPTX are **read** with `mammoth` and `jszip` inside the processing pipeline; these skills are for authoring office files. (`anthropic-skills:docx` was used later, in track F5, for the DOCX export — above.) |
 | `anthropic-skills:xlsx`, slide and marketing skills | Not needed by this product (§00: do not run unrelated skills just because they exist). |
 | `security-review` | The security work was done by the per-track adversarial reviewers and by the Round 5 G8 security sweep (auth on every route, CSRF, files, ZIP, SSRF, secrets). |
 

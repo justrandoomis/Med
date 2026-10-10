@@ -15,17 +15,25 @@ export function PracticeEntry() {
   const navigate = useNavigate();
   const sourceId = params.get('source_id');
   const questionId = params.get('question_id');
+  // (track F3) the study mode's policy: «امتحن نفسك» → an assessed exam (no hints, solutions at the end); «راجع» →
+  // revision; «تدرّب» → practice with Anti-shortcut. The server fixes the policy when the set is created.
+  const modeParam = params.get('mode');
+  const mode: ExamCreateRequest['mode'] = modeParam === 'exam' || modeParam === 'revision' ? modeParam : 'practice';
+  const antiShortcut = params.get('anti_shortcut') === '1';
   const attemptId = useRef(newId());
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
-    const req: ExamCreateRequest = sourceId
-      ? { title: 'تدريب من المحاضرة', mode: 'practice', count: 10, source_ids: [sourceId], start_question_id: questionId, attempt_id: attemptId.current }
+    const title = mode === 'exam' ? 'امتحن نفسك من المحاضرة' : mode === 'revision' ? 'مراجعة من المحاضرة' : 'تدريب من المحاضرة';
+    const policy = mode === 'practice' && antiShortcut ? { anti_shortcut: true } : undefined;
+    const base: ExamCreateRequest = sourceId
+      ? { title, mode, count: 10, source_ids: [sourceId], start_question_id: questionId, attempt_id: attemptId.current }
       : questionId
-        ? { title: 'تدريب على سؤال', mode: 'practice', count: 1, question_ids: [questionId], attempt_id: attemptId.current }
-        : { title: 'تدريب', mode: 'practice', count: 10, attempt_id: attemptId.current };
+        ? { title: mode === 'exam' ? 'امتحن نفسك' : 'تدريب على سؤال', mode, count: 1, question_ids: [questionId], attempt_id: attemptId.current }
+        : { title: 'تدريب', mode, count: 10, attempt_id: attemptId.current };
+    const req: ExamCreateRequest = policy ? { ...base, policy } : base;
     (async () => {
       // a written question (short answer / essay) is answered in the written flow, not in the MCQ runner
       if (questionId) {
@@ -46,7 +54,7 @@ export function PracticeEntry() {
     return () => {
       cancelled = true;
     };
-  }, [sourceId, questionId, navigate, retry]);
+  }, [sourceId, questionId, navigate, retry, mode, antiShortcut]);
 
   if (error) {
     return (

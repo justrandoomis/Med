@@ -9,6 +9,7 @@ import { settingsStore } from '../lib/settings';
 import { getDb } from '../lib/localdb';
 import { installOfflineTransport } from '../lib/offline';
 import { getSyncEngine } from '../lib/sync';
+import { reportError } from '../lib/errorReporter';
 import { recoverNoteDrafts } from '../features/workspace/data/noteDrafts';
 import { usePageTitle } from '../lib/usePageTitle';
 import { PwaUpdatePrompt } from './PwaUpdatePrompt';
@@ -61,6 +62,12 @@ export function RouteErrorScreen() {
   const error = useRouteError();
   const navigate = useNavigate();
   usePageTitle('تعذّر فتح الصفحة');
+  // (track F5, §56) a render / loader error caught by the router never reaches window.onerror: report it here
+  // (redacted, batched — lib/errorReporter.ts). A 404 or the offline-auth 503 is not an application error.
+  useEffect(() => {
+    if (isRouteErrorResponse(error) && (error.status === 404 || error.status === 503)) return;
+    reportError('route', error);
+  }, [error]);
   if (isRouteErrorResponse(error) && error.status === 503) {
     return (
       <div className="ml-standalone">

@@ -100,20 +100,24 @@ scrollTop); a selection's end boundary quoting the whole page; canvases sharing 
 
 ## 4. Not done / known limits (honest)
 
-* **AI actions, Study Book, Question Vault panels**: disabled with reasons (later rounds). The «الشرح والسؤال» tab
-  generates nothing.
-* **Manual re-anchoring** UI: the list shows items and their previous place; moving them is not built.
-* **Download Manager**: the reader reads explicitly downloaded files from IndexedDB `blobs` (`<fileId>` or
-  `file:<fileId>`) when present, but nothing writes them yet; offline the reader says the source is not on this device.
+* ~~**AI actions, Study Book, Question Vault panels**: disabled with reasons (later rounds).~~ Built: the «الشرح
+  والسؤال» tab and the Study Book view (track C2, `panels/ExplainTab.tsx`, `studybook/`), the questions tab (track C3);
+  without an AI key the AI actions report `requires_configuration` with the reason. *(reconciled, track F5)*
+* **Manual re-anchoring** UI: the «إعادة ربط» list shows items and their previous place («اذهب إلى الصفحة»); moving
+  them is still not built.
+* ~~**Download Manager**: nothing writes the `blobs` yet.~~ Track D1's download manager writes them (`lib/offline.ts`);
+  the reader opens downloaded sources offline (AC-23, `e2e/g7-ac23-offline.spec.ts`). *(reconciled, track F5)*
 * Search hits are not drawn inside DOCX/slide-text sections (navigation to the section works); search over large
   documents fetches each page's text once per open (pdf.js text / regions), with real progress counts.
-* Note pages (paper pages after a source page) are synced and returned by `GET /source/:id` but not rendered in the
-  reader yet.
+* ~~Note pages (paper pages after a source page) are synced and returned by `GET /source/:id` but not rendered in the
+  reader yet.~~ Built in track F1 (inserted note pages in the reader sequence + notebooks) — see «Track F1» below.
 * Text highlights in DOCX sections are disabled with a reason (no fixed page geometry); copy and notes work.
-* The secondary pane in Split Study is read-only (no ink, no session autosave beyond its page index).
+* ~~The secondary pane in Split Study is read-only (no ink, no session autosave beyond its page index).~~ Writable since
+  track F1 (ink + notes; its zoom kept in the session) — see «Track F1» below.
 * Keyboard-only text selection (caret browsing) reaches the selection toolbar after the panels in tab order.
-* Not run: real iPad/iPhone Safari, Apple Pencil, VoiceOver/NVDA passes, axe/Lighthouse (no axe in the repo),
-  very large documents (hundreds of pages) — virtualization logic is unit-tested, not measured on a device.
+* Not run: real iPad/iPhone Safari, Apple Pencil, VoiceOver/NVDA passes, axe/Lighthouse (no axe in the repo). Very
+  large documents were measured in Chromium since round I2 (300-page lecture, `e2e/perf.spec.ts`,
+  docs/PERFORMANCE.md) — still not on a device. *(reconciled, track F5)*
 * Pinch-zoom was implemented for touch and Safari gesture events but only Ctrl+wheel was exercised automatically.
 
 ## 5. Independent adversarial review (after the build) — findings, fixes, regression tests
@@ -234,3 +238,191 @@ and `e2e/g7-ac24-two-devices.spec.ts` (two browser contexts = two devices):
   other device was also on showed the «موضع أحدث من جهاز آخر» dialog with two identical places (it blocked the reader in
   the two-device E2E). Same source, version, view and page (by id, else index) / Study Book block → the update is applied
   as `merged` (view preferences are last-write-wins, ARCHITECTURE §3.4). A different page is still never written over.
+
+## Track F1 — notebook pages & writing surfaces (2026-10-10; §26, §25, §05)
+
+### Server (`modules/annotations`, migration `0260_note_pages_links_images.sql`)
+* `note_page` gains `page_kind` (`page` | `divider`), `color` (one of the library cover colours, for dividers) and
+  `after_page_id` (the source page a page is inserted after; the index stays as the fallback). `annotation_image`
+  (`image_key` → `stored_file`, mime, bytes, size, `referenced`) holds pictures inserted with the ink image tool; an
+  expression index finds the annotations that show a picture.
+* Sync (`sync.ts`, `schemas.ts`): a note page must belong to a notebook / folder or follow a page of a source
+  (Arabic reasons); placement without a source, unknown colours and absurd sizes are rejected; a page id of another
+  source is dropped and the page is kept by its index (`merged`, said in the detail). Annotation kinds `link`
+  (`{v:1, box, target: source_page{source_id, version_id, page_id, page_index, bbox?, region_id?} | note_page{note_page_id, bbox?}, label?}`)
+  and `image` (`{v:1, image_key, box, mime, natural_w/h, bytes, alt?}`) are validated (`ANNOTATION_IMAGE_MIMES`:
+  png / jpeg / webp / gif, ≤ 10 MB, ≤ 12 000 px a side); a link that cannot be followed is never stored.
+* Routes: `GET /note-pages?node_id=|source_id=[&include_deleted=1]`, `GET /notebook/:nodeId` (pages + what is written
+  on them — seeds a device), `POST /images` (multipart `image_key` + file; upload rate limit; the type is **sniffed**
+  — SVG / HTML / TIFF / text are refused whatever the client says, 415; too big 413; idempotent by key: the same bytes
+  again → `duplicate`, other bytes → 409), `GET /images/:key/meta`, `GET /images/:key` (nosniff; before the upload
+  arrives: 404 «لم تصل هذه الصورة إلى الخادم بعد…»).
+* An image annotation may arrive before its picture or after it (both orders tested). Purge: a picture another page
+  still shows is kept; once no annotation — live or tombstoned (undo may bring it back) — refers to it, the row and the
+  file go (`pruneAnnotationImages`, called after `executePurge`). An upload no annotation has claimed yet is kept for
+  7 days (its annotation may still be queued on a device). Backups carry the files (every `stored_file`).
+
+### Web
+| area | files | what it does |
+|---|---|---|
+| Paper | `model/paper.ts` | blank / ruled / dotted / grid drawn as CSS gradients in page units (follows zoom exactly) with token colours `--wk-paper-bg` / `--wk-paper-rule` — dark mode keeps the contrast of the ink; ruled paper has a header band and an RTL-aware margin. |
+| Local-first rows | `data/notePages.ts`, `data/local.ts` | create / rename / paper / move / trash / restore = IndexedDB row + outbox op in one transaction (no network). Edits to a still-queued create coalesce into one full-state op; once the server acknowledged rev n the next edit names `base_rev` n; trash is a tombstone + `delete`, restore an upsert. Server seeding never overwrites a row with unsynced changes. |
+| Reader sequence | `model/sequence.ts`, `notes/readerNotePages.tsx`, `reader/BookCanvas.tsx`, `reader/NotePageView.tsx` | the Book Canvas renders `ReaderSheet[]` (source pages + note pages inserted after a page id / index, in sort order; trashed pages and dividers are not in the reader). The URL keeps the source page and `?note=`; the session stores `note_page_id` + offset; Home / End / flips / go-to work in sheet space; a note page has a folio menu (rename, paper, move across source pages, new page after, trash with «تراجع»). «صفحة ملاحظات بعد هذه الصفحة…» in the top bar's menu; «ملاحظاتي» lists the source's note pages and the trashed ones (restore). |
+| Notebook | `notebook/NotebookScreen.tsx`, `NotePagesList.tsx`, `NotebookSection.tsx`, route `/notebook/:nodeId?page=` | the folder's cover (library `Cover`), section tabs from dividers («أقسام الدفتر»), the pages on the same Book Canvas with the ink engine (`note_page` anchors), «صفحة N من M», a page list panel (docked ≥ 1024 px, a sheet below) with move / rename / paper / trash and the trash with restore. The library node page shows a «دفتر الملاحظات» section (open, new page, compact list). |
+| Page links | `notes/NotePageDialogs.tsx` (`LinkTargetDialog`), ink `link` tool, `ink/host.tsx` | drag a box with «رابط إلى صفحة» → «إلى أين يقود الرابط؟» (a page of this source by printed label / file position, or a note page) → a `link` annotation. With the hand tool the box is a labelled button («رابط: … يفتح …») that navigates and pushes a back entry (`BackEntry.route` for notebook pages, `ReaderPosition.notePageId`); while writing it lets the pen through and is hidden from the accessibility tree. |
+| PDF links | `reader/pdfLinks.tsx` | pdf.js link annotations as buttons over the page: internal destinations (named / explicit / Next / Prev / First / Last) go to the page and push a back entry; external URLs (http / https / mailto only) open after «فتح رابط خارجي؟» in a new window (`noopener`); the server never fetches them. Inert while writing. |
+| Pictures | ink `image` tool, `ink/images.ts` | file picker («إدراج صورة هنا») or paste; the bytes are stored on the device first (`blobs`, `annimg:<key>`), the annotation is appended locally, uploads retry with backoff (2 s … 10 min; refused bytes are kept with the reason; nothing is uploaded while offline). Shown from the device copy, else the server; a badge says «بانتظار الرفع» / why it was refused. Moved / resized with the lasso (aspect kept), undo removes only the annotation. |
+| Split Study | `split/SplitPane.tsx` | the second pane is writable: the same ink engine (one toolbar, undo covers both), its own inserted note pages, a notes panel for its pages; its page and zoom live in the split state, so neither pane loses its place when the other changes. |
+
+### Tested (run 2026-10-10, results at the time of writing)
+| command | result |
+|---|---|
+| `npm test -w @medlevo/server` | 102 files passed, 6 skipped — **1152 passed**, 6 skipped; `test/annotations/notebook.test.ts` 14 tests (notebook pages + dividers order and seeding, rev-checked edits / stale rejection, trash / restore keeps ink, refusals with reasons, page-id placement, GET validation / 404 / 401, links stored and malformed links refused, picture before / after its annotation, content sniffing + limits, purge keeps a shared picture / removes an unused one, backup carries it, prune grace period) |
+| `npm test -w @medlevo/web` | 92 files passed, 1 skipped — **616 passed**, 1 skipped; F1: `model/sequence.test.ts` (7), `model/paper.test.ts` (4), `reader/pdfLinks.test.ts` (6), `data/notePages.test.ts` (7), `reader/noteSheets.test.tsx` (4), `model/backStack.test.ts` (+2), `test/ink/notebook-tools.test.tsx` (11: picture geometry / limits, local-first insert + undo, lasso resize keeps aspect, uploader states, toolbar, image and link tools in a layer) |
+| `npm test -w @medlevo/shared` | 48 passed |
+| `npx tsc -p apps/server --noEmit` · `-p apps/web` · `-p e2e` · `-p packages/shared` | no errors |
+| `npm run build -w @medlevo/web` | success |
+| `npx playwright test e2e/f1-notebook-pages.spec.ts` (phone + desktop, real server) | **4 passed**: in the library create a ruled notebook page → pen stroke → insert a picture with the image tool → a second (grid) page → link tool box → «الصفحة الثانية» → followed with the hand tool → back; the server has the pages, ink, picture (served 200) and link; reload keeps everything; offline reload, a new dotted page inserted after the current one + a stroke, back online → synced. In the reader a note page inserted after page 1 sits between pages 1 and 2, takes ink, is on the server with `after_page_index` 0 and survives a reload. |
+
+### Not done / limits (honest)
+* ~~PDF internal links are unit-tested (`pdfLinks.test.ts`) but no E2E fixture PDF has link annotations.~~ Covered in
+  E2E since the F1 review (a generated PDF with real Link annotations — see «Review F1» below).
+* An offline download of a source does not include pictures inserted on **another** device (this device's own
+  pictures are kept locally until uploaded); offline, a picture that is only on the server says so.
+* Undo / redo history is per open session (memory), as for the rest of the ink engine.
+* No real iPad / Apple Pencil run (pointer events in Chromium only); no screen-reader pass (labels, roles and
+  keyboard paths are in place and asserted by the tests).
+* Covers: the notebook shows the folder's library cover (set in the library); there is no per-page cover type.
+
+### Review F1 (independent adversarial review, 2026-10-10)
+Every F1 file was re-read against the shared contracts, the sync engine and the spec; candidates were probed with
+throw-away server tests, jsdom tests and Playwright runs against the real server before anything was changed. Fixed
+(each with a regression test that fails without the fix):
+
+| # | severity | defect (confirmed) | fix | regression test |
+|---|---|---|---|---|
+| 1 | major | **The reading place followed the sheet INDEX, not the sheet.** Note pages reach the reader a moment after the first layout (IndexedDB live query, then the server), and are inserted / trashed / moved / pulled from another device while it is open: every time one landed before the place, the canvas re-anchored to the neighbouring sheet and that wrong page was saved as the session (opened at page 2 with a note page after page 1 → the reader showed and saved the note page). | `reader/BookCanvas.tsx`: when `sheets` changes, the place is remapped to the same sheet by key (a removed sheet leaves the place on the sheet that now follows the last surviving one before it), before the layout effects re-anchor. | `reader/noteSheets.test.tsx` (2 tests); `e2e/f1-notebook-pages.spec.ts` (reader: opened at page 2 → stays, reload restores page 2 — this step failed in the real app with the fix disabled: «1 من 4») |
+| 2 | minor | A note page created in the reader was not opened: `goToNote` ran before the live query delivered the new row. | `WorkspaceScreen.tsx`: `onCreated` falls back to `pendingNote` (opened as soon as the page appears). | E2E: after «أضف الصفحة» the top bar shows «صفحة ملاحظات بعدها» |
+| 3 | minor (honesty) | «استُعيدت … مع كتابتها» on a device that never had the page's ink (seeding fetches the ink of LIVE pages only): the restored page was blank until the next seeding. | `data/notePages.ts`: `restoreNotePage` fetches `/annotations/by-targets?keys=note_page:<id>` when online and merges it (never over unsynced local rows). | `data/notePages.test.ts` |
+| 4 | minor (data reach) | The picture uploader marked a picture «refused» for good on ANY 4xx (a refused origin 403, a proxy's 404, 405 …) — it was never uploaded again, so other devices never saw it. | `ink/images.ts`: only a verdict on the bytes (400 / 409 / 413 / 415 / 422) is final; anything else is retried with backoff. | `test/ink/notebook-tools.test.tsx` |
+| 5 | minor (security) | The external-link confirmation printed the PDF's raw URL: a right-to-left override or a look-alike (IDN) host could show a different destination than the one that opens. | `notes/NotePageDialogs.tsx`: the dialog shows the normalized address that would really open (punycode host, percent-encoded bidi / invisible characters). | `reader/noteSheets.test.tsx` («external links of a PDF», 2 tests) + E2E |
+| 6 | minor (a11y) | The 44 px touch area of small page links (`::before`) was clipped by `overflow: hidden` on the link button. | `ink/ink.css`: no clipping on the button (the text span ellipsizes); the area grows in both directions. | E2E: `elementFromPoint` just outside the drawn box still hits the link |
+| 7 | minor (honesty) | A purge's impact report did not name the owner's note pages it deletes (blank pages were not mentioned at all). | `sources/purge.ts`: `note_pages` count + «صفحات ملاحظاتك الورقية (مع ما كتبته وأدرجته عليها): …» (purge) and counted in «تبقى محفوظة» (trash); part of the confirm-token fingerprint. | `srv:annotations/notebook.test.ts` |
+| 8 | test gap | PDF links were unit-tested only. | — | E2E «PDF links»: a PDF generated in the spec with real Link annotations — internal → page 3 and «العودة إلى موضعك» returns; external → «فتح رابط خارجي؟» first, cancel opens nothing and NO request reaches the external host, confirm opens a new window with `window.opener === null` at exactly that URL; the reader does not move. |
+
+Probed and found sound: auth on every new route (401 without a session, 403 without the CSRF header on `POST /images`),
+content sniffing (SVG / HTML / TIFF refused, GIF accepted, the file part may come before `image_key`, a second file
+part is refused), idempotent uploads and the 409 on a key clash, picture files across purge (shared bytes kept,
+unreferenced removed, tombstoned annotations keep theirs) and backup, link targets limited to source / note pages (no
+URL type exists; the server never fetches anything), React-escaped labels / alt texts / titles (no HTML injection),
+the rev bookkeeping of queued note-page edits, paper patterns as colour tokens with a `prefers-contrast` / forced-colours
+variant.
+
+Not fixed (reported):
+* **Pre-existing reader issue (B1, not F1):** near the end of a document the reading line slides down
+  (`readingLineY`), while a restored offset is re-applied at the fixed line; reopening a source at its second-to-last
+  page on a phone lands one page later (reproduced without any note page). Changing it moves every jump near the end
+  of a book, so it is left to the reader's owner.
+* A note page whose notebook was purged meanwhile and that follows no source is saved with neither (kept on the server
+  and in backups, but listed nowhere) — pre-existing B1 behaviour of `notePageFields`.
+* The full JSON export (data module) does not list `annotation_image` (key → file); the backup carries everything.
+* Prune right after a purge removes a picture whose only annotation on the server was purged, even if a copy (same
+  `image_key`) is still queued offline on another device; that copy then shows «لم تصل الصورة إلى الخادم بعد».
+* After a server restore (epoch reset), pictures this device had already uploaded are not re-uploaded if the restored
+  backup predates them.
+* A pasted picture lands on the last page touched (`activeTargetKey`), which may not be the page on screen after a
+  scroll; the uploader runs only while a reader / notebook is open.
+* `sortOrderBetween` after many moves into the same gap falls back to `prev + 1e-6`, which can pass the next page
+  (order only; nothing is lost).
+
+Runs of the review (2026-10-10, this tree):
+
+| command | result |
+|---|---|
+| `npm test -w @medlevo/server` | 104 files passed, 3 failed, 6 skipped — 1162 passed, 3 failed, 6 skipped. The 3 failures are all in `test/brain/` (`review.test.ts` + two `zz-probe-*` files deleted during the run) — the parallel Course Brain (F2) review's work in progress, not this track. Every `test/annotations`, `test/library` and `test/sources` file passed, incl. the new purge-impact test. |
+| `npm test -w @medlevo/web` | 92 files passed, 1 skipped — **628 passed**, 1 skipped (new: `reader/noteSheets.test.tsx` +4, `data/notePages.test.ts` +1, `test/ink/notebook-tools.test.tsx` +1) |
+| `npm test -w @medlevo/shared` | 48 passed |
+| `npx tsc -p apps/server --noEmit` · `-p apps/web` · `-p e2e` | no errors |
+| `npm run build -w @medlevo/web` | success |
+| `npx playwright test e2e/f1-notebook-pages.spec.ts` (phone + desktop, real server) | **6 passed** (the two original scenarios with the new assertions + «PDF links») |
+
+## Track F4 — handwriting & recording host in the reader (2026-10-10)
+
+* `WorkspaceScreen` wraps its content in `<HandwritingHost sourceId nodeId online>` (inside `InkHost`, so inside the
+  document's `InkProvider`) and adds `<RecordMenuItem />` («سجّل ملاحظة صوتية…») to the top bar's view-options menu. The
+  host provides the lasso actions to the ink engine (`InkSelectionActionsProvider`): «تحويل إلى نص» (disabled with the
+  server's reason without a vision provider, or offline), «اسأل عن المحدد», playing a stroke's recording moment and
+  editing its time link; it renders the recognition dialog, the recording indicator, the player and the link editor
+  (`features/workspace/handwriting/*`, `features/workspace/audio/*` — see `docs/modules/ink.md` and
+  `docs/modules/cases-media.md` «Track F4»).
+* «اسأل عن المحدد» hands its composed question to the rail through the existing selection → rail store: `AiRequest`
+  gained an optional `prefill` (additive, `model/aiActions.ts`); `ExplainTab` passes it to `ChatPanel` (new optional
+  `prefill` prop), which puts it in the composer with the focus hand-over. Nothing is sent until the owner sends it; the
+  chat's own capability still decides whether sending is possible (requires_configuration here).
+* Leaving the reader stops and saves a running recording (`recorder.abandon()` on unmount).
+
+## Track F3 — study modes, «حالات», Create MCQ, diagrams and figure readings in the reader (2026-10-10; §30, §31, §39, §13)
+
+* **Study-mode switch** (`modes/StudyModeSwitch.tsx`, in the reading bar — a labelled button on desktop, an icon button
+  on the phone row): one menu with the five `STUDY_MODES` (تعلّم / افهم / تدرّب / راجع / امتحن نفسك); the current one
+  is named in the trigger («وضع الدراسة: …») and marked in the list in words («الحالي») and with a check. A mode only
+  ARRANGES the same tools and data (`modes/arrangement.ts`, pure, unit-tested): the rail section order, the section it
+  opens on, which side panels it opens (desktop), how many linked questions are open (this page / the lecture / all),
+  the practice policy of a set started from the rail (`practiceHref`: revision for «راجع», anti-shortcut for «تدرّب»,
+  an assessed exam with hints off for «امتحن نفسك» — the exams module fixes the policy at creation), and what
+  «امتحن نفسك» hides: the «الشرح والسؤال» and «المصادر» sections (named in a note with `EXAM_MODE_HIDDEN_AR`), why a
+  question was linked, its original page (a question-source page can carry its printed key), the question details link,
+  and «اشرح» on a selection (disabled with the reason). Nothing is duplicated: the same tab components receive the
+  arrangement.
+* **Persistence**: `useStudySession` keeps `mode` (restored from this device's row or the adopted server copy) and
+  `setMode()` writes it AT ONCE with the current place (IndexedDB + outbox → `study_session.mode`, which the server
+  already validated: an unknown mode is refused). A reload / another device continues in the same mode.
+* **«حالات»** (`panels/CasesTab.tsx`): the cases / OSCE stations / viva of THIS lecture (`GET /api/cases?source_id=` —
+  the case's lecture or the lecture of its Source Lock), with kind, origin in words, status and its first reason, the
+  last attempt and «افتح الحالة»; in «امتحن نفسك» the reasons are hidden and the link reads «ابدأ الحالة». Creating a
+  case stays in the cases screens.
+* **Create MCQ from a selection**: the selection toolbar's «أنشئ سؤال اختيار من متعدد» (`aiActions.ts` entry now
+  `wired`) puts the selection in `model/mcqRequest.ts`; the workspace opens the rail on «الأسئلة», which shows
+  `panels/CreateMcqPanel.tsx` (difficulty, item type, language; the regions under the selection are resolved like the
+  explain anchor). It calls the regular generation pipeline with `anchor` + `origin: 'selection'` and polls the run:
+  published → labelled generated question with «افتح السؤال» / «تدرّب عليه»; needs review → «لم يُنشر» with the failed
+  checks; abstained → the reason and the suggestion. Without a provider the menu item and the panel are disabled with the
+  capability's reason.
+* **Interactive diagrams** (`features/studybook/diagrams/*`): under the explanation tab, «مخطط تفاعلي من المادة» draws a
+  flowchart or a timeline of the current page (or a typed topic) — see `docs/modules/studybook.md` «Track F3».
+* **Figure readings** (`panels/FigureReadingPanel.tsx`): a figure / diagram row in «المصادر» has «بنية الشكل (قراءة
+  بصرية)» — the vision reading's label, status in words, direction, boxes and arrows each with «مقروء / غير مؤكد», and
+  the owner's review (correct labels, keep only the relations seen — uncertain ones start unticked — confirm or reject).
+  Without a vision provider the button is disabled with the reason; see `docs/modules/processing.md` «Track F3».
+* Shared-file edits (additive): `WorkspaceScreen.tsx` (mode state → rail / panels / selection toolbar / top bar, the
+  pending MCQ opens the rail), `chrome/TopBar.tsx` (`modeSwitch` slot), `panels/StudyRail.tsx` (arranged by mode,
+  «حالات» tab, diagram panel), `panels/QuestionsTab.tsx`, `panels/SourcesTab.tsx`, `selection/SelectionToolbar.tsx`,
+  `questions/PracticeButton.tsx` (`href`, `label`), `exams/PracticeEntry.tsx` (`mode=exam|revision`, `anti_shortcut=1`).
+* Tests: `web:src/features/workspace/modes/arrangement.test.ts` (5), `modes/studyModes.test.tsx` (11: switch, Learn vs
+  Exam rail, «حالات» incl. Exam hiding, Create MCQ gated / published / review queue / abstained, mode persisted to
+  IndexedDB + outbox and restored, figure reading gated and confirmed with only ticked relations),
+  `web:src/features/workspace/model/aiActions.critic.test.ts` (MCQ wired), `e2e:f3-study-modes.spec.ts`.
+* Tested (run 2026-10-10 for track F3, results at the time of writing): `npm test -w @medlevo/web` 103 files passed,
+  1 skipped — 693 passed, 1 skipped; `npm test -w @medlevo/shared` 48 passed; `npm test -w @medlevo/server` 106 files /
+  1215 tests passed — the only failures were in the parallel F4 review's work in progress
+  (`test/annotations/recognition.test.ts` «(review) a long handwritten answer …» expecting 202, got 400, and
+  `test/media/f4-review-probe.test.ts` removed during the run), none in F3 code (`test/f3/*` 31 passed);
+  `npx tsc -p apps/server --noEmit`, `-p apps/web`, `-p e2e`: no errors; `npm run build -w @medlevo/web`: success;
+  `npx playwright test e2e/f3-study-modes.spec.ts` (phone + desktop, real server, no AI key): **4 passed**;
+  `e2e/g3-ac08-diagram.spec.ts` re-run after the «المصادر» change: 2 passed.
+* Not done / limits: the AI paths (Create MCQ, diagrams, derived versions, simulations, figure readings) never ran with
+  a real model (no key) — they are tested with the scripted provider only; the study mode is per study session (per
+  source), not a global preference; diagrams are not part of the offline package; Create MCQ makes one question per
+  request.
+* **F3 review (2026-10-10)**: «امتحن نفسك» also disables the Study Book views (the view menu names the mode as the
+  reason; an open Study Book / split with the book returns to the original — `EXAM_MODE_HIDDEN_AR` said explanations were
+  hidden while the Study Book stayed one click away); the disabled «اشرح» on a selection exposes its reason through
+  `aria-describedby` (a `title` alone is not announced); a mode switch saves the view in use (a split view was saved as
+  «original»). Tests: `web:src/features/workspace/modes/studyModes.test.tsx` (view kept), `e2e:f3-study-modes.spec.ts`
+  (Study Book item disabled with the mode's reason on desktop; «اشرح» described). Residual (track F4's area): «اسأل عن
+  المحدد» on handwriting still opens the rail in Exam mode, where the explanation section is hidden, so the request
+  waits until the mode changes.
+* Tested (F3 review run, 2026-10-10): `npm test -w @medlevo/server` 108 files / 1221 passed, 7 skipped (incl.
+  `test/f3/review.test.ts`, 5); `npm test -w @medlevo/web` 103 files / 700 passed, 1 skipped; `npm test -w
+  @medlevo/shared` 48 passed; `npx tsc -p apps/server|apps/web|e2e --noEmit` clean; `npm run build -w @medlevo/web`
+  success; `npx playwright test e2e/f3-study-modes.spec.ts` (phone + desktop, real server, no AI key): 4 passed.

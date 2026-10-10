@@ -35,6 +35,8 @@ export interface ChatPanelProps {
   online: boolean;
   /** bump to focus the composer (Ask from the selection toolbar) */
   focusKey: number;
+  /** (track F4) text put in the composer with the focus bump (the owner reviews and sends it) */
+  prefill?: string | null;
   /** the owner explicitly widened the lock from an abstention: the rail's lock follows (G2 / AC-05) */
   onScopeChange?: (scope: SourceScope) => void;
 }
@@ -45,7 +47,7 @@ const DRAFT_LABEL: Partial<Record<ChatMessageView['status'], string>> = {
   rejected: 'تعذّر إكمال هذه الإجابة؛ لم يُعرض أي جزء منها',
 };
 
-export function ChatPanel({ sourceId, page, anchor, anchorText, scope, style, gate, online, focusKey, onScopeChange }: ChatPanelProps) {
+export function ChatPanel({ sourceId, page, anchor, anchorText, scope, style, gate, online, focusKey, prefill, onScopeChange }: ChatPanelProps) {
   const toast = useToast();
   const [threads, setThreads] = useState<ChatThreadView[] | null>(null);
   const [active, setActive] = useState<ChatThreadResponse | null>(null);
@@ -87,7 +89,11 @@ export function ChatPanel({ sourceId, page, anchor, anchorText, scope, style, ga
   }, [scopeKey]);
 
   useEffect(() => {
-    if (focusKey > 0) composer.current?.focus();
+    if (focusKey <= 0) return;
+    // (track F4) the composed question joins an unsent draft instead of replacing it (the owner's words are kept)
+    if (prefill) setText((t) => (t.trim() && t.trim() !== prefill.trim() ? `${t.trimEnd()}\n\n${prefill}` : prefill));
+    composer.current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusKey]);
 
   const open = async (id: string) => {

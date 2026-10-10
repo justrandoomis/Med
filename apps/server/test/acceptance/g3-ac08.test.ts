@@ -27,7 +27,6 @@ let t: QApp;
 let lecture: { sourceId: string; versionId: string };
 let fig: { id: string; page_id: string };
 let diagram: { id: string; text: string; structure_json: string; status: string };
-let caption: { id: string; text: string };
 
 beforeAll(async () => {
   const app = await createTestApp({
@@ -40,7 +39,8 @@ beforeAll(async () => {
   lecture = await uploadAndProcess(t, course, 'lecture_appendicitis.pdf', golden('lecture_appendicitis.pdf'), 'lecture', 'Acute Appendicitis (TEST FIXTURE)');
   fig = t.ctx.db.get<{ id: string; page_id: string }>(`SELECT id, page_id FROM source_region WHERE version_id = ? AND kind = 'figure' ORDER BY reading_order LIMIT 1`, [lecture.versionId])!;
   diagram = t.ctx.db.get(`SELECT id, text, structure_json, status FROM source_region WHERE parent_region_id = ? AND kind = 'diagram'`, [fig.id])!;
-  caption = t.ctx.db.get(`SELECT id, text FROM source_region WHERE page_id = ? AND kind = 'caption'`, [fig.page_id])!;
+  // the figure's page has a readable caption region (the «caption sentence stays linked» case below rests on it)
+  expect(t.ctx.db.get(`SELECT id FROM source_region WHERE page_id = ? AND kind = 'caption'`, [fig.page_id])).toBeTruthy();
   ai.on('verify_support', allSupported);
 }, 240_000);
 

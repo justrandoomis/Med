@@ -1,10 +1,22 @@
 // /library/topics and /library/topics/:topicId — topics (§05): create / rename / delete; what each topic links to
 // (sources, places in sources, questions, concepts…); suggested links to accept or reject (the decision persists — a
-// rejected suggestion is never made again); link sources and questions by hand; use a topic as a library filter.
+// rejected suggestion is never made again); link sources, places in a source (regions) and questions by hand; use a
+// topic as a library filter.
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Check, Filter, Plus, RotateCcw, Sparkles, Tag, Trash2, X } from 'lucide-react';
-import { TOPIC_ENTITY_LABELS_AR, type LibraryTreeResponse, type QuestionListResponse, type TopicDetailResponse, type TopicLinkDetail, type TopicEntityType } from '@medlevo/shared';
+import {
+  TOPIC_ENTITY_LABELS_AR,
+  pageDisplayLabel,
+  type LibraryTreeResponse,
+  type PageRegionsResponse,
+  type RegionKind,
+  type QuestionListResponse,
+  type SourcePagesResponse,
+  type TopicDetailResponse,
+  type TopicLinkDetail,
+  type TopicEntityType,
+} from '@medlevo/shared';
 import { Breadcrumbs, Button, ConfirmDialog, Dialog, EmptyState, ErrorState, LoadingState, Select, StatusPill, TextField, useToast } from '../../design';
 import { api, errorMessage } from '../../lib/api';
 import { usePageTitle } from '../../lib/usePageTitle';
@@ -141,7 +153,7 @@ export function TopicScreen() {
   const all = useQuery<{ topics: TopicListItem[] }>(BRAIN_PATHS.topics);
   const toast = useToast();
   const navigate = useNavigate();
-  const [dialog, setDialog] = useState<null | 'edit' | 'delete' | 'link-source' | 'link-question'>(null);
+  const [dialog, setDialog] = useState<null | 'edit' | 'delete' | 'link-source' | 'link-region' | 'link-question'>(null);
   usePageTitle(q.data?.topic.title ?? 'موضوع');
   if (q.loading && !q.data) return <LoadingState stage="جارٍ تحميل الموضوع…" />;
   if (q.error && !q.data) {
@@ -182,6 +194,9 @@ export function TopicScreen() {
           </Button>
           <Button size="sm" icon={<Plus size={16} />} onClick={() => setDialog('link-source')}>
             اربط مصدرًا
+          </Button>
+          <Button size="sm" icon={<Plus size={16} />} onClick={() => setDialog('link-region')}>
+            اربط موضعًا من مصدر
           </Button>
           <Button size="sm" icon={<Plus size={16} />} onClick={() => setDialog('link-question')}>
             اربط سؤالًا
@@ -235,6 +250,7 @@ export function TopicScreen() {
         }}
       />
       {dialog === 'link-source' && <LinkSourceDialog topicId={d.topic.id} onClose={() => setDialog(null)} />}
+      {dialog === 'link-region' && <LinkRegionDialog topicId={d.topic.id} onClose={() => setDialog(null)} />}
       {dialog === 'link-question' && <LinkQuestionDialog topicId={d.topic.id} onClose={() => setDialog(null)} />}
     </div>
   );
@@ -368,6 +384,88 @@ function LinkSourceDialog({ topicId, onClose }: { topicId: string; onClose: () =
         <p className="lw-muted">لا مصادر في مكتبتك بعد.</p>
       ) : (
         <Select<string> label="المصدر" options={sources.map((s) => ({ value: s.id, label: s.title }))} value={sid || sources[0]!.id} onValueChange={setSid} />
+      )}
+    </Dialog>
+  );
+}
+
+/** Page furniture and sub-parts are not offered (a table is linked whole, a question with its options). */
+const UNLINKABLE_REGION_KINDS = new Set<RegionKind>(['header', 'footer', 'table_cell', 'option']);
+
+/**
+ * Link one place in a source (a region: heading, paragraph, table, figure…) to the topic: choose the source, then the
+ * page, then the place — the text of each place is shown so the choice is made on what the page says.
+ */
+function LinkRegionDialog({ topicId, onClose }: { topicId: string; onClose: () => void }) {
+  const tree = useQuery<LibraryTreeResponse>('/library/tree', { cache: true });
+  const toast = useToast();
+  const sources = (tree.data?.sources ?? []).filter((s) => !s.deleted_at && s.active_version_id);
+  const [sid, setSid] = useState('');
+  const source = sources.find((s) => s.id === sid) ?? sources[0];
+  const pages = useQuery<SourcePagesResponse>(source ? `/sources/${encodeURIComponent(source.id)}/versions/${encodeURIComponent(source.active_version_id!)}/pages` : null);
+  const pageList = (pages.data?.pages ?? []).filter((p) => p.processing_status === 'ready' || p.processing_status === 'needs_review');
+  const [pid, setPid] = useState('');
+  const page = pageList.find((p) => p.id === pid) ?? pageList[0];
+  const regions = useQuery<PageRegionsResponse>(page ? `/sources/pages/${encodeURIComponent(page.id)}/regions` : null);
+  const regionList = (regions.data?.regions ?? []).filter((r) => !!(r.text ?? '').trim() && !UNLINKABLE_REGION_KINDS.has(r.kind));
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const link = async (regionId: string) => {
+    setBusyId(regionId);
+    try {
+      await brainApi.linkTopic(topicId, 'source_region', regionId);
+      toast.show({ title: 'رُبط الموضع بالموضوع', tone: 'success' });
+      onClose();
+    } catch (e) {
+      toast.show({ title: errorMessage(e), tone: 'danger' });
+    } finally {
+      setBusyId(null);
+    }
+  };
+  return (
+    <Dialog open onClose={onClose} title="اربط موضعًا من مصدر بالموضوع" description="اختر المصدر ثم الصفحة ثم الموضع بنصه. الربط لا يغيّر المصدر." footer={<Button onClick={onClose}>إغلاق</Button>}>
+      {tree.loading && !tree.data ? (
+        <LoadingState stage="جارٍ تحميل المصادر…" inline />
+      ) : sources.length === 0 ? (
+        <p className="lw-muted">لا مصادر معالجة في مكتبتك بعد.</p>
+      ) : (
+        <div className="lw-stack">
+          <Select<string>
+            label="المصدر"
+            options={sources.map((s) => ({ value: s.id, label: s.title }))}
+            value={source!.id}
+            onValueChange={(v) => {
+              setSid(v);
+              setPid('');
+            }}
+          />
+          {pages.loading && !pages.data ? (
+            <LoadingState stage="جارٍ تحميل الصفحات…" inline />
+          ) : pageList.length === 0 ? (
+            <p className="lw-muted">لا صفحات جاهزة في هذا المصدر بعد.</p>
+          ) : (
+            <Select<string> label="الصفحة" options={pageList.map((p) => ({ value: p.id, label: pageDisplayLabel(p) }))} value={page!.id} onValueChange={setPid} />
+          )}
+          {page && regions.loading && !regions.data && <LoadingState stage="جارٍ تحميل مواضع الصفحة…" inline />}
+          {page && regions.data && regionList.length === 0 && <p className="lw-muted">لا مواضع نصية في هذه الصفحة.</p>}
+          {regionList.length > 0 && (
+            <ul className="kb-topic-links" aria-label={`مواضع ${pageDisplayLabel(page!)}`}>
+              {regionList.slice(0, 60).map((r) => {
+                const text = (r.text ?? '').trim();
+                const preview = text.length > 140 ? `${text.slice(0, 140)}…` : text;
+                return (
+                  <li key={r.id} className="kb-topic-link">
+                    <span>
+                      <bdi>{preview}</bdi>
+                    </span>
+                    <Button size="sm" variant="secondary" loading={busyId === r.id} onClick={() => void link(r.id)} aria-label={`اربط الموضع: ${preview.slice(0, 60)}`}>
+                      اربط
+                    </Button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
       )}
     </Dialog>
   );

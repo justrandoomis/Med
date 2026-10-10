@@ -170,6 +170,8 @@ export async function insertImage(input: InsertImageInput): Promise<InsertImageR
 
 // ───────── uploads (idempotent by key; retried with backoff while online) ─────────
 const BACKOFF_MS = [2_000, 10_000, 30_000, 120_000, 600_000];
+/** HTTP answers that judge the picture itself (POST /api/annotations/images): kept on the device, labelled, not retried. */
+const FINAL_UPLOAD_STATUSES: ReadonlySet<number> = new Set([400, 409, 413, 415, 422]);
 let running: Promise<{ uploaded: number; rejected: number; failed: number }> | null = null;
 const listeners = new Set<() => void>();
 
@@ -218,7 +220,9 @@ export function kickImageUploads(db: MedLevoDB = getDb(), deps: UploadDeps = {})
         out.uploaded++;
       } catch (e) {
         const status = isApiError(e) ? e.status : 0;
-        if (isApiError(e) && !e.offline && status >= 400 && status < 500 && status !== 401 && status !== 408 && status !== 429) {
+        // only the server's verdict on THESE bytes is final (invalid key / type / size, a different picture under
+        // the key); anything else (a refused origin, a proxy's 404, a server error …) is retried with backoff
+        if (isApiError(e) && !e.offline && FINAL_UPLOAD_STATUSES.has(status)) {
           // the server will never accept these bytes (type / size / key clash): keep them, say why
           await db.blobs.update(rec.id, { uploadState: 'rejected', uploadError: e.message } as Partial<ImageBlobRecord>);
           out.rejected++;

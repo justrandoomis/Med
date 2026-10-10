@@ -13,20 +13,25 @@ export function PracticeButton({
   size = 'md',
   describedBy,
   reasonShownElsewhere = false,
+  href,
+  label = 'تدرّب',
 }: {
   sourceId: string;
   questionId: string;
   size?: 'sm' | 'md';
   describedBy?: string;
   reasonShownElsewhere?: boolean;
+  /** (track F3) the practice route with the study mode's policy (e.g. an assessed exam in «امتحن نفسك») */
+  href?: string;
+  label?: string;
 }) {
   const caps = useCapabilities();
   const gate = caps.feature('exams');
   if (gate.available) {
     return (
-      <Link to={practiceUrl(sourceId, questionId)} className={buttonClass({ variant: 'secondary', size })}>
+      <Link to={href ?? practiceUrl(sourceId, questionId)} className={buttonClass({ variant: 'secondary', size })}>
         <GraduationCap size={16} aria-hidden="true" />
-        تدرّب
+        {label}
       </Link>
     );
   }
@@ -34,14 +39,14 @@ export function PracticeButton({
   if (reasonShownElsewhere) {
     return (
       <Button size={size} variant="secondary" icon={<GraduationCap size={16} />} disabled aria-describedby={reasonId}>
-        تدرّب
+        {label}
       </Button>
     );
   }
   return (
     <span className="qv-gated">
       <Button size={size} variant="secondary" icon={<GraduationCap size={16} />} disabled aria-describedby={reasonId}>
-        تدرّب
+        {label}
       </Button>
       <span id={reasonId} className="qv-gated__reason">
         {gate.reason ?? 'التدريب غير متاح بعد.'}

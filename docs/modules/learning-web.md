@@ -210,3 +210,12 @@ Commands (repo root unless noted), real results after the fixes:
   re-reads for 300 writes).
 * The pure fold (`computeQueue`, 3 000 cards × 4 events) measured in Node: `test/learning/queue.perf.test.ts`
   (`MEDLEVO_PERF=1`); numbers in [`docs/PERFORMANCE.md`](../PERFORMANCE.md).
+
+## F2 Course Brain additions (2026-10-10, §44)
+* **Weakness Center** (`features/weakness/parts.tsx`, `WeaknessDetail.tsx`, `WeaknessCenter.tsx`, additive): weakness
+  kind `case` («حالة») for a clinical case / OSCE station / viva grouping; signal type `viva` («امتحان شفهي») next to
+  `case` / `osce`; the suggested action `retry_case` («أعد محاولة …», icon + text) opens `/cases/:id`; a link
+  «خريطتي المعرفية» opens the Student Knowledge Map (`/knowledge`, in `features/brain`). Server side:
+  `docs/modules/learning.md` §6. Tests: `apps/web/src/features/brain/brain.test.tsx` (case kind label and the `retry_case` link; the viva label
+  is not unit-tested),
+  `e2e/f2-course-brain.spec.ts` (an OSCE attempt shows in the Weakness Center as its own type).

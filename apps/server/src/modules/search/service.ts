@@ -4,6 +4,8 @@
 //   notes       owner_content_fts entity 'note' (annotations track; normalized key only → snippet from the note)
 //   generated   owner_content_fts origin 'generated' (study-book track: artifacts / blocks / messages)
 //   transcripts owner_content_fts entity 'transcript_segment' (no producer yet → notice)
+//   handwriting owner_content_fts entity 'ink_recognition' (track F4: readings of the owner's pen strokes; origin
+//               «مقروء آليًا», or «كتبته بنفسك» once the owner corrected it; strokes all erased → not returned)
 // Rules:
 //  * filters (source type, library node subtree, source / version) are applied in SQL in the same statement as
 //    MATCH, i.e. BEFORE bm25 ranking and LIMIT;
@@ -474,6 +476,63 @@ function searchTranscripts(ctx: AppContext, p: SearchParams, match: string, fetc
   return out;
 }
 
+/** (track F4) Handwriting readings of the owner's strokes on source pages and note pages. */
+function searchHandwriting(ctx: AppContext, p: SearchParams, match: string, fetch: number, hl: Highlighter, counters: { exactRejected: number }): Scored[] {
+  const out: Scored[] = [];
+  for (const h of ownerContentHits(ctx, match, ['ink_recognition'], null, fetch)) {
+    const r = ctx.db.get<{
+      text: string;
+      corrected_text: string | null;
+      source_id: string | null;
+      version_id: string | null;
+      page_id: string | null;
+      note_page_id: string | null;
+      annotation_ids_json: string;
+      deleted_at: number | null;
+      purpose: string;
+    }>('SELECT text, corrected_text, source_id, version_id, page_id, note_page_id, annotation_ids_json, deleted_at, purpose FROM ink_recognition WHERE id = ?', [h.entity_id]);
+    if (!r || r.deleted_at !== null || r.purpose !== 'page_ink') continue;
+    // the reading stands for writing that still exists: when every stroke it read was erased, it is not a hit
+    const ids = fromJson<string[]>(r.annotation_ids_json, []) ?? [];
+    if (ids.length > 0) {
+      const known = ctx.db.all<{ deleted_at: number | null }>(`SELECT deleted_at FROM annotation WHERE id IN (${ids.map(() => '?').join(',')})`, ids);
+      if (known.length > 0 && known.every((k) => k.deleted_at !== null)) continue;
+    }
+    if (r.note_page_id) {
+      const np = ctx.db.get<{ deleted_at: number | null; source_id: string | null; node_id: string | null }>('SELECT deleted_at, source_id, node_id FROM note_page WHERE id = ?', [r.note_page_id]);
+      if (!np || np.deleted_at !== null) continue;
+      if (np.source_id ? !sourcePasses(ctx, p, np.source_id) : p.source_type || p.source_id || (p.node_id && !inSubtree(ctx, p.node_id, [np.node_id]))) continue;
+    } else if (!sourcePasses(ctx, p, r.source_id)) continue;
+    const text = r.corrected_text ?? r.text;
+    const hs = hl(text);
+    if (p.mode === 'exact' && hs.length === 0) {
+      counters.exactRejected++;
+      continue;
+    }
+    const s = r.source_id ? ctx.db.get<{ title: string; source_type: SourceType }>('SELECT title, source_type FROM source WHERE id = ?', [r.source_id]) : undefined;
+    const page = r.page_id ? ctx.db.get<PageForLabel & { id: string }>('SELECT id, page_index, printed_label, kind FROM source_page WHERE id = ?', [r.page_id]) : undefined;
+    const origin: SearchOrigin = r.corrected_text !== null ? 'owner_typed' : 'recognized';
+    out.push({
+      group: 1,
+      rank: h.rank,
+      result: {
+        type: 'handwriting',
+        id: h.entity_id,
+        title: s ? `خط يدي على «${clean(s.title)}»` : 'خط يدي في صفحة ملاحظات',
+        snippet: makeSnippet(text, hs),
+        location: r.source_id
+          ? { source_id: r.source_id, version_id: r.version_id, page_id: page?.id ?? null, page_index: page?.page_index ?? null, page_label_ar: page ? pageDisplayLabel(page) : null, region_id: null }
+          : null,
+        origin,
+        source_type: s?.source_type ?? null,
+        source_title: s ? clean(s.title) : null,
+        is_evidence: false,
+      },
+    });
+  }
+  return out;
+}
+
 function tableHasRows(ctx: AppContext, sql: string): boolean {
   try {
     return !!ctx.db.get(sql);
@@ -508,8 +567,9 @@ export function universalSearch(ctx: AppContext, p: SearchParams): SearchRespons
     if (!tableHasRows(ctx, `SELECT 1 AS x FROM owner_content_fts WHERE entity_type = 'transcript_segment' LIMIT 1`)) notices.push('التفريغ الصوتي غير متاح بعد، فلا يوجد ما يُبحث فيه من التسجيلات.');
     else all.push(...searchTranscripts(ctx, p, match, fetch, hl, counters));
   }
+  if (types.includes('handwriting')) all.push(...searchHandwriting(ctx, p, match, fetch, hl, counters));
   // sources first, then the owner's own notes, then generated content (never ranked as a source)
-  const typeOrder: Record<SearchResultType, number> = { chunks: 0, questions: 1, transcripts: 2, notes: 3, generated: 4 };
+  const typeOrder: Record<SearchResultType, number> = { chunks: 0, questions: 1, transcripts: 2, notes: 3, handwriting: 4, generated: 5 };
   all.sort((a, b) => a.group - b.group || a.rank - b.rank || typeOrder[a.result.type] - typeOrder[b.result.type]);
   const page = all.slice(p.offset, p.offset + p.limit);
   base.results = page.map((s) => s.result);

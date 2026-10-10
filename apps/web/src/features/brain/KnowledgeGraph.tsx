@@ -400,7 +400,10 @@ export function TextTwin({ data }: { data: KnowledgeMapResponse }) {
                   {cs.length > 0 && (
                     <span className="lw-muted">
                       {' '}
-                      — {cs.map((e) => node(e.to)?.label).filter(Boolean).join('، ')}
+                      — {cs
+                        .map((e) => (node(e.to) ? `${node(e.to)!.label} (${e.label_ar})` : null))
+                        .filter(Boolean)
+                        .join('، ')}
                     </span>
                   )}
                 </li>

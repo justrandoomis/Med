@@ -114,6 +114,7 @@ function assertNotReplaced(ctx: AppContext, regionId: string): void {
 export function cleanOwnerText(raw: string | undefined | null): string {
   const t = stripBidiControls(String(raw ?? ''))
     .replace(/\r\n?/g, '\n')
+    // eslint-disable-next-line no-control-regex -- owner text: C0 control characters are removed (newline and tab kept)
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '')
     .normalize('NFC')
     .trim();

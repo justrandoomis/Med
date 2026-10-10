@@ -66,6 +66,8 @@ export interface TopBarProps {
   extraMenuItems?: ReactNode;
   /** the reading line is on an inserted note page (track F1): the indicator names the source page before it */
   noteLabel?: string | null;
+  /** (track F3) the study-mode switch (§39) */
+  modeSwitch?: ReactNode;
 }
 
 const ZOOM_PRESETS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
@@ -163,6 +165,7 @@ export function TopBar(p: TopBarProps) {
             {p.noteLabel && <span className="wk-note-chip">{p.noteLabel}</span>}
           </div>
           <SaveStatus state={p.saveState} detail={p.saveDetail} compact />
+          {p.modeSwitch}
           <Hint label="البحث في المصدر">
             <IconButton label="البحث في المصدر" icon={<Search size={20} />} pressed={p.searchOpen} onClick={p.onToggleSearch} />
           </Hint>
@@ -235,6 +238,7 @@ export function TopBar(p: TopBarProps) {
         </div>
 
         <div className="wk-topbar__center">
+          {p.modeSwitch}
           {viewMenu}
           {p.inkAvailable && (
             <div className="wk-topbar__ink" role="group" aria-label="أدوات الكتابة">

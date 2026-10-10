@@ -1,0 +1,133 @@
+# MedLevo CI (track F5, §58): every push and pull request runs the same gates as a local `npm run typecheck`,
+# `npm run lint`, `npm test` and `npm run build`. The browser (Playwright) suite is an OPTIONAL job: it starts real
+# servers and processes real uploads (tens of minutes), so it runs only when asked for (manual run with e2e = true).
+# No AI key is used anywhere: AI-gated features are tested with the test-only scripted providers, and the real
+# server reports them as requiring configuration.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      e2e:
+        description: 'Also run the Playwright end-to-end suite (phone + desktop)'
+        type: boolean
+        default: false
+      e2e_spec:
+        description: 'Optional spec file(s) for the e2e job, e.g. e2e/smoke.spec.ts (empty = the whole suite)'
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # node:sqlite is still flagged experimental in Node 22; the warning is noise in test logs
+  NODE_OPTIONS: --disable-warning=ExperimentalWarning
+  # never reach a real model provider from CI
+  ANTHROPIC_API_KEY: ''
+
+jobs:
+  checks:
+    name: typecheck · lint · unit tests · web build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # poppler renders PDF pages (OCR input, page images); openssl makes the TLS reverse-proxy test's certificate.
+      # LibreOffice is not installed: the legacy .doc / .ppt tests skip themselves with a reason without it.
+      - name: System tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends poppler-utils openssl
+
+      - run: npm ci
+
+      - name: Typecheck (shared, server, web, e2e)
+        run: npm run typecheck
+
+      - name: Lint (zero warnings)
+        run: npm run lint
+
+      - name: Unit tests — shared
+        run: npm test -w @medlevo/shared
+
+      - name: Unit tests — server
+        run: npm test -w @medlevo/server
+
+      - name: Unit tests — web
+        run: npm test -w @medlevo/web
+
+      - name: Web build (PWA)
+        run: npm run build -w @medlevo/web
+
+      - name: Evaluation (regression set, scripted provider; fails on a regression against the committed baseline)
+        run: npm run eval -- --set=regression --compare=docs/eval/baseline.json --no-record --out=eval-reports
+
+      - name: Keep the evaluation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: eval-reports/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  e2e:
+    name: end-to-end (Playwright, phone + desktop)
+    if: github.event_name == 'workflow_dispatch' && inputs.e2e
+    needs: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: System tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends poppler-utils fonts-noto-core
+
+      - run: npm ci
+
+      # On a CI runner the browser has to be downloaded; playwright.config.ts reads its path from PW_CHROMIUM_PATH
+      # (locally the preinstalled /opt/pw-browsers/chromium is used and nothing is downloaded).
+      - name: Chromium for Playwright
+        run: |
+          npx playwright install --with-deps chromium
+          echo "PW_CHROMIUM_PATH=$(node -e "console.log(require('@playwright/test').chromium.executablePath())")" >> "$GITHUB_ENV"
+
+      - name: Playwright
+        env:
+          CI: '1'
+          E2E_BUILD: '1'
+          # passed through the environment (never interpolated into the script); unquoted on purpose: several files
+          E2E_SPEC: ${{ inputs.e2e_spec }}
+        run: npx playwright test $E2E_SPEC
+
+      - name: Keep the Playwright report and failure traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            e2e/.artifacts/
+          if-no-files-found: ignore
+          retention-days: 14

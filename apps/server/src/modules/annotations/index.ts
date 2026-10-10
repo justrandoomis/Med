@@ -1,9 +1,14 @@
 // Annotations module (/api/annotations) — track B1. Owns annotation, annotation_target, note, note_page,
 // ink_recognition, study_session, source_progress (ARCHITECTURE §2).
+//  * (track F4) handwriting recognition: /recognitions (create → job ink.recognize, list, read, correct, retry,
+//    delete the derived reading, image) and /ask-context (handwriting + the paragraph next to it → a chat request)
 //  * sync entity handlers: annotation, note, note_page, study_session (merge policies in ./sync.ts)
 //  * read APIs for the reader, the ink engine, offline download and Continue Studying
 //  * reading progress (pages shown) — Reading Progress only, never mastery (§45)
 import type {
+  AskContextResponse,
+  RecognitionListResponse,
+  RecognitionResponse,
   AnnotationImageUploadResponse,
   AnnotationImageView,
   AnnotationsByTargetsResponse,
@@ -23,6 +28,19 @@ import { AppError } from '../../lib/errors';
 import { parseBody, parseParams, parseQuery, RATE_LIMITS } from '../../lib/http';
 import { sendStoredFile } from '../files';
 import { assertImageKey, getAnnotationImage, toImageView, uploadAnnotationImage } from './images';
+import {
+  askContext,
+  correctRecognition,
+  createRecognition,
+  deleteRecognition,
+  getRecognitionRow,
+  listRecognitions,
+  recognitionImage,
+  recognitionListQuery,
+  recognitionView,
+  registerRecognitionJob,
+  retryRecognition,
+} from './recognition';
 import { AnnotationsService, MAX_TARGET_KEYS } from './service';
 import { registerAnnotationSync } from './sync';
 
@@ -68,6 +86,10 @@ export default async function register(app: FastifyInstance, { ctx }: ModuleOpti
   // 'annotation' entity registered above. The ink track verifies the engine itself; pressure/tilt/palm
   // rejection are reported per device by the engine (§27), not promised here.
   ctx.capabilities.set('workspace.ink', 'available');
+  // (track F4) handwriting recognition: built; the registry turns it into `requires_configuration` (with the reason)
+  // when no vision-capable AI provider is configured (FEATURE_AI_TASK / AI_DEPENDENT_FEATURES).
+  ctx.capabilities.set('workspace.handwriting_recognition', 'available');
+  registerRecognitionJob(ctx);
 
   app.get('/by-targets', async (req): Promise<AnnotationsByTargetsResponse> => {
     const q = parseQuery(byTargetsQuery, req);
@@ -121,6 +143,28 @@ export default async function register(app: FastifyInstance, { ctx }: ModuleOpti
     if (!row || !file) throw missingImage();
     return sendStoredFile(ctx.files, file, req, reply);
   });
+
+  // ── handwriting recognition (track F4): a DERIVED, correctable reading; the ink itself is never touched ──
+  const recParams = z.object({ id: ID });
+  app.post('/recognitions', { bodyLimit: 6 * 1024 * 1024, config: { rateLimit: RATE_LIMITS.upload } }, async (req, reply): Promise<RecognitionResponse> => {
+    const r = createRecognition(ctx, req.body ?? {});
+    if (r.created) reply.code(202);
+    return { recognition: r.view };
+  });
+  app.get('/recognitions', async (req): Promise<RecognitionListResponse> => ({ recognitions: listRecognitions(ctx, parseQuery(recognitionListQuery, req)) }));
+  app.get('/recognitions/:id', async (req): Promise<RecognitionResponse> => ({ recognition: recognitionView(ctx, getRecognitionRow(ctx, parseParams(recParams, req).id)) }));
+  app.patch('/recognitions/:id', async (req): Promise<RecognitionResponse> => ({ recognition: correctRecognition(ctx, parseParams(recParams, req).id, req.body ?? {}) }));
+  app.post('/recognitions/:id/retry', async (req): Promise<RecognitionResponse> => ({ recognition: retryRecognition(ctx, parseParams(recParams, req).id) }));
+  app.delete('/recognitions/:id', async (req) => {
+    deleteRecognition(ctx, parseParams(recParams, req).id);
+    return { ok: true };
+  });
+  app.get('/recognitions/:id/image', async (req, reply) => {
+    const png = recognitionImage(ctx, parseParams(recParams, req).id);
+    reply.header('content-type', 'image/png').header('cache-control', 'private, max-age=3600').header('x-content-type-options', 'nosniff');
+    return reply.send(png);
+  });
+  app.post('/ask-context', async (req): Promise<AskContextResponse> => askContext(ctx, req.body ?? {}));
 
   app.get('/needs-reanchor', async (req): Promise<NeedsReanchorResponse> => {
     const q = parseQuery(reanchorQuery, req);

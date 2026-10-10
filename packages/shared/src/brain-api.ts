@@ -156,7 +156,8 @@ export interface BrainConceptResponse {
 
 // ───────── relations ─────────
 export interface RelationReason {
-  kind: 'defined_earlier_used_later' | 'listed_under_section' | 'owner';
+  /** 'basis_removed': the source the suggestion was built from was deleted for good (its text is not kept) */
+  kind: 'defined_earlier_used_later' | 'listed_under_section' | 'owner' | 'basis_removed';
   text_ar: string;
   /** where the prerequisite / source side is stated */
   from?: BrainLocation & { quote: string | null };
@@ -218,7 +219,8 @@ export interface BrainLectureStatus {
     /** extracted from the study version with the current extractor */
     current: boolean;
     updated_at: number;
-    counts: { concepts: number; mentions: number; definitions: number; sections: number; table_entries: number };
+    /** `mentions_found` > `mentions`: the extraction kept only the first `mentions` (per-version cap) — reported, never silent */
+    counts: { concepts: number; mentions: number; definitions: number; sections: number; table_entries: number; mentions_found?: number };
     objectives: KnowledgeObjective[];
   };
   job: null | { id: string; status: string };

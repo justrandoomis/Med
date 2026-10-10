@@ -16,7 +16,7 @@ const STRONG_LTR_RE = /[A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u024F\u0370-\u03
 export type CharDir = 'R' | 'L' | 'N';
 
 export function charDir(ch: string): CharDir {
-  if (/[\u0660-\u0669\u06F0-\u06F9\u064B-\u065F\u0670\u0640]/.test(ch)) return 'N'; // Arabic digits/harakat/tatweel are not strong
+  if (/[\u064B-\u065F\u0670\u0640\u0660-\u0669\u06F0-\u06F9]/.test(ch)) return 'N'; // Arabic digits/harakat/tatweel are not strong
   if (STRONG_RTL_RE.test(ch)) return 'R';
   if (STRONG_LTR_RE.test(ch)) return 'L';
   return 'N';
@@ -40,6 +40,7 @@ export function hasArabic(text: string): boolean {
 const PRESENTATION_FORMS = /[\uFB50-\uFDFF\uFE70-\uFEFC]/g;
 const ODD_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
 const ZERO_WIDTH_NOISE = /[\u200B\uFEFF\u00AD]/g; // ZWSP, BOM/ZWNBSP, soft hyphen (ZWJ/ZWNJ are meaningful, kept)
+// eslint-disable-next-line no-control-regex -- the point of this pattern: control characters left by extractors
 const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
 
 /**
@@ -79,8 +80,8 @@ const REVERSED_LAM_ALEF_TEST = new RegExp(REVERSED_LAM_ALEF.source);
 // emphasis never saw it. A bare article «ال» never stands alone before a word, and «إال» / «أال» are not words, so
 // these whole-word forms are repaired: «ال» / «وال» only when another Arabic word follows; «إال» / «أال» anywhere.
 const AR_MARKS = '\\u064B-\\u0652\\u0670';
-const REVERSED_LA_WORD = new RegExp(`(?<![${AR_LETTER}${AR_MARKS}\\u0640])(و?)ال(?=\\s+[${AR_MARKS}]*[${AR_LETTER}])`, 'g');
-const REVERSED_ILLA_WORD = new RegExp(`(?<![${AR_LETTER}${AR_MARKS}\\u0640])([إأ])ال(?![${AR_LETTER}${AR_MARKS}\\u0640])`, 'g');
+const REVERSED_LA_WORD = new RegExp(`(?<![${AR_MARKS}${AR_LETTER}\\u0640])(و?)ال(?=\\s+[${AR_MARKS}]*[${AR_LETTER}])`, 'g');
+const REVERSED_ILLA_WORD = new RegExp(`(?<![${AR_MARKS}${AR_LETTER}\\u0640])([إأ])ال(?![${AR_MARKS}${AR_LETTER}\\u0640])`, 'g');
 
 export function fixReversedLamAlef(text: string): { text: string; fixes: number } {
   let fixes = 0;
@@ -177,6 +178,7 @@ export function detectSuspicious(text: string, ctx: SuspicionContext = {}): Susp
       context: excerpt(text, m.index ?? 0, m[0].length),
     });
   }
+  // eslint-disable-next-line no-control-regex -- counting the control characters an extractor left in the text
   for (const m of text.matchAll(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g)) {
     out.push({ kind: 'control_char', token: `U+${m[0].charCodeAt(0).toString(16).padStart(4, '0')}`, context: '' });
   }

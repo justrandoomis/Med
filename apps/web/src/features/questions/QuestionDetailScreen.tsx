@@ -10,6 +10,7 @@ import { errorMessage, isApiError } from '../../lib/api';
 import { usePageTitle } from '../../lib/usePageTitle';
 import { questionsApi } from './api';
 import { AnswerCheckSection } from './AnswerCheck';
+import { DerivedVersionsSection } from './DerivedVersions';
 import { ChecksSection, DuplicatesSection, KeysSection, LinksSection, OccurrencesSection, ReviewItemsSection, VersionsSection } from './DetailSections';
 import { KeyDialog } from './KeyDialog';
 import { AnswerPill, ExtractionPill, MixedText, NegationPill, OriginIcon, QuestionStatusPill, ReviewPill, Stem } from './labels';
@@ -146,6 +147,7 @@ export function QuestionDetailScreen() {
       <DuplicatesSection questionId={q.id} count={q.duplicates.length} onChanged={() => void load()} />
       <ChecksSection issues={v.validation?.issues} />
       <ReviewItemsSection d={d!} />
+      <DerivedVersionsSection questionId={q.id} original={v} />
       <VersionsSection d={d!} />
 
       <KeyDialog open={keyOpen} onClose={() => setKeyOpen(false)} questionId={q.id} version={v} onDone={afterKey} />

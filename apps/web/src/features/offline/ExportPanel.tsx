@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { FileDown, Printer } from 'lucide-react';
 import type { ExportFormat, ExportFormatsResponse, SourceSummary } from '@medlevo/shared';
-import { Bidi, Button, Checkbox, EmptyState, ErrorState, LoadingState, SegmentedControl, Select, useToast } from '../../design';
+import { Button, Checkbox, EmptyState, ErrorState, LoadingState, SegmentedControl, Select, useToast } from '../../design';
 import { Mixed } from './Mixed';
 import { errorMessage } from '../../lib/api';
 import { useOnline } from '../../lib/useOnline';
@@ -140,6 +140,7 @@ export function ExportPanel() {
         <SegmentedControl
           label="الصيغة"
           showLabel
+          className="dl-formats"
           options={formats.formats.map((f) => ({ value: f.format, label: f.label_ar }))}
           value={format}
           onValueChange={(v) => setFormat(v as ExportFormat)}

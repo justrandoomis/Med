@@ -216,8 +216,8 @@ Reviewed adversarially (server + web), probed against the real modules, then fix
   lecture / region / question suggestions with their reason); an owner decision (accepted, rejected, deleted auto
   link) is never overridden — see `docs/modules/course-brain.md`.
 * **Web**: «الموضوعات» button in the library header opens `/library/topics` (topic list, create / rename / reparent /
-  delete, topic page with linked sources, regions, questions, concepts; accept / reject suggestions; link a source or a
-  question). The library takes `?topic=<id>` as a filter (a chip with the topic's linked items replaces the tabs; a
+  delete, topic page with linked sources, regions, questions, concepts; accept / reject suggestions; link a source, a
+  place in a source (source → page → region by its text) or a question). The library takes `?topic=<id>` as a filter (a chip with the topic's linked items replaces the tabs; a
   «موضوع» select sits in the tools row). Screens live in `apps/web/src/features/brain/` (`TopicsScreen.tsx`,
   `TopicFilter.tsx`); `LibraryScreen.tsx` was changed additively. Course pages (`NodeScreen.tsx`) render the course
   content inside `CourseBrainTabs` (المصادر / خريطة المعرفة / التقدم / تغطية الأسئلة); the sources tab is the existing

@@ -12,8 +12,9 @@ import { ConceptsScreen } from './ConceptsScreen';
 import { CoverageView } from './CoverageView';
 import { KnowledgeGraph } from './KnowledgeGraph';
 import { KnowledgeScreen } from './KnowledgeScreen';
-import { coverageLines, layoutMap, masteryText, moveFocus, nodeAccessibleName } from './model';
+import { coverageLines, extractionCut, layoutMap, masteryText, moveFocus, nodeAccessibleName, prerequisiteLabel } from './model';
 import { TopicScreen } from './TopicsScreen';
+import { ActionButton, WEAKNESS_KIND_AR } from '../weakness/parts';
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 afterEach(() => setFetchImpl(null));
@@ -241,7 +242,7 @@ describe('Student Knowledge Map', () => {
     const item = (await screen.findByRole('link', { name: 'Septic shock' })).closest('li')!;
     expect(within(item).getByText('تتدرب عليه (لا تقدير بعد)')).toBeTruthy();
     expect(within(item).getByText('لا تقدير بعد (إجابة محسوبة واحدة)')).toBeTruthy();
-    expect(within(item).getByText('(علاقة مستنتجة — مقترحة)')).toBeTruthy();
+    expect(within(item).getByText('(علاقة مستنتجة — مقترحة لم تقررها)')).toBeTruthy();
     expect(within(item).getByText('لم تبدأ بعد')).toBeTruthy();
     expect(within(item).getByText('لماذا هذه الحالة؟')).toBeTruthy();
     expect(within(item).getByRole('link', { name: 'افتح ص 1' }).getAttribute('href')).toBe('/study/L2?page_id=P2');
@@ -325,5 +326,128 @@ describe('topic page', () => {
     await waitFor(() => expect(calls.some((c) => c.url === '/api/library/topic-links/K1' && c.method === 'PATCH' && (c.body as { status: string }).status === 'rejected')).toBe(true));
     fireEvent.click(screen.getByRole('button', { name: 'أزل الرابط: Appendicitis' }));
     await waitFor(() => expect(calls.some((c) => c.url === '/api/library/topic-links/K2' && c.method === 'DELETE')).toBe(true));
+  });
+});
+
+describe('topic page — link a place in a source', () => {
+  it('choose source, page, then a region by its text; page furniture is not offered; the link is sent as source_region', async () => {
+    const calls: Array<{ url: string; method: string; body: unknown }> = [];
+    const detail: TopicDetailResponse = {
+      topic: { id: 'T', title: 'Appendicitis', title_ar: null, parent_topic_id: null, created_at: 1, updated_at: 1 },
+      links: [],
+      children: [],
+      counts: { accepted: 0, suggested: 0, rejected: 0 },
+    };
+    setFetchImpl(async (url, init) => {
+      const method = String(init.method ?? 'GET');
+      calls.push({ url, method, body: init.body ? JSON.parse(String(init.body)) : undefined });
+      if (url === '/api/brain/topics/T') return json(detail);
+      if (url === '/api/brain/topics') return json({ topics: [] });
+      if (url === '/api/library/tree') return json({ nodes: [], sources: [{ id: 'S1', title: 'Acute abdomen (TEST)', deleted_at: null, active_version_id: 'V1' }] });
+      if (url === '/api/sources/S1/versions/V1/pages') {
+        return json({ version: {}, pages: [{ id: 'P1', version_id: 'V1', page_index: 13, printed_label: '12', kind: 'page', numbered_version: false, processing_status: 'ready' }] });
+      }
+      if (url === '/api/sources/pages/P1/regions') {
+        return json({
+          page: {},
+          regions: [
+            { id: 'R0', kind: 'header', text: 'Surgery course — running header' },
+            { id: 'R1', kind: 'paragraph', text: 'Appendicitis is inflammation of the vermiform appendix.' },
+          ],
+        });
+      }
+      if (url === '/api/library/topics/T/links') return json({ link: {} });
+      return json({}, 404);
+    });
+    render(
+      <ToastProvider>
+        <MemoryRouter initialEntries={['/library/topics/T']}>
+          <Routes>
+            <Route path="/library/topics/:topicId" element={<TopicScreen />} />
+          </Routes>
+        </MemoryRouter>
+      </ToastProvider>,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'اربط موضعًا من مصدر' }));
+    const dialog = await screen.findByRole('dialog');
+    const list = await within(dialog).findByRole('list', { name: 'مواضع ص 12 (الصفحة 14 في الملف)' });
+    expect(within(list).queryByText(/running header/)).toBeNull();
+    fireEvent.click(within(list).getByRole('button', { name: /اربط الموضع: Appendicitis is inflammation/ }));
+    await waitFor(() =>
+      expect(calls.some((c) => c.url === '/api/library/topics/T/links' && c.method === 'POST' && JSON.stringify(c.body) === JSON.stringify({ entity_type: 'source_region', entity_id: 'R1' }))).toBe(true),
+    );
+  });
+});
+
+describe('Weakness Center — case / OSCE / viva signals (track F2)', () => {
+  it('a case weakness has its own kind label and the retry action opens the case', async () => {
+    setFetchImpl(async () => json({}, 503));
+    expect(WEAKNESS_KIND_AR.case).toBe('حالة / OSCE / شفهي');
+    render(
+      <ToastProvider>
+        <MemoryRouter>
+          <ActionButton action={{ kind: 'retry_case', label_ar: 'أعد محاولة «Station 3 (TEST)»', ref: { case_id: 'CASE 1' } }} back="/weakness" />
+        </MemoryRouter>
+      </ToastProvider>,
+    );
+    const link = await screen.findByRole('link', { name: 'أعد محاولة «Station 3 (TEST)»' });
+    expect(link.getAttribute('href')).toBe('/cases/CASE%201');
+  });
+});
+
+describe('review F2 — honest labels and robustness', () => {
+  it('an inferred prerequisite stays «مستنتجة» but is never called «مقترحة» once accepted; owner relations say so', () => {
+    expect(prerequisiteLabel({ support: 'inferred', relation_status: 'suggested' })).toBe('(علاقة مستنتجة — مقترحة لم تقررها)');
+    expect(prerequisiteLabel({ support: 'inferred', relation_status: 'accepted' })).toBe('(علاقة مستنتجة — قبلتها)');
+    expect(prerequisiteLabel({ support: 'stated', relation_status: 'accepted' })).toBe('(علاقة أقررتها)');
+  });
+
+  it('a capped extraction is recognised (the course page pill says «مستخرج جزئيًا»)', () => {
+    expect(extractionCut({ mentions: 1500, mentions_found: 1640 })).toBe(true);
+    expect(extractionCut({ mentions: 12, mentions_found: 12 })).toBe(false);
+    expect(extractionCut({ mentions: 12 })).toBe(false);
+  });
+
+  it('the text twin says what backs each question → concept link, like the details panel', () => {
+    renderGraph('list');
+    const questions = screen.getByRole('heading', { name: 'الأسئلة' }).closest('section')!;
+    expect(within(questions).getByText(/Septic shock \(اسم المفهوم في نص السؤال\)/)).toBeTruthy();
+  });
+
+  it('coverage: a lecture chosen before a refresh that is no longer there falls back to the whole course (no crash)', async () => {
+    const lecture = (id: string, title: string): CoverageResponse['lectures'][number] => ({
+      source_id: id,
+      title,
+      version_id: `V${id}`,
+      pages: [{ page_id: `P${id}`, page_index: 0, label_ar: 'ص 1', source_question_ids: [], generated_question_ids: [], attempted_question_ids: [], status: 'uncovered' }],
+      concepts: [],
+      totals: {
+        pages: { total: 1, with_source_questions: 0, with_generated_questions: 0, attempted: 0, uncovered: 1 },
+        concepts: { total: 0, with_source_questions: 0, with_generated_questions: 0, attempted: 0, uncovered: 0 },
+        questions: { source: 0, generated: 0, attempted_source: 0, attempted_generated: 0 },
+      },
+    });
+    const cov = (lectures: CoverageResponse['lectures']): CoverageResponse => ({
+      scope: { kind: 'course', id: 'C', title: 'Course' },
+      lectures,
+      totals: { pages: { total: lectures.length, with_source_questions: 0, with_generated_questions: 0, attempted: 0, uncovered: lectures.length }, concepts: { total: 0, with_source_questions: 0, with_generated_questions: 0, attempted: 0, uncovered: 0 } },
+      notes_ar: [],
+    });
+    setFetchImpl(async (url) => (url === '/api/brain/coverage?course_node_id=C' ? json(cov([lecture('L1', 'Lecture one'), lecture('L2', 'Lecture two')])) : url === '/api/brain/coverage?course_node_id=C2' ? json(cov([lecture('L9', 'Lecture nine')])) : json({}, 404)));
+    const view = render(
+      <MemoryRouter>
+        <CoverageView courseNodeId="C" />
+      </MemoryRouter>,
+    );
+    fireEvent.change(await screen.findByLabelText('المحاضرة'), { target: { value: 'L2' } });
+    expect(await screen.findByRole('heading', { name: 'Lecture two' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Lecture one' })).toBeNull();
+    view.rerender(
+      <MemoryRouter>
+        <CoverageView courseNodeId="C2" />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByRole('heading', { name: 'Lecture nine' })).toBeTruthy();
+    expect((screen.getByLabelText('المحاضرة') as HTMLSelectElement).value).toBe('all');
   });
 });

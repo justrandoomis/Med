@@ -46,6 +46,8 @@ const GROUP_TITLES: Record<SearchResultType, string> = {
   questions: 'الأسئلة',
   transcripts: 'التفريغ الصوتي',
   notes: 'ملاحظاتي',
+  // (track F4) readings of my pen strokes («مقروء آليًا», or «كتبته بنفسك» once corrected)
+  handwriting: 'خط يدي المقروء',
   generated: 'محتوى مولَّد — ليس دليلًا',
 };
 
@@ -107,6 +109,7 @@ export function ResultItem({ r }: { r: SearchResult }) {
         {r.location?.page_label_ar && <span className="sr-item__page">{r.location.page_label_ar}</span>}
         {r.source_title && r.type !== 'chunks' && <BidiText as="span" className="sr-item__source" text={r.source_title} />}
         {!href && r.type === 'notes' && <span className="sr-item__page">ملاحظة غير مرتبطة بصفحة</span>}
+        {!href && r.type === 'handwriting' && <span className="sr-item__page">في صفحة ملاحظات</span>}
       </div>
       <BidiLines className="sr-item__snippet" text={r.snippet.text} highlights={r.snippet.highlights} />
     </li>
@@ -278,7 +281,7 @@ export function SearchScreen() {
     }
   };
 
-  const results = state.data?.results ?? state.local ?? [];
+  const results = useMemo(() => state.data?.results ?? state.local ?? [], [state.data, state.local]);
   const groups = useMemo(() => groupResults(results), [results]);
   const offlineMode = !online || state.local !== null;
   const typeOptions = SEARCH_RESULT_TYPES;

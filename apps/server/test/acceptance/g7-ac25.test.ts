@@ -23,7 +23,7 @@ import { aliasWith, allSupported, pageId, ScriptedAi as ExamAi } from '../exams/
 import { createClock, createTestApp, TEST_ORIGIN, type TestApp } from '../helpers/app';
 import { addSource, processVersion } from '../processing/helpers';
 import { createNode, golden, uploadAndProcess, type QApp } from '../questions/helpers';
-import { content, lectureOnly, regionsIn, S, ScriptedAi as BookAi } from '../studybook/helpers';
+import { content, regionsIn, S, ScriptedAi as BookAi } from '../studybook/helpers';
 
 const cleanup: Array<() => Promise<void>> = [];
 afterAll(async () => {

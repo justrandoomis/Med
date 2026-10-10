@@ -560,3 +560,21 @@
     min-height: var(--ml-touch-target);
   }
 }
+
+/* derived versions (track F3): labelled as derived, beside the original — never in its place */
+.qv-derived {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+  margin-top: var(--ml-space-2);
+  padding: var(--ml-space-3);
+  border-inline-start: 3px solid var(--ml-color-accent);
+  border-radius: var(--ml-radius-sm);
+  background: var(--ml-color-paper-2);
+}
+.qv-derived__notice {
+  margin: 0;
+  font-size: var(--ml-text-xs);
+  line-height: var(--ml-leading-xs);
+  color: var(--ml-color-ink-2);
+}

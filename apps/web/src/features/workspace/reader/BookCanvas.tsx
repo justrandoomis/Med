@@ -165,6 +165,34 @@ export const BookCanvas = forwardRef<BookCanvasHandle, BookCanvasProps>(function
     [geometry, flow],
   );
 
+  // The place is an index in the SHEET sequence: when the sequence changes under it (note pages arriving from
+  // IndexedDB / the server after the first layout, inserted, trashed or moved before the place), the place follows its
+  // sheet by key — otherwise the reader would show (and save) the neighbouring page. A sheet that went away leaves the
+  // place where it was: on the sheet that now follows the last surviving one before it. Runs before the effects below.
+  const prevSheets = useRef(sheets);
+  useLayoutEffect(() => {
+    const prev = prevSheets.current;
+    prevSheets.current = sheets;
+    if (prev === sheets) return;
+    const cur = locRef.current;
+    const key = prev[cur.pageIndex]?.key;
+    if (key == null) return;
+    const same = sheets.findIndex((s) => s.key === key);
+    if (same >= 0) {
+      if (same !== cur.pageIndex) locRef.current = { pageIndex: same, frac: cur.frac };
+      return;
+    }
+    let next = 0;
+    for (let j = cur.pageIndex - 1; j >= 0; j--) {
+      const k = sheets.findIndex((s) => s.key === prev[j]!.key);
+      if (k >= 0) {
+        next = Math.min(k + 1, Math.max(0, sheets.length - 1));
+        break;
+      }
+    }
+    locRef.current = { pageIndex: next, frac: 0 };
+  }, [sheets]);
+
   // paged layouts: a new spread starts at its top
   const lastSpread = useRef(spread.join(','));
   const [flipDir, setFlipDir] = useState<'next' | 'prev' | null>(null);
@@ -422,14 +450,15 @@ export const BookCanvas = forwardRef<BookCanvasHandle, BookCanvasProps>(function
   useEffect(() => {
     const root = scrollerRef.current;
     if (!root || typeof IntersectionObserver === 'undefined') return;
+    const vis = visible.current;
     const io = new IntersectionObserver(
       (entries) => {
         for (const en of entries) {
           const idx = Number((en.target as HTMLElement).dataset.seq);
           if (en.isIntersecting && en.intersectionRatio >= 0.5) {
-            if (!visible.current.has(idx)) visible.current.set(idx, performance.now());
+            if (!vis.has(idx)) vis.set(idx, performance.now());
           } else {
-            visible.current.delete(idx);
+            vis.delete(idx);
           }
         }
       },
@@ -440,7 +469,7 @@ export const BookCanvas = forwardRef<BookCanvasHandle, BookCanvasProps>(function
     const timer = window.setInterval(() => {
       if (document.visibilityState === 'hidden') return;
       const now = performance.now();
-      for (const [idx, since] of visible.current) {
+      for (const [idx, since] of vis) {
         if (now - since >= VIEWED_MS && !viewedSent.current.has(idx)) {
           viewedSent.current.add(idx);
           onViewed(idx);
@@ -450,7 +479,7 @@ export const BookCanvas = forwardRef<BookCanvasHandle, BookCanvasProps>(function
     return () => {
       io.disconnect();
       window.clearInterval(timer);
-      visible.current.clear();
+      vis.clear();
     };
   }, [geometry, near, flow, onViewed]);
 

@@ -9,7 +9,7 @@ import { Breadcrumbs, EmptyState, ErrorState, LoadingState, Select, StatusPill }
 import { usePageTitle } from '../../lib/usePageTitle';
 import { useQuery } from '../library/data';
 import { BRAIN_PATHS, conceptUrl } from './api';
-import { KNOWLEDGE_STATE_META, masteryText } from './model';
+import { KNOWLEDGE_STATE_META, masteryText, prerequisiteLabel } from './model';
 import '../review/learning.css';
 import './brain.css';
 
@@ -135,7 +135,7 @@ function ConceptKnowledge({ item: i }: { item: StudentConceptView }) {
                   <bdi>{p.name}</bdi>
                 </Link>{' '}
                 <KnowledgeStatePill state={p.state} />{' '}
-                <span className="lw-muted">{p.support === 'inferred' ? '(علاقة مستنتجة — مقترحة)' : '(علاقة أقررتها)'}</span>
+                <span className="lw-muted">{prerequisiteLabel(p)}</span>
               </li>
             ))}
           </ul>

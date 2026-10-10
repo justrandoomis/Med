@@ -10,6 +10,7 @@ export type CapabilityState =
   | 'not_reported' // the device/browser did not report it
   | 'heuristic' // approximated on the web (e.g. palm rejection)
   | 'requires_native' // only a native iPad layer can provide it
+  | 'requires_configuration' // built, but needs something set up on the server (e.g. a vision provider)
   | 'not_implemented'; // MedLevo has not built it yet
 
 export const CAPABILITY_STATE_LABELS_AR: Record<CapabilityState, string> = {
@@ -18,6 +19,7 @@ export const CAPABILITY_STATE_LABELS_AR: Record<CapabilityState, string> = {
   not_reported: 'لا يبلّغ عنه هذا الجهاز',
   heuristic: 'تقريبي على الويب',
   requires_native: 'يتطلب تطبيق iPad أصليًا',
+  requires_configuration: 'يحتاج إعدادًا على الخادم',
   not_implemented: 'غير منفّذ بعد',
 };
 
@@ -99,7 +101,11 @@ export const EMPTY_OBSERVATIONS: PenObservations = {
  * `storage`: whether this page could actually open its local database (null = not checked yet).
  * The `indexedDB` global alone proves nothing — private modes expose it and then refuse to open.
  */
-export function buildCapabilityReport(api: ApiSupport, o: PenObservations, opts: { recognitionReason_ar?: string; storage?: 'ok' | 'failed' | null } = {}): CapabilityRow[] {
+export function buildCapabilityReport(
+  api: ApiSupport,
+  o: PenObservations,
+  opts: { recognitionReason_ar?: string; recognitionAvailable?: boolean; storage?: 'ok' | 'failed' | null } = {},
+): CapabilityRow[] {
   const noPen = 'لم يُستخدم قلم هنا بعد. اكتب أو مرّر القلم في مساحة الاختبار.';
   const rows: CapabilityRow[] = [];
 
@@ -169,12 +175,22 @@ export function buildCapabilityReport(api: ApiSupport, o: PenObservations, opts:
     state: 'requires_native',
     detail_ar: 'تحويل الحبر على الصفحة إلى نص غير متاح للويب. داخل حقول النص العادية (مربع النص والملاحظة اللاصقة) قد يعمل Scribble من النظام على Safari في iPad — لم نختبر ذلك على جهاز.',
   });
-  rows.push({
-    key: 'recognition',
-    label_ar: 'التعرف على الخط اليدوي',
-    state: 'not_implemented',
-    detail_ar: opts.recognitionReason_ar ?? 'لم يُبنَ بعد. الحبر الأصلي يُحفظ دائمًا، وسيكون التعرف نتيجة مشتقة قابلة للتصحيح عند بنائه.',
-  });
+  // (track F4) recognition is built: a vision provider on the server reads what the owner selects
+  rows.push(
+    opts.recognitionAvailable
+      ? {
+          key: 'recognition',
+          label_ar: 'التعرف على الخط اليدوي',
+          state: 'supported',
+          detail_ar: 'حدّد كتابتك بأداة التحديد الحر ثم «تحويل إلى نص»: يقرؤها مزود الرؤية على الخادم. النتيجة مشتقة تعرض الكلمات غير المؤكدة وتقبل التصحيح، ولا تمحو الحبر. دقتها على خطك لم تُختبر هنا.',
+        }
+      : {
+          key: 'recognition',
+          label_ar: 'التعرف على الخط اليدوي',
+          state: 'requires_configuration',
+          detail_ar: opts.recognitionReason_ar ?? 'يحتاج مزود ذكاء اصطناعي يقرأ الصور (vision) على الخادم. الحبر الأصلي يُحفظ دائمًا، والتعرف نتيجة مشتقة قابلة للتصحيح.',
+        },
+  );
   const offline = 'الكتابة دون اتصال';
   rows.push(
     !api.indexedDB || opts.storage === 'failed'

@@ -158,10 +158,9 @@ describe('export: source, notes, questions, all', () => {
   it('formats endpoint says PDF is via browser printing and names other formats honestly', async () => {
     const f = (await getJson<ExportFormatsResponse>(lib, '/api/data/export/formats')).body;
     expect(f.pdf_note_ar).toContain('PDF عبر الطباعة من المتصفح');
-    expect(f.formats.map((x) => x.format)).toEqual(['md', 'html', 'json']);
-    const docx = f.other.find((o) => o.key === 'export.docx')!;
-    expect(docx.available).toBe(false);
-    expect(docx.reason_ar).toBeTruthy();
+    // (track F5) DOCX is a real format now (test/data/docx-export.test.ts); no longer listed as «not built»
+    expect(f.formats.map((x) => x.format)).toEqual(['md', 'html', 'json', 'docx']);
+    expect(f.other.some((o) => o.key === 'export.docx')).toBe(false);
   });
 
   it('render: a run that is LTR inside an RTL paragraph is isolated; marks kept; no controls inserted', () => {

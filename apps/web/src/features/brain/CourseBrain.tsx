@@ -11,6 +11,7 @@ import { useQuery } from '../library/data';
 import { BRAIN_PATHS, brainApi, conceptsUrl, knowledgeUrl } from './api';
 import { CoverageView } from './CoverageView';
 import { KnowledgeGraph } from './KnowledgeGraph';
+import { extractionCut } from './model';
 import { ProgressView } from './ProgressView';
 import '../review/learning.css';
 import './brain.css';
@@ -113,7 +114,13 @@ function CourseMapPanel({ courseNodeId, readOnly }: { courseNodeId: string; read
                 <bdi>{l.title}</bdi>
               </span>
               {l.extraction ? (
-                <StatusPill tone={l.extraction.current ? 'success' : 'warning'}>{l.extraction.current ? `مستخرج — ${l.extraction.counts.concepts} مفهومًا` : 'مستخرج بإصدار أقدم'}</StatusPill>
+                <StatusPill tone={l.extraction.current && !extractionCut(l.extraction.counts) ? 'success' : 'warning'}>
+                  {!l.extraction.current
+                    ? 'مستخرج بإصدار أقدم'
+                    : extractionCut(l.extraction.counts)
+                      ? `مستخرج جزئيًا — أول ${l.extraction.counts.mentions} من ${l.extraction.counts.mentions_found} ذكرًا`
+                      : `مستخرج — ${l.extraction.counts.concepts} مفهومًا`}
+                </StatusPill>
               ) : l.job && (l.job.status === 'queued' || l.job.status === 'running') ? (
                 <StatusPill tone="info">{l.job.status === 'queued' ? 'في الانتظار' : 'جارٍ الاستخراج'}</StatusPill>
               ) : !l.processed ? (

@@ -310,6 +310,7 @@ export function buildExplanationPrompt(p: BuildPromptInput): PromptParts {
 /** Owner text goes into the trusted instruction: strip control characters and anything that looks like a delimiter. */
 export function sanitizeOwnerText(text: string): string {
   return text
+    // eslint-disable-next-line no-control-regex -- owner text in a prompt: control characters become spaces
     .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, ' ')
     .replace(/<\/?untrusted_content[^>]*>/gi, ' ')
     .slice(0, 1500)

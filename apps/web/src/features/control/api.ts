@@ -1,6 +1,10 @@
 // Server calls of the Personal Control Center (shapes in packages/shared/src/control-api.ts).
 import type {
   CapabilitiesResponse,
+  ClientErrorsResponse,
+  EvaluationOverviewResponse,
+  EvalReport,
+  HealthTrendsResponse,
   ControlOverviewResponse,
   HistoryResponse,
   ImpactApplyResponse,
@@ -51,4 +55,10 @@ export const controlApi = {
   history: (q: { entity_type?: string; before?: string | null }) =>
     api.get<HistoryResponse>('/control/history', { ...T, query: { entity_type: q.entity_type || undefined, before: q.before ?? undefined, limit: 50 } }),
   capabilities: () => api.get<CapabilitiesResponse>('/capabilities', T),
+  // (track F5) quality ops
+  evaluation: () => api.get<EvaluationOverviewResponse>('/control/evaluation', T),
+  evaluationRun: (id: string) => api.get<{ report: EvalReport }>(`/control/evaluation/runs/${enc(id)}`, T),
+  health: (days = 14) => api.get<HealthTrendsResponse>('/control/health', { ...T, query: { days } }),
+  clientErrors: () => api.get<ClientErrorsResponse>('/control/client-errors', T),
+  clearClientErrors: () => api.del<{ deleted: number }>('/control/client-errors', T),
 };

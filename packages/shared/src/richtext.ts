@@ -51,7 +51,7 @@ export type RichText = z.infer<typeof richTextSchema>;
 
 // ───────── character classes ─────────
 // Arabic script blocks (letters, marks, presentation forms). Arabic-Indic digits are NOT strong RTL.
-const ARABIC_STRONG = /[؀-؈؋؍؛-ي٭-ٯٱ-ەۥۦۮۯۺ-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]/;
+const ARABIC_STRONG = /[؀-؈؋؍؛-ي٭-ٯٱ-ەۥۦۮۯۺ-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-\uFEFF]/;
 const HEBREW_STRONG = /[֐-׿]/;
 const LATIN_STRONG = /[A-Za-zÀ-ɏͰ-Ͽµ]/; // Latin, Greek (α, β, µ)
 // ASCII digits plus superscript / subscript digits: «10⁹», «CO₂», «HCO₃⁻», «x¹» are numbers that belong to the LTR

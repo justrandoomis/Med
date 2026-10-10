@@ -16,6 +16,7 @@ import { runExtraction } from './extract';
 import { matchQuestions, matchSourceVersion, MATCHER_VERSION } from './match';
 import { PARSER_VERSION } from './parser';
 import { registerRoutes } from './routes';
+import { registerDerivationJob, registerDerivedRoutes } from './derived';
 
 export { PARSER_VERSION } from './parser';
 export { MATCHER_VERSION } from './match';
@@ -83,5 +84,8 @@ export default async function register(app: FastifyInstance, { ctx }: ModuleOpti
     },
   });
 
+  // (track F3) derived question versions — translations / paraphrases (§35, §37), AI-gated via ai.generate_questions
+  registerDerivationJob(ctx);
+  registerDerivedRoutes(app, ctx);
   registerRoutes(app, ctx);
 }

@@ -17,6 +17,8 @@ export const routes: FeatureRoutes = {
         { path: 'intelligence', lazy: () => import('./IntelligenceScreen').then((m) => ({ Component: m.IntelligenceScreen })) },
         { path: 'storage', lazy: () => import('./StorageScreen').then((m) => ({ Component: m.StorageScreen })) },
         { path: 'capabilities', lazy: () => import('./CapabilitiesScreen').then((m) => ({ Component: m.CapabilitiesScreen })) },
+        { path: 'health', lazy: () => import('./HealthScreen').then((m) => ({ Component: m.HealthScreen })) },
+        { path: 'evaluation', lazy: () => import('./EvaluationScreen').then((m) => ({ Component: m.EvaluationScreen })) },
         { path: 'history', lazy: () => import('./HistoryScreen').then((m) => ({ Component: m.HistoryScreen })) },
       ],
     },

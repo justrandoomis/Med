@@ -169,13 +169,12 @@ describe('every /api/data route needs the owner session (and CSRF for mutations)
     expect(t.ctx.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM change_log WHERE entity_type = 'backup'")!.n).toBeGreaterThanOrEqual(3);
   }, 60_000);
 
-  it('capabilities are honest: offline/backup/export available, DOCX not implemented with a reason', async () => {
+  it('capabilities are honest: offline/backup/export available (DOCX too since track F5)', async () => {
     const t = await createTestApp();
     apps.push(t);
     const h = await t.login();
     const caps = (await t.app.inject({ method: 'GET', url: '/api/capabilities', headers: h })).json().features;
     for (const k of ['offline', 'backup', 'export.markdown', 'export.pdf']) expect(caps[k].state, k).toBe('available');
-    expect(caps['export.docx'].state).toBe('not_implemented');
-    expect(caps['export.docx'].reason_ar).toContain('DOCX');
+    expect(caps['export.docx'].state).toBe('available');
   });
 });

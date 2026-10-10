@@ -13,6 +13,7 @@ import { itemHitByPath, PointEraseSession } from './eraser';
 import { classifyPointerDown, StrokeCapture, type InputSample } from './input';
 import { bboxOf, boxContains, expandBox, fractionInside, pointInPolygon, unionBox, type Mat, type Vec } from './math';
 import { isBoxItem, isInkStroke, isShape, isSticky, isTextBox, itemBBox, itemGeometry, lassoSamplePoints, makeInkItem, makeShapeItem, transformItem, type InkItem } from './model';
+import { audioLinkAt } from './audioLink';
 import { LASER_COLOR, resolveInkColor } from './palette';
 import { canvasScale, deviceRectOf, drawItem, HIGHLIGHT_ALPHA, HIGHLIGHT_ALPHA_ISOLATED, highlightBlendIsolated, pageMatrix, paintOrder, paperToneOf, setMatrix, type RenderEnv } from './render';
 import { recognizeShape, type RecognizedShape } from './shapes';
@@ -714,6 +715,9 @@ export class PageInkController {
       tiltAvailable: g.capture.tiltAvailable,
       pointerType: g.capture.pointerType,
     });
+    // (track F4) written while an in-app recording runs → automatic time link (t of the last sample = stroke length)
+    const link = audioLinkAt(now - (points[points.length - 1]?.[2] ?? 0));
+    if (link) ink.data.audio_link = link;
     if (g.recognized) {
       const shape = makeShapeItem({
         id: g.id,
@@ -728,6 +732,9 @@ export class PageInkController {
         recognizedFrom: ink.data,
         pointerType: g.capture.pointerType,
       });
+      // (track F4) a shape drawn while recording keeps the stroke's time link on the item itself (where the lasso and
+      // the server look for it), not only inside the kept original stroke
+      if (link) (shape.data as { audio_link?: typeof link }).audio_link = link;
       this.d.store.commit('تحسين شكل', [{ id: shape.id, targetKey: this.d.targetKey, before: null, after: shape }]);
       return;
     }
@@ -813,6 +820,8 @@ export class PageInkController {
           tiltAvailable: orig.data.tilt_available,
           pointerType: orig.input?.pointer_type ?? 'unknown',
         });
+        // (track F4) the pieces are the same writing: they keep its time link
+        if (orig.data.audio_link) piece.data.audio_link = orig.data.audio_link;
         changes.push({ id: piece.id, targetKey: this.d.targetKey, before: null, after: { ...piece, input: orig.input } });
       }
     }

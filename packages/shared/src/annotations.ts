@@ -27,6 +27,19 @@ export interface InkData {
   /** what the input device actually reported (never assume) */
   pressure_available: boolean;
   tilt_available: boolean;
+  /** (track F4) written while an in-app recording ran: tapping the stroke plays that moment */
+  audio_link?: InkAudioLink;
+}
+
+/**
+ * (track F4, §29) Time link of a pen stroke to an in-app recording: `offset_ms` from the start of the recording.
+ * `auto` = set because the stroke was written while recording; `manual` = the owner changed it.
+ */
+export interface InkAudioLink {
+  /** client id of the recording session (= the recording's id on the server once uploaded) */
+  recording_id: string;
+  offset_ms: number;
+  origin: 'auto' | 'manual';
 }
 
 export interface ShapeData {
@@ -39,6 +52,8 @@ export interface ShapeData {
   style: InkStyle;
   /** when produced by shape recognition, the original stroke is kept so the owner can reject the enhancement */
   recognized_from?: InkData;
+  /** (track F4) drawn while an in-app recording ran */
+  audio_link?: InkAudioLink;
 }
 
 export interface TextBoxData {

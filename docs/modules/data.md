@@ -92,7 +92,7 @@ Spec: §11 (offline citations), §46–§49; AC-23 (offline), AC-30 (backup & re
   escaped so owner text cannot inject links or HTML), **JSON** (data + manifest of ids, versions and sha256),
   **print-ready HTML** (RTL document, English runs isolated with `<bdi dir="ltr">`, escaped, no scripts, print CSS).
   **PDF = print the HTML from the browser**, and the API and UI say so (`export.pdf` is available on that basis).
-  `export.docx` is `not_implemented` with an Arabic reason. Anki TSV belongs to the learning track
+  ~~`export.docx` is `not_implemented` with an Arabic reason.~~ **Word (DOCX)** since track F5 (below). Anki TSV belongs to the learning track
   (`export.anki_tsv`, shown with its own state).
 * Responses: `Content-Disposition: attachment` (RFC 5987 file name), `no-store`, `nosniff`.
 
@@ -140,7 +140,7 @@ Spec: §11 (offline citations), §46–§49; AC-23 (offline), AC-30 (backup & re
   Offline, new downloads say «يحتاج التنزيل اتصالًا بالخادم» and existing downloads stay usable.
 * **النسخ الاحتياطي**: create, real status, size, sha256, verification report per check, download, delete (confirm),
   what is in and out, and the CLI commands.
-* **التصدير**: kind (source / notes / questions / everything), format (Markdown, HTML for printing, JSON), solutions
+* **التصدير**: kind (source / notes / questions / everything), format (Markdown, HTML for printing, JSON, Word (DOCX) since track F5), solutions
   toggle, «اطبع / احفظ PDF» (opens the HTML export in a new tab), with honest notes on PDF and DOCX.
 * `OfflineDownloadButton` is exported for other screens (library or workspace) to mount. See the not-done list.
 * RTL with `Bidi` isolation for English titles and sizes, labelled controls, 390 px without horizontal overflow, and
@@ -244,7 +244,7 @@ with exit 2 → server started on the restored directory: old cookie 401, login 
   and «بياناتك» linked from Settings (the Control Center storage section already linked it). Global nav unchanged.
 * ~~`.env.example` lacks `MEDLEVO_SETUP_TOKEN`~~ — **fixed in I1** (with a test that every variable the server reads
   is documented).
-* No DOCX export. PDF only via browser printing. No server-side PDF.
+* ~~No DOCX export.~~ DOCX export since track F5 (below). PDF only via browser printing. No server-side PDF.
 * Question-source files (the PDF a question was extracted from) are not part of a lecture download. Download the
   question source itself.
 * Re-send after a restore covers only writes still in the outbox history (7 days) and acknowledged by a client with
@@ -320,3 +320,30 @@ Not changed (noted):
 * Signing out does not clear downloaded copies from IndexedDB (the local-first design keeps writing there too).
 * Double restore while a device stays offline, and conflict copies only the old server created: see
   `docs/BACKUP_RESTORE.md` §3 limits.
+
+## Track F5 — Word (DOCX) export (§46, 2026-10-10)
+
+* `modules/data/docx.ts` (the `docx` package 9.7.1, a dependency of `apps/server`) builds a real `.docx` for every
+  export kind that has a document form: a source (page labels as printed + the extracted text + the ink note), the
+  Study Book (`artifact`), notes (`exportNotesDocx`) and questions (`include_solutions`, with who stands behind each
+  key). `?format=docx` on the same routes; `GET /export/formats` lists it («Word (DOCX)», «… دون روابط …»); capability
+  `export.docx` is **available**. JSON stays the only format for «everything».
+* RTL: Arabic paragraphs are right-to-left (`<w:bidi/>`; an all-English paragraph stays LTR), Arabic runs `<w:rtl/>`
+  (ar-SA), English terms / values / units
+  their own LTR runs (en-US). Run properties alone did NOT keep a value in order — LibreOffice laid «11 ×10⁹/L» out as
+  «L/10⁹× 11» inside an Arabic sentence (measured by rendering the file and reading the PDF text boxes) — so an
+  opposite-direction island is wrapped in the Unicode isolates LRI / RLI … PDI. Those are the only invisible
+  characters written (balanced, asserted); marks, embeddings and overrides never are, and characters XML cannot carry
+  are stripped.
+* Citations are numbered TEXT («المصدر — ص 12 (الصفحة 14 في الملف) — الإصدار 1» + the evidence quote) under «الأدلة
+  المستشهد بها»; never a hyperlink (no external relationship in the package). Generated content carries the generated
+  label; owner text is plain text (never markup); solutions only on request.
+* Web: «بياناتك» → «التصدير» lists Word (DOCX) as a fourth format. With four formats the format control wraps instead of
+  widening the page on a phone (`dl-formats`, found by the F5 browser test at 390 px).
+* Tests: `apps/server/test/data/docx-export.test.ts` (7: opens the archive — content type, RTL, isolated LTR runs, the
+  value in logical order, citations as text, no hyperlink, solutions on/off, 404/401, formats + capability, the
+  builder's stripping), `test/data/export.test.ts` and `test/security.test.ts` (capability available), web
+  `features/offline/screens.test.tsx` (the DOCX option), E2E `e2e/f5-quality-ops.spec.ts` (questions → Word from the
+  export panel, phone + desktop; the downloaded file is a DOCX with `<w:bidi/>`).
+* Not verified: opening the files in Microsoft Word itself (rendering checked with LibreOffice only); Word may lay out
+  isolates slightly differently. Images are not embedded (figures are cited by page).

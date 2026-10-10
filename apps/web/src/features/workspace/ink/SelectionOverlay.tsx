@@ -4,7 +4,7 @@
 // a CSS matrix on a ref, the selected items are drawn transformed on the live canvas, and the
 // change is committed once (one undo step) on release.
 import { useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
-import { ArrowDownToLine, ArrowUpToLine, Copy, CopyPlus, Ellipsis, Lock, LockOpen, Palette, RotateCw, Trash2, Undo2, Minus } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpToLine, Clock, Copy, CopyPlus, Ellipsis, Lock, LockOpen, MessageCircleQuestion, Palette, Play, RotateCw, ScanText, Trash2, Undo2, Minus } from 'lucide-react';
 import { normBoxToView, normToView, viewToNorm, type NormBox } from '@medlevo/shared';
 import { IconButton, Menu, MenuItem, MenuSeparator, Toolbar, Tooltip } from '../../../design';
 import { useInkInternal } from './InkProvider';
@@ -13,6 +13,8 @@ import { IDENTITY, invertMat, isIdentity, multiply, rotateAbout, scaleAbout, tra
 import { isInkStroke, isShape, limitScaleToRange, revertEnhancement, type InkItem } from './model';
 import { HIGHLIGHTER_COLORS, PEN_COLORS, resolveInkColor } from './palette';
 import { pageMatrix, paperToneOf } from './render';
+import { audioLinkOf, formatOffset } from './audioLink';
+import { NO_ASK_HOST_AR, NO_RECOGNITION_HOST_AR, useInkSelectionActions } from './selectionActions';
 import type { InkPageView } from './types';
 
 type Mode = { kind: 'move' } | { kind: 'rotate' } | { kind: 'scale'; corner: 0 | 1 | 2 | 3 };
@@ -49,6 +51,7 @@ export function SelectionOverlay({
   onStrokeActiveChange: (active: boolean) => void;
 }) {
   const { store, announce } = useInkInternal();
+  const actions = useInkSelectionActions();
   useSyncExternalStore(store.subscribeSelection, store.getSelectionVersion, store.getSelectionVersion);
   const [, setItemsVersion] = useState(0);
   useEffect(() => store.subscribePage(targetKey, (e) => e.kind === 'items' && setItemsVersion((v) => v + 1)), [store, targetKey]);
@@ -182,6 +185,18 @@ export function SelectionOverlay({
   const barTop = rect.top >= 100 ? rect.top - 96 : rect.top + rect.height + 14;
   const barCenter = Math.min(Math.max(rect.left + rect.width / 2, 150), Math.max(150, layerW - 150));
 
+  // (track F4) handwriting: what the screen around the engine offers for this selection
+  const page = store.page(targetKey);
+  const selInfo = () => ({ targetKey, anchor: page?.anchor ?? null, items, bbox, ar: page?.ar ?? ar });
+  const hasWriting = items.some((i) => isInkStroke(i) || isShape(i));
+  const convertReason = !hasWriting ? 'حدّد كتابة بالقلم (لا نصًا مطبوعًا أو صورة).' : actions?.convert ? actions.convert.reason : NO_RECOGNITION_HOST_AR;
+  const askReason = !hasWriting ? 'حدّد كتابة بالقلم بجانب فقرة.' : actions?.ask ? actions.ask.reason : NO_ASK_HOST_AR;
+  // time link of the earliest linked stroke in the selection (written during an in-app recording)
+  const linked = items
+    .map((i) => ({ item: i, link: audioLinkOf(i) }))
+    .filter((x): x is { item: InkItem; link: NonNullable<ReturnType<typeof audioLinkOf>> } => !!x.link)
+    .sort((a, b) => a.link.offset_ms - b.link.offset_ms)[0];
+
   const undoEnhancement = (shape: InkItem) => {
     const after = revertEnhancement(shape, Date.now());
     if (!after) return;
@@ -217,6 +232,16 @@ export function SelectionOverlay({
         ))}
       <div ref={barRef} className="ml-ink-selbar" style={{ top: barTop, left: barCenter }} data-ink-ui="" dir="rtl">
         <Toolbar label={`إجراءات التحديد (${items.length} عنصر)`}>
+          {linked && actions?.playAudio && (
+            <Tooltip content={linked.link.origin === 'auto' ? 'رابط زمني تلقائي: كُتب أثناء التسجيل' : 'رابط زمني عدّلته بنفسك'} describe={false}>
+              <IconButton
+                label={`استمع من ${formatOffset(linked.link.offset_ms)} في التسجيل (${linked.link.origin === 'auto' ? 'رابط تلقائي' : 'رابط يدوي'})`}
+                icon={<Play size={18} />}
+                size="sm"
+                onClick={() => actions.playAudio!(linked.link)}
+              />
+            </Tooltip>
+          )}
           {locked ? (
             <Tooltip content="فك القفل" describe={false}>
               <IconButton label="فك القفل" icon={<LockOpen size={18} />} size="sm" onClick={() => store.setSelectionLocked(false)} />
@@ -279,11 +304,16 @@ export function SelectionOverlay({
                 إلغاء تحسين الشكل (إرجاع الخط الأصلي)
               </MenuItem>
             )}
+            {linked && actions?.editAudioLink && (
+              <MenuItem icon={<Clock size={16} />} hint={formatOffset(linked.link.offset_ms)} onSelect={() => actions.editAudioLink!(linked.item, targetKey)}>
+                {linked.link.origin === 'auto' ? 'الرابط الزمني (تلقائي)…' : 'الرابط الزمني (يدوي)…'}
+              </MenuItem>
+            )}
             <MenuSeparator />
-            <MenuItem disabled disabledReason="يحتاج التعرف على الخط اليدوي، ولم يُبنَ بعد." onSelect={() => {}}>
+            <MenuItem icon={<ScanText size={16} />} disabled={!!convertReason} disabledReason={convertReason ?? undefined} onSelect={() => actions?.convert?.run(selInfo())}>
               تحويل إلى نص
             </MenuItem>
-            <MenuItem disabled disabledReason="يُبنى مع لوحة الدراسة السياقية." onSelect={() => {}}>
+            <MenuItem icon={<MessageCircleQuestion size={16} />} disabled={!!askReason} disabledReason={askReason ?? undefined} onSelect={() => actions?.ask?.run(selInfo())}>
               اسأل عن المحدد
             </MenuItem>
           </Menu>

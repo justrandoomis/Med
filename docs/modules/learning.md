@@ -285,10 +285,10 @@ create card with duplicate check 0.1 s.
 | Lapse detection duplicated the fold | `foldReviews(…, onEvent)` shared by schedule and weakness |
 
 ## 13. Not done / limits (honest)
-* **No web screens** in this track (review, weakness, planner, home UI) — contract ready in `learning-api.ts`. The web
-  Dexie `FlashcardRow` lacks `clozeIndex` / `noteId` / `image` / `conceptId`; the server accepts them when sent and
-  keeps stored values when absent. The web should compute offline schedules with `GET /srs-config` (+ verify
-  `parity_check`) and fold `schedule_resets` like the server.
+* ~~**No web screens** in this track.~~ Built in track L2 (`features/review`, `features/weakness`,
+  `features/planner`, home): the local card model carries `noteId` / `clozeIndex` / `image` / `conceptId`, offline
+  schedules use `GET /srs-config` and fold `schedule_resets` like the server (`features/review/local/`).
+  *(reconciled, track F5)*
 * **No AI generation** in this track: no generated cards, the reasoning-replay completion and the simplified
   explanation are AI-gated pointers to the evidence-checked explain flow (studybook). Nothing here produces medical text.
 * Case / OSCE / viva attempts are collected by the Weakness Center since track F2 (see §6). The Student Knowledge Map

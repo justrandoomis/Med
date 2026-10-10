@@ -583,6 +583,12 @@
 }
 .ml-menu {
   padding: 6px;
+  /* a long menu on a short (phone) screen scrolls inside itself instead of running off the bottom, where its last
+     items could not be reached */
+  max-height: calc(100vh - 16px);
+  max-height: calc(100dvh - 16px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .ml-popover {
   padding: var(--ml-space-4);

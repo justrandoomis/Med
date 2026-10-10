@@ -72,7 +72,7 @@ export function GenerateScreen() {
     return () => {
       cancel = true;
     };
-  }, [lecture?.id, lecture?.active_version_id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [lecture?.id, lecture?.active_version_id]);
 
   // poll a running request (real job state, no fake progress)
   useEffect(() => {

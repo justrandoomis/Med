@@ -39,7 +39,7 @@ export function TermsScreen() {
     void reload();
   }, []);
 
-  const terms = load.status === 'ready' ? load.terms : [];
+  const terms = useMemo(() => (load.status === 'ready' ? load.terms : []), [load]);
   const shown = useMemo(() => terms.filter((t) => termMatches(t, query)), [terms, query]);
 
   return (

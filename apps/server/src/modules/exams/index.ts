@@ -9,6 +9,7 @@ import type { ModuleOptions } from '../../context';
 import { registerAttemptSync } from './attempts';
 import { registerGenerationJob } from './generation/pipeline';
 import { registerRoutes } from './routes';
+import { registerSimulationJob, registerSimulationRoutes } from './simulation';
 
 export default async function register(app: FastifyInstance, { ctx }: ModuleOptions): Promise<void> {
   ctx.capabilities.set('exams', 'available');
@@ -16,5 +17,8 @@ export default async function register(app: FastifyInstance, { ctx }: ModuleOpti
   ctx.capabilities.set('ai.grade_written', 'available');
   registerAttemptSync(ctx);
   registerGenerationJob(ctx);
+  // (track F3) generated simulation following the owner's Exam DNA (§40)
+  registerSimulationJob(ctx);
+  registerSimulationRoutes(app, ctx);
   registerRoutes(app, ctx);
 }

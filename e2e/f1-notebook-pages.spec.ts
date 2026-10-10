@@ -9,7 +9,7 @@
 import type { AnnotationDTO, NotebookContentResponse, NotePageView, SourceAnnotationsResponse } from '@medlevo/shared';
 import type { Locator, Page } from '@playwright/test';
 import { deflateSync, crc32 } from 'node:zlib';
-import { expect, openWorkspace, screenshot, setupOwner, test, waitForWorkspace } from './support';
+import { CSRF_HEADERS, expect, openWorkspace, screenshot, setupOwner, test, waitForWorkspace } from './support';
 import { mouseStroke, pickInkTool, viewMenuItem } from './g6-helpers';
 
 // offline, the browser reports the failing background requests (sync, capabilities) as console errors — expected here
@@ -164,6 +164,15 @@ test('notebook page: ruled paper, ink, a picture and a page link persist on the 
     await pickInkTool(page, /^اليد/);
     const link = notePage(page, p1).getByRole('button', { name: /^رابط: انظر المخطط/ });
     await link.scrollIntoViewIfNeeded();
+    // (review F1) a link drawn smaller than a finger keeps a 44 px touch area around it
+    await link.evaluate((el) => el.scrollIntoView({ block: 'center' }));
+    const lb = (await link.boundingBox())!;
+    const edgeY = lb.height < 44 ? lb.y - (44 - lb.height) / 2 + 2 : lb.y + 2;
+    const hit = await page.evaluate(({ x, y }) => {
+      const el = document.elementFromPoint(x, y);
+      return el?.closest('.ml-ink-link') ? 'link' : `${el?.tagName ?? 'none'}.${el?.className ?? ''}`;
+    }, { x: lb.x + lb.width / 2, y: edgeY });
+    expect(hit, `touch area of the link (height ${lb.height})`).toBe('link');
     await link.click();
     await expect(page.locator('.nb-bar__where')).toHaveText('صفحة 2 من 2');
     await page.getByRole('button', { name: 'العودة إلى موضعك' }).click();
@@ -241,6 +250,8 @@ test('reader: a note page inserted after a lecture page sits in the page sequenc
   await dialog.getByRole('button', { name: 'أضف الصفحة' }).click();
   const note = page.locator('.wk-page--note');
   await expect(note).toHaveCount(1);
+  // (review F1) the reader opens the page it just added (the reading line is on it)
+  await expect(page.locator('.wk-note-chip').first()).toHaveText('صفحة ملاحظات بعدها');
   // between source page 1 (index 0) and page 2 (index 1) in the canvas
   const order = await page.locator('.wk-canvas [data-seq]').evaluateAll((els) =>
     els.map((e) => ({ seq: Number((e as HTMLElement).dataset.seq), kind: (e as HTMLElement).dataset.notePageId ? 'note' : `p${(e as HTMLElement).dataset.pageIndex}` })).sort((a, b) => a.seq - b.seq).map((x) => x.kind),
@@ -263,4 +274,121 @@ test('reader: a note page inserted after a lecture page sits in the page sequenc
   await expect(page.locator('.wk-page--note')).toHaveCount(1);
   await page.locator('.wk-page--note').scrollIntoViewIfNeeded();
   await expect.poll(() => inkPixels(page.locator('.wk-page--note'))).toBeGreaterThan(50);
+
+  // (review F1) the reading place follows its PAGE when the note pages load after the first layout (they come from
+  // IndexedDB / the server a moment later): opened at the 2nd page (the note page sits before it), the reader stays
+  // there — and saves that place. (Not the 3rd of 4: near the end of a book the reading line slides down, and a
+  // restored offset there lands one page later even without note pages — a separate, pre-existing reader issue.)
+  const indicator = page.locator('.wk-pageind').first();
+  await openWorkspace(page, up.source_id, { pageIndex: 1 });
+  await expect(indicator).toHaveAttribute('aria-label', /، 2 من 4\./);
+  await page.waitForTimeout(2000); // note pages loaded, the session saved (debounced)
+  await expect(indicator).toHaveAttribute('aria-label', /، 2 من 4\./);
+  await page.goto(`/study/${up.source_id}`); // no place in the URL: the saved session decides
+  await waitForWorkspace(page);
+  await page.waitForTimeout(1000);
+  await expect(indicator).toHaveAttribute('aria-label', /، 2 من 4\./);
+});
+
+/**
+ * A small digital PDF (TEST FIXTURE) whose first page carries two real Link annotations: an internal one to page 3
+ * (explicit destination) and an external URI. Built by hand (byte offsets in the xref), so no fixture file is needed.
+ */
+function linkedPdf(externalUrl: string): Buffer {
+  const lines = (n: number) => [`TEST FIXTURE - linked document, page ${n}.`, `Synthetic structural text for automated tests (page ${n}).`, 'Not a medical reference.'];
+  const esc = (s: string) => s.replace(/[\\()]/g, (c) => `\\${c}`);
+  const content = (n: number, extra: string[] = []) => {
+    const body = [...lines(n), ...extra].map((t, i) => `BT /F1 14 Tf 72 ${780 - i * 40} Td (${esc(t)}) Tj ET`).join('\n');
+    return `<< /Length ${Buffer.byteLength(body, 'latin1')} >>\nstream\n${body}\nendstream`;
+  };
+  // page 1: the two link areas sit on the 4th and 5th text lines (y = 660 and 620)
+  const objs: string[] = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 6 0 R >> >> /Contents 7 0 R /Annots [10 0 R 11 0 R] >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 6 0 R >> >> /Contents 8 0 R >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 6 0 R >> >> /Contents 9 0 R >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>',
+    content(1, ['Go to the third page (internal link).', 'Visit the external site (external link).']),
+    content(2),
+    content(3, ['Third page: the internal link lands here.']),
+    // objects 10 and 11: the two Link annotations of page 1
+    '<< /Type /Annot /Subtype /Link /Rect [66 652 420 680] /Border [0 0 0] /Dest [5 0 R /XYZ null null null] >>',
+    `<< /Type /Annot /Subtype /Link /Rect [66 612 420 640] /Border [0 0 0] /A << /S /URI /URI (${esc(externalUrl)}) >> >>`,
+  ];
+  let out = '%PDF-1.4\n%\xe2\xe3\xcf\xd3\n';
+  const offsets: number[] = [];
+  objs.forEach((o, i) => {
+    offsets.push(Buffer.byteLength(out, 'latin1'));
+    out += `${i + 1} 0 obj\n${o}\nendobj\n`;
+  });
+  const xref = Buffer.byteLength(out, 'latin1');
+  out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('')}`;
+  out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(out, 'latin1');
+}
+
+test('PDF links: an internal link opens its page (Back returns); an external URL opens only after an explicit confirmation (review F1)', async ({ page, api, context }, testInfo) => {
+  test.setTimeout(4 * 60_000);
+  await setupOwner(page);
+  const { course } = await api.createNotebookAndCourse();
+  const external = 'https://example.org/medlevo-e2e?from=pdf';
+  const res = await page.request.post('/api/sources/upload', {
+    headers: { ...CSRF_HEADERS },
+    multipart: {
+      node_id: course.id,
+      source_type: 'lecture',
+      title: `F1 PDF links ${testInfo.project.name}`,
+      on_duplicate: 'create',
+      files: { name: 'linked.pdf', mimeType: 'application/pdf', buffer: linkedPdf(external) },
+    },
+  });
+  expect(res.ok(), await res.text()).toBe(true);
+  const up = ((await res.json()) as { results: Array<{ source_id: string; version_id: string }> }).results[0]!;
+  expect((await api.waitForProcessing(up.version_id)).job?.status).toBe('completed');
+
+  // every request the browser makes to the external site is recorded (none may happen before the confirmation)
+  const externalRequests: string[] = [];
+  context.on('request', (r) => {
+    if (r.url().startsWith('https://example.org/')) externalRequests.push(r.url());
+  });
+  await context.route('https://example.org/**', (r) => r.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>external</title>' }));
+
+  await openWorkspace(page, up.source_id, { pageIndex: 0 });
+  const indicator = page.locator('.wk-pageind').first();
+  await expect(indicator).toHaveAttribute('aria-label', /، 1 من 3\./);
+  const firstPage = page.locator('.wk-page[data-page-index="0"]');
+
+  // internal: «رابط داخلي إلى الصفحة 3 في الملف» → page 3, Back returns to page 1
+  const internal = firstPage.getByRole('button', { name: 'رابط داخلي إلى الصفحة 3 في الملف' });
+  await expect(internal).toHaveCount(1, { timeout: 30_000 });
+  await internal.click();
+  await expect(indicator).toHaveAttribute('aria-label', /، 3 من 3\./);
+  await page.getByRole('button', { name: 'العودة إلى موضعك' }).first().click();
+  await expect(indicator).toHaveAttribute('aria-label', /، 1 من 3\./);
+
+  // external: a confirmation first — cancelling opens nothing; confirming opens a NEW window (no opener)
+  const ext = firstPage.getByRole('button', { name: 'رابط خارجي: example.org' });
+  await ext.scrollIntoViewIfNeeded();
+  await ext.click();
+  const confirm = page.getByRole('alertdialog', { name: 'فتح رابط خارجي؟' });
+  await expect(confirm).toBeVisible();
+  await expect(confirm).toContainText('الخادم لا يزوره ولا يجلب محتواه');
+  await expect(confirm).toContainText(external);
+  await screenshot(page, testInfo, 'f1-pdf-external-confirm');
+  await confirm.getByRole('button', { name: 'إلغاء' }).click();
+  await expect(confirm).toHaveCount(0);
+  expect(externalRequests, 'nothing was requested from the external site before a confirmation').toEqual([]);
+  expect(context.pages()).toHaveLength(1);
+
+  await ext.click();
+  const popupPromise = context.waitForEvent('page');
+  await page.getByRole('alertdialog', { name: 'فتح رابط خارجي؟' }).getByRole('button', { name: 'افتح في نافذة جديدة' }).click();
+  const popup = await popupPromise;
+  await popup.waitForLoadState('domcontentloaded');
+  expect(popup.url()).toBe(external);
+  expect(await popup.evaluate(() => window.opener)).toBeNull();
+  await popup.close();
+  // the reader did not move
+  await expect(indicator).toHaveAttribute('aria-label', /، 1 من 3\./);
 });

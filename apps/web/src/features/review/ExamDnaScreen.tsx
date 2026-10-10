@@ -150,6 +150,16 @@ export function ExamDnaScreen() {
             </div>
             <p className="lw-muted">غياب موضوع عن هذه العينة لا يعني أنه لن يأتي في الامتحان؛ لا تُسقط دراسته بسبب هذا التحليل.</p>
           </section>
+
+          <section className="lw-sheet" aria-labelledby="lw-dna-sim">
+            <h2 id="lw-dna-sim" className="lw-sheet__title">
+              محاكاة مولدة بهذا التوزيع
+            </h2>
+            <p className="lw-muted">أسئلة مولدة من محاضراتك تتبع حصص هذه العينة — ليست نسخة متوقعة من الامتحان القادم.</p>
+            <Link to={course ? `/exams/simulate?course_node_id=${encodeURIComponent(course)}` : '/exams/simulate'} className={buttonClass({ variant: 'secondary' })}>
+              اعرض خطة المحاكاة
+            </Link>
+          </section>
         </div>
       )}
     </div>

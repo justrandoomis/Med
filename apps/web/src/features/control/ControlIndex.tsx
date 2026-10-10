@@ -1,5 +1,5 @@
 // The Control Center index: every section with ONE sentence of real state — no counters dashboard (§56).
-import { ArrowUpLeft, Archive, Bell, BrainCircuit, ChevronLeft, ClipboardCheck, Cog, GitCompare, History, Layers3, ListOrdered, ShieldCheck } from 'lucide-react';
+import { Activity, ArrowUpLeft, Archive, Bell, BrainCircuit, ChevronLeft, ClipboardCheck, Cog, FlaskConical, GitCompare, History, Layers3, ListOrdered, ShieldCheck } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { ErrorState, ListItem } from '../../design';
 import { useSyncSnapshot } from '../../lib/sync';
@@ -18,6 +18,8 @@ const ICONS: Record<SectionKey, ReactNode> = {
   storage: <Archive size={20} />,
   profile: <Layers3 size={20} />,
   capabilities: <ShieldCheck size={20} />,
+  health: <Activity size={20} />,
+  evaluation: <FlaskConical size={20} />,
   history: <History size={20} />,
 };
 

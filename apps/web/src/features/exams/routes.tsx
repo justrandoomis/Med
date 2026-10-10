@@ -7,6 +7,7 @@ export const routes: FeatureRoutes = {
     { path: 'exams', lazy: () => import('./HistoryScreen').then((m) => ({ Component: m.HistoryScreen })) },
     { path: 'exams/new', lazy: () => import('./BuilderScreen').then((m) => ({ Component: m.BuilderScreen })) },
     { path: 'exams/generate', lazy: () => import('./GenerateScreen').then((m) => ({ Component: m.GenerateScreen })) },
+    { path: 'exams/simulate', lazy: () => import('./SimulationScreen').then((m) => ({ Component: m.SimulationScreen })) },
     { path: 'exams/written/:questionId', lazy: () => import('./WrittenScreen').then((m) => ({ Component: m.WrittenScreen })) },
     { path: 'exams/:attemptId/results', lazy: () => import('./ResultsScreen').then((m) => ({ Component: m.ResultsScreen })) },
     { path: 'practice', lazy: () => import('./PracticeEntry').then((m) => ({ Component: m.PracticeEntry })) },

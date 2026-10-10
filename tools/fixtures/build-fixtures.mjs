@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  AlignmentType, BorderStyle, ColumnBreak, Document, Footer, Header, HeadingLevel, ImageRun, Packer, PageBreak,
+  AlignmentType, ColumnBreak, Document, Footer, Header, HeadingLevel, ImageRun, Packer, PageBreak,
   PageNumber, Paragraph, Table, TableCell, TableRow, TextRun, WidthType, SectionType,
 } from 'docx';
 import { PDFDocument, PDFName, PDFNumber } from 'pdf-lib';

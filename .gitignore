@@ -23,3 +23,5 @@ e2e/.artifacts/
 *.db-*
 .DS_Store
 
+# evaluation reports written by `npm run eval` (docs/eval/ holds the committed baseline)
+eval-reports/

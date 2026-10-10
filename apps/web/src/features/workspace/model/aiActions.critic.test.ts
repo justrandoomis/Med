@@ -1,16 +1,14 @@
-// Critic round regression (honest, specific reasons — §12, §61): «أنشئ سؤال اختيار من متعدد» on a selection said the
-// feature «arrives with the generated-questions phase», although generated questions exist (/exams/generate). The
-// reason now names the real limit (not wired to the reader) and the working path.
+// Critic round regression (honest, specific reasons — §12, §61): «أنشئ سؤال اختيار من متعدد» on a selection used to say
+// it «arrives with the generated-questions phase». Track F3 wired it to the reader (the rail's Create MCQ panel), so it
+// has no «not wired» reason any more; without an AI provider the capability's own reason is shown.
 import { describe, expect, it } from 'vitest';
 import { actionDisabledReason, SELECTION_AI_ACTIONS } from './aiActions';
 
 describe('selection action reasons', () => {
-  it('Create MCQ points to the generated-questions screen instead of a future phase', () => {
+  it('Create MCQ is wired to the reader: no «not wired» reason when generation is available', () => {
     const mcq = SELECTION_AI_ACTIONS.find((a) => a.id === 'mcq')!;
-    const reason = actionDisabledReason(mcq, { available: true, reason: null })!;
-    expect(reason).not.toContain('يصل مع مرحلة');
-    expect(reason).toContain('توليد أسئلة صعبة');
-    expect(reason).toContain('لم يُربط بالقارئ بعد');
+    expect(mcq.wired).toBe(true);
+    expect(actionDisabledReason(mcq, { available: true, reason: null })).toBeNull();
   });
 
   it('without an AI provider the capability reason still comes first', () => {

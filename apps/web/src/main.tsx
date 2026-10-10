@@ -13,9 +13,13 @@ import './design/components.css';
 import './app/shell.css';
 import { applyAppearance, appearanceStore } from './design';
 import { App } from './app/App';
+import { installErrorReporter } from './lib/errorReporter';
+import { lastKnownAuthenticated } from './lib/auth';
 
 // Apply the stored appearance before the first render (no flash of the wrong theme / text size).
 applyAppearance(appearanceStore.get());
+// §56 client error tracking (redacted, batched, owner session only — lib/errorReporter.ts)
+installErrorReporter(window, { canSend: lastKnownAuthenticated });
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

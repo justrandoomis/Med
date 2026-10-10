@@ -8,17 +8,20 @@ import { toJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
 import { newId } from '../../lib/ids';
 import { joinBilingualSuggestions } from './concepts';
+import { recomputeCourseRelations } from './course';
 import { EXTRACTOR_VERSION, extractKnowledge, type RegionIn } from './extract';
-import { recomputeInferredRelations } from './relations';
 import { ConceptIndex, nameNorm } from './resolve';
 import { courseKey, PROCESSED, studySource } from './store';
 import { suggestTopicLinks } from './topics';
+
+/** Stated mentions kept per source version (a very long textbook is cut here — the course page says so). */
+export const MAX_MENTIONS = 1500;
 
 const KIND_OF_ROLE: Partial<Record<ConceptRole, string>> = { investigation: 'investigation', sign: 'sign', drug: 'drug', mechanism: 'mechanism' };
 
 export interface ExtractionSummary {
   status: 'completed' | 'nothing_found';
-  counts: { concepts: number; mentions: number; definitions: number; sections: number; table_entries: number };
+  counts: { concepts: number; mentions: number; definitions: number; sections: number; table_entries: number; mentions_found: number };
   roles: Record<string, number>;
   objectives: Array<{ text: string; region_id: string; page_id: string | null }>;
   sections: Array<{ title: string; role: string | null; region_id: string }>;
@@ -48,7 +51,7 @@ export function runKnowledgeExtraction(ctx: AppContext, versionId: string, jobId
     const index = new ConceptIndex(ctx);
     const concepts = new Set<string>();
     let created = 0;
-    for (const m of x.mentions.slice(0, 1500)) {
+    for (const m of x.mentions.slice(0, MAX_MENTIONS)) {
       let id = index.find(m.name) ?? (m.nameAlt ? index.find(m.nameAlt) : null);
       if (!id) {
         id = newId(now);
@@ -88,7 +91,8 @@ export function runKnowledgeExtraction(ctx: AppContext, versionId: string, jobId
       status: x.mentions.length > 0 || x.objectives.length > 0 ? 'completed' : 'nothing_found',
       counts: {
         concepts: concepts.size,
-        mentions: Math.min(x.mentions.length, 1500),
+        mentions: Math.min(x.mentions.length, MAX_MENTIONS),
+        mentions_found: x.mentions.length,
         definitions: (roles.definition ?? 0) + (roles.classification ?? 0),
         sections: x.sections.filter((s) => s.role !== null).length,
         table_entries: (roles.table_entry ?? 0) + (roles.value ?? 0),
@@ -108,9 +112,12 @@ export function runKnowledgeExtraction(ctx: AppContext, versionId: string, jobId
     return summary;
   });
 
-  // course-level follow-ups (separate transactions; owner decisions are never touched)
+  // course-level follow-ups (separate transactions; owner decisions are never touched). A source moved to the trash
+  // meanwhile has no course to update (its relations are recomputed when it is restored and its course page opens).
+  const live = ctx.db.get<{ deleted_at: number | null }>('SELECT deleted_at FROM source WHERE id = ?', [v.source_id]);
+  if (!live || live.deleted_at !== null) return result;
   const src = studySource(ctx, v.source_id);
-  result.relations = recomputeInferredRelations(ctx, courseKey(src));
+  result.relations = recomputeCourseRelations(ctx, courseKey(src));
   suggestTopicLinks(ctx);
   return result;
 }

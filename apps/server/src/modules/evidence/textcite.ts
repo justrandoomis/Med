@@ -51,7 +51,7 @@ export function inventedCitations(text: string, quotes: string[]): string[] {
 /** Remove text «citations» from a label or a free note: a bracketed group that carries one goes as a whole. */
 export function stripPseudoCitations(text: string): string {
   if (!hasPseudoCitation(text)) return text;
-  let t = text.replace(/[(\[（]([^()[\]（）]*)[)\]）]/gu, (m) => (hasPseudoCitation(m) ? '' : m));
+  let t = text.replace(/[([（]([^()[\]（）]*)[)\]）]/gu, (m) => (hasPseudoCitation(m) ? '' : m));
   for (const re of PSEUDO_CITATION_PATTERNS) t = t.replace(re, '');
   return t
     .replace(/\s+([.,،؛;:!?؟])/gu, '$1')

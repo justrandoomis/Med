@@ -9,7 +9,8 @@
     "test": "NODE_OPTIONS='--disable-warning=ExperimentalWarning' vitest run",
     "typecheck": "tsc --noEmit",
     "backup": "NODE_OPTIONS='--disable-warning=ExperimentalWarning' tsx src/cli/backup.ts",
-    "restore:verify": "NODE_OPTIONS='--disable-warning=ExperimentalWarning' tsx src/cli/restore-verify.ts"
+    "restore:verify": "NODE_OPTIONS='--disable-warning=ExperimentalWarning' tsx src/cli/restore-verify.ts",
+    "eval": "NODE_OPTIONS='--disable-warning=ExperimentalWarning' tsx src/cli/eval.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.132.1",
@@ -20,6 +21,7 @@
     "@medlevo/shared": "0.1.0",
     "@tesseract.js-data/ara": "^1.0.0",
     "@tesseract.js-data/eng": "^1.0.0",
+    "docx": "^9.7.1",
     "fastify": "^5.12.5",
     "jszip": "^3.10.2",
     "mammoth": "^1.13.0",

@@ -59,6 +59,9 @@ export function HistoryScreen() {
               توليد أسئلة صعبة
             </Link>
           )}
+          <Link to="/exams/simulate" className={buttonClass({ variant: 'plain' })}>
+            محاكاة مولدة
+          </Link>
         </div>
       </header>
       {!gen.available && gen.reason && <p className="ex-muted">توليد الأسئلة الصعبة: {gen.reason}</p>}

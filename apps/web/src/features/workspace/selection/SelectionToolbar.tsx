@@ -2,6 +2,8 @@
 // explanation actions (Explain / Simplify / Translate / Ask / Compare / Explain Image), which hand the selection
 // anchor to the «الشرح والسؤال» rail tab. «أنشئ بطاقة مراجعة» opens the card editor with the selected quote (the server
 // makes the exact evidence excerpt); «أضف إلى المراجعة» saves a «للمراجعة» page mark (learning web track).
+// Track F3: «أنشئ سؤال اختيار من متعدد» hands the selection to the rail's «الأسئلة» section (Create MCQ panel); in the
+// «امتحن نفسك» study mode the explanation family is disabled with the reason (no explanations while testing yourself).
 import { useLayoutEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { BookOpenText, Copy, Highlighter, NotebookPen, Sparkles, Underline, Eraser } from 'lucide-react';
@@ -11,6 +13,7 @@ import { useCapabilities } from '../../../lib/capabilities';
 import { getDb, type AnnotationRow } from '../../../lib/localdb';
 import { createAnnotation, deleteAnnotation } from '../data/local';
 import { actionDisabledReason, aiRequestStore, SELECTION_AI_ACTIONS, type ExplainActionId } from '../model/aiActions';
+import { mcqRequestStore } from '../model/mcqRequest';
 import { clientRectsToNorm, quoteFromText, rangeOffsetsWithin, roundBox } from '../model/textQuote';
 import type { BookSelection } from './useBookSelection';
 import { addRevisionMark } from '../../review/local/revisionMarks';
@@ -26,6 +29,8 @@ export interface SelectionToolbarProps {
   fixedPages: boolean;
   onAddNote: (pageIndex: number, quote: TextQuote | null) => void;
   onDone: () => void;
+  /** (track F3) set in the «امتحن نفسك» study mode: the explanation actions are disabled with this reason */
+  explainHiddenReason?: string | null;
 }
 
 /** Selection → {quote, rects} on one page (exported for tests). */
@@ -45,7 +50,7 @@ export function selectionToHighlight(sel: Pick<BookSelection, 'range'>, textRoot
   return { quote, rects };
 }
 
-export function SelectionToolbar({ selection, canvas, textRoot, anchorFor, fixedPages, onAddNote, onDone }: SelectionToolbarProps) {
+export function SelectionToolbar({ selection, canvas, textRoot, anchorFor, fixedPages, onAddNote, onDone, explainHiddenReason = null }: SelectionToolbarProps) {
   const ref = useRef<HTMLDivElement>(null);
   const toast = useToast();
   const caps = useCapabilities();
@@ -146,6 +151,21 @@ export function SelectionToolbar({ selection, canvas, textRoot, anchorFor, fixed
     onDone();
   };
 
+  /** Create MCQ (track F3): the selection becomes the focus of a generation request in the rail's «الأسئلة» section */
+  const createMcq = () => {
+    const pageAnchor = anchorFor(selection.pageIndex);
+    if (!pageAnchor || pageAnchor.type !== 'page') return;
+    mcqRequestStore.request({
+      source_id: pageAnchor.source_id,
+      version_id: pageAnchor.version_id,
+      page_id: pageAnchor.page_id,
+      pageIndex: selection.pageIndex,
+      text: (highlight?.quote.exact ?? selection.text).trim(),
+      rects: highlight?.rects ?? [],
+    });
+    onDone();
+  };
+
   /** learning actions: a card from this quote (editor), or a «للمراجعة» mark on this page */
   const learningAction = async (id: 'flashcard' | 'revision') => {
     const pageAnchor = anchorFor(selection.pageIndex);
@@ -197,9 +217,23 @@ export function SelectionToolbar({ selection, canvas, textRoot, anchorFor, fixed
           ملاحظة
         </Button>
         {/* always reachable: when explanations are unavailable the rail says exactly why (never a dead button) */}
-        <Button size="sm" variant="plain" icon={<BookOpenText size={16} />} onClick={() => askRail('explain')}>
+        <Button
+          size="sm"
+          variant="plain"
+          icon={<BookOpenText size={16} />}
+          disabled={!!explainHiddenReason}
+          title={explainHiddenReason ?? undefined}
+          aria-describedby={explainHiddenReason ? 'sel-explain-why' : undefined}
+          onClick={() => askRail('explain')}
+        >
           اشرح
         </Button>
+        {/* (F3 review) the reason reaches assistive technology too — a title alone is not announced reliably */}
+        {explainHiddenReason && (
+          <span id="sel-explain-why" className="ml-visually-hidden">
+            {explainHiddenReason}
+          </span>
+        )}
         <Menu
           label="أدوات الشرح والتعلّم"
           trigger={
@@ -209,9 +243,15 @@ export function SelectionToolbar({ selection, canvas, textRoot, anchorFor, fixed
           }
         >
           {SELECTION_AI_ACTIONS.map((a) => {
-            const reason = actionDisabledReason(a, caps.feature(a.feature));
+            const explanationFamily = a.id !== 'flashcard' && a.id !== 'revision' && a.id !== 'mcq';
+            const reason = (explanationFamily && explainHiddenReason) || actionDisabledReason(a, caps.feature(a.feature));
             return (
-              <MenuItem key={a.id} onSelect={() => (a.id === 'flashcard' || a.id === 'revision' ? void learningAction(a.id) : askRail(a.id as ExplainActionId))} disabled={!!reason} disabledReason={reason ?? undefined}>
+              <MenuItem
+                key={a.id}
+                onSelect={() => (a.id === 'flashcard' || a.id === 'revision' ? void learningAction(a.id) : a.id === 'mcq' ? createMcq() : askRail(a.id as ExplainActionId))}
+                disabled={!!reason}
+                disabledReason={reason ?? undefined}
+              >
                 {a.label} <Term>{a.term}</Term>
               </MenuItem>
             );

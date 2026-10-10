@@ -103,7 +103,9 @@ describe('capability report is honest (AC-28)', () => {
   it('native-only features are never shown as implemented on the web', () => {
     const r = byKey(buildCapabilityReport(api, { ...EMPTY_OBSERVATIONS, penSeen: true, pressureVaried: true }));
     for (const k of ['double_tap', 'squeeze', 'pencilkit', 'scribble']) expect(r[k]!.state).toBe('requires_native');
-    expect(r.recognition!.state).toBe('not_implemented');
+    // (track F4) recognition is built; without a vision provider on the server it needs configuration
+    expect(r.recognition!.state).toBe('requires_configuration');
+    expect(byKey(buildCapabilityReport(api, EMPTY_OBSERVATIONS, { recognitionAvailable: true })).recognition!.state).toBe('supported');
   });
 
   it('missing APIs are reported as not available in this browser', () => {

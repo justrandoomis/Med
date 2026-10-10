@@ -27,12 +27,12 @@ import { acc, g8App, gold, type G8App } from './g8-helpers';
 
 let t: G8App;
 let bank: { sourceId: string; versionId: string };
-let lecture: { sourceId: string; versionId: string };
 
 beforeAll(async () => {
   t = await g8App();
   const course = (await createNode(t, 'G8 AC-27 course')).id;
-  lecture = await uploadAndProcess(t, course, 'lecture_appendicitis.pdf', gold('lecture_appendicitis.pdf'), 'lecture', 'Appendicitis G8-27');
+  // the lecture the bank's questions are matched against
+  await uploadAndProcess(t, course, 'lecture_appendicitis.pdf', gold('lecture_appendicitis.pdf'), 'lecture', 'Appendicitis G8-27');
   bank = await uploadAndProcess(t, course, 'g8_key_bank.pdf', acc('g8_key_bank.pdf'), 'question_source', 'G8 Revision Bank');
   await t.ctx.jobs.drain();
 }, 240_000);

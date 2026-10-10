@@ -49,11 +49,18 @@ by the follow-up job — like the questions trigger for candidate mentions); `co
 `concept_extraction`, `concept_relation` and the stated mentions; the questions module keeps writing candidate mentions
 (`role 'candidate_*'`) and its matcher reads **only** those, so question matching is unchanged by this track.
 
+**`0801_brain_relation_reasons_purge.sql`** (review F2): trigger `brain_version_relation_reasons_bd` — when a source
+version is deleted (the sources purge), every relation reason that points into it is dropped; an undecided suggestion
+left without reasons is deleted, a decided one (accepted / rejected / owner) keeps the decision with a neutral
+`basis_removed` reason. No sentence, title or location of a purged lecture survives in `concept_relation`.
+
 ### Hooks into other modules (all additive)
 
 * processing `pipeline.ts`: `enqueueKnowledgeFollowUp` after a study source is processed (guarded like the question hook).
 * questions `concepts.ts`: candidate lookup through `findConceptByName`; `lectureConcepts` restricted to candidate
-  mentions and live (not merged) concepts.
+  mentions and live (not merged) concepts, and one matcher entry per NAME (English, Arabic, names absorbed in a merge)
+  so a bilingual join / merge never drops a name question matching used (review F2; the Golden Set links are identical
+  with and without the brain module).
 * library `tags.ts`: owner topic links validated (known entity type, existing row → 400 / 404).
 * learning `weakness.ts`: reads `cases/signals.caseSignals` — each checklist item / viva point of a completed attempt is a
   signal of type `case | osce | viva`, grouped by the case (`WeaknessKind 'case'`, action `retry_case`) and by the
@@ -85,13 +92,44 @@ by the follow-up job — like the questions trigger for candidate mentions); `co
   **`/concepts/:id`** (every mention with its exact quote, page link, role and section; link the concept or one of its
   places to a topic).
 * **`/library/topics`, `/library/topics/:id`**: topic tree with counts; create / edit / delete (impact stated); suggested
-  links with «لماذا»; accept / reject / restore / unlink; link a source or a question (search) by hand; «اعرض المكتبة
+  links with «لماذا»; accept / reject / restore / unlink; link a source, a place in a source (source → page → region,
+  chosen by its text; headers / footers / table cells / options not offered) or a question (search) by hand; «اعرض المكتبة
   مصفّاة بهذا الموضوع». **Library filter**: `/library?topic=<id>` (`TopicFilterView`) + «تصفية بموضوع» select and a
   «الموضوعات» button on the library screen; suggested links are marked as such.
 * **`/knowledge?course=`** — Student Knowledge Map: counts per state (icon + words), per concept: state, reading,
   practice, mastery text («تقدير: 80% (من 3 إجابات)» / «لا تقدير بعد …»), prerequisites with their state and the
   inferred label, «لماذا هذه الحالة؟», next step with a reader link. Linked from the Weakness Center.
 * Weakness Center: kind «حالة / OSCE / شفهي», signal type «امتحان شفهي», action «أعد محاولة …» (→ `/cases/:id`).
+
+### Accessibility review of the maps (WCAG 2.1 AA, `design:accessibility-review` checklist)
+
+| criterion | how it is met | checked by |
+|---|---|---|
+| 2.1.1 Keyboard · 2.4.3 Focus order | one tab stop into the graph, arrows / Home / End / Enter / Esc inside it; dialogs trap and return focus (design `Dialog`) | `brain.test.tsx`, `e2e/f2-course-brain.spec.ts` (keyboard only) |
+| 4.1.2 Name, role, value | nodes are `<button>`s named «النوع: الاسم — الوصف — عدد الروابط», `aria-pressed` for the selected one; the graph is a labelled group with instructions (`aria-describedby`) | `brain.test.tsx` |
+| 1.3.1 Info and relationships | the text twin and the coverage / progress tables carry everything the drawing shows | `brain.test.tsx` |
+| 1.4.1 Use of colour · 1.4.11 Non-text contrast | states and statuses are words + icon; node type = column + shape + icon + words; edge colours ≥ 3:1 on both surfaces (dataviz validator) | validator run, `brain.test.tsx` |
+| 2.5.5 Target size | nodes and actions ≥ 44 × 44 px | CSS (`NODE_PX`, design buttons); E2E screenshots at 390 px |
+| 4.1.3 Status messages | the details panel is `aria-live="polite"`; toasts for decisions | `brain.test.tsx` |
+
+Not verified: a real screen reader (VoiceOver / NVDA) and 200 % zoom — no device or AT here.
+
+## Review F2 (adversarial review) — fixed
+
+| issue | severity | fix | regression test |
+|---|---|---|---|
+| heading section words were cut out of the MIDDLE of a heading, so a «stated» name was not in its quote («Cardiac drug toxicity» → «Cardiac toxicity», «Type 2 Diabetes Mellitus» → «2 Diabetes Mellitus», «Drug-induced …» → «induced …») | major | `headingConceptPart` strips section words at the edges only (whole words; «Type / Class + number» kept); `trimStructural` keeps «Type 2 …» | `srv:brain/review.test.ts` (names + an invariant: every name is a contiguous run of its quote) |
+| a purged lecture's sentences, title and locations stayed in `concept_relation.reasons_json` (readable at `GET /relations`) | major | migration `0801` trigger (above) | `srv:brain/review.test.ts` (real purge route) |
+| large courses: the in-process relation recompute was quadratic with a DB query per mention / pair — ≈ 4.7 s per recompute and ≈ 6 s for the 30th lecture's extraction job on a 30 × 20-page course, and the course page recomputed again after every job (≈ 5.3 s) | major | memoised lookups, regions read once per lecture, an exact substring prefilter before the per-region regex, unchanged reasons not rewritten, the job remembers the state it computed for (`recomputeCourseRelations`) — same result (asserted), recompute ≈ 0.9 s, last extraction ≈ 1.2 s, course page ≈ 0.1 s after the jobs | `srv:perf/brain-course.perf.test.ts` (opt-in `MEDLEVO_PERF=1`; asserts the recompute is idempotent) |
+| a merge dropped the moved row's owner decision when the target already had the same relation undecided (a rejected prerequisite came back as «suggested») | major | `mergeCore` keeps the decided row | `srv:brain/review.test.ts` |
+| a bilingual join made question matching see only the English name of the joined concept (Arabic question text lost its concept hit) | minor | `lectureConcepts` emits one entry per name | `srv:brain/review.test.ts` |
+| the concept page mixed quotes of superseded versions with the study version's | minor | study version only (like the list) | `srv:brain/review.test.ts` |
+| the 1 500-mention cap per version was silent (a long textbook's later chapters had no concepts, nothing said so) | minor | `counts.mentions_found`, a course-page note and a «مستخرج جزئيًا» pill | `srv:brain/review.test.ts`, `brain.test.tsx` |
+| an accepted inferred prerequisite was labelled «مقترحة»; a prerequisite rejected as a concept was still listed | minor | `prerequisiteLabel` («مستنتجة — قبلتها»); rejected concepts skipped | `brain.test.tsx`, `srv:brain/review.test.ts` |
+| owner-added questions were counted as «أسئلة من المصادر» without saying so | minor | a coverage note says so | `srv:brain/review.test.ts` |
+| the coverage view crashed when the chosen lecture vanished on refresh; the text twin lacked the basis of question → concept links; the differential reason's location link was called «موضع الاستخدام» | minor | fallback to the whole course; basis shown in the twin; «موضع ذكره» | `brain.test.tsx` |
+| an extraction finishing after its source went to the trash failed the job | minor | course follow-ups skipped for a trashed source | `srv:brain/review.test.ts` |
+| a topic's merged concept was suggested as the pointer | minor | resolved to the live concept | — (one-line resolve) |
 
 ## Tests
 
@@ -109,9 +147,12 @@ by the follow-up job — like the questions trigger for candidate mentions); `co
   strong; needs work), topic suggestions and decisions, validated owner links, OSCE + viva signals in the Weakness Center
   (own types, case weakness, retry action, exclusion).
 * `apps/server/test/brain/math.test.ts` — coverage math and knowledge-state rules.
+* `apps/server/test/brain/review.test.ts` — the review F2 regressions (table above).
+* `apps/server/test/perf/brain-course.perf.test.ts` — opt-in (`MEDLEVO_PERF=1`) large-course timing + idempotent recompute.
 * `apps/web/src/features/brain/brain.test.tsx` — map layout + keyboard model, graph a11y (one tab stop, RTL arrows,
   Enter / live panel / Escape, text twin), correction view decisions, Student Knowledge Map labels, coverage statuses and
-  denominators, topic page decisions.
+  denominators, topic page decisions, linking a region by hand (source → page → region; page furniture not offered),
+  the Weakness Center case kind label and `retry_case` link.
 * `e2e/f2-course-brain.spec.ts` (phone 390 × 844 + desktop 1280 × 800, real server): course page tabs, the map driven by
   the keyboard, text twin, progress, coverage, a rejected concept surviving re-extraction, topics with suggestions /
   decisions / library filter, Student Knowledge Map, an OSCE attempt in the Weakness Center.
@@ -127,3 +168,10 @@ by the follow-up job — like the questions trigger for candidate mentions); `co
 * Topic links to a region whose page was re-processed keep pointing at the old region id and show «لم يعد موجودًا».
 * The profile signal reset has no «case attempts» part: resetting MCQ / card signals does not reset case signals.
 * The knowledge map is capped (60 concepts / 40 questions) with the totals shown; the concepts page lists all.
+* Stated mentions are capped at 1 500 per source version (reported, see above). Concepts whose only mentions were in a
+  purged source keep their NAMES (shared concept rows, like the questions module's candidates); their mentions,
+  extraction records and relation reasons are removed.
+* The relation recompute is still in-process and synchronous: ≈ 0.9 s on a 30-lecture × 20-page synthetic course
+  (`docs/PERFORMANCE.md`-style numbers from `srv:perf/brain-course.perf.test.ts`); much larger courses block the server
+  proportionally while an extraction job finishes.
+* The coverage «attempted» count and the case / OSCE / viva signals ignore learning-profile resets.

@@ -143,7 +143,7 @@ export function figureReferences(text: string, ownCaptionNumber?: string | null)
 }
 
 const BULLET_RE = /^\s*(?:[•▪◦●○■□◆◇‣⁃∙·*]|[-–—](?=\s))\s*/;
-const NUMBERED_RE = /^\s*(?:\(?[0-9٠-٩]{1,2}[.)\-]|\(?[a-zA-Z][.)]|\(?[أبجدهـوزحطي][.)\-])\s+/;
+const NUMBERED_RE = /^\s*(?:\(?[0-9٠-٩]{1,2}[.)-]|\(?[a-zA-Z][.)]|\(?[أبجدهـوزحطي][.)-])\s+/;
 
 export function isListStart(text: string): boolean {
   return BULLET_RE.test(text) || NUMBERED_RE.test(text);

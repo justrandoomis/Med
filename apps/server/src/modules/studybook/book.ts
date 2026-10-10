@@ -858,7 +858,6 @@ export function finalizeSectioned(ctx: AppContext, artifactId: string, o: { jobS
   const a = requireArtifact(ctx, artifactId);
   const sections = sectionRows(ctx, artifactId);
   const complete = sections.filter((s) => s.status === 'complete');
-  const abstained = sections.filter((s) => s.status === 'abstained');
   const failed = sections.filter((s) => s.status === 'failed' || s.status === 'pending' || s.status === 'generating');
   const params = fromJson<SectionedParams>(a.params_json);
   let status: StudyBookView['artifact']['status'];

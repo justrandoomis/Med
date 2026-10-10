@@ -1,8 +1,9 @@
 // Written questions (§41; capability `ai.grade_written`): short answer, essay, enumerate, compare, clinical written.
 //
-//  * The owner types the answer (handwriting recognition is not available in this build). Text recognized from
-//    ink would be stored as `recognized_text` and is never graded until the owner confirmed it — uncertain OCR
-//    never costs points.
+//  * The owner types the answer, or writes it by hand in a pad (track F4): the pad is read by the vision reader
+//    (annotations/recognition.ts, ink_recognition purpose 'written_answer'), the machine reading is stored as
+//    `recognized_text` and only the text the owner CONFIRMED (and possibly edited) is saved and graded — uncertain
+//    reading never costs points.
 //  * Grading = a rubric bound to the sources: the question's own rubric (when it has one) or a rubric generated
 //    from evidence retrieved INSIDE the Source Lock and validated claim by claim (C1 validateClaims). The model
 //    marks each point correct / partial / missing / wrong, lists wrong statements (each «why» must be backed by
@@ -35,6 +36,7 @@ import type { UntrustedBlock } from '../ai/types';
 import { getClaimViews, packFromCandidates, resolveScope, retrieve, toResolvedScope, validateClaims, type SentenceResult } from '../evidence/services';
 import { getQuestion } from '../questions/service';
 import { paragraph, richText, shorten } from './generation/text';
+import { writtenAnswerRecognition } from '../annotations/recognition';
 
 export const WRITTEN_GRADER_VERSION = 'wgrade-v1';
 const MIN_VERIFIED_POINTS = 2;
@@ -49,6 +51,8 @@ export const writtenAttemptSchema = z
     answer_text: z.string().max(20_000),
     recognized_text: z.string().max(20_000).nullable().optional(),
     recognized_confirmed: z.boolean().optional(),
+    /** (track F4) the reading of the handwriting pad this answer was confirmed from */
+    recognition_id: idSchema.nullable().optional(),
     answered_at: z.number().int().min(0),
   })
   .strict();
@@ -98,6 +102,7 @@ interface WrittenRow {
   model: string | null;
   error_json: string | null;
   updated_at: number | null;
+  recognition_id: string | null;
 }
 
 function row(ctx: AppContext, id: string): WrittenRow | null {
@@ -118,6 +123,7 @@ export function writtenView(ctx: AppContext, r: WrittenRow): WrittenAttemptView 
     answer_text: r.answer_text ?? '',
     recognized_text: r.recognized_text,
     recognized_confirmed: r.recognized_confirmed === 1,
+    recognition_id: r.recognition_id ?? null,
     status: r.status,
     answered_at: r.answered_at,
     graded_at: r.graded_at,
@@ -186,14 +192,23 @@ export function saveWrittenAttempt(ctx: AppContext, body: unknown): WrittenAttem
       throw new AppError('VALIDATION_FAILED', 'هذا سؤال اختيار من متعدد؛ يُحل في صفحة التدريب لا في الإجابة المكتوبة.', 400);
     }
     const text = input.answer_text.trim();
-    const recognized = input.recognized_text?.trim() || null;
+    let recognized = input.recognized_text?.trim() || null;
+    let recognitionId: string | null = null;
+    if (input.recognition_id) {
+      // (track F4) a handwritten answer: the machine reading comes from the server's own record (never from the
+      // client), and only the text the owner CONFIRMED is stored as the answer — uncertain reading never costs points
+      const rec = writtenAnswerRecognition(ctx, input.recognition_id, input.question_id);
+      if (!input.recognized_confirmed) throw new AppError('VALIDATION_FAILED', 'راجع النص المقروء من خط يدك وأكّده (أو صحّحه) قبل الحفظ؛ لا يُحفظ للتقييم نص غير مؤكد.', 400);
+      recognized = rec.text || null;
+      recognitionId = rec.id;
+    }
     if (!text && !(recognized && input.recognized_confirmed)) throw new AppError('VALIDATION_FAILED', 'اكتب إجابتك أولًا (أو أكّد النص المقروء من خط يدك).', 400);
     const now = ctx.clock.now();
     ctx.db.run(
       `INSERT INTO written_attempt (id, question_id, question_version_id, answer_text, answer_ink_ids_json, recognized_text, recognized_confirmed, assessment_json, assessment_kind,
-         answered_at, created_at, status, graded_at, rubric_json, scope_json, model, error_json, updated_at)
-       VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, NULL, ?, ?, 'saved', NULL, NULL, NULL, NULL, NULL, ?)`,
-      [input.id, input.question_id, v.id, text, recognized, input.recognized_confirmed ? 1 : 0, Math.min(input.answered_at, now + 5 * 60_000), now, now],
+         answered_at, created_at, status, graded_at, rubric_json, scope_json, model, error_json, updated_at, recognition_id)
+       VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, NULL, ?, ?, 'saved', NULL, NULL, NULL, NULL, NULL, ?, ?)`,
+      [input.id, input.question_id, v.id, text, recognized, input.recognized_confirmed ? 1 : 0, Math.min(input.answered_at, now + 5 * 60_000), now, now, recognitionId],
     );
     ctx.audit.record({ entityType: 'written_attempt', entityId: input.id, action: 'create', summary: 'إجابة مكتوبة محفوظة', actor: 'owner' });
     return writtenView(ctx, row(ctx, input.id)!);
@@ -235,7 +250,8 @@ export async function gradeWrittenAttempt(ctx: AppContext, attemptId: string, bo
   const given = questionRubric(v.rubric_json);
   const scopeReq = req.scope ?? linkedLectureScope(ctx, r.question_id);
   const notes: string[] = [];
-  if (r.recognized_text && r.recognized_confirmed === 1 && !r.answer_text?.trim()) notes.push('قُيّم النص المقروء من خط يدك بعد أن أكدته؛ أي غموض في القراءة لا يُخصم منه شيء.');
+  const handwritten = !!r.recognized_text && r.recognized_confirmed === 1;
+  if (handwritten) notes.push('قُيّم النص الذي أكدته بعد قراءة خط يدك؛ أي غموض في القراءة الآلية لا يُخصم منه شيء.');
 
   if (!scopeReq && given.length === 0) {
     const assessment: WrittenAssessmentView = {
@@ -313,9 +329,15 @@ export async function gradeWrittenAttempt(ctx: AppContext, attemptId: string, bo
       schema: gradeOutputSchema,
       system: GRADE_SYSTEM,
       input,
-      instruction: given.length
-        ? 'Grade the student answer against the question rubric block (return rubric: []). Cite only the aliases given.'
-        : 'Write an evidence-bound rubric, then grade the student answer against it. Cite only the aliases given.',
+      instruction: [
+        given.length
+          ? 'Grade the student answer against the question rubric block (return rubric: []). Cite only the aliases given.'
+          : 'Write an evidence-bound rubric, then grade the student answer against it. Cite only the aliases given.',
+        // (track F4) a handwritten answer was machine-read and confirmed by the student
+        ...(handwritten
+          ? ['The answer was handwritten, machine-read and then confirmed by the student. Never deduct for spelling, missing diacritics, odd spacing or other reading artifacts; judge the meaning only.']
+          : []),
+      ].join('\n'),
       scope,
       sourceVersionIds: versionIds,
       maxOutputTokens: 5000,

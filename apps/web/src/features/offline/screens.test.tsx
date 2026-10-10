@@ -180,6 +180,45 @@ describe('ExportPanel', () => {
     await waitFor(() => expect(fetched).toEqual(['/api/data/export/source/S1?format=html']));
     expect(created).toHaveLength(1);
   });
+
+  it('(track F5) DOCX is offered when the server lists it; the Word file is downloaded as a binary blob', async () => {
+    const fetched: string[] = [];
+    const formats: ExportFormatsResponse = {
+      formats: [
+        { format: 'md', label_ar: 'Markdown', note_ar: 'نص منظم.' },
+        { format: 'docx', label_ar: 'Word (DOCX)', note_ar: 'مستند Word من اليمين لليسار، الاستشهادات نصًّا دون روابط.' },
+      ],
+      pdf_note_ar: 'PDF عبر الطباعة من المتصفح.',
+      other: [],
+    };
+    setFetchImpl(async (url) => {
+      if (url === '/api/data/export/formats') return json(formats);
+      if (url === '/api/library/tree') return json({ nodes: [], sources: [{ id: 'S1', title: 'Acute Appendicitis', source_type: 'lecture', deleted_at: null }] });
+      return json({}, 404);
+    });
+    vi.stubGlobal('fetch', async (url: string) => {
+      fetched.push(url);
+      return new Response(new Uint8Array([0x50, 0x4b, 0x03, 0x04]), {
+        status: 200,
+        headers: { 'content-type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'content-disposition': 'attachment; filename="notes.docx"' },
+      });
+    });
+    const blobs: Blob[] = [];
+    URL.createObjectURL = vi.fn((b: Blob) => {
+      blobs.push(b);
+      return 'blob:1';
+    }) as unknown as typeof URL.createObjectURL;
+    URL.revokeObjectURL = vi.fn();
+    mount(<ExportPanel />);
+    await screen.findByText(/PDF عبر الطباعة من المتصفح/);
+    fireEvent.change(screen.getByLabelText('ما الذي تصدّره'), { target: { value: 'notes' } });
+    fireEvent.click(screen.getByRole('radio', { name: 'Word (DOCX)' }));
+    expect(screen.getByText(/الاستشهادات نصًّا دون روابط/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /نزّل الملف/ }));
+    await waitFor(() => expect(fetched).toEqual(['/api/data/export/notes?format=docx']));
+    expect(blobs).toHaveLength(1);
+    expect(blobs[0]!.size).toBe(4);
+  });
 });
 
 describe('UpdateBanner (PWA update prompt on every route)', () => {

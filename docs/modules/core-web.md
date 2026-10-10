@@ -188,16 +188,19 @@ now per-weight files, verified: only Arabic + Latin subsets load).
   Dexie). Settings is lazy; feature tracks should use `lazy` routes. Splitting zod out of the shared index would help.
 * **No background sync while the app is closed** (Background Sync API is not used — unsupported on iOS); sync
   runs while the app is open (stated in the UI copy).
-* **Conflict / rejection review UI** is not built (engine API exists: `openIssues/acknowledge/retry`) — Control
-  Center track.
-* **Download Manager UI** not built; `offlineSources` / `blobs` / `apiCache` tables exist. `requestPersistentStorage()`
-  exists but is not called automatically (Firefox would prompt at startup).
-* The pdf.js worker is emitted/precached only once a feature imports `lib/pdf.ts` (none does yet).
+* ~~**Conflict / rejection review UI** is not built~~ — built in the Control Center («المزامنة»,
+  `features/control/SyncScreen.tsx`, track D2) on the engine's `openIssues/acknowledge/retry`. *(reconciled, track F5)*
+* ~~**Download Manager UI** not built~~ — built in track D1 (`lib/offline.ts`, «بياناتك» → «التنزيلات»,
+  `features/offline`). `requestPersistentStorage()` is still never called at startup: only from an owner action
+  (`requestPersistence()`, Firefox would prompt). *(reconciled, track F5)*
+* ~~The pdf.js worker is emitted/precached only once a feature imports `lib/pdf.ts` (none does yet).~~ The reader
+  (`features/workspace/reader`), the figure picker and the Control Center's original view import it. *(reconciled, track F5)*
 * Text size is stepped (90–150 %), not continuous. The UI is Arabic only (`ui_language: 'en'` is stored but not rendered).
 * Tested in Chromium only (Playwright, desktop + mobile emulation). **Not run:** real iPad/iPhone Safari, VoiceOver /
-  NVDA screen-reader passes, axe/Lighthouse audits, ESLint (no ESLint config exists in the repo yet).
-* Server-side entity handlers (notes, annotations, …) don't exist yet, so `/api/sync/push` was exercised only with
-  mocked transports in tests; the real-server check covered `/api/sync/pull`.
+  NVDA screen-reader passes, axe/Lighthouse audits. ESLint now runs (track F5 — see «Lint» below).
+* ~~Server-side entity handlers don't exist yet, so `/api/sync/push` was exercised only with mocked transports.~~ The
+  handlers exist (core-server.md) and real pushes run end to end in the browser suites (`e2e/g7-ac24-two-devices.spec.ts`,
+  `e2e/g7-ac23-offline.spec.ts`). *(reconciled, track F5)*
 
 ## 8. Acceptance round G7 — AC-23 (2026-10-10)
 * `resolveFeature` (`lib/capabilities.tsx`): offline, a network-bound feature that the server last reported as
@@ -205,3 +208,28 @@ now per-weight files, verified: only Arabic + Latin subsets load).
   آخر ما عرفه هذا الجهاز من الخادم: …» — before, the offline reader said only «needs a server setting», which is stale
   information the device cannot check offline. `not_implemented` / `disabled_by_owner` / `requires_native` are unchanged.
   Tests: `test/lib.test.ts`, `e2e/g7-ac23-offline.spec.ts`.
+
+## 9. Track F5 — client error reporter and lint (2026-10-10)
+
+* **Error reporter** (`src/lib/errorReporter.ts`, installed once in `main.tsx`; `RouteErrorScreen` reports route errors
+  other than 404 / offline): `error` and `unhandledrejection` events are redacted in the browser with the shared
+  `redactClientError` (no document / note text, no query, no secret), grouped by fingerprint with a count, at most 20
+  pending and 30 distinct per page session, flushed every 5 s and on page hide (`keepalive`), sent only while
+  `lastKnownAuthenticated()` (new in `lib/auth.ts`); 5xx / offline keep the batch (bounded), other 4xx drop it; benign
+  noise (ResizeObserver loop, «Script error.», AbortError) is ignored; it never writes to the console. Viewer: Control
+  Center «صحة النظام» (`docs/modules/control.md` §7). Tests: `test/error-reporter.test.ts` (7), E2E
+  `e2e/f5-quality-ops.spec.ts`.
+* **Lint** (`eslint.config.js` at the repo root, `npm run lint` = `eslint . --max-warnings 0`): @eslint/js +
+  typescript-eslint recommended everywhere, `react-hooks/rules-of-hooks` (error) and `react-hooks/exhaustive-deps`
+  (warning — and warnings fail the run) for the web app, unused disable directives are errors. The React Compiler rule
+  set of eslint-plugin-react-hooks 7 (`set-state-in-effect`, `refs`, `purity`, …) is **not** enabled: the app does not
+  use the React Compiler and those rules describe compiler-optimizable code rather than bugs (171 findings measured
+  when tried). The first run found 55 problems; all were fixed in code — e.g. the focus trap and outside-pointer hooks
+  read their options / refs through a ref instead of omitting dependencies, `SourcesTab` keys its effect on the page id,
+  `BookCanvas` captures its visibility map for the cleanup, Search / Terms memoize their derived lists, unused imports
+  and variables removed, 6 stale disable comments removed. The disables that remain are single-line, single-rule and say
+  why (deliberately keyed effects in Settings and NodeDialog, the ink summary's change counter, control-character
+  regexes on the server).
+* `ExportPanel`: the format choice wraps on a phone now that there are four formats (DOCX) — found by the F5 browser
+  test at 390 px.
+

@@ -248,7 +248,8 @@ export interface RestoreReport {
 }
 
 // ───────────────────────────── export (§46) ─────────────────────────────
-export const EXPORT_FORMATS = ['md', 'json', 'html'] as const;
+// 'docx' (track F5): Word document built on the server (Study Book, notes, questions, a source's text)
+export const EXPORT_FORMATS = ['md', 'json', 'html', 'docx'] as const;
 export type ExportFormat = (typeof EXPORT_FORMATS)[number];
 export const EXPORT_FORMAT_FORMAT = 'medlevo-export-1' as const;
 

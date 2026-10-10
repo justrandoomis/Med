@@ -168,8 +168,11 @@ terms.
 Since track F2 (`brain` module, `docs/modules/course-brain.md`): a candidate name is looked up with
 `findConceptByName` from `brain/resolve.ts`, which follows `merged_into_id` and owner aliases (a concept the owner
 renamed or merged is reused, never re-created); the matcher's lecture concepts read only `candidate*` mentions of
-non-merged concepts, so the brain's `stated` mentions do not change matching (matching stays deterministic). Concept
-correction (merge, relations, rename with alias) is in the brain module; `PATCH /concepts/:id` here is unchanged.
+non-merged concepts, so the brain's `stated` mentions do not change matching (matching stays deterministic). Each
+lecture concept is offered to the matcher once per NAME (English, Arabic, names absorbed in a merge — review F2): when
+the brain joins the two candidates of a bilingual heading, Arabic question text still hits the concept by its Arabic
+name (the Golden Set links are identical with and without the brain module). Concept correction (merge, relations,
+rename with alias) is in the brain module; `PATCH /concepts/:id` here is unchanged.
 
 ## Lecture ↔ question matching (`match.ts`, AC-16)
 
@@ -477,3 +480,40 @@ with the test-only scripted provider).
   `recordDependencies`): a later correction / replacement of the lecture text that an answer check relied on now flags
   that question version in the content alert (before, only the question's own source was a dependency).
 * Tests: `apps/server/test/acceptance/g8-ac26.test.ts`, `e2e/g8-ac26-correction.spec.ts`.
+
+## Track F3 — translations & paraphrases as DERIVED question versions (2026-10-10; §35, §37)
+
+* **Model**: a derivation is a request row in `question_derivation` (migration `0520_question_derivation.sql`: question,
+  source version, kind `translation | paraphrase`, language, status, issues, job, derived version); the published result
+  is a new `question_version` of the SAME question with `kind` `translation` / `paraphrase`, `derived_from_version_id` =
+  the original version, `created_by 'translation'`, the same option keys, display labels and pinned flags, and the
+  original's correct option keys. It is NEVER made current: attempts, keys, exams and the vault keep using the original;
+  the view maps every derived option to the ORIGINAL option id (`DerivedOptionView.id`), so an answer can only ever
+  reference the original. A newer original version marks the derived text «قد لا يطابق النسخة الحالية». Feedback's
+  «changed since» ignores derived versions (`exams/feedback.ts`).
+* **Pipeline** (`modules/questions/derived.ts`, job `questions.derive_version`): the model (task `generate_questions`)
+  receives ONLY the question's own text (no lecture evidence, an explicit empty scope — a translation adds nothing) and
+  returns stem + options by option key; then deterministic checks (`derivedIssues`, exported and unit-tested): every
+  option present exactly once, numbers and units of the stem and of each option preserved (Western and Arabic-Indic
+  digits), a negation kept as a negation, the requested language, a paraphrase that really differs; then the independent
+  validator (task `validate_question`: same meaning, options equivalent, negation and numbers / units preserved). Any
+  failure → `needs_review` with the reasons and a review-queue item (`question_derivation`), no version is written.
+  Requests are idempotent per (version, kind, language) while queued / running / published; a translation into the
+  question's own language → 400.
+* **API**: `GET /api/questions/:id/derived` (derivations + `can_derive` with its reason), `POST /api/questions/:id/derived`
+  `{kind, lang?}` (409 `AI_NOT_CONFIGURED` without a provider), `GET /api/questions/derivations/:derivationId`.
+* **Web** (`features/questions/DerivedVersions.tsx`, on the question screen before «النسخ»): translate into the other
+  language / paraphrase (disabled with the server's reason), each derivation with its status in words and its failed
+  checks; a published one is shown only on demand, labelled «نسخة مشتقة … ليست نص السؤال الأصلي», with the answer marked
+  «الإجابة (مفتاح الأصل نفسه)» on the original key.
+* Tests: `srv:f3/ai-tools.test.ts` (translation published with the original ids / keys while the original stays current
+  and a new exam pins the original; idempotent; a dropped «NOT» → needs_review + review item, no version; the validator
+  rejecting a changed meaning), `srv:f3/unconfigured.test.ts` (409, `can_derive` reason, units of `derivedIssues` /
+  `equivalenceIssues`), `web:src/features/questions/DerivedVersions.test.tsx`, `e2e:f3-study-modes.spec.ts`.
+* Not run: real translations (no key).
+* **F3 review (2026-10-10)**: the derived view reads the key and the answer status from the ORIGINAL version
+  (`derivedVersionView`) — a derived row kept its own copy, which went stale when the lifecycle refresh changed an
+  unattempted original's key in place (the derived version then showed a different «الإجابة»); a published derived
+  version's `fingerprint` is cleared, so extraction's «same question, any version» lookup can never attach a source
+  occurrence to a question through generated text (`srv:f3/review.test.ts`). Residual (outside F3's files): the
+  question screen's «سجل النسخ» lists the derived row with its own stored key mark; «النسخ المشتقة» shows the original's.

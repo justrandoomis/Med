@@ -9,6 +9,7 @@ import { INDEX_VERSION } from './chunks';
 import { OCR_ENGINE_LABEL, OcrEngine, ocrModelsAvailable } from './ocr';
 import { createProcessHandler, MAX_ATTEMPTS, PIPELINE_VERSION, type ProcessingHooks } from './pipeline';
 import { detectTools, type ToolPaths } from './tools';
+import { registerVisionJob, registerVisionRoutes } from './vision';
 
 export { PIPELINE_VERSION } from './pipeline';
 export { INDEX_VERSION } from './chunks';
@@ -52,8 +53,6 @@ const AR = {
   pptxNoDisplay: 'تُستخرج الشرائح ونصوصها وترتيبها، لكن نسخة العرض الثابتة (PDF) تحتاج LibreOffice غير المثبت على الخادم.',
   imagesNoOcr: 'معالجة الصور تحتاج نماذج OCR غير المثبتة؛ تُحفظ الصور كأشكال دون قراءة نصها.',
   legacyMissing: 'ملفات Word وPowerPoint القديمة (.doc/.ppt) تحتاج تثبيت LibreOffice على الخادم لتحويلها. احفظها بصيغة DOCX/PPTX أو PDF.',
-  vision:
-    'فهم الرسوم والمخططات بالرؤية الحاسوبية غير مبني بعد: تُستخرج تسميات الرسم بالـOCR فقط وتُعلَّم «غير مؤكدة»، ولا تُستنتج العلاقات أو الأسهم.',
 };
 
 function declareCapabilities(ctx: AppContext, tools: ToolPaths, ocrOk: boolean): void {
@@ -72,7 +71,9 @@ function declareCapabilities(ctx: AppContext, tools: ToolPaths, ocrOk: boolean):
   else ctx.capabilities.set('processing.ocr', 'available');
   if (tools.soffice) ctx.capabilities.set('processing.legacy_office', 'available');
   else ctx.capabilities.set('processing.legacy_office', 'requires_configuration', AR.legacyMissing);
-  ctx.capabilities.set('processing.vision', 'not_implemented', AR.vision);
+  // (track F3) the on-demand Vision step: AI-gated (reported requires_configuration without a vision provider). Processing
+  // itself never sends pages to a model; the owner asks for one figure (§13).
+  ctx.capabilities.set('processing.vision', 'available');
 }
 
 export function createProcessingModule(opts: ProcessingModuleOptions = {}): ModulePlugin {
@@ -90,6 +91,10 @@ export function createProcessingModule(opts: ProcessingModuleOptions = {}): Modu
       inputSchema: processJobInputSchema as unknown as z.ZodType<ProcessJobInput>,
       handler: createProcessHandler({ ctx, tools, ocr, hooks: opts.hooks ?? {} }),
     });
+
+    // (track F3) figure structure readings — derived, uncertain until the owner reviews them (AC-08)
+    registerVisionJob(ctx);
+    registerVisionRoutes(app, ctx);
 
     app.addHook('onClose', async () => {
       await ocr?.close();

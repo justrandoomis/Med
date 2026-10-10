@@ -1,7 +1,7 @@
 // «قدرات القلم على هذا الجهاز» — an honest, live report (spec §27, AC-28). Rows come from what this
 // browser's Pointer Events actually carried; nothing is claimed from the device name.
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { CircleCheck, CircleDashed, CircleSlash, Construction, Smartphone, Waves } from 'lucide-react';
+import { CircleCheck, CircleDashed, CircleSlash, Construction, Smartphone, Waves, Settings2 } from 'lucide-react';
 import { Bidi, Dialog, StatusPill, type StatusTone } from '../../../design';
 import { useCapabilities } from '../../../lib/capabilities';
 import { describeDevice } from '../../../lib/deviceId';
@@ -22,6 +22,7 @@ const TONE: Record<CapabilityState, StatusTone> = {
   not_reported: 'warning',
   heuristic: 'info',
   requires_native: 'neutral',
+  requires_configuration: 'warning',
   not_implemented: 'neutral',
 };
 
@@ -31,6 +32,7 @@ const ICON: Record<CapabilityState, React.ReactNode> = {
   not_reported: <CircleSlash size={14} />,
   heuristic: <Waves size={14} />,
   requires_native: <Smartphone size={14} />,
+  requires_configuration: <Settings2 size={14} />,
   not_implemented: <Construction size={14} />,
 };
 
@@ -64,7 +66,7 @@ export function CapabilityPanel() {
       alive = false;
     };
   }, [api.indexedDB]);
-  const rows = buildCapabilityReport(api, obs, { recognitionReason_ar: recognition.available ? undefined : (recognition.reason ?? undefined), storage });
+  const rows = buildCapabilityReport(api, obs, { recognitionAvailable: recognition.available, recognitionReason_ar: recognition.available ? undefined : (recognition.reason ?? undefined), storage });
   const device = useMemo(() => describeDevice(), []);
   return (
     <div className="ml-ink-caps" dir="rtl">

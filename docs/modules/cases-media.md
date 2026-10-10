@@ -5,8 +5,9 @@ simulation), §44 (case signals for the Weakness Center), AC-08 (uncertain label
 (image candidates must match modality, region and finding).
 
 Everything deterministic works without an AI provider. Without one, AI generation and the AI viva judge report
-`requires_configuration` with an Arabic reason; automatic transcription, in-app recording, automatic segment-to-page
-linking and external image search are not built, and the API and UI say so.
+`requires_configuration` with an Arabic reason; automatic transcription, automatic segment-to-page linking and external
+image search are not built, and the API and UI say so. In-app recording (with pen ↔ recording time links) was built in
+track F4 (section at the end).
 
 ## 1. Server: `/api/cases` (owner session; mutations need the CSRF header like every `/api` route)
 
@@ -233,8 +234,8 @@ passed.
 
 ## 5. Not done / limits
 
-- **Voice mode, automatic transcription, in-app recording, automatic segment-to-page linking and external image
-  search are not built.** Each is reported with its reason. No automatic linker exists, so the auto-link label and
+- **Voice mode, automatic transcription, automatic segment-to-page linking and external image search are not
+  built.** (In-app recording: track F4 below.) Each is reported with its reason. No automatic linker exists, so the auto-link label and
   its controls are only exercised with a test fixture.
 - **Weakness Center integration**: case signals are published at `GET /api/cases/signals` in the `WeaknessSignal`
   shape (with `case_id`, `item_id`, `source_ids`, `owner_judged`). Since track F2 the learning Weakness Center reads
@@ -316,3 +317,107 @@ Results after the review (2026-10-10):
   (before: 1 of 4 failed). No deterministic test reproduces the effect timing; the existing runner tests are the
   regression tests.
 * **Transcript search origin** (universal search): see `docs/modules/evidence-search.md` §7.
+
+## Track F4 — in-app recording and pen ↔ recording time links (§29, 2026-10-10)
+
+### Server (`apps/server/src/modules/media/recordings.ts`, migration `0660_audio_recording.sql`)
+* `POST /api/media/recordings` (multipart: `recording_id` = the client's ULID, `started_at`, `duration_ms?`,
+  `linked_source_id?`, `node_id?`, `title?`, `device_id?`; one `file`): the bytes are streamed to a private temp file and
+  **content-sniffed** — only audio is accepted (WebM / Ogg / MP4 / WAV / MP3; a WebM or MP4 holding a video track is
+  refused). The recording becomes a **«ملاحظة صوتية» (`my_audio_note`) source** through the sources module's own
+  `registerUpload` (owner-chosen type, folder = `node_id` or the lecture's folder, title «ملاحظة صوتية — 10/10 14:05» in
+  the owner's timezone, Western digits, no bidi control marks — the `ar` formatter's RLM scrambled the date in the heading), linked
+  to the lecture that was open (`source_link 'audio_for'`), and `audio_recording` maps the recording id → that source
+  (`ON DELETE CASCADE` with the source; `linked_source_id` `SET NULL`). A retried upload of the same id returns the
+  stored recording (`created: false`) — never a second source. The duration measured by the recording device is stored as
+  the player duration (the server does not decode audio).
+* `GET /api/media/recordings/:id` → `RecordingView` with `linked_strokes`: the live ink / shape annotations whose
+  `data.audio_link.recording_id` is this recording, ordered by offset, with their page label and `auto` / `manual`
+  origin. `GET /api/media/recordings?source_id=` lists the recordings of / linked to a source.
+* Sniffing (`sources/sniff.ts`, additive): `webmAudioOnly` (EBML DocType webm/matroska, audio codec ids only) →
+  `audio/webm`; `mp4AudioOnly` (every `hdlr` handler is `soun`) → `audio/mp4`. Everything else is unchanged (a WebM with
+  `V_VP8`, an MP4 with a `vide` track are still «video» and refused).
+* `/api/media/status.recording` → `available` with the reason that tells where it is and that it never starts by itself;
+  `workspace.audio`'s reason mentions in-app recording (browser support is decided in the browser).
+
+### Web (`apps/web/src/features/workspace/audio/`)
+* `recorder.ts` — `RecorderController`: the microphone is requested ONLY by `start()` (called from the explicit menu item
+  «سجّل ملاحظة صوتية…» in the reader's «خيارات العرض / القراءة» menu); nothing starts on load, reload or a timer.
+  `recordingSupport()` (no `MediaRecorder` / `getUserMedia` → «unsupported»; insecure page → «insecure») is checked
+  without touching the microphone and disables the menu item with its reason. getUserMedia errors are explained
+  (`NotAllowedError` → how to allow it; `NotFoundError` → no microphone; `NotReadableError` → busy). Pause / resume when
+  the browser supports it; paused time is excluded from stroke offsets. Chunks are written to IndexedDB every 4 s while
+  recording (`recchunk:<id>:<seq>`); on stop the microphone tracks are stopped, the whole recording is stored on the device
+  (`rec:<id>`, uploadState `pending`) and the chunks are dropped in the same transaction.
+* `recordings.ts` — uploader like the pictures' (backoff 2 s → 10 min; a refusal of the bytes — 400/413/415/422 — is kept
+  on the device with the server's reason; offline / 401 stop the run); `recoverInterruptedRecordings` turns the chunks of
+  a recording whose page died before «إيقاف» back into a recording (labelled `recovered`, duration unknown) — never
+  while that recording is still running; `playbackSource` plays the device copy (object URL) when this device recorded it,
+  else the server stream.
+* `AudioUi.tsx` — `RecordingBar` (in a bottom dock shared with the player — they stack, neither covers the other — while requesting / recording / saving / saved / error: a red dot AND
+  the words «يُسجَّل الآن» or «التسجيل متوقف مؤقتًا», the time, pause / resume, «إيقاف التسجيل»; announced in a polite live
+  region; closing / reloading the page while recording asks first, and leaving the reader in the app stops and saves the
+  recording — it never runs on without its indicator; a permission request still pending then is cancelled), `RecordingPlayer` (plays a stroke's moment; says «رابط زمني
+  تلقائي» / «عدّلته بنفسك»; explains a recording that is neither on the device nor on the server), `AudioLinkDialog`
+  (m:ss, Arabic-Indic digits accepted; save → manual; «أزل الرابط»).
+* The audio screen (`/media/audio/:id`) lists «ملاحظات القلم أثناء التسجيل» for an in-app recording: time («استمع» plays
+  it), page label, automatic / manual label, «افتح الصفحة». Its disabled «سجّل» button is shown only when the server says
+  recording is not available.
+
+### Tests (all passing, 2026-10-10)
+| file | what it proves |
+|---|---|
+| `srv:media/recordings.test.ts` | sniffing (audio-only WebM / MP4 accepted, with a video track refused); upload → my_audio_note source (owner type, lecture's folder), `audio_for` link, stream served as audio/webm, retry = same recording, listed for the lecture; refusals (video, PDF, empty, no folder) create nothing; strokes with `audio_link` listed (auto), an edited link → manual, a malformed link rejected by the stroke schema, an unknown id → 404 with the reason |
+| `srv:media/media.test.ts` (updated) | status: recording `available`, its reason says it starts only on the owner's press |
+| `web:src/features/workspace/audio/recorder.test.ts` | support / insecure reasons without touching the microphone; never starts by itself, one microphone request per start, audio only; denied / no device / busy explained, nothing recorded or linked; recording → chunks saved, offsets exclude the pause, no link before the start, tracks stopped, the whole recording stored with its duration; a failed save stays an error; device copy: chunks replaced by the recording, an interrupted recording recovered (not the live one); uploads: idempotent id + fields, refusal kept with the reason and the bytes, offline retried later |
+| `web:src/features/workspace/audio/AudioUi.test.tsx` | indicator invisible until started, then dot + «يُسجَّل الآن» + time + pause / resume + stop, announced; refused microphone explained; player seeks to the moment and labels the link; missing recording explained; link editor validation |
+| `e2e:f4-handwriting-audio.spec.ts` (recording test) | real server + Chromium fake microphone: no getUserMedia call before the click; indicator and stop visible; a pen stroke written while recording; stop → stored, uploaded as my_audio_note linked to the lecture, the stroke's link is automatic with a plausible offset; lasso tap → «استمع من … (رابط تلقائي)» plays; the audio screen lists the stroke |
+
+### Independent adversarial review of F4 (2026-10-10)
+Confirmed and fixed (regression tests fail on the code before the fix):
+* **A recording could stay invisible on the device for ever.** A refusal (400/413/415/422) was kept on the device
+  «with the reason», but nothing showed it, and the bar had already said «يُرفع عند الاتصال». Now
+  `DeviceRecordingsNotice` (in the reader's bottom dock) lists recordings that need the owner's eye — refused (with the
+  server's reason), recovered after an interrupted page, or still failing after an attempt — with «نزّل نسخة» (a file of
+  the device copy) and «أعد محاولة الرفع» (`recordings.ts deviceRecordingsNeedingAttention / retryRecordingUpload /
+  downloadRecording`; `AudioUi.test.tsx`, `recorder.test.ts`).
+* **A recording that could not be stored on the device was lost on «إغلاق» or the next «سجّل».** The message told the
+  owner to «retry» but there was no retry. The controller now keeps it in memory (`unsaved()`), the bar offers «أعد
+  محاولة الحفظ», «نزّل نسخة» and an explicit «تخلَّ عنه» (ConfirmDialog with the consequence) and no close button; a new
+  recording cannot start over it; closing the page asks first.
+* **The indicator kept saying «يُسجَّل الآن» after the browser stopped the recorder by itself** (microphone unplugged,
+  permission revoked, the OS took the device). The recorder's own `stop` event now ends the recording: what was recorded
+  is stored and the bar says why (`interrupted`).
+* **A second tab «recovered» a recording still being made in the first** (its 4-second chunks), uploading a truncated
+  copy under the same id — the full one was then answered as «already stored». The recording tab now holds a Web Lock
+  (`medlevo-recording:<id>`) from the start until the recording is stored; recovery skips held ids, and where the
+  browser cannot list locks it waits until the newest chunk is 2 minutes old (`RECOVERY_MIN_AGE_MS`); recovery runs on
+  every upload pass (not only at start), so a skipped recording is still recovered later.
+* Server: **a lecture purged while the recording waited on the device made its upload fail with 404 for ever** (404 is
+  retried); the recording is now stored unlinked in the folder sent (or the lecture's), and when no folder exists the
+  answer is a final 400 telling the owner to download it and upload it by hand. **Two simultaneous uploads of one
+  recording** (two tabs) created two my_audio_note sources and a 500; uploads of one id are now serialised in the server
+  and the second gets the first's result. A retried upload of a recording whose source was trashed since is answered
+  «stored» (the device stops retrying). (`srv:media/recordings.test.ts`, three «(review)» tests.)
+* E2E (`e2e/f4-handwriting-audio.spec.ts` «F4 review: a recording the server refused is never invisible», phone +
+  desktop, passing): the server's answer to the upload is staged as 413 → the reader lists «تسجيل واحد لم يقبله الخادم»
+  with the reason, «نزّل نسخة» hands over `recording-<id>.webm`, and «أعد محاولة الرفع» (refusal lifted) stores it as the
+  lecture's voice note and the notice goes away.
+
+### Limits (honest list)
+* Only Chromium with a **fake** microphone was used; no real microphone, no Safari / iPadOS (MP4 recording path is
+  implemented from the format, sniff-tested with synthetic boxes only).
+* A WebM written by MediaRecorder has no cue index: some browsers can only seek in it after loading; the player then
+  starts from the beginning instead of the moment (it never claims otherwise). Server-side remuxing is not built.
+* The upload sends the whole recording in one request (bounded by `MEDLEVO_MAX_UPLOAD_MB`); a recording larger than that
+  is refused with the reason and kept on the device.
+* Automatic transcription and automatic audio ↔ page alignment are still not built (no speech-to-text provider); the
+  stroke time links come only from strokes written during the recording.
+
+## Track F3 — cases of a lecture (2026-10-10; §30, §42)
+
+* `GET /api/cases?source_id=<lecture>` (additive filter): the cases whose lecture is that source OR whose Source Lock
+  names it (`json_extract(scope_json, '$.lecture_source_id')`). Used by the reader rail's «حالات» section
+  (`features/workspace/panels/CasesTab.tsx`, see `docs/modules/workspace.md` «Track F3»). Tests:
+  `srv:f3/unconfigured.test.ts` (filter), `web:src/features/workspace/modes/studyModes.test.tsx`,
+  `e2e:f3-study-modes.spec.ts` (an owner OSCE station of the lecture listed in the rail).

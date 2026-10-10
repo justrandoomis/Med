@@ -319,3 +319,34 @@ regressions in `apps/server/test/acceptance/g4-ac11.test.ts` (8 of its 12 tests 
   loopback port 1, empty no-proxy list) and the same proxy in its environment. Tests:
   `apps/server/test/acceptance/g8-security.test.ts` (PPTX + DOC → zero requests to the trap, the rendering / conversion
   still produced), `e2e/g8-security.spec.ts` (real server). Fixtures: `fixtures/acceptance/g8_linked_image.{pptx,doc}`.
+
+## Track F3 — the vision step for figures: `analyze_figure` (2026-10-10; §13, §14, AC-08)
+
+* **On demand only** (never part of the upload pipeline): `POST /api/processing/figures/:regionId/analyze` (rate-limited)
+  queues job `processing.analyze_figure` for a figure region (a diagram child resolves to its parent figure; any other
+  kind → 400; a figure without a crop → 409). The job sends the figure crop with its caption and OCR blocks to the AI
+  task `vision_figure` (lecture-only scope pinned to the region's version) and stores the result in `figure_reading`
+  (migration `0210_figure_reading.sql`) — a DERIVED reading beside the region: `source_region`, its OCR text and its
+  `DiagramStructure` are never modified.
+* **Certainty** (`readingStructure`, exported and unit-tested): a box is `read` only when the model is clear AND its label
+  is confirmed by the OCR text; an arrow is `read` only when the model is clear and both ends are read; arrows to unknown
+  boxes are dropped with a note; `unreadable` → failed. The reading is `uncertain` until the owner reviews it and
+  `usable_as_fixed_answer` is true only for an `owner_reviewed` reading whose region still exists — nothing (exams, image
+  quiz, generation) consumes an unreviewed reading (AC-08).
+* **Review**: `POST /api/processing/figure-readings/:id/review` `{decision: 'confirm' | 'reject', nodes?, edges?, note?}` —
+  confirm stores the owner's version (corrected labels, the kept relations; everything confirmed becomes `read`) in
+  `reviewed_structure_json`, the model reading stays as it was; audited in `change_log`. Reads:
+  `GET /api/processing/figures/:regionId/readings` (with `can_analyze` and its reason), `GET
+  /api/processing/figure-readings/:id`.
+* **Capability**: `processing.vision` is now registered (`available` from the module) and gated by the AI task
+  `vision_figure` (`settings/capabilities.ts FEATURE_AI_TASK`): without a provider it is `requires_configuration` with
+  «… تسميات الرسوم تُقرأ دونه بالـOCR فقط وتبقى «غير مؤكدة»، ولا تُستنتج الأسهم.»; the API answers 409 before touching
+  the region.
+* **Web**: «المصادر» → a figure / diagram row → «بنية الشكل (قراءة بصرية)» (`features/workspace/panels/FigureReadingPanel.tsx`).
+* Tests: `srv:f3/ai-tools.test.ts` (scripted vision: uncertain reading with the image sent, region unchanged, confirm with
+  a label correction → usable, reject, unreadable → failed, confirming a failed reading 409, paragraph 400),
+  `srv:f3/unconfigured.test.ts` (requires_configuration + 409; `readingStructure` units),
+  `web:src/features/workspace/modes/studyModes.test.tsx` (panel gated; confirm keeps only ticked relations),
+  `e2e:f3-study-modes.spec.ts` (page 14 flowchart of the Golden Set lecture: panel disabled with the reason, API 409,
+  region status unchanged).
+* Not run: a real vision model (no key). Arrow direction quality on real figures is therefore unmeasured.

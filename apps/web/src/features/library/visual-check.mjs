@@ -63,7 +63,6 @@ const COMBOS = [
   { name: 'desktop', viewport: { width: 1280, height: 800 } },
 ];
 let firstPdfSourceId = null;
-let firstPdfVersionId = null;
 
 for (const combo of COMBOS) {
   for (const scheme of ['light', 'dark']) {
@@ -110,7 +109,6 @@ for (const combo of COMBOS) {
       const tree = await (await page.request.get(`${base}/api/library/tree`)).json();
       const pdf = tree.sources.find((s) => s.title === 'lecture appendicitis');
       firstPdfSourceId = pdf.id;
-      firstPdfVersionId = pdf.current_version_id;
       await page.request.post(`${base}/api/sources/${refSrc.source_id}/links`, { headers: { 'x-medlevo-csrf': '1' }, data: { to_source_id: pdf.id, relation: 'reference_for' } });
       await page.request.post(`${base}/api/sources/${qSrc.source_id}/links`, { headers: { 'x-medlevo-csrf': '1' }, data: { to_source_id: pdf.id, relation: 'question_source_for' } });
       await page.request.post(`${base}/api/sources/${pdf.id}/open`, { headers: { 'x-medlevo-csrf': '1' } });

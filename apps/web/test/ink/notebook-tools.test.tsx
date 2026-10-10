@@ -130,7 +130,7 @@ describe('uploads', () => {
     const post = vi.fn(async (form: FormData) => {
       const k = form.get('image_key');
       if (k === 'BAD1') throw new ApiError({ code: 'UNSUPPORTED_FORMAT', message: 'هذا الملف ليس صورة مدعومة.', status: 415 });
-      if (k === 'NET1') throw new ApiError({ code: 'NETWORK', message: 'لا اتصال', status: 0, offline: true });
+      if (k === 'NET1') throw new ApiError({ code: 'NETWORK_ERROR', message: 'لا اتصال', status: 0, offline: true });
     });
     const res = await kickImageUploads(db, { post, online: () => true, now: () => 1000 });
     expect(res).toEqual({ uploaded: 1, rejected: 2, failed: 1 });
@@ -146,6 +146,23 @@ describe('uploads', () => {
     expect(await kickImageUploads(db, { post: again, online: () => true, now: () => 2000 })).toEqual({ uploaded: 0, rejected: 0, failed: 0 });
     expect(await kickImageUploads(db, { post: again, online: () => false, now: () => 9000 })).toEqual({ uploaded: 0, rejected: 0, failed: 0 });
     expect(await kickImageUploads(db, { post: again, online: () => true, now: () => 9000 })).toEqual({ uploaded: 1, rejected: 0, failed: 0 });
+  });
+
+  it('only a verdict on the bytes is final: a refused origin (403), a 404 or a server error is retried later (review F1)', async () => {
+    const { db, rows } = stubDb([rec('CSRF'), rec('GONE'), rec('BOOM'), rec('BIG')]);
+    const post = vi.fn(async (form: FormData) => {
+      const k = form.get('image_key');
+      if (k === 'CSRF') throw new ApiError({ code: 'CSRF_FAILED', message: 'رُفض الطلب لأنه صادر من أصل غير مسموح.', status: 403 });
+      if (k === 'GONE') throw new ApiError({ code: 'NOT_FOUND', message: 'غير موجود', status: 404 });
+      if (k === 'BOOM') throw new ApiError({ code: 'INTERNAL', message: 'خطأ', status: 500 });
+      if (k === 'BIG') throw new ApiError({ code: 'PAYLOAD_TOO_LARGE', message: 'الصورة أكبر من الحد المسموح.', status: 413 });
+    });
+    expect(await kickImageUploads(db, { post, online: () => true, now: () => 1000 })).toEqual({ uploaded: 0, rejected: 1, failed: 3 });
+    for (const k of ['CSRF', 'GONE', 'BOOM']) expect(rows.get(imageBlobId(k)), k).toMatchObject({ uploadState: 'pending', attempts: 1 });
+    expect(rows.get(imageBlobId('BIG'))).toMatchObject({ uploadState: 'rejected', uploadError: 'الصورة أكبر من الحد المسموح.' });
+    // once the cause is fixed, the waiting pictures go up
+    const ok = vi.fn(async () => undefined);
+    expect(await kickImageUploads(db, { post: ok, online: () => true, now: () => 60_000 })).toEqual({ uploaded: 3, rejected: 0, failed: 0 });
   });
 });
 

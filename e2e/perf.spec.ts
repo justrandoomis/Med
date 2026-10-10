@@ -143,8 +143,6 @@ type Rich = { paragraphs: Array<{ runs: Array<{ t: string }> }> };
 /** plain text of a stored note body (mixed-direction text is split into runs) */
 const plain = (b: Rich) => b.paragraphs.map((p) => p.runs.map((r) => r.t).join('')).join('\n');
 
-let lecture: { sourceId: string; versionId: string; pageIds: string[] } | null = null;
-
 test('300-page lecture: open time, render while scrolling, virtualization keeps memory bounded', async ({ page, api }, testInfo) => {
   test.setTimeout(30 * 60_000);
   await installLongTasks(page);
@@ -156,7 +154,6 @@ test('300-page lecture: open time, render while scrolling, virtualization keeps 
   const processed = await api.waitForProcessing(up.version_id, { timeoutMs: 20 * 60_000 });
   const processingMs = Date.now() - p0;
   expect(processed.job?.status).toBe('completed');
-  lecture = { sourceId: up.source_id, versionId: up.version_id, pageIds: await pageIds(api, up.source_id, up.version_id) };
 
   const cdp = await page.context().newCDPSession(page);
   await cdp.send('Performance.enable');

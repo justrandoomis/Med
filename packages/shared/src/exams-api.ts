@@ -417,9 +417,31 @@ export interface GenerateQuestionsRequest {
   difficulty: GenerationDifficulty;
   item_types?: GeneratedItemType[];
   language?: 'en' | 'ar';
+  /**
+   * (track F3) «Create MCQ» from a selection in the reader: the selected regions / quote on one lecture page are the
+   * focus of retrieval (the scope itself is unchanged — lecture only by default).
+   */
+  anchor?: GenerationAnchor | null;
+  /** (track F3) where the request came from: the generate screen, a reader selection, or a generated simulation */
+  origin?: GenerationOrigin;
 }
 
-export type GenerationRunStatus = 'queued' | 'running' | 'completed' | 'partial' | 'needs_review' | 'abstained' | 'failed';
+/** (track F3) A selection on one page of the lecture's locked version. */
+export interface GenerationAnchor {
+  page_id: string;
+  region_ids?: string[];
+  /** the selected text (logical order), used as the retrieval query when no topic is given */
+  quote?: string | null;
+}
+
+export type GenerationOrigin = 'builder' | 'selection' | 'simulation';
+export const GENERATION_ORIGIN_LABELS_AR: Record<GenerationOrigin, string> = {
+  builder: 'من شاشة توليد الأسئلة',
+  selection: 'من نص حددته في المحاضرة',
+  simulation: 'جزء من محاكاة مولدة',
+};
+
+export type GenerationRunStatus ='queued' | 'running' | 'completed' | 'partial' | 'needs_review' | 'abstained' | 'failed';
 export const GENERATION_RUN_STATUS_LABELS_AR: Record<GenerationRunStatus, string> = {
   queued: 'في الانتظار',
   running: 'قيد التوليد والتحقق',
@@ -470,9 +492,11 @@ export interface WrittenAttemptInput {
   question_id: string;
   question_version_id: string;
   answer_text: string;
-  /** text recognized from handwriting (not available in this build); never graded until confirmed */
+  /** text recognized from handwriting; never graded until confirmed */
   recognized_text?: string | null;
   recognized_confirmed?: boolean;
+  /** (track F4) the reading of the handwriting pad (ink_recognition) the answer was confirmed from */
+  recognition_id?: string | null;
   answered_at: number;
 }
 
@@ -507,6 +531,8 @@ export interface WrittenAttemptView {
   answer_text: string;
   recognized_text: string | null;
   recognized_confirmed: boolean;
+  /** (track F4) reading of the handwriting pad (its picture: /api/annotations/recognitions/:id/image) */
+  recognition_id?: string | null;
   status: 'saved' | 'graded' | 'grading_failed';
   answered_at: number;
   graded_at: number | null;

@@ -260,3 +260,69 @@ Checked and found sound: auth on every route (now also asserted for `GET /review
 the evidence service only marks stale and alerts), costs labelled «تقديري» wherever shown, impact preview is a dry run,
 apply needs a fresh token, sync «keep both» / «send again» never delete an outbox record.
 
+## 7. Track F5 — quality ops: evaluation, client errors, daily trends (§56, §57, 2026-10-10)
+
+Migration `0710_quality_ops.sql` (fresh number in 0700–0749; nothing edited): `evaluation_case` gains `set_kind`
+(regression | tuning), title, fixture, catalogue version, `retired_at`; new tables `evaluation_run` (one recorded run:
+mode, set filter, label, system fingerprint, catalogue version + hash, the report as JSON and Markdown) and
+`client_error` (one row per fingerprint with a count, first / last seen); indexes for the trend queries on `claim`,
+`verification_result` and `sync_operation`. Shared contract: `packages/shared/src/quality-api.ts` (one appended export
+line in `index.ts`).
+
+**Evaluation (§57)** — `modules/control/evaluation/` + `apps/server/src/cli/eval.ts` (`npm run eval`). A THROWAWAY
+server (temporary data directory, removed afterwards) receives the synthetic TEST FIXTURE files through the real
+upload / quick-add API and the real pipeline; each catalogue case is judged on one axis: text accuracy, negation /
+numbers, options completeness, key binding, citation validity, claim support, abstention, over-abstention, image match
+(the AC-09 validator), lecture link quality, RTL / bidi. 149 cases: 80 in the frozen **regression** set, 69 **tuning**
+examples, always reported apart (`regressionHash` pins the regression set). Rates carry their denominators and a Wilson
+95 % interval; a sample under 30 is flagged small and a perfect small sample reads «n / n نجحت — الحد الأدنى …» —
+never «100%». The AI axes (claim support, abstention, over-abstention) use an evaluation-only scripted provider
+(`EvalScriptedProvider`): they measure the server's guarantees (evidence aliases, verification, abstention), not a
+model; `--mode=live` uses the configured provider and reports `not_run` with the Arabic reason without a key. Each
+report records the system fingerprint (pipeline / index / parser / matcher / AI-rules / generator / verifier versions,
+OCR and pdf.js package versions, git commit) so two runs can be compared (`--compare`, exit 4 on a regression);
+the compare-and-rollback procedure is docs/EVALUATION.md. The catalogue is synced into `evaluation_case` at boot; a
+run is recorded into the server database when it exists (50 kept). Committed reference run: `docs/eval/baseline.json`
+/ `.md` (regression 79 / 80, tuning 69 / 69 at the time of writing; the one failure is a real finding — see below).
+
+**Client error sink (§56)** — `apps/web/src/lib/errorReporter.ts` (installed in `main.tsx`; route error screens
+report too): uncaught errors and unhandled rejections are redacted in the browser by the shared `redactClientError`
+(no quoted or long Arabic text, no query strings, no tokens / keys / e-mails, stack frames reduced to code locations),
+grouped by fingerprint with a count, batched (≤ 20, every 5 s and on page hide, keepalive) and sent only while signed
+in; the reporter never logs to the console and never retries forever. The server redacts again
+(`modules/control/client-errors.ts`), keeps 30 days and at most 500 rows, stores the browser family instead of the user agent, and rate-limits
+the sink (30 / min).
+
+**Daily trends (§56)** — `modules/control/trends.ts`: per owner-timezone day (DST-safe), computed from existing rows:
+claims checked, citations rejected, claims the evidence did not establish (entailment failures only), changes received
+from devices, changes refused, conflicts kept as both copies. Each failure count is shown next to its denominator.
+
+Routes (owner session; the DELETE and POST need the CSRF header): `GET /api/control/evaluation`,
+`GET /evaluation/runs/:id`, `GET /evaluation/runs/:id/report.md`, `GET /health?days=7..60` (default 14),
+`GET|POST|DELETE /client-errors` (DELETE is audited).
+
+Web: two new sections, «صحة النظام» (`/control/health`: one sentence per metric with its denominator, a quiet 14-day
+strip that is `aria-hidden` because the sentence and the day-by-day table carry the numbers, the redacted error list
+with «امسح السجل» behind a confirm dialog) and «تقييم الجودة» (`/control/evaluation`: how to run when nothing is
+recorded; else the latest report — regression and tuning apart, per-axis rates with intervals, what did not pass and
+why, the comparison with the previous run, earlier runs, the Markdown report download).
+
+Tests (run 2026-10-10): server `test/control/evaluation.test.ts` (17: Wilson / small-sample wording, never 100 %,
+regression hash, compare, store sync / retire, a real subset run, scripted AI axes, live mode without a key),
+`test/control/quality-ops.test.ts` (9: sink redaction, grouping by fingerprint, the batch cap, auth / CSRF,
+retention, the audited clear, browser family instead of the user agent; trends per local day with denominators; the
+rate limit itself is configured, not tested); shared `packages/shared/test/quality.test.ts` (7); web
+`src/features/control/quality.test.tsx` (5) and `test/error-reporter.test.ts` (7); E2E `e2e/f5-quality-ops.spec.ts`
+(3 tests × phone + desktop: a dispatched error and rejection reach «صحة النظام» redacted; clear; the real
+`npm run eval` records a report the screen shows with denominators and no «100%»; DOCX export).
+
+Not done / limits:
+* **Real finding, not fixed (evidence module):** `overabstain.pregnancy_test` — a lecture-only chat abstains
+  («not found in scope») without calling the generator although the lecture states the pregnancy-test sentence: a
+  retrieval miss in the evidence module, outside this track. It stays failing in the baseline so a fix shows up as
+  «now passes».
+* The live-model evaluation never ran (no API key here); the scripted axes measure the server's guarantees only.
+* The fixtures are synthetic; no rate is an accuracy claim beyond these cases. Image match covers the AC-09 validator,
+  not open-ended figure recognition.
+* Client errors are captured only while the app runs and is signed in; errors before sign-in are dropped by design.
+

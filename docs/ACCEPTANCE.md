@@ -362,7 +362,9 @@ every screen; RTL / mixed-direction rendering was correct everywhere it was look
 * §52 / §46 / §35 **No semantic retrieval**: keyword (FTS5) + metadata only, no embeddings, no reranker; lecture ↔
   question matching is lexical. Honestly reported (`search.semantic` requires configuration).
 * §28 (and §41, §46) **Handwriting recognition not built**: no search in handwriting, no hand-written answers for written
-  questions, lasso «تحويل إلى نص» disabled with its reason.
+  questions, lasso «تحويل إلى نص» disabled with its reason. *(Later: built in track F4 — recognition job, corrections,
+  search in handwriting, handwritten written answers, lasso «تحويل إلى نص» / «اسأل عن المحدد»; real recognition needs a
+  vision provider and reports `requires_configuration` here — `docs/modules/ink.md`.)*
 * §26 **Note pages and paper**: `note_page` (blank / ruled / dotted / grid) syncs and is backed up, but no UI adds or
   renders a note page; no covers / dividers / tabs inside a notebook, no links between pages, no image-insertion tool.
 * AI quality **never exercised with a real provider** (no key): every AI path ran only with the test-only scripted
@@ -379,7 +381,7 @@ every screen; RTL / mixed-direction rendering was correct everywhere it was look
   Weakness Center (now stated truthfully).
 * §31 **Interactive Knowledge Map / Timelines / Flowcharts** not built (mind-map / flowchart summaries are AI text only).
 * §30 «Create MCQ» from a selection not wired to the reader (reason now accurate).
-* §29 **Audio**: in-app recording, automatic transcription and automatic page linking not built (manual flow works).
+* §29 **Audio**: in-app recording, automatic transcription and automatic page linking not built (manual flow works). *(Later: in-app recording with pen ↔ recording time links was built in track F4 — `docs/modules/cases-media.md`; transcription and automatic page alignment remain.)*
 * §40 Generated simulation that follows the owner's question-source distribution not built.
 * §57 **Evaluation**: no `EvaluationCase` store / per-axis report (extraction, support, abstention and over-abstention
   rates) and no documented compare-and-rollback procedure for model / OCR / chunking changes beyond version bumps.
@@ -400,7 +402,8 @@ every screen; RTL / mixed-direction rendering was correct everywhere it was look
 * Upload screen: the destination path joins mixed-direction titles into one `<bdi>` with « / », so adjacent Latin runs
   of two segments merge (reads correctly, visually ambiguous).
 * Media hub at 1280 px: the «نوع التصوير» placeholder is clipped («y / CT / Ultrasound …»).
-* §58 no ESLint configuration; lint is not run. §56 no client error reporting / error-tracking sink.
+* ~~§58 no ESLint configuration; lint is not run. §56 no client error reporting / error-tracking sink.~~ Both built in
+  track F5 (`npm run lint` with `eslint.config.js`; the client error sink in Control Center «صحة النظام»).
 * Carried over from G1–G8 (not repeated here): AC-04 label producers without `numbered_version`, OCR glyph rectangles,
   phone go-to popover overflow, LibreOffice Arabic lam-alef, sideways `/Rotate` pages, Roman vs digit section labels, etc.
 

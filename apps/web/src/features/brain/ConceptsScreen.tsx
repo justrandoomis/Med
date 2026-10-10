@@ -393,7 +393,7 @@ export function RelationRow({ relation: r }: { relation: ConceptRelationView }) 
                 <>
                   {' '}
                   <Link className="lw-link" to={`/study/${encodeURIComponent(x.to.source_id)}?page_id=${encodeURIComponent(x.to.page_id)}&region=${encodeURIComponent(x.to.region_id)}`}>
-                    موضع الاستخدام
+                    {x.kind === 'listed_under_section' ? 'موضع ذكره' : 'موضع الاستخدام'}
                   </Link>
                 </>
               )}

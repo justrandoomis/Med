@@ -19,14 +19,16 @@
     "build": "npm run build -w @medlevo/web",
     "start": "npm run start -w @medlevo/server",
     "typecheck": "tsc -p packages/shared --noEmit && tsc -p apps/server --noEmit && tsc -p apps/web --noEmit && tsc -p e2e --noEmit",
-    "lint": "eslint .",
+    "lint": "eslint . --max-warnings 0",
     "test": "npm test -w @medlevo/shared && npm test -w @medlevo/server && npm test -w @medlevo/web",
     "e2e": "playwright test",
     "fixtures": "npm --prefix tools/fixtures install --no-workspaces && node tools/fixtures/build-fixtures.mjs",
     "backup": "npm run backup -w @medlevo/server",
-    "restore:verify": "npm run restore:verify -w @medlevo/server"
+    "restore:verify": "npm run restore:verify -w @medlevo/server",
+    "eval": "npm run eval -w @medlevo/server --"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "@playwright/test": "^1.64.0",
     "eslint": "^9.39.0",
     "eslint-plugin-react-hooks": "^7.1.1",

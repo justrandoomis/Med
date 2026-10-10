@@ -1,0 +1,230 @@
+/* Interactive study diagrams (track F3) — calm, token-based; the edge emphasis form follows the knowledge map (F2):
+   neutral hairline for the rest, the accent for the selected node's relations; review state is dashed AND in words. */
+.dg {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-3);
+}
+.dg-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-1);
+}
+.dg-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ml-space-1);
+  margin: 0;
+  font-size: var(--ml-text-xs);
+  color: var(--ml-color-ink-2);
+}
+.dg-title {
+  margin: 0;
+  font-size: var(--ml-text-md);
+  font-weight: var(--ml-weight-semibold);
+}
+.dg-label {
+  margin: 0;
+  padding: var(--ml-space-2) var(--ml-space-3);
+  border-inline-start: 3px solid var(--ml-color-accent);
+  border-radius: var(--ml-radius-xs);
+  background: var(--ml-color-accent-soft);
+  color: var(--ml-color-accent-soft-ink);
+  font-size: var(--ml-text-xs);
+  line-height: var(--ml-leading-xs);
+}
+.dg-stale {
+  margin: 0;
+  padding: var(--ml-space-2) var(--ml-space-3);
+  border-radius: var(--ml-radius-xs);
+  background: var(--ml-color-warning-soft);
+  font-size: var(--ml-text-xs);
+}
+.dg-muted {
+  margin: 0;
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-sm);
+}
+.dg-canvas-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-3);
+}
+.dg-canvas {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--ml-color-line);
+  border-radius: var(--ml-radius-md);
+  background: var(--ml-color-paper-2);
+}
+.dg-edges {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.dg-edge {
+  fill: none;
+  stroke: var(--ml-color-ink-3);
+  stroke-width: 1.5;
+}
+.dg-edge--on {
+  stroke: var(--ml-color-accent);
+  stroke-width: 2.25;
+}
+.dg-edge--review {
+  stroke-dasharray: 5 4;
+}
+.dg-arrowhead {
+  fill: var(--ml-color-ink-3);
+}
+.dg-arrowhead--on {
+  fill: var(--ml-color-accent);
+}
+.dg-edge-label {
+  position: absolute;
+  transform: translateX(-50%);
+  max-width: 45%;
+  padding: 0 var(--ml-space-1);
+  border-radius: var(--ml-radius-xs);
+  background: var(--ml-color-paper);
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-xs);
+  line-height: var(--ml-leading-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+.dg-node {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 44px;
+  padding: var(--ml-space-1) var(--ml-space-2);
+  border: 1px solid var(--ml-color-line-strong);
+  border-radius: var(--ml-radius-md);
+  background: var(--ml-color-paper);
+  color: var(--ml-color-ink);
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+}
+.dg-node--decision {
+  border-radius: var(--ml-radius-xl);
+  border-width: 2px;
+}
+.dg-node--start,
+.dg-node--outcome {
+  border-radius: var(--ml-radius-pill);
+}
+.dg-node--review {
+  border-style: dashed;
+}
+.dg-node--on {
+  border-color: var(--ml-color-accent);
+  box-shadow: 0 0 0 2px var(--ml-color-accent-soft);
+}
+.dg-node:focus-visible {
+  outline: 2px solid var(--ml-color-focus);
+  outline-offset: 2px;
+}
+.dg-node__label {
+  font-size: var(--ml-text-sm);
+  line-height: var(--ml-leading-sm);
+  overflow-wrap: anywhere;
+}
+.dg-node__kind,
+.dg-node__time {
+  font-size: var(--ml-text-xs);
+  color: var(--ml-color-ink-2);
+}
+.dg-details {
+  padding: var(--ml-space-3);
+  border: 1px solid var(--ml-color-line);
+  border-radius: var(--ml-radius-md);
+}
+.dg-detail,
+.dg-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+}
+.dg-steps,
+.dg-edges-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+  margin: 0;
+  padding-inline-start: var(--ml-space-5);
+}
+.dg-step__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-1) var(--ml-space-2);
+  margin: 0;
+}
+.dg-step__kind,
+.dg-step__time {
+  font-size: var(--ml-text-xs);
+  color: var(--ml-color-ink-2);
+}
+.dg-step__label {
+  font-weight: var(--ml-weight-medium);
+}
+.dg-step__statement {
+  margin: var(--ml-space-1) 0 0;
+  font-size: var(--ml-text-sm);
+  color: var(--ml-color-ink-2);
+}
+.dg-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--ml-space-1);
+  vertical-align: middle;
+}
+.dg-subhead {
+  margin: var(--ml-space-2) 0 0;
+  font-size: var(--ml-text-sm);
+  font-weight: var(--ml-weight-semibold);
+}
+.dg-removed summary {
+  min-height: var(--ml-touch-target);
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  font-size: var(--ml-text-sm);
+}
+/* rail panel */
+.dg-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-3);
+  margin: 0 var(--ml-space-4) var(--ml-space-4);
+  padding-top: var(--ml-space-3);
+  border-top: 1px solid var(--ml-color-line);
+}
+.dg-panel__title {
+  margin: 0;
+  font-size: var(--ml-text-md);
+  font-weight: var(--ml-weight-semibold);
+}
+.dg-history {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ml-space-1);
+}
+@media (forced-colors: active) {
+  .dg-edge,
+  .dg-edge--on {
+    stroke: CanvasText;
+  }
+  .dg-arrowhead,
+  .dg-arrowhead--on {
+    fill: CanvasText;
+  }
+}

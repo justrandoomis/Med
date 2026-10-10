@@ -11,3 +11,7 @@ export { CapabilityPanel, CapabilityDialog } from './CapabilityPanel';
 // Track F1 (additive): the screen around the engine (page links + current page for pictures), picture helpers.
 export { InkHost, useInkHost, type InkHostValue, type InkLinkHost, type LinkChoice } from './host';
 export { insertImage, kickImageUploads, imageBoxAt, checkImageFile, startImageUploader } from './images';
+// Track F4 (additive): lasso actions provided by the host (handwriting recognition, «اسأل عن المحدد», recording time
+// links) and the pen ↔ recording link helpers.
+export { InkSelectionActionsProvider, useInkSelectionActions, type InkSelectionActions, type InkSelectionInfo, type InkSelectionAction } from './selectionActions';
+export { setActiveRecording, getActiveRecording, audioLinkAt, audioLinkOf, withAudioLink, formatOffset, parseOffset, type ActiveRecording } from './audioLink';

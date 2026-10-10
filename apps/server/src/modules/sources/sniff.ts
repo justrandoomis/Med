@@ -1,6 +1,6 @@
 // File type detection from CONTENT (magic bytes), never from the extension or the client's MIME (§49).
 export type SniffedImage = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif' | 'image/tiff';
-export type SniffedAudio = 'audio/mpeg' | 'audio/mp4' | 'audio/wav' | 'audio/ogg';
+export type SniffedAudio = 'audio/mpeg' | 'audio/mp4' | 'audio/wav' | 'audio/ogg' | 'audio/webm';
 
 export type Sniffed =
   | { kind: 'pdf' }
@@ -57,6 +57,9 @@ export function sniff(head: Uint8Array): Sniffed {
     if (['M4A ', 'M4B ', 'M4P '].includes(brand)) return { kind: 'audio', mime: 'audio/mp4' };
     if (['heic', 'heix', 'hevc', 'hevx', 'mif1', 'msf1', 'heim', 'heis'].includes(brand)) return { kind: 'unsupported', what: 'heic' };
     if (['avif', 'avis'].includes(brand)) return { kind: 'unsupported', what: 'avif' };
+    // (track F4) an in-app recording (e.g. Safari's MediaRecorder: fragmented MP4, generic brand) holds only a sound
+    // track: accepted as audio when its track handlers are all «soun» (any «vide» track → still a video)
+    if (mp4AudioOnly(head)) return { kind: 'audio', mime: 'audio/mp4' };
     return { kind: 'unsupported', what: 'video' };
   }
   if (ascii(head, 0, 3) === 'ID3') return { kind: 'audio', mime: 'audio/mpeg' };
@@ -72,17 +75,49 @@ export function sniff(head: Uint8Array): Sniffed {
   if (ascii(head, 0, 2) === 'MZ' || starts(head, [0x7f, 0x45, 0x4c, 0x46]) || starts(head, [0xcf, 0xfa, 0xed, 0xfe])) {
     return { kind: 'unsupported', what: 'executable' };
   }
+  // (track F4) WebM / Matroska: what Chromium's and Firefox's MediaRecorder produce for an audio-only recording.
+  // Audio only when the track codecs (read from the Tracks element at the start) are audio and none is video.
+  if (head.length >= 4 && ascii(head, 0, 4) === '\x1a\x45\xdf\xa3' && webmAudioOnly(head)) return { kind: 'audio', mime: 'audio/webm' };
   if (head.length >= 4 && (ascii(head, 0, 4) === '\x1a\x45\xdf\xa3' || ascii(head, 4, 4) === 'moov')) return { kind: 'unsupported', what: 'video' };
   // text-like formats
   const text = Buffer.from(head.subarray(0, 4096));
   if (!text.includes(0)) {
-    const t = text.toString('utf8').replace(/^﻿/, '').trimStart().toLowerCase();
+    const t = text.toString('utf8').replace(/^\uFEFF/, '').trimStart().toLowerCase();
     if (t.startsWith('{\\rtf')) return { kind: 'unsupported', what: 'rtf' };
     if (t.startsWith('<svg') || (t.startsWith('<?xml') && t.includes('<svg'))) return { kind: 'unsupported', what: 'svg' };
     if (t.startsWith('<!doctype html') || t.startsWith('<html')) return { kind: 'unsupported', what: 'html' };
     if (isLikelyUtf8Text(text)) return { kind: 'unsupported', what: 'text' };
   }
   return { kind: 'unsupported', what: 'unknown' };
+}
+
+/** EBML DocType is webm / matroska and the head names at least one audio codec and no video codec. */
+export function webmAudioOnly(head: Uint8Array): boolean {
+  const b = Buffer.from(head.subarray(0, 64 * 1024));
+  const doc = b.indexOf(Buffer.from([0x42, 0x82])); // DocType element
+  if (doc < 0 || doc > 64) return false;
+  const docType = b.toString('latin1', doc + 3, doc + 3 + Math.min(b[doc + 2]! & 0x7f, 16));
+  if (!docType.startsWith('webm') && !docType.startsWith('matroska')) return false;
+  const text = b.toString('latin1');
+  const audio = /A_(OPUS|VORBIS|AAC|PCM|MPEG|FLAC)/.test(text);
+  const video = /V_(VP8|VP9|AV1|MPEG|MS\/|THEORA|UNCOMPRESSED)/.test(text);
+  return audio && !video;
+}
+
+/** Every track handler («hdlr» box) in the head is «soun» (at least one) — an audio-only MP4. */
+export function mp4AudioOnly(head: Uint8Array): boolean {
+  const b = Buffer.from(head);
+  let sound = 0;
+  let from = 0;
+  for (;;) {
+    const at = b.indexOf('hdlr', from, 'latin1');
+    if (at < 0 || at + 16 > b.length) break;
+    const handler = b.toString('latin1', at + 12, at + 16);
+    if (handler === 'vide') return false;
+    if (handler === 'soun') sound++;
+    from = at + 4;
+  }
+  return sound > 0;
 }
 
 function isLikelyUtf8Text(buf: Buffer): boolean {

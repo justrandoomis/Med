@@ -374,7 +374,9 @@ export function ExternalLinkDialog({ url, onClose }: { url: string | null; onClo
       {url && (
         <p className="wk-external-url">
           <ExternalLink size={16} aria-hidden="true" />
-          <bdi dir="ltr">{url}</bdi>
+          {/* the address that would really open (normalized: an IDN host as punycode, bidi / invisible characters
+              percent-encoded), so the file cannot dress a link up as another site */}
+          <bdi dir="ltr">{safe ?? url}</bdi>
         </p>
       )}
     </ConfirmDialog>

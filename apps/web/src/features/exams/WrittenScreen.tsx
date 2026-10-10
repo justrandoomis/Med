@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom';
 import { CircleAlert, CircleCheck, CircleMinus, CircleX, Save, Sparkles } from 'lucide-react';
 import { newId, type WrittenAssessmentView, type WrittenAttemptView, type WrittenQuestionView } from '@medlevo/shared';
-import { Button, ErrorState, LoadingState, RichTextView, StatusPill, TextArea, buttonClass } from '../../design';
+import { Button, ErrorState, LoadingState, RichTextView, SegmentedControl, StatusPill, TextArea, buttonClass } from '../../design';
 import { errorMessage } from '../../lib/api';
 import { useCapabilities } from '../../lib/capabilities';
 import { getDb } from '../../lib/localdb';
@@ -18,6 +18,8 @@ import { examsApi } from './api';
 import { ClaimChips, ClaimedText } from './ClaimedText';
 import { loadWrittenDraft, saveWrittenDraft } from './local';
 import { MixedLine } from './MixedLine';
+import { HandwrittenAnswer } from './HandwrittenAnswer';
+import '../workspace/handwriting/handwriting.css';
 import './exams.css';
 
 const POINT_LABELS: Record<WrittenAssessmentView['points'][number]['status'], { label: string; tone: 'success' | 'warning' | 'danger' | 'neutral'; icon: ReactNode }> = {
@@ -32,6 +34,9 @@ export function WrittenScreen() {
   usePageTitle('إجابة مكتوبة');
   const caps = useCapabilities();
   const grade = caps.feature('ai.grade_written');
+  // (track F4) answering by hand: the pad is read on the server, the owner confirms the text before it is saved
+  const recognition = caps.feature('workspace.handwriting_recognition');
+  const [answerMode, setAnswerMode] = useState<'typed' | 'handwritten'>('typed');
   const online = useOnline();
   const [view, setView] = useState<WrittenQuestionView | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -115,22 +120,37 @@ export function WrittenScreen() {
         <h2 id="ex-written-h" className="ex-subhead">
           إجابتك
         </h2>
-        <TextArea
-          label="اكتب إجابتك"
-          hint="تُحفظ مسودتك على هذا الجهاز أثناء الكتابة. التعرف على الكتابة اليدوية غير متاح في هذا الإصدار؛ اكتب النص بنفسك."
-          rows={8}
-          value={text}
-          onChange={(e) => onType(e.target.value)}
+        <SegmentedControl<'typed' | 'handwritten'>
+          label="طريقة الإجابة"
+          options={[
+            { value: 'typed', label: 'لوحة المفاتيح' },
+            { value: 'handwritten', label: 'بخط اليد' },
+          ]}
+          value={answerMode}
+          onValueChange={setAnswerMode}
         />
-        {actionError && (
-          <p className="ex-note ex-note--warn" role="alert">
-            {actionError}
-          </p>
+        {answerMode === 'handwritten' ? (
+          <HandwrittenAnswer view={view} online={online} recognition={{ available: recognition.available, reason: recognition.reason }} onSaved={() => void load()} />
+        ) : (
+          <>
+            <TextArea
+              label="اكتب إجابتك"
+              hint="تُحفظ مسودتك على هذا الجهاز أثناء الكتابة. يمكنك أيضًا الإجابة «بخط اليد» ثم مراجعة النص المقروء وتأكيده قبل التقييم."
+              rows={8}
+              value={text}
+              onChange={(e) => onType(e.target.value)}
+            />
+            {actionError && (
+              <p className="ex-note ex-note--warn" role="alert">
+                {actionError}
+              </p>
+            )}
+            <Button variant="primary" icon={<Save size={16} />} loading={saving} disabled={!text.trim() || !online} onClick={() => void save()}>
+              احفظ الإجابة
+            </Button>
+            {!online && <p className="ex-muted">الحفظ على الخادم يحتاج اتصالًا؛ مسودتك محفوظة هنا.</p>}
+          </>
         )}
-        <Button variant="primary" icon={<Save size={16} />} loading={saving} disabled={!text.trim() || !online} onClick={() => void save()}>
-          احفظ الإجابة
-        </Button>
-        {!online && <p className="ex-muted">الحفظ على الخادم يحتاج اتصالًا؛ مسودتك محفوظة هنا.</p>}
       </section>
 
       {view.attempts.length > 0 && (
@@ -145,6 +165,12 @@ export function WrittenScreen() {
                 <p className="ex-written__answer">
                   <MixedLine text={a.answer_text} />
                 </p>
+                {a.recognition_id && (
+                  <p className="ex-muted">
+                    كُتبت بخط يدك، وقُرئت آليًا ثم راجعتَ النص وأكدته قبل الحفظ؛ يُقيَّم النص المؤكَّد وحده.
+                    {a.recognized_text && a.recognized_text !== a.answer_text ? ' (عدّلت القراءة الآلية قبل التأكيد.)' : ''}
+                  </p>
+                )}
                 {a.status !== 'graded' && (
                   <div className="ml-cluster">
                     <Button variant="secondary" icon={<Sparkles size={16} />} loading={grading === a.id} disabled={!grade.available || !online} aria-describedby={!grade.available ? 'ex-grade-why' : undefined} onClick={() => void gradeAttempt(a)}>

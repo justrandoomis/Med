@@ -264,3 +264,44 @@ The Playwright browser check (`real-server-check.mjs`) was **not re-run** in thi
   `BlockNotes` shows a note as «فقرتها تغيّرت في هذه النسخة — تحتاج إعادة ربط» when the server report lists it, or when its
   kept quote no longer matches (offline). Tests: `apps/server/test/acceptance/g6-ac22.test.ts` (2 failed before),
   `studybook/BlockNotes.g6.test.tsx` (2 failed before).
+
+## Track F3 — interactive timelines & flowcharts (2026-10-10; §31)
+
+* **Server** (`modules/studybook/diagrams.ts`, migration `0460_study_diagram.sql`, table `study_diagram`; claims with
+  `owner_type 'study_diagram'` are deleted with their row by a trigger). `POST /api/studybook/diagrams`
+  `{kind: 'flowchart' | 'timeline', source_id, scope?, page_ids? (≤ 12), anchor?, topic?, force?}` (rate-limited, AI);
+  `GET /api/studybook/diagrams?source_id=`, `GET /api/studybook/diagrams/:id`. The scope defaults to lecture-only and
+  is resolved like every explanation (Source Lock; pages / anchor must belong to the locked version); retrieval → evidence
+  pack → task `summarize` with a STRUCTURED output (`abstain`, `title`, nodes `N1…` with kind / order / time label /
+  one-sentence statement, edges with an optional condition and a statement). Deterministic structure checks
+  (`diagramStructureIssues`, exported and unit-tested: duplicate / unknown keys, self loops, duplicate edges, fewer than
+  two nodes, flowchart without edges or with isolated nodes, a decision with fewer than two labelled branches, timeline
+  orders missing or repeated) → `failed` with the reason. Every node and edge statement is a claim validated against the
+  evidence (`validateClaims`); a node whose claim fails is removed WITH its edges, an edge whose claim fails is removed,
+  both listed in `removed` (shown on demand, never as supported); fewer than two nodes left (or a flowchart without
+  edges) → `abstained`. A published diagram is cached by (kind, scope hash, pages / anchor / topic, versions, rules
+  version) and reused unless `force`; a newer source version marks it stale with the reason. Capability: `ai.summaries`
+  + task `summarize`; without a provider → 409 `AI_NOT_CONFIGURED`.
+* **Web** (`features/studybook/diagrams/`): `layout.ts` (pure: longest-path layers that survive cycles, timeline by
+  `order`, RTL placement — the first branch at the reading start, RTL-aware arrow keys, node names and relation
+  sentences in words «من «A» إلى «B» — الشرط: …»); `StudyDiagram.tsx` (always labelled «مخطط أُعيد تنظيمه تعليميًا من
+  مصادرك — ليس صورة من المصدر» with the scope; nodes are 44 px buttons with one roving tab stop, Enter / Space selects,
+  Esc clears; the edges are a decorative SVG — the selected node's relations in the accent, the rest a neutral hairline,
+  «يحتاج مراجعة» dashed AND in words; a live details region with the verified statement, its citation chips and the
+  relations; a text twin with the same steps, relations, statements and chips); `DiagramPanel.tsx` (in the rail under
+  the explanation tab: kind, optional topic, «ارسم المخطط», «أعد الرسم» for a cached one, abstention / rejection with the
+  reason, earlier diagrams of the source; disabled with the capability reason without a provider).
+* Tests: `srv:f3/ai-tools.test.ts` (scripted provider: flowchart published with linked claims and cached; a node citing a
+  bad alias removed with its edges; a decision with one branch → failed; timeline order; model abstention; Source Lock
+  409), `srv:f3/unconfigured.test.ts` (409 / 400 on the real configuration, structure checks),
+  `web:src/features/studybook/diagrams/{layout.test.ts,StudyDiagram.test.tsx}`, `e2e:f3-study-modes.spec.ts`
+  (requires_configuration in the rail, API 409).
+* Not run: a real model drawing a diagram (no key). Diagrams are not part of the Study Book offline package.
+* **F3 review (2026-10-10)**: node labels, time labels, edge conditions and the title are generated text shown OUTSIDE the
+  verified statement, so `labelIssues` (exported, unit-tested) checks each against its verified statement and the
+  evidence it cites (`checkCriticalTokens` families: numbers, units, quantities, comparators / thresholds, populations,
+  exceptions, negation incl. a flipped one; plain wording and abbreviations are not checked — a label is short by
+  design). A failing node is removed with its edges, a failing edge is removed, both listed («التسمية «…» تقول ما لا
+  تقوله عبارتها المتحقق منها …»); a title with an unsupported value falls back to «<النوع> — <المصدر>».
+  `DIAGRAM_GENERATOR_VERSION` → `diagram-2026.10-2`, so no diagram cached before the check is reused
+  (`srv:f3/review.test.ts`).

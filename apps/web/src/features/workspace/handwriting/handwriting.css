@@ -1,0 +1,251 @@
+/* Handwriting recognition + recording (track F4). Design tokens only. */
+.hw-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-4);
+}
+.hw-picture {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+}
+.hw-picture img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  max-height: 12rem;
+  object-fit: contain;
+  background: #fff; /* the picture itself is black on white: shown as sent, in both themes */
+  border: 1px solid var(--ml-color-line);
+  border-radius: var(--ml-radius-md);
+}
+.hw-row,
+.hw-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--ml-space-3);
+}
+.hw-muted {
+  margin: 0;
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-sm);
+  line-height: var(--ml-leading-sm);
+}
+.hw-reason {
+  margin: 0;
+  color: var(--ml-color-ink);
+  background: var(--ml-color-warning-soft);
+  border-radius: var(--ml-radius-sm);
+  padding: var(--ml-space-2) var(--ml-space-3);
+  font-size: var(--ml-text-sm);
+  line-height: var(--ml-leading-sm);
+}
+.hw-status {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--ml-space-2);
+  color: var(--ml-color-ink-2);
+}
+.hw-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--ml-space-2);
+  color: var(--ml-color-danger-ink);
+  background: var(--ml-color-danger-soft);
+  border-radius: var(--ml-radius-md);
+  padding: var(--ml-space-3);
+}
+.hw-error p {
+  margin: 0;
+}
+.hw-result,
+.hw-ask {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--ml-space-3);
+}
+.hw-result > .ml-field,
+.hw-ask > .ml-field {
+  align-self: stretch;
+}
+.hw-subhead {
+  margin: 0;
+  font-size: var(--ml-text-md);
+  font-weight: var(--ml-weight-semibold);
+}
+.hw-lines {
+  align-self: stretch;
+  background: var(--ml-color-paper);
+  border: 1px solid var(--ml-color-line);
+  border-radius: var(--ml-radius-md);
+  padding: var(--ml-space-3);
+  font-family: var(--ml-font-reading);
+  font-size: var(--ml-text-reading);
+  line-height: var(--ml-leading-reading);
+}
+.hw-line {
+  margin: 0;
+  unicode-bidi: plaintext;
+}
+.hw-uncertain {
+  background: none;
+  color: inherit;
+  text-decoration: underline dotted;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.25em;
+  text-decoration-color: var(--ml-color-warning);
+}
+.hw-uncertain__flag {
+  font-size: 0.7em;
+  vertical-align: super;
+  margin-inline-start: 0.1em;
+  color: var(--ml-color-ink-2);
+}
+.hw-quote {
+  margin: 0;
+  align-self: stretch;
+  padding: var(--ml-space-2) var(--ml-space-3);
+  border-inline-start: 3px solid var(--ml-color-line-strong);
+  color: var(--ml-color-ink-2);
+  font-family: var(--ml-font-reading);
+  unicode-bidi: plaintext;
+}
+
+/* ── bottom dock: the recording indicator and the stroke player stack here and never cover each other ── */
+.hw-dock {
+  position: fixed;
+  inset-inline: var(--ml-space-4);
+  bottom: calc(var(--ml-space-4) + var(--ml-safe-bottom));
+  z-index: var(--ml-z-sticky);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--ml-space-2);
+  pointer-events: none;
+}
+.hw-dock > * {
+  pointer-events: auto;
+}
+
+/* ── recording indicator (visible the whole time a recording runs) ── */
+.hw-recbar {
+  display: flex;
+  align-items: center;
+  gap: var(--ml-space-3);
+  max-width: 100%;
+  padding: var(--ml-space-2) var(--ml-space-3);
+  background: var(--ml-color-elevated);
+  color: var(--ml-color-ink);
+  border: 1px solid var(--ml-color-line-strong);
+  border-radius: var(--ml-radius-pill);
+  box-shadow: var(--ml-shadow-overlay);
+}
+/* a message (saved / error / waiting for permission) may wrap to two lines: a card, not a pill */
+.hw-recbar:not([data-state='recording']) {
+  border-radius: var(--ml-radius-lg);
+}
+.hw-recbar__dot {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 50%;
+  background: var(--ml-color-danger);
+  flex: none;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .hw-recbar__dot[data-live] {
+    animation: hw-pulse 1.6s var(--ml-ease-standard) infinite;
+  }
+}
+@keyframes hw-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+.hw-recbar__label {
+  font-weight: var(--ml-weight-semibold);
+  white-space: nowrap;
+}
+.hw-recbar__time {
+  font-variant-numeric: tabular-nums;
+  color: var(--ml-color-ink-2);
+}
+.hw-recbar__msg {
+  flex: 1;
+  min-width: 0;
+}
+.hw-player {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+  padding: var(--ml-space-3);
+  background: var(--ml-color-elevated);
+  border: 1px solid var(--ml-color-line-strong);
+  border-radius: var(--ml-radius-lg);
+  box-shadow: var(--ml-shadow-overlay);
+  width: min(22rem, 100%);
+}
+.hw-player audio {
+  width: 100%;
+  min-height: var(--ml-touch-target);
+}
+.hw-player__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ml-space-2);
+}
+
+/* recordings on this device that did not reach the server (refused / recovered / still failing) */
+.hw-devrec__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-3);
+}
+.hw-devrec__item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--ml-space-1);
+  padding-block-end: var(--ml-space-3);
+  border-block-end: 1px solid var(--ml-color-line);
+}
+.hw-devrec__item:last-child {
+  border-block-end: none;
+}
+
+/* ── written-answer pad ── */
+.hw-pad {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+}
+.hw-pad__surface {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 3 / 1;
+  min-height: 9rem;
+  background: var(--ml-color-paper);
+  border: 1px solid var(--ml-color-line-strong);
+  border-radius: var(--ml-radius-md);
+  touch-action: none;
+  overflow: hidden;
+}
+.hw-pad__surface canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+}
+.hw-pad__surface:focus-within {
+  outline: 2px solid var(--ml-color-focus);
+  outline-offset: 2px;
+}

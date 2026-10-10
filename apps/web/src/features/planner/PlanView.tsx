@@ -54,7 +54,6 @@ export function PlanView() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   const setTask = async (t: PlanTaskView, status: 'todo' | 'done' | 'skipped') => {

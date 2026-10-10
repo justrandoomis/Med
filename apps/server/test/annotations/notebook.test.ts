@@ -41,7 +41,8 @@ async function createNode(title = 'دفتر ملاحظات الجراحة', kind
   return (res.json() as { node: { id: string } }).node.id;
 }
 
-const notePage = (o: Partial<NotePageView> & Record<string, unknown>) => ({ template: 'ruled', width: 595, height: 842, sort_order: 1, title: null, ...o });
+// loosely typed on purpose: the refusal tests send values the contract forbids
+const notePage = (o: Record<string, unknown>) => ({ template: 'ruled', width: 595, height: 842, sort_order: 1, title: null, ...o });
 const noteAnchor = (id: string) => ({ type: 'note_page' as const, note_page_id: id, space: 'page_norm' as const });
 
 /** A real (tiny) PNG file. */
@@ -354,6 +355,30 @@ describe('pictures on pages (annotation kind image + /api/annotations/images)', 
     expect(count('SELECT COUNT(*) AS n FROM annotation_image')).toBe(0);
     expect(count('SELECT COUNT(*) AS n FROM stored_file WHERE id = ?', [fileId])).toBe(0);
     expect(existsSync(blob)).toBe(false);
+  });
+
+  it('the purge impact names the note pages it deletes, even blank ones (review F1: never deleted without being shown)', async () => {
+    // a blank page inserted after a lecture page, and one trashed page: only the live one is «yours» in the report
+    const np = newId();
+    await push1(op({ entity_type: 'note_page', entity_id: np, payload: notePage({ source_id: f.sourceId, after_page_index: 0, after_page_id: f.pageIds[0] }) }));
+    const gone = newId();
+    await push1(op({ entity_type: 'note_page', entity_id: gone, payload: notePage({ source_id: f.sourceId, after_page_index: 1 }) }));
+    await push1(op({ entity_type: 'note_page', entity_id: gone, op: 'delete', base_rev: 1, payload: { id: gone } }));
+    await t.app.inject({ method: 'POST', url: `/api/sources/${f.sourceId}/trash`, headers: h });
+    const trash = (await get(`/api/sources/${f.sourceId}/impact?mode=trash`)).json() as ImpactReport;
+    expect(trash.lines_ar.join('\n')).toMatch(/تبقى محفوظة/);
+    const impact = (await get(`/api/sources/${f.sourceId}/impact?mode=purge`)).json() as ImpactReport;
+    expect(impact.lines_ar.join('\n')).toMatch(/صفحات ملاحظاتك الورقية \(مع ما كتبته وأدرجته عليها\): صفحة ملاحظات واحدة\./);
+    // a notebook with two pages
+    const nodeId = await createNode('دفتر للحذف');
+    for (const id of [newId(), newId()]) await push1(op({ entity_type: 'note_page', entity_id: id, payload: notePage({ node_id: nodeId }) }));
+    await t.app.inject({ method: 'POST', url: `/api/library/nodes/${nodeId}/trash`, headers: h });
+    const nImpact = (await get(`/api/library/nodes/${nodeId}/impact?mode=purge`)).json() as ImpactReport;
+    expect(nImpact.lines_ar.join('\n')).toMatch(/صفحتا ملاحظات\./);
+    // the confirmation still works with the new count in its fingerprint
+    const purged = await t.app.inject({ method: 'DELETE', url: `/api/library/nodes/${nodeId}?confirm_token=${encodeURIComponent(nImpact.confirm_token!)}`, headers: h });
+    expect(purged.statusCode).toBe(200);
+    expect((purged.json() as { removed: { note_pages: number } }).removed.note_pages).toBe(2);
   });
 
   it('prune keeps a never-referenced upload for the grace period (its annotation may still be queued on a device), then removes it', async () => {

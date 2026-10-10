@@ -68,7 +68,7 @@ export function createLink(ctx: AppContext, segmentId: string, body: unknown): M
   const seg = ctx.db.get<{ id: string; deleted_at: number | null }>('SELECT id, deleted_at FROM transcript_segment WHERE id = ?', [segmentId]);
   if (!seg || seg.deleted_at !== null) throw new AppError('NOT_FOUND', 'مقطع التفريغ غير موجود.', 404);
   let pageId: string | null = req.page_id ?? null;
-  let regionId: string | null = req.region_id ?? null;
+  const regionId: string | null = req.region_id ?? null;
   if (regionId) {
     const r = ctx.db.get<{ page_id: string | null; version_id: string }>('SELECT page_id, version_id FROM source_region WHERE id = ?', [regionId]);
     if (!r) throw new AppError('NOT_FOUND', 'المنطقة المحددة غير موجودة.', 404);

@@ -662,7 +662,8 @@
   font-size: var(--ml-text-sm);
   line-height: 1.2;
   direction: rtl;
-  overflow: hidden;
+  /* no overflow clipping here: it would also clip (and so disable) the 44 px touch area of ::before below; the text
+     itself is clipped with an ellipsis by .ml-ink-link__text */
   /* while writing (and for the lasso) the pen goes through; the lasso selects it by geometry */
   pointer-events: none;
   transform-origin: center;
@@ -682,7 +683,8 @@
   /* a touch target of at least 44 px around small links */
   content: '';
   position: absolute;
-  inset: min(0px, calc((100% - 44px) / 2)) 0;
+  /* top/bottom: % of the height, left/right: % of the width — grows only a side shorter than 44 px */
+  inset: min(0px, calc((100% - 44px) / 2)) min(0px, calc((100% - 44px) / 2));
 }
 .ml-ink-link--active:hover {
   background: var(--ml-color-fill);

@@ -3,7 +3,7 @@
 // transaction (writeAndEnqueue) and never waits for the network. Deleting moves a page to the trash (a tombstone that
 // keeps its ink); restoring is an upsert of the tombstoned page (the server restores it, «merged»).
 import { useMemo } from 'react';
-import { newId, type NotebookContentResponse, type NotePagesResponse, type NotePageTemplate, type NotePageView } from '@medlevo/shared';
+import { newId, type AnnotationsByTargetsResponse, type NotebookContentResponse, type NotePagesResponse, type NotePageTemplate, type NotePageView } from '@medlevo/shared';
 import { api } from '../../../lib/api';
 import type { MedLevoDB, OutboxRecord } from '../../../lib/localdb';
 import { getDb } from '../../../lib/localdb';
@@ -117,8 +117,22 @@ export async function trashNotePage(db: MedLevoDB, row: WorkspaceNotePageRow): P
   });
 }
 
-export async function restoreNotePage(db: MedLevoDB, row: WorkspaceNotePageRow): Promise<WorkspaceNotePageRow> {
-  return updateNotePage(db, row, {});
+/**
+ * Restore from the trash: an upsert of the full page. A page trashed before this device ever opened it has its writing
+ * only on the server (seeding brings the ink of LIVE pages only), so — when online — this device fetches what is
+ * written on it right away; «استُعيدت مع كتابتها» is then true here too. Offline it arrives with the next seeding.
+ */
+export async function restoreNotePage(db: MedLevoDB, row: WorkspaceNotePageRow, opts: { fetchInk?: (id: string) => Promise<unknown>; online?: () => boolean } = {}): Promise<WorkspaceNotePageRow> {
+  const next = await updateNotePage(db, row, {});
+  const online = opts.online ?? (() => typeof navigator === 'undefined' || navigator.onLine !== false);
+  if (online()) void (opts.fetchInk ?? ((id: string) => fetchNotePageInk(id, db)))(row.id).catch(() => undefined);
+  return next;
+}
+
+/** The (live) writing on one note page from the server, merged without overwriting unsynced local changes. */
+export async function fetchNotePageInk(id: string, db: MedLevoDB = getDb()): Promise<number> {
+  const r = await api.get<AnnotationsByTargetsResponse>('/annotations/by-targets', { query: { keys: `note_page:${id}` }, timeoutMs: 30_000, skipAuthRedirect: true });
+  return mergeServerAnnotations(db, r.annotations);
 }
 
 // ───────── ordering (fractional sort_order: one upsert per move) ─────────

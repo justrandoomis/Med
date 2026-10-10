@@ -244,6 +244,8 @@ export interface SyncPullResponse {
 export const AI_TASKS = [
   'explain', 'study_book', 'chat', 'summarize', 'compare', 'verify_support', 'generate_questions',
   'validate_question', 'vision_figure', 'grade_written', 'case_sim', 'classify', 'embed', 'transcribe',
+  // (track F4) handwriting recognition of a cropped picture of pen strokes (vision)
+  'ink_recognize',
 ] as const;
 export type AiTask = (typeof AI_TASKS)[number];
 

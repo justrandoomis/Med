@@ -60,6 +60,11 @@ export async function fetchAuthStatus(opts: { force?: boolean } = {}): Promise<A
   }
 }
 
+/** (track F5) last known sign-in state on this device — the error reporter sends only while signed in (no 401 noise). */
+export function lastKnownAuthenticated(): boolean {
+  return readLastAuth()?.authenticated === true;
+}
+
 export function invalidateAuthStatus(): void {
   statusCache = null;
 }

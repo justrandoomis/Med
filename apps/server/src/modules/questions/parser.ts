@@ -118,7 +118,7 @@ const KEY_HEADING =
   /^(?:answer\s*keys?|answers?|key\s*answers?|correct\s+answers?|answer\s+sheet|model\s+answers?|key)\b\s*(?:\(([^)]*)\))?\s*[:\-–—]?\s*(.*)$/i;
 const KEY_HEADING_AR = /^(?:مفتاح\s*(?:ال)?[إا]جاب(?:ة|ات)|مفتاح\s*(?:ال)?[أا]جوبة|(?:ال)?[إا]جابات(?:\s+الصحيحة)?|(?:ال)?[أا]جوبة(?:\s+الصحيحة)?|الحلول|مفتاح)\s*[:\-–—]?\s*(.*)$/u;
 const SECTION_EN = /^(?:section|part|unit|paper|block)\s*[-–:.]?\s*([A-Z]|[IVX]{1,4}|\d{1,2})(?![A-Za-z0-9])\s*(.*)$/i;
-const SECTION_AR = /^(?:القسم|الجزء|المجموعة|قسم|جزء)\s*[-–:.]?\s*([^\s:—–\-]+)\s*(.*)$/u;
+const SECTION_AR = /^(?:القسم|الجزء|المجموعة|قسم|جزء)\s*[-–:.]?\s*([^\s:—–-]+)\s*(.*)$/u;
 const AR_ORDINALS: Record<string, string> = {
   الاول: '1', اول: '1', الثاني: '2', ثاني: '2', الثالث: '3', ثالث: '3', الرابع: '4', رابع: '4', الخامس: '5', خامس: '5', السادس: '6', سادس: '6',
 };
@@ -262,11 +262,7 @@ export function parseKeyPairs(text: string): Array<{ n: string; label: string }>
   const clean = stripBidiControls(text).trim();
   if (!clean) return null;
   const pairs: Array<{ n: string; label: string }> = [];
-  let consumed = '';
-  for (const m of clean.matchAll(KEY_PAIR)) {
-    pairs.push({ n: toAsciiDigits(m[1]!), label: m[2]! });
-    consumed += m[0];
-  }
+  for (const m of clean.matchAll(KEY_PAIR)) pairs.push({ n: toAsciiDigits(m[1]!), label: m[2]! });
   if (pairs.length === 0) return null;
   // everything else must be separators
   const leftover = clean.replace(KEY_PAIR, ' ').replace(/[\s,;،؛|/.\-–]+/g, '');
@@ -286,7 +282,7 @@ function parseSectionHeader(text: string): { key: string; title: string; rest: s
   const t = stripBidiControls(text).trim();
   const m = SECTION_EN.exec(t) ?? SECTION_AR.exec(t);
   if (!m) return null;
-  const rest = m[2]!.replace(/^[\s:—–\-]+/, '');
+  const rest = m[2]!.replace(/^[\s:—–-]+/, '');
   // a long line is a section header only when it is a section's key run («Section 3: 1. B 2. C … 40. D», G4 / AC-12)
   if (t.length > 90 && !parseKeyPairs(rest)) return null;
   return { key: sectionKeyFrom(m[1]!), title: t, rest };
@@ -294,7 +290,7 @@ function parseSectionHeader(text: string): { key: string; title: string; rest: s
 
 /** Where a section label followed by «:» / «—» starts inside a line (EN «Section B:», AR «القسم الثاني:»). */
 const SECTION_LABEL_AT =
-  /(?:^|\s)(?=(?:section|part|unit|paper|block)\s*[-–:.]?\s*(?:[A-Z]|[IVX]{1,4}|\d{1,2})(?![A-Za-z0-9])\s*[:\-–—]|(?:القسم|الجزء|المجموعة)\s*[-–:.]?\s*[^\s:—–\-]+\s*[:\-–—])/giu;
+  /(?:^|\s)(?=(?:section|part|unit|paper|block)\s*[-–:.]?\s*(?:[A-Z]|[IVX]{1,4}|\d{1,2})(?![A-Za-z0-9])\s*[:\-–—]|(?:القسم|الجزء|المجموعة)\s*[-–:.]?\s*[^\s:—–-]+\s*[:\-–—])/giu;
 
 /**
  * Several section-labelled key runs printed on ONE line, or merged into one region by the layout
@@ -311,7 +307,7 @@ export function splitSectionKeyRuns(line: string): string[] {
   const runs = starts.map((at, i) => text.slice(at, starts[i + 1]).trim());
   const allKeyRuns = runs.every((r) => {
     const m = SECTION_EN.exec(r) ?? SECTION_AR.exec(r);
-    return !!m && !!parseKeyPairs(m[2]!.replace(/^[\s:—–\-]+/, ''));
+    return !!m && !!parseKeyPairs(m[2]!.replace(/^[\s:—–-]+/, ''));
   });
   if (!allKeyRuns) return [line];
   const prefix = text.slice(0, starts[0]).trim();

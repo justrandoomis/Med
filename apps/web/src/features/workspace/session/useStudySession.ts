@@ -3,13 +3,14 @@
 // when another device saved a newer position.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { liveQuery } from 'dexie';
-import { newId, type StudySessionDTO } from '@medlevo/shared';
+import { newId, type StudyMode, type StudySessionDTO } from '@medlevo/shared';
 import { getDeviceId } from '../../../lib/deviceId';
 import { getDb, kvGet } from '../../../lib/localdb';
 import { getSyncEngine } from '../../../lib/sync';
 import { fetchLatestSession } from '../data/api';
 import { latestLocalSession, rebasePendingSessionOps, saveSession, SESSION_CONFLICT_KEY, sessionRowFromDTO, type WorkspaceSessionRow } from '../data/local';
 import { decideStart, type ReaderLocation, type StartDecision } from '../model/session';
+import { isStudyMode } from '../modes/arrangement';
 
 export const AUTOSAVE_MS = 1200;
 
@@ -32,6 +33,10 @@ export interface StudySessionApi {
   /** 'theirs': adopt the other device's position (returned for navigation); 'mine': keep the current one */
   resolveConflict(choice: 'theirs' | 'mine', current: { location: ReaderLocation; versionId: string }): Promise<StudySessionDTO | null>;
   dismissRemote(): void;
+  /** (track F3) the study mode of this session (§39) — restored with the session, synced like the place */
+  mode: StudyMode;
+  /** switch the mode: saved at once (IndexedDB + outbox), never waiting for the network */
+  setMode(mode: StudyMode, current?: { location: ReaderLocation; versionId: string; view?: 'original' | 'split' }): void;
 }
 
 export function useStudySession(opts: {
@@ -51,6 +56,8 @@ export function useStudySession(opts: {
   const timer = useRef<number | undefined>(undefined);
   const conflictRef = useRef<SessionConflict | null>(null);
   conflictRef.current = conflict;
+  const [mode, setModeState] = useState<StudyMode>('learn');
+  const modeRef = useRef<StudyMode>('learn');
   const urlRef = useRef(opts.url);
   const onlineRef = useRef(opts.online);
   onlineRef.current = opts.online;
@@ -90,6 +97,14 @@ export function useStudySession(opts: {
         d.rev = server.rev;
       }
       sessionId.current = d.sessionId ?? newId();
+      // the mode of the session being continued (this device's row, or the adopted server copy)
+      const row = (await db.studySessions.get(sessionId.current).catch(() => undefined)) as WorkspaceSessionRow | undefined;
+      const restored = row?.mode ?? (server && server.id === sessionId.current ? server.mode : null);
+      if (cancelled) return;
+      if (isStudyMode(restored)) {
+        modeRef.current = restored;
+        setModeState(restored);
+      }
       setDecision({ ...d, sessionId: sessionId.current });
       if (d.conflict) setConflict({ server: d.conflict, origin: 'open' });
     })();
@@ -128,7 +143,7 @@ export function useStudySession(opts: {
       id,
       sourceId,
       versionId: p.versionId,
-      mode: cur?.mode ?? 'learn',
+      mode: modeRef.current,
       view: p.view,
       location: p.location,
       deviceId: deviceId.current || null,
@@ -211,5 +226,29 @@ export function useStudySession(opts: {
     if (id) void getDb().studySessions.update(id, { remoteChange: null } as Partial<WorkspaceSessionRow>).catch(() => undefined);
   }, []);
 
-  return { decision, sessionId: decision?.sessionId ?? null, conflict, remote, save, flush, resolveConflict, dismissRemote };
+  const setMode = useCallback<StudySessionApi['setMode']>(
+    (next, current) => {
+      if (!isStudyMode(next)) return;
+      modeRef.current = next;
+      setModeState(next);
+      // the switch is written at once with the current place (local first; the outbox syncs it)
+      const place = pending.current ?? (current ? { location: current.location, versionId: current.versionId, view: current.view ?? ('original' as const) } : null);
+      if (place) {
+        pending.current = place;
+        window.clearTimeout(timer.current);
+        void writeNow();
+        return;
+      }
+      const id = sessionId.current;
+      if (!id) return;
+      void (async () => {
+        const db = getDb();
+        const cur = (await db.studySessions.get(id)) as WorkspaceSessionRow | undefined;
+        if (cur && !conflictRef.current) await saveSession(db, { ...cur, mode: next }).catch(() => undefined);
+      })();
+    },
+    [writeNow],
+  );
+
+  return { decision, sessionId: decision?.sessionId ?? null, conflict, remote, save, flush, resolveConflict, dismissRemote, mode, setMode };
 }

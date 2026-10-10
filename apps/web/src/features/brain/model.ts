@@ -105,6 +105,16 @@ export const KNOWLEDGE_STATE_META: Record<KnowledgeState, { label: string; tone:
   strong: { label: KNOWLEDGE_STATE_LABELS_AR.strong, tone: 'success', icon: 'check' },
 };
 
+/** How a prerequisite is known: an inferred relation stays labelled «مستنتجة» even once accepted, and is never called
+ * «مقترحة» after the owner decided it (review F2). */
+export function prerequisiteLabel(p: { support: 'stated' | 'inferred'; relation_status: 'suggested' | 'accepted' | 'rejected' }): string {
+  if (p.support === 'inferred') return p.relation_status === 'accepted' ? '(علاقة مستنتجة — قبلتها)' : '(علاقة مستنتجة — مقترحة لم تقررها)';
+  return '(علاقة أقررتها)';
+}
+
+/** The extraction kept only part of a source's mentions (per-version cap) — shown on the course page, never silent. */
+export const extractionCut = (c: { mentions: number; mentions_found?: number }) => (c.mentions_found ?? 0) > c.mentions;
+
 /** «تقدير: 80% (من 3 إجابات)» — or why there is none. Never a bare percentage. */
 export function masteryText(value: number | null, sample: number): string {
   if (value === null) return `لا تقدير بعد (${sample === 0 ? 'لا إجابات محسوبة' : sample === 1 ? 'إجابة محسوبة واحدة' : `${sample} إجابات محسوبة`})`;

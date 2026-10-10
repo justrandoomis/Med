@@ -30,6 +30,7 @@ import { fromJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
 import { describeAnchorAr } from '../annotations/repo';
 import { SECRET_SETTING_KEY, SECRET_VALUE } from './backup';
+import { DOCX_MIME, DocxCitations, buildDocx, bullet, heading, para, richTextBlocks, tableBlock, textSegs, type DocBlock } from './docx';
 import type { Forward } from './offline';
 import {
   citationLabel,
@@ -47,7 +48,8 @@ import {
 export interface ExportFile {
   fileName: string;
   contentType: string;
-  body: string;
+  /** text formats are strings; DOCX (track F5) is a binary zip */
+  body: string | Buffer;
 }
 
 const sha = (v: unknown) => createHash('sha256').update(typeof v === 'string' ? v : JSON.stringify(v)).digest('hex');
@@ -86,13 +88,15 @@ const RELATION_AR: Record<string, string> = {
 };
 
 function safeName(s: string): string {
+  // eslint-disable-next-line no-control-regex -- a file name never carries control characters
   const base = s.normalize('NFC').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
   return base || 'medlevo-export';
 }
 
-function fileFor(kind: string, title: string, format: ExportFormat, body: string): ExportFile {
-  const ext = format === 'md' ? 'md' : format === 'json' ? 'json' : 'html';
-  const contentType = format === 'md' ? 'text/markdown; charset=utf-8' : format === 'json' ? 'application/json; charset=utf-8' : 'text/html; charset=utf-8';
+function fileFor(kind: string, title: string, format: ExportFormat, body: string | Buffer): ExportFile {
+  const ext = format === 'md' ? 'md' : format === 'json' ? 'json' : format === 'docx' ? 'docx' : 'html';
+  const contentType =
+    format === 'md' ? 'text/markdown; charset=utf-8' : format === 'json' ? 'application/json; charset=utf-8' : format === 'docx' ? DOCX_MIME : 'text/html; charset=utf-8';
   return { fileName: `${safeName(`${kind} - ${title}`)}.${ext}`, contentType, body };
 }
 
@@ -212,6 +216,23 @@ export async function exportArtifact(ctx: AppContext, forward: Forward, artifact
     return fileFor('كتاب', title, format, JSON.stringify({ manifest, generated: true, generated_label_ar: GENERATED_LABEL_AR, artifact: a }, null, 2));
   }
 
+  if (format === 'docx') {
+    // (track F5) Word: the same content, RTL paragraphs, isolated LTR runs, citations as numbered text
+    const cites = new DocxCitations(a.claims);
+    const out: DocBlock[] = [heading(title, 1), para(GENERATED_LABEL_AR, 'generated'), para(meta.join(' · '), 'meta')];
+    if (statusNote) out.push(para(statusNote, 'label'));
+    for (const b of blocks) {
+      const label = ASIDE_AR[b.kind];
+      if (b.kind === 'comparison_table' && b.table) out.push(tableBlock(b.table, cites.marker));
+      else if (label) out.push(para(label, 'aside', { b: true }), ...richTextBlocks(b.content, cites.marker, 'aside'));
+      else out.push(...richTextBlocks(b.content, cites.marker));
+    }
+    if (a.abstain) out.push(para(`امتنع المولّد عن الإجابة: ${a.abstain.reason_ar}`, 'label'));
+    if (a.coverage?.missing_ar?.length) out.push(heading('غير مغطّى في المصادر المسموحة', 2), ...a.coverage.missing_ar.map(bullet));
+    out.push(...cites.blocks());
+    return fileFor('كتاب', title, format, await buildDocx(title, out, { description: GENERATED_LABEL_AR }));
+  }
+
   const notes = new Footnotes(a.claims);
   if (format === 'md') {
     const out: string[] = [`# ${mdEscape(title)}`, '', `> ${GENERATED_LABEL_AR}`, '>', `> ${meta.map(mdEscape).join(' · ')}`];
@@ -325,6 +346,33 @@ function notesSection(ctx: AppContext, notes: NoteDTO[], format: 'md' | 'html'):
   return out.join('\n');
 }
 
+/** (track F5) the notes as DOCX blocks: title, where it is anchored, origin labels (generated / recognized), body. */
+function notesDocxBlocks(ctx: AppContext, notes: NoteDTO[]): DocBlock[] {
+  const out: DocBlock[] = [];
+  for (const n of notes) {
+    const where = describeAnchorAr(ctx.db, n.anchor);
+    out.push(heading(n.title ?? 'ملاحظة', 3));
+    if (where.text) out.push(para(`${where.sourceTitle ? `${where.sourceTitle} — ` : ''}${where.text}`, 'meta'));
+    const origin = noteOriginLabel(n);
+    if (origin) out.push(para(origin, n.origin === 'ai_answer' ? 'generated' : 'label'));
+    if (n.conflict_of_id) out.push(para('نسخة محفوظة من تعارض بين جهازين', 'label'));
+    out.push(...richTextBlocks(n.body));
+  }
+  return out;
+}
+
+export async function exportNotesDocx(ctx: AppContext, filter: { sourceId?: string; nodeId?: string }): Promise<ExportFile> {
+  const notes = selectNotes(ctx, filter);
+  const scopeTitle = filter.sourceId
+    ? ctx.db.get<{ title: string }>('SELECT title FROM source WHERE id = ?', [filter.sourceId])?.title ?? 'مصدر'
+    : filter.nodeId
+      ? ctx.db.get<{ title: string }>('SELECT title FROM library_node WHERE id = ?', [filter.nodeId])?.title ?? 'مجلد'
+      : 'كل الملاحظات';
+  const title = `ملاحظاتي — ${scopeTitle}`;
+  const blocks = [heading(title, 1), ...(notes.length ? notesDocxBlocks(ctx, notes) : [para('لا توجد ملاحظات في هذا النطاق.')])];
+  return fileFor('ملاحظات', scopeTitle, 'docx', await buildDocx(title, blocks));
+}
+
 export function exportNotes(ctx: AppContext, filter: { sourceId?: string; nodeId?: string }, format: ExportFormat): ExportFile {
   const notes = selectNotes(ctx, filter);
   const scopeTitle = filter.sourceId
@@ -393,6 +441,27 @@ export async function exportSource(ctx: AppContext, forward: Forward, sourceId: 
       .sort((a, b) => a.reading_order - b.reading_order);
   const ocrNote = (t: string) => (t === 'ocr' || t === 'mixed' ? 'نص مقروء آليًا (OCR) — قد يحتوي أخطاء' : t === 'no_text_found' || t === 'needs_ocr' || t === 'failed' ? 'لا يوجد نص مقروء لهذه الصفحة' : null);
   const hlOn = (pageId: string) => highlights.filter((h) => h.anchor.type === 'page' && h.anchor.page_id === pageId);
+
+  if (format === 'docx') {
+    const out: DocBlock[] = [heading(title, 1), para(meta.join(' · '), 'meta'), para('النص المستخرج من الملف الأصلي، صفحة صفحة، مع ما كتبته عليه.', 'label')];
+    if (inkCount) out.push(para(`لا تُصدَّر الكتابة بالقلم (${inkCount} عنصر) في ملف Word؛ هي محفوظة في تصدير JSON وفي النسخة الاحتياطية.`, 'label'));
+    for (const r of regions) {
+      out.push(heading(pageDisplayLabel(r.page), 2));
+      const note = ocrNote(r.page.text_status);
+      if (note) out.push(para(note, 'meta'));
+      for (const reg of pageText(r)) {
+        for (const line of reg.text!.split(/\n+/).filter((l) => l.trim())) {
+          out.push(reg.kind === 'heading' ? heading(line, 3) : reg.kind === 'list_item' ? bullet(line) : reg.kind === 'caption' ? para(line, 'caption') : para(line));
+        }
+      }
+      for (const h of hlOn(r.page.id)) {
+        const q = (h.data as { quote?: { exact?: string } }).quote?.exact;
+        if (q) out.push({ kind: 'para', dir: 'rtl', style: 'quote', segs: [...textSegs('تمييزي: «', 'rtl'), ...textSegs(q), ...textSegs('»', 'rtl')] });
+      }
+    }
+    if (notes.length) out.push(heading('ملاحظاتي على هذا المصدر', 2), ...notesDocxBlocks(ctx, notes));
+    return fileFor('مصدر', title, format, await buildDocx(title, out));
+  }
 
   if (format === 'md') {
     const out: string[] = [`# ${mdEscape(title)}`, '', `> النص المستخرج من الملف الأصلي، صفحة صفحة، مع ما كتبته عليه. ${meta.map(mdEscape).join(' · ')}`, ''];
@@ -503,6 +572,35 @@ export async function exportQuestions(
   }
 
   const optLabel = (o: { source_label: string | null; ord: number }) => o.source_label ?? String.fromCharCode(65 + o.ord);
+  if (format === 'docx') {
+    const out: DocBlock[] = [heading(title, 1), para(solutionsNote, 'label')];
+    details.forEach((d, i) => {
+      const q = d.question;
+      const v = q.current;
+      out.push(heading(`السؤال ${i + 1}`, 2), para(q.occurrences[0]?.origin_label_ar ?? q.origin_label_ar, 'meta'));
+      if (q.origin_type === 'generated') out.push(para('سؤال مولَّد بواسطة MedLevo من المصادر المحددة — ليس من مصدر أسئلة.', 'generated'));
+      out.push(...richTextBlocks(v.stem));
+      const { label, correct } = answerLine(d);
+      for (const o of [...v.options].sort((a, b) => a.ord - b.ord)) {
+        const dir = o.text.paragraphs[0]?.dir ?? 'rtl';
+        const isCorrect = includeSolutions && correct.has(o.id);
+        out.push({
+          kind: 'para',
+          dir,
+          segs: [
+            { t: `${optLabel(o)}) `, dir: /[A-Za-z]/.test(optLabel(o)) ? 'ltr' : 'rtl', b: true },
+            ...textSegs(richTextPlain(o.text).replace(/\n+/g, ' '), dir, isCorrect ? { b: true } : {}),
+            ...(isCorrect ? textSegs(' (الإجابة)', 'rtl', { b: true }) : []),
+          ],
+        });
+      }
+      if (includeSolutions) {
+        out.push(para(`الإجابة: ${label}`));
+        if (v.explanation) out.push(para('الشرح', 'aside', { b: true }), ...richTextBlocks(v.explanation, undefined, 'aside'));
+      }
+    });
+    return fileFor('أسئلة', scopeTitle, format, await buildDocx(title, out));
+  }
   if (format === 'md') {
     const out: string[] = [`# ${mdEscape(title)}`, '', `> ${solutionsNote}`, ''];
     details.forEach((d, i) => {
@@ -551,7 +649,7 @@ export async function exportQuestions(
 }
 
 // ───────────────────────────── full JSON export ─────────────────────────────
-const FULL_TABLES: Array<{ table: string; type: string; where?: string; rev?: string }> = [
+const FULL_TABLES: Array<{ table: string; type: string; where?: string; rev?: string; columns?: string }> = [
   { table: 'library_node', type: 'library_node' },
   { table: 'tag', type: 'tag' },
   { table: 'tag_link', type: 'tag_link' },
@@ -582,6 +680,15 @@ const FULL_TABLES: Array<{ table: string; type: string; where?: string; rev?: st
   { table: 'evidence', type: 'evidence' },
   { table: 'medical_term', type: 'medical_term' },
   { table: 'owner_setting', type: 'owner_setting' },
+  // Track F4: the owner's handwriting readings and corrections (the picture sent for reading is left out — it is
+  // re-made from the strokes in `annotation`) and the in-app recordings' metadata (the audio itself is a stored_file)
+  {
+    table: 'ink_recognition',
+    type: 'ink_recognition',
+    columns:
+      'id, purpose, status, annotation_ids_json, strokes_json, anchor_json, bbox_json, source_id, version_id, page_id, note_page_id, question_id, lang_requested, lang, text, lines_json, uncertain_count, corrected_text, corrected_at, engine, created_at, updated_at, deleted_at',
+  },
+  { table: 'audio_recording', type: 'audio_recording' },
 ];
 
 /** Everything the owner created or studied, as JSON (files referenced by sha256; never secrets). */
@@ -591,7 +698,7 @@ export function exportAll(ctx: AppContext): ExportFile {
   for (const t of FULL_TABLES) {
     let rows: Array<Record<string, unknown>>;
     try {
-      rows = ctx.db.all<Record<string, unknown>>(`SELECT * FROM ${t.table}`);
+      rows = ctx.db.all<Record<string, unknown>>(`SELECT ${t.columns ?? '*'} FROM ${t.table}`);
     } catch {
       continue;
     }

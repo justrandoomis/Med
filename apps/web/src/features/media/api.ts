@@ -13,6 +13,7 @@ import type {
   MediaStatusResponse,
   OverlayShape,
   OverlayView,
+  RecordingView,
   SegmentRevisionView,
   SourcePagesResponse,
   TranscriptImportResponse,
@@ -24,6 +25,8 @@ import { api } from '../../lib/api';
 const enc = encodeURIComponent;
 
 export const mediaApi = {
+  /** (track F4) in-app recordings of / linked to a source, with the strokes written while recording */
+  recordings: (sourceId: string) => api.get<{ recordings: RecordingView[] }>('/media/recordings', { query: { source_id: sourceId } }).then((r) => r.recordings),
   status: () => api.get<MediaStatusResponse>('/media/status'),
   // audio
   audio: () => api.get<AudioListResponse>('/media/audio'),

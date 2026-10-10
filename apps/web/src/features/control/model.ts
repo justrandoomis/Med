@@ -3,7 +3,7 @@
 import { parseRichText, richTextToPlain, type ControlOverviewResponse } from '@medlevo/shared';
 import type { OutboxRecord } from '../../lib/localdb';
 
-export type SectionKey = 'review' | 'alerts' | 'sync' | 'processing' | 'sources' | 'intelligence' | 'storage' | 'profile' | 'capabilities' | 'history';
+export type SectionKey = 'review' | 'alerts' | 'sync' | 'processing' | 'sources' | 'intelligence' | 'storage' | 'profile' | 'capabilities' | 'health' | 'evaluation' | 'history';
 
 export interface SectionDef {
   key: SectionKey;
@@ -26,6 +26,9 @@ export const SECTIONS: SectionDef[] = [
   { key: 'storage', label: 'التخزين ودون اتصال', href: '/control/storage', purpose: 'مساحة الخادم وهذا الجهاز والتنزيلات.' },
   { key: 'profile', label: 'ملف التعلّم', href: '/review/profile', purpose: 'ما تستخدمه المنصة لتخصيص تعلمك، وتعديله.', external: true },
   { key: 'capabilities', label: 'القدرات', href: '/control/capabilities', purpose: 'ما يعمل الآن وما لا يعمل ولماذا.' },
+  // (track F5, §56 · §57)
+  { key: 'health', label: 'صحة النظام', href: '/control/health', purpose: 'ما منعه التحقق يومًا بيوم، ورفض المزامنة، وأخطاء الواجهة المسجلة.' },
+  { key: 'evaluation', label: 'تقييم الجودة', href: '/control/evaluation', purpose: 'آخر تقييم لمحاور الدقة على ملفات اختبار معروفة الإجابة.' },
   { key: 'history', label: 'السجل', href: '/control/history', purpose: 'ما تغيّر في بياناتك، ومتى، وبيد من.' },
 ];
 

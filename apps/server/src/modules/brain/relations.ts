@@ -35,7 +35,25 @@ interface StatedMention {
   page_index: number | null;
 }
 
-function statedMentions(ctx: AppContext, versionId: string): StatedMention[] {
+/** Per-recompute memo of concept lookups (review F2: a course recompute used to re-query them per mention / pair). */
+interface RecomputeMemo {
+  status: Map<string, string | undefined>;
+  names: Map<string, string[]>;
+  display: Map<string, string>;
+  locations: Map<string, BrainLocation | null>;
+  /** usable regions of a version + all their normalized texts joined (a cheap «can it occur at all?» prefilter) */
+  regions: Map<string, { list: Array<{ id: string; norm: string; text: string }>; all: string }>;
+}
+
+function newMemo(): RecomputeMemo {
+  return { status: new Map(), names: new Map(), display: new Map(), locations: new Map(), regions: new Map() };
+}
+
+function statedMentions(ctx: AppContext, versionId: string, memo: RecomputeMemo = newMemo()): StatedMention[] {
+  const statusOf = (id: string) => {
+    if (!memo.status.has(id)) memo.status.set(id, ctx.db.get<{ status: string }>('SELECT status FROM concept WHERE id = ?', [id])?.status);
+    return memo.status.get(id);
+  };
   return ctx.db
     .all<StatedMention & { status: string; merged_into_id: string | null }>(
       `SELECT m.concept_id, m.region_id, m.role, m.quote, p.page_index, c.status, c.merged_into_id
@@ -45,7 +63,7 @@ function statedMentions(ctx: AppContext, versionId: string): StatedMention[] {
       [versionId],
     )
     .map((m) => ({ ...m, concept_id: m.merged_into_id ? resolveConceptId(ctx, m.concept_id) : m.concept_id }))
-    .filter((m) => ctx.db.get<{ status: string }>('SELECT status FROM concept WHERE id = ?', [m.concept_id])?.status !== 'rejected');
+    .filter((m) => statusOf(m.concept_id) !== 'rejected');
 }
 
 /** Main concepts of a lecture: the concepts of its first heading(s) (the title page). */
@@ -67,15 +85,22 @@ function escapeRe(s: string): string {
 }
 
 /** First region of the version whose text names the concept (word boundary on normalized text). */
-function findUsage(regions: Array<{ id: string; norm: string; text: string }>, names: string[]): { id: string; text: string } | null {
+function findUsage(regions: { list: Array<{ id: string; norm: string; text: string }>; all: string }, names: string[]): { id: string; text: string } | null {
   if (names.length === 0) return null;
+  // exact prefilter: a whole-word occurrence is also a substring of the joined text — most concepts are not in most
+  // lectures, so the per-region regex below only runs where the name can occur
+  if (!names.some((n) => regions.all.includes(n))) return null;
   const re = new RegExp(`(?:^|[^\\p{L}\\p{N}])(?:${names.map(escapeRe).join('|')})(?:$|[^\\p{L}\\p{N}])`, 'u');
-  for (const r of regions) if (re.test(r.norm)) return { id: r.id, text: r.text };
+  for (const r of regions.list) if (re.test(r.norm)) return { id: r.id, text: r.text };
   return null;
 }
 
-function loc(ctx: AppContext, regionId: string, quote: string | null): (BrainLocation & { quote: string | null }) | undefined {
-  const l = locationOfRegion(ctx, regionId);
+function loc(ctx: AppContext, regionId: string, quote: string | null, memo?: RecomputeMemo): (BrainLocation & { quote: string | null }) | undefined {
+  let l: BrainLocation | null;
+  if (memo) {
+    if (!memo.locations.has(regionId)) memo.locations.set(regionId, locationOfRegion(ctx, regionId));
+    l = memo.locations.get(regionId) ?? null;
+  } else l = locationOfRegion(ctx, regionId);
   return l ? { ...l, quote: quote ? quote.slice(0, 300) : null } : undefined;
 }
 
@@ -95,9 +120,39 @@ export interface RecomputeStats {
 
 /** Recompute the suggested (inferred) relations of one course group. Owner decisions are never changed. */
 export function recomputeInferredRelations(ctx: AppContext, key: string): RecomputeStats {
-  const lectures: Array<StudySource & { mentions: StatedMention[] }> = sourcesOfCourseKey(ctx, key)
+  const memo = newMemo();
+  const lectures: Array<StudySource & { mentions: StatedMention[]; firstMention: Map<string, StatedMention> }> = sourcesOfCourseKey(ctx, key)
     .filter((s) => !!s.version_id && !!ctx.db.get('SELECT 1 AS x FROM concept_extraction WHERE version_id = ?', [s.version_id]))
-    .map((s) => ({ ...s, mentions: statedMentions(ctx, s.version_id!) }));
+    .map((s) => {
+      const mentions = statedMentions(ctx, s.version_id!, memo);
+      const firstMention = new Map<string, StatedMention>();
+      for (const m of mentions) if (!firstMention.has(m.concept_id)) firstMention.set(m.concept_id, m);
+      return { ...s, mentions, firstMention };
+    });
+  const namesOfMemo = (id: string) => {
+    if (!memo.names.has(id)) memo.names.set(id, namesOf(ctx, id));
+    return memo.names.get(id)!;
+  };
+  const displayOf = (id: string) => {
+    if (!memo.display.has(id)) memo.display.set(id, displayName(conceptRow(ctx, id)));
+    return memo.display.get(id)!;
+  };
+  const regionsOf = (versionId: string) => {
+    let r = memo.regions.get(versionId);
+    if (!r) {
+      const list = ctx.db
+        .all<{ id: string; text: string | null }>(
+          `SELECT r.id, r.text FROM source_region r JOIN source_page p ON p.id = r.page_id
+            WHERE r.version_id = ? AND r.parent_region_id IS NULL AND r.kind NOT IN ('header','footer') AND r.status <> 'rejected' AND r.text IS NOT NULL
+            ORDER BY p.page_index, r.reading_order`,
+          [versionId],
+        )
+        .map((x) => ({ id: x.id, text: x.text ?? '', norm: nameNorm(x.text ?? '') }));
+      r = { list, all: list.map((x) => x.norm).join('\n') };
+      memo.regions.set(versionId, r);
+    }
+    return r;
+  };
   const suggestions = new Map<string, Suggestion>();
   const push = (s: Suggestion) => {
     if (s.from === s.to) return;
@@ -116,29 +171,18 @@ export function recomputeInferredRelations(ctx: AppContext, key: string): Recomp
       const mains = mainConcepts(lj.mentions);
       if (mains.length === 0) continue;
       const definedThere = new Set(lj.mentions.filter((m) => DEFINING_ROLES.includes(m.role)).map((m) => m.concept_id));
-      let regions: Array<{ id: string; norm: string; text: string }> | null = null;
       for (const [a, def] of defined) {
         if (definedThere.has(a)) continue;
         let usage: { id: string; text: string } | null = null;
-        const stated = lj.mentions.find((m) => m.concept_id === a);
+        const stated = lj.firstMention.get(a);
         if (stated) usage = { id: stated.region_id, text: stated.quote ?? '' };
-        else {
-          regions ??= ctx.db
-            .all<{ id: string; text: string | null }>(
-              `SELECT r.id, r.text FROM source_region r JOIN source_page p ON p.id = r.page_id
-                WHERE r.version_id = ? AND r.parent_region_id IS NULL AND r.kind NOT IN ('header','footer') AND r.status <> 'rejected' AND r.text IS NOT NULL
-                ORDER BY p.page_index, r.reading_order`,
-              [lj.version_id],
-            )
-            .map((r) => ({ id: r.id, text: r.text ?? '', norm: nameNorm(r.text ?? '') }));
-          usage = findUsage(regions, namesOf(ctx, a));
-        }
+        else usage = findUsage(regionsOf(lj.version_id!), namesOfMemo(a));
         if (!usage) continue;
-        const aName = displayName(conceptRow(ctx, a));
+        const aName = displayOf(a);
         for (const b of mains) {
           if (b === a) continue;
-          const from = loc(ctx, def.region_id, def.quote);
-          const to = loc(ctx, usage.id, usage.text);
+          const from = loc(ctx, def.region_id, def.quote, memo);
+          const to = loc(ctx, usage.id, usage.text, memo);
           push({
             from: a,
             to: b,
@@ -162,7 +206,7 @@ export function recomputeInferredRelations(ctx: AppContext, key: string): Recomp
     const mains = mainConcepts(l.mentions);
     if (mains.length !== 1) continue;
     for (const m of l.mentions.filter((x) => x.role === 'differential')) {
-      const at = loc(ctx, m.region_id, m.quote);
+      const at = loc(ctx, m.region_id, m.quote, memo);
       push({
         from: m.concept_id,
         to: mains[0]!,
@@ -183,8 +227,8 @@ export function recomputeInferredRelations(ctx: AppContext, key: string): Recomp
   ctx.db.tx(() => {
     const seen = new Set<string>();
     for (const s of suggestions.values()) {
-      const prior = ctx.db.get<{ id: string; origin: string; status: string }>(
-        'SELECT id, origin, status FROM concept_relation WHERE from_concept_id = ? AND to_concept_id = ? AND relation = ?',
+      const prior = ctx.db.get<{ id: string; origin: string; status: string; reasons_json: string | null; course_node_id: string | null }>(
+        'SELECT id, origin, status, reasons_json, course_node_id FROM concept_relation WHERE from_concept_id = ? AND to_concept_id = ? AND relation = ?',
         [s.from, s.to, s.relation],
       );
       if (prior) {
@@ -193,8 +237,11 @@ export function recomputeInferredRelations(ctx: AppContext, key: string): Recomp
           stats.kept_owner++;
           continue;
         }
-        // undecided or accepted suggestion: refresh its reasons (the status is the owner's)
-        ctx.db.run('UPDATE concept_relation SET reasons_json = ?, course_node_id = ?, updated_at = ? WHERE id = ?', [toJson(s.reasons), key, now, prior.id]);
+        // undecided or accepted suggestion: refresh its reasons (the status is the owner's) — only when they changed
+        const reasonsJson = toJson(s.reasons);
+        if (prior.reasons_json !== reasonsJson || prior.course_node_id !== key) {
+          ctx.db.run('UPDATE concept_relation SET reasons_json = ?, course_node_id = ?, updated_at = ? WHERE id = ?', [reasonsJson, key, now, prior.id]);
+        }
         if (prior.status === 'accepted') stats.kept_owner++;
         else stats.updated++;
         continue;

@@ -48,7 +48,7 @@ Control Center («مركز التحكم» → «القدرات») lists each fea
 |---|---|
 | Semantic search, automatic transcription, external image / evidence search | they need an embeddings, speech-to-text or search provider that is not built |
 | Handwriting recognition, native iPad layer (PencilKit, double tap, squeeze) | not built; the web ink records pressure / tilt when the browser sends them, but no real Apple Pencil was tested |
-| DOCX export, server-side PDF export | not built; PDF = print the HTML export from the browser |
+| Server-side PDF export | not built; PDF = print the HTML export from the browser (Word (DOCX) export exists since track F5) |
 
 The full, evidence-based list (with the tests behind each line) is the [Requirement Matrix](docs/REQUIREMENTS_MATRIX.md).
 
@@ -124,7 +124,10 @@ NODE_ENV=production MEDLEVO_DATA_DIR=/srv/medlevo/data \
 - On an exposed server the setup token is required until the owner exists (see Setup).
 - `SIGTERM` / `SIGINT` stop gracefully: running jobs are re-queued and resume from their checkpoints at the next boot.
 - The E2E suite starts the server exactly this way (`NODE_ENV=production`, built app, throwaway data dir) on loopback.
-  A deployment behind a real reverse proxy with TLS has **not** been exercised here.
+  The production setup behind a TLS-terminating reverse proxy (Secure cookie, `MEDLEVO_TRUST_PROXY`, Origin / CSRF
+  checks, setup token) is exercised by `apps/server/test/deploy/tls-proxy.test.ts` with a self-signed certificate made
+  at test time — not on a real host. Reverse proxy examples, backups on a schedule and the update plan:
+  [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 **Updating** (code, schema, models, sources):
 
@@ -159,12 +162,17 @@ device is not a backup. Details: [`docs/BACKUP_RESTORE.md`](docs/BACKUP_RESTORE.
 | `npm run typecheck` | TypeScript checks for shared, server, web and the E2E harness |
 | `npm run build` | production build of the web app (PWA) |
 | `npm run e2e` | Playwright end-to-end tests against the real server (phone + desktop; see [`e2e/README.md`](e2e/README.md)) |
+| `npm run lint` | ESLint (flat config at the root: typescript-eslint recommended + react-hooks), zero warnings allowed |
+| `npm run eval` | per-axis accuracy evaluation on the Golden Set and acceptance fixtures, JSON + Markdown report ([`docs/EVALUATION.md`](docs/EVALUATION.md)) |
 | `MEDLEVO_PERF=1 …` | opt-in performance and resilience suites ([`docs/PERFORMANCE.md`](docs/PERFORMANCE.md)) |
 
 AI paths are tested only with a test-only fake provider (no key is used in tests); with no key the E2E suite checks
 that every AI feature honestly reports that it needs configuration. The latest full run, with exact commands, counts
 and what was not run (real iPad / Apple Pencil, Safari, screen readers, a live AI provider, a real Anki import), is in
-[`docs/TEST_LOG.md`](docs/TEST_LOG.md). ESLint is listed in `package.json` but has no configuration yet.
+[`docs/TEST_LOG.md`](docs/TEST_LOG.md). CI (`.github/workflows/ci.yml`) runs typecheck, lint, the unit tests, the web
+build and the evaluation regression set (compared with `docs/eval/baseline.json`) on every push and pull request; the
+E2E job is optional (manual dispatch). The workflow has not run on a GitHub runner yet; each of its commands was run
+locally.
 
 ## Project layout
 
@@ -190,6 +198,8 @@ docs/               documentation (below)
 | [`docs/CAPABILITY_MATRIX.md`](docs/CAPABILITY_MATRIX.md) | pen / ink capabilities per platform and what was (not) tested |
 | [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) | measured performance and resilience, with limits |
 | [`docs/BACKUP_RESTORE.md`](docs/BACKUP_RESTORE.md) | backup, verification and restore |
+| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | production setup: reverse proxy + TLS, environment, setup token, backup schedule, update and rollback plan |
+| [`docs/EVALUATION.md`](docs/EVALUATION.md) | the accuracy evaluation (axes, regression vs tuning sets, honest rates) and the compare-and-rollback procedure |
 | [`docs/design-system.md`](docs/design-system.md) | tokens, components, accessibility rules |
 | [`docs/SKILLS_AUDIT.md`](docs/SKILLS_AUDIT.md) | skills actually used to build MedLevo, and the capabilities still needed |
 | [`docs/modules/`](docs/modules) | per-module notes: what is implemented, tested, not done, and why |

@@ -60,7 +60,7 @@ export function NodeDialog({ open, mode, onClose, onSaved }: { open: boolean; mo
     setDescription(editing?.description ?? '');
     setErrors({});
     setFormError(null);
-    // reset only when the dialog opens
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset only when the dialog opens: a parent re-render must not wipe what the owner typed
   }, [open]);
 
   const submit = async (e: FormEvent) => {

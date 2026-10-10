@@ -28,3 +28,6 @@ export * from './control-api';
 export * from './cases-api';
 export * from './media-api';
 export * from './brain-api';
+export * from './handwriting-api';
+export * from './study-api';
+export * from './quality-api';

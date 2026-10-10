@@ -1,34 +1,41 @@
 // «المصادر» (§11 Source Inspector basics): what this page is — version, printed label and file position,
 // text status, OCR confidence — and its regions, each of which can be shown on the page.
 import { useEffect, useState } from 'react';
-import { Columns2, Crosshair, ExternalLink } from 'lucide-react';
+import { Columns2, Crosshair, ExternalLink, ScanSearch } from 'lucide-react';
 import { detectDir, SOURCE_TYPE_LABELS_AR, type SourcePageView, type SourceRegionView } from '@medlevo/shared';
 import { Bidi, Button, ErrorState, Skeleton, StatusPill, Term, buttonClass } from '../../../design';
 import { Link } from 'react-router-dom';
 import { errorMessage } from '../../../lib/api';
+import { useOnline } from '../../../lib/useOnline';
 import { fetchRegions } from '../data/api';
 import type { SourceDocument } from '../data/useSourceDocument';
 import { useSourceNavigation } from '../nav/SourceNavigation';
 import { PAGE_PROCESSING_AR, REGION_KIND_AR, regionStatus, TEXT_STATUS_AR, versionLabel } from '../model/labels';
 import { fullPageLabel } from '../model/pages';
+import { FigureReadingPanel } from './FigureReadingPanel';
+
+const FIGURE_KINDS = new Set(['figure', 'diagram']);
 
 export function SourcesTab({ doc, page, onOpenSplit, splitReason }: { doc: SourceDocument; page: SourcePageView | null; onOpenSplit: (sourceId: string) => void; splitReason: string | null }) {
   const nav = useSourceNavigation();
   const [regions, setRegions] = useState<SourceRegionView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const [reading, setReading] = useState<string | null>(null);
+  const online = useOnline();
+  const pageId = page?.id ?? null;
   useEffect(() => {
-    if (!page) return;
+    if (!pageId) return;
     let cancelled = false;
     setRegions(null);
     setError(null);
-    fetchRegions(page.id)
+    fetchRegions(pageId)
       .then((r) => !cancelled && setRegions([...r.regions].sort((a, b) => a.reading_order - b.reading_order)))
       .catch((e) => !cancelled && setError(errorMessage(e, 'تعذّر تحميل مناطق الصفحة.')));
     return () => {
       cancelled = true;
     };
-  }, [page?.id, attempt]);
+  }, [pageId, attempt]);
 
   const { detail, version } = doc;
   const text = page ? TEXT_STATUS_AR[page.text_status] : null;
@@ -118,6 +125,14 @@ export function SourcesTab({ doc, page, onOpenSplit, splitReason }: { doc: Sourc
                 >
                   إظهار في الصفحة
                 </Button>
+                {FIGURE_KINDS.has(r.kind) && (
+                  <>
+                    <Button size="sm" variant="plain" icon={<ScanSearch size={16} />} aria-expanded={reading === r.id} onClick={() => setReading((x) => (x === r.id ? null : r.id))}>
+                      بنية الشكل (قراءة بصرية)
+                    </Button>
+                    {reading === r.id && <FigureReadingPanel regionId={r.id} online={online} />}
+                  </>
+                )}
               </li>
             );
           })}

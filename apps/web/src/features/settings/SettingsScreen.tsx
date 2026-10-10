@@ -109,7 +109,7 @@ export function SettingsScreen() {
   useEffect(() => {
     if (customDraft === savedCustom.current) setCustomDraft(settings.custom_instruction);
     savedCustom.current = settings.custom_instruction;
-    // (deliberately keyed on the stored value only)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the stored value only: a new draft must not re-run the server-sync step
   }, [settings.custom_instruction]);
   useEffect(() => {
     if (customDraft === settings.custom_instruction) return;
@@ -118,7 +118,7 @@ export function SettingsScreen() {
       if (settingsStore.get().settings.custom_instruction !== customDraft) void update({ custom_instruction: customDraft });
     }, 800);
     return () => clearTimeout(t);
-    // (deliberately keyed on the draft only)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the draft only: a stored value arriving from the server must not restart the debounce
   }, [customDraft]);
   // leaving the screen inside the debounce window still saves the draft
   const draftRef = useRef(customDraft);

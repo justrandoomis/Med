@@ -10,7 +10,7 @@ import type { AppContext } from '../../context';
 import { fromJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
 import { suggestTopicLink } from '../library/tags';
-import { ConceptIndex, nameNorm } from './resolve';
+import { ConceptIndex, nameNorm, resolveConceptId } from './resolve';
 import { inList } from './store';
 
 interface TopicRow {
@@ -47,7 +47,8 @@ export function suggestTopicLinks(ctx: AppContext, topicId?: string): { created:
     for (const t of topics) {
       const names = [t.title, t.title_ar].filter((n): n is string => !!n && nameNorm(n).length >= 3);
       const conceptIds = new Set<string>();
-      if (t.concept_id) conceptIds.add(t.concept_id);
+      // a topic's concept may have been merged since: suggest the concept it joined (never the pointer)
+      if (t.concept_id) conceptIds.add(resolveConceptId(ctx, t.concept_id));
       for (const n of names) {
         const c = index.find(n);
         if (c) conceptIds.add(c);

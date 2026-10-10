@@ -184,3 +184,19 @@
   overflow-wrap: anywhere;
   text-align: left;
 }
+
+/* Export formats (track F5: four formats since DOCX). The options wrap instead of widening the page on a phone or at a
+   large text size — every format stays visible (no hidden horizontal scroll) and keeps its 44px touch target. */
+.dl-stack {
+  grid-template-columns: minmax(0, 1fr);
+}
+.dl-formats {
+  min-width: 0;
+}
+.dl-formats .ml-segmented {
+  flex-wrap: wrap;
+  overflow-x: visible;
+}
+.dl-formats .ml-segmented__option {
+  flex: 1 1 auto;
+}

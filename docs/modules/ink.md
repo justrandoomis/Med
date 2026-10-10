@@ -188,7 +188,7 @@ including the IndexedDB flush ≈ 250 ms (mostly the scripted mouse movement).
 * Double tap, squeeze, Scribble on the canvas and PencilKit latency need a native iPad layer; not built.
 * Text boxes do not rotate (rotation moves their centre); the shape tool has no Shift constraints;
   «bring forward / backward» are implemented as bring to front / send to back (one step at a time is
-  not); no image insertion tool; no multi-page selection.
+  not); ~~no image insertion tool~~ (built in track F1, below); no multi-page selection.
 * The text-box editor uses the box's font size, so on an iPhone a small font may make Safari zoom into
   the field while typing.
 * Undo history is memory-only (by design): it does not survive a reload or a crash; the ink does.
@@ -269,3 +269,121 @@ Commands run for the review (results at the time of writing): see the review rep
   never reports pressure / tilt / hover as supported; a mouse stroke is stored with `input.pointer_type = 'mouse'`,
   `pressure_available: false` and 3-value points. The Control Center pen summary no longer says pressure / tilt / hover
   «تعمل» (they only ran with simulated events).
+
+## Track F1 — image and link tools, note pages, host (2026-10-10)
+
+* **New item kinds** (`model.ts`): `image` (layer `media`, drawn as a `<figure>` UNDER the canvases so ink stays on
+  top; never captures input) and `link` (layer `text`, a button above the ink). Both are box items: lasso hit-testing,
+  bounding boxes, move and uniform resize (`transformItem` keeps a picture's aspect ratio) and undo work as for text
+  boxes. `makeImageItem` / `makeLinkItem`; `isImage` / `isLink` / `isBoxItem` / `boxOf`.
+* **Image tool** («إدراج صورة», `images.ts`): a tap opens «إدراج صورة هنا» with a file input («اختر صورة من الجهاز»);
+  `InkHost` also inserts pasted pictures on the active / current page. `checkImageFile` refuses what the server would
+  (type, 10 MB) with a reason; `imageBoxAt` places the picture centred on the tap at its natural size (96 dpi), capped
+  to 60 % of the page in both directions, kept inside the page. The bytes go to IndexedDB `blobs` first
+  (`annimg:<key>`, `uploadState: pending`), the annotation is a normal local-first `append`; `kickImageUploads` uploads
+  due pictures once per run (backoff 2 s → 10 min; a refusal of the bytes themselves — 400 / 409 / 413 / 415 / 422 —
+  is kept with its reason, any other answer (403, 404, 5xx …) is retried (review F1); offline / 401 stop the run;
+  bytes the browser lost are marked, never uploaded as garbage); `startImageUploader` retries on `online` and every
+  minute. `useImageSource` shows the device copy (object URL) or the server route, with an honest badge.
+* **Link tool** («رابط إلى صفحة», `link_box` gesture in `layerController.ts`): a dragged box asks the host
+  (`InkLinkHost.pickTarget`) where it leads; a cancelled choice adds nothing. The link is followable only when the
+  current tool is not a writing tool (hand), then it is a labelled button («رابط: <label> — يفتح <where>»); while
+  writing it is `aria-hidden`, untabbable and lets the pen through. The tool is in the toolbar only where a host can
+  open pages (`InkHost links`).
+* **Host** (`host.tsx`): `<InkHost links currentPage notify>` — the reader / notebook / split pane provide link
+  targets and navigation; the engine stays independent of routes.
+* **Note pages**: `InkLayer` with a `note_page` anchor (`targetKey note_page:<id>`) — same engine, same sync.
+* Toolbar: `visibleSlots` keeps the pen, options, undo, eraser, highlighter and hand visible at 390 px with the two
+  new families; the options button of non-preset tools uses a sliders icon (two «…» icons were confusing).
+* Tests: `test/ink/notebook-tools.test.tsx` (11, passing — geometry and limits, insert + undo, lasso resize keeps the
+  aspect, uploader states with a stub table because jsdom's `Blob` does not survive fake-indexeddb's structured clone,
+  toolbar families, image and link tools in a mounted layer); `e2e/f1-notebook-pages.spec.ts` (phone + desktop, real
+  server: picture inserted with the tool, uploaded and served; link drawn, followed, back).
+* Limits: no crop for pictures, and the lasso's rotate moves a picture's centre without turning it (as for text
+  boxes); a picture inserted on another device is fetched from the server when shown (not part of offline downloads).
+* Review F1 (2026-10-10): a page link keeps its 44 px touch area (the button no longer clips its `::before` with
+  `overflow: hidden`; the area grows in both directions — E2E checks `elementFromPoint` at the edge); the uploader no
+  longer marks a picture «refused» for answers that do not judge its bytes (regression test in
+  `notebook-tools.test.tsx`). See `docs/modules/workspace.md` «Review F1».
+
+## Track F4 — handwriting recognition and recording time links (2026-10-10)
+
+Spec §28 (recognition, lasso «تحويل إلى نص» / «اسأل عن المحدد»), §29 (pen ↔ recording time), §41 (handwritten answers),
+§46 (search in handwriting). Server side: `apps/server/src/modules/annotations/recognition.ts` (table
+`ink_recognition`, migration `0270_ink_recognition.sql`); recordings: `docs/modules/cases-media.md` «Track F4»;
+handwritten answers: `docs/modules/exams.md` «Track F4».
+
+### What the engine does (and does not)
+* **The ink is never replaced.** Recognition is a DERIVED reading stored beside the strokes (`ink_recognition`), never
+  written into an annotation; deleting a reading deletes only the reading. A correction is stored next to the machine
+  reading (which stays as returned); search and «اسأل» use the owner's text when there is one.
+* **Lasso actions come from the host** (`ink/selectionActions.tsx`): `InkSelectionActionsProvider` gives the selection
+  bar `convert` / `ask` (each with `reason: string | null` → disabled with that reason) and the recording hooks
+  `playAudio` / `editAudioLink`. Without a host both items stay disabled with a reason (`NO_RECOGNITION_HOST_AR`,
+  `NO_ASK_HOST_AR`); a selection without pen writing (only a text box / picture) also disables them with a reason.
+  The reader's host is `features/workspace/handwriting/HandwritingHost.tsx` (mounted in `WorkspaceScreen` inside
+  `InkHost`).
+* **The picture sent to the reader** (`handwriting/raster.ts`): only the selected writing — ink strokes (highlighters
+  left out) and shape outlines — re-drawn black on white, cropped to its own bounds with 16 px padding, ≈ 4000 px per
+  page width for normal writing and never more than 1568 px on the long edge, line width 2–10 px. Never a screenshot of
+  the page: no printed text, colours, highlights or other notes leave the device. The owner sees exactly that picture
+  in the dialog before «اقرأ الخط».
+* **Time links** (`ink/audioLink.ts`): while the recorder runs (`setActiveRecording`, set only by
+  `features/workspace/audio/recorder.ts` after an explicit start), `layerController.commitStroke` stores
+  `data.audio_link = { recording_id, offset_ms, origin: 'auto' }` on the stroke — and, for a stroke straightened into a
+  recognized shape, on the shape item itself as well as on the original kept inside it (review fix: before, only the kept
+  original carried it, so the lasso offered no «استمع» and the audio screen did not list the shape); the offset is the stroke's start (commit time − its last sample's t) minus the recording start,
+  excluding paused time; nothing is linked while paused or outside a recording. Point-eraser pieces keep the
+  original's link. The link is part of the stroke's `data`: same IndexedDB row, same outbox op, same server merge rules
+  (validated by `audioLinkSchema` in the server's `annotations/schemas.ts`). Selecting a linked stroke shows «استمع من
+  m:ss في التسجيل (رابط تلقائي|يدوي)» in the selection bar and «الرابط الزمني (تلقائي|يدوي)…» in its menu; an edit is one
+  `store.commit` (undoable) that changes only `audio_link` (origin → `manual`) or removes it.
+* **Capability panel**: the recognition row is «مدعوم ورُصد هنا» only when the server's
+  `workspace.handwriting_recognition` is available; otherwise the new state «يحتاج إعدادًا على الخادم»
+  (`requires_configuration`) with the server's reason — never «غير منفّذ» any more, and never a claim about accuracy.
+
+### Tests (all passing, 2026-10-10)
+| file | what it proves |
+|---|---|
+| `test/ink/audio-links.test.tsx` | time formats (Arabic-Indic digits); a stroke written while recording carries an AUTOMATIC link that reaches IndexedDB and the outbox payload, strokes before / after the recording and during a pause carry none; the selection bar's «استمع من 1:05 …(رابط تلقائي)» calls the host with the link, the menu's link editor and «تحويل إلى نص» call the host; a manual link changes only the link (points identical); without a host both actions are disabled |
+| `test/ink/input.test.ts` (updated) | recognition row: `requires_configuration` without the server capability, `supported` with it |
+| `src/features/workspace/handwriting/handwriting.test.tsx` | the picture holds only pen writing (highlighter excluded, shape outline included), cropped, ≤ 1568 px, points inside the padding; a reading is reused only for exactly the same strokes; uncertain words: dotted underline + «؟» + spoken label + alternatives in the title, words isolated by direction; dialog: exact picture shown, read → request body (ids, page anchor, language, PNG), pending writing pushed first, uncertain summary, correction saved beside the machine reading; disabled with the server reason without a vision provider; an earlier reading of the same strokes shown; abstention reason + «اكتب ما كتبته»; «اسأل»: composed question with the paragraph, edited, handed over (anchor + quote + question) — never sent; typed text instead of a reading; the chat composer receives the question with no message posted |
+| `src/features/workspace/audio/recorder.test.ts`, `AudioUi.test.tsx` | see `docs/modules/cases-media.md` «Track F4» |
+| `apps/server/test/annotations/recognition.test.ts` (15) | without a vision provider: `requires_configuration` with the Arabic reason, a request refused (409 `AI_NOT_CONFIGURED`), nothing stored — also when a configured provider cannot read pictures; with the test-only FakeAiProvider: a DERIVED reading (strokes untouched, uncertain words, the sent picture kept, transcription-only prompt), idempotent by the client id, search in handwriting with its origin, a correction keeps the machine reading and becomes the owner text (audit), erased strokes / a deleted reading drop the hit, abstention / failure / retry, PNG and context validation, note pages, «اسأل» context (paragraph beside the writing), handwritten written answers (confirmed text, reading id), the full JSON export carries readings and corrections without the picture |
+| `e2e/f4-handwriting-audio.spec.ts` (2 × 2 projects, passing) | real server without a key: capability `requires_configuration`, API 409; lasso «تحويل إلى نص» disabled with the reason; «اسأل عن المحدد»: the exact picture shown, the owner types the text, the paragraph beside it is found, the question lands in the rail composer and nothing is sent; recording with a fake microphone (see cases-media) |
+
+### Limits (honest list)
+* Recognition quality is **not measured**: no vision provider exists here; the server path ran only with the test-only
+  `FakeAiProvider`. No claim about Arabic / English accuracy is made anywhere in the UI.
+* Readings are online-only (the reader is on the server); corrections are saved through the API (an offline correction
+  stays in the field with an error, it is not queued).
+* Readings are not re-run automatically when the strokes change: an edited / moved stroke keeps its earlier reading
+  until the owner reads it again (the dialog matches readings to the exact set of stroke ids).
+* Note pages: «تحويل إلى نص» works (the note page must have reached the server — the dialog pushes pending writing
+  first and the server says so when it has not); «اسأل عن المحدد» needs a lecture paragraph and explains that on a note
+  page. The notebook screen (`/notebook/:id`) has no host yet: there both items stay disabled with their reason.
+* A tap on a stroke plays its moment only with the lasso (the hand tool reads the page and does not hit-test ink).
+* The full JSON export (`/api/data/export/all`) carries `ink_recognition` rows (reading, lines, correction, anchor,
+  stroke ids) without the PNG that was sent (it is re-made from the strokes in `annotation`) and `audio_recording`.
+* Found by the phone E2E run: the reader's «خيارات العرض» menu ran past the bottom of a 390 × 844 screen, so its last
+  items could not be reached; `.ml-menu` (design system) now has `max-height: 100dvh − 16px` and scrolls inside itself.
+
+### Independent adversarial review of F4 (2026-10-10)
+Fixed (each with a regression test that fails on the code before the fix):
+* **Recognized shapes lost their time link** — a stroke held still until it became a line / shape while recording kept
+  `audio_link` only inside `recognized_from`, so `audioLinkOf(shape)` and the server's `$.audio_link.recording_id`
+  query saw nothing. `layerController.commitStroke` now sets it on the shape too (`test/ink/audio-links.test.tsx`
+  «a shape drawn while recording…»).
+* **«رجوع» from the composed question lost the reading** — the dialog went back to «اقرأ الخط», inviting a second reading
+  of the same strokes; the ask phase now remembers the reading (`handwriting.test.tsx` ««رجوع» from the composed
+  question…»).
+* **The composed question erased an unsent chat draft** — `ChatPanel`'s prefill replaced the composer text; it now joins
+  the draft (`handwriting.test.tsx` «joins an unsent draft…»).
+* **A misleading timeout message** said the result would be «في ملاحظاتي» (readings are not listed there); it now says
+  to select the same writing again and open «تحويل إلى نص».
+* Server: a handwritten answer's pad may now hold up to 4000 strokes (was 500 — an Arabic essay is many short strokes),
+  with an Arabic reason past the bound (`recognition.test.ts` «a long handwritten answer…»).
+Checked and found sound: the ink is never written by recognition (rows compared before / after), corrections keep the
+machine text, search origin labels, the grading prompt carries only the confirmed text plus the no-deduction rule,
+every new route sits behind the global session + CSRF guard, the PNG is magic-checked and size-bounded and served with
+`nosniff`, recognized text is rendered as text (no HTML).

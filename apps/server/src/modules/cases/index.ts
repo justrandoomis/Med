@@ -28,7 +28,8 @@ import { casesCapabilities, detailView, summaryView } from './views';
 const id = z.string().trim().min(1).max(64);
 const idParams = z.object({ id });
 const attemptParams = z.object({ attemptId: id });
-const listQuery = z.object({ kind: z.enum(CASE_KINDS).optional(), trash: z.enum(['0', '1']).optional() }).strict();
+// (track F3) `source_id`: cases of one lecture (its focal lecture, or the lecture of its Source Lock) — the rail «حالات»
+const listQuery = z.object({ kind: z.enum(CASE_KINDS).optional(), trash: z.enum(['0', '1']).optional(), source_id: id.optional() }).strict();
 const attemptsQuery = z.object({ case_id: id.optional(), limit: z.coerce.number().int().min(1).max(200).default(50) }).strict();
 const signalsQuery = z.object({ since: z.coerce.number().int().min(0).optional() }).strict();
 
@@ -39,9 +40,14 @@ export default async function register(app: FastifyInstance, { ctx }: ModuleOpti
 
   app.get('/', async (req): Promise<CaseListResponse> => {
     const q = parseQuery(listQuery, req);
+    const params: unknown[] = [];
+    if (q.kind) params.push(q.kind);
+    if (q.source_id) params.push(q.source_id, q.source_id);
     const rows = ctx.db.all<CaseRow>(
-      `SELECT * FROM clinical_case WHERE ${q.trash === '1' ? 'deleted_at IS NOT NULL' : 'deleted_at IS NULL'} ${q.kind ? 'AND kind = ?' : ''} ORDER BY updated_at DESC, id DESC LIMIT 500`,
-      q.kind ? [q.kind] : [],
+      `SELECT * FROM clinical_case WHERE ${q.trash === '1' ? 'deleted_at IS NOT NULL' : 'deleted_at IS NULL'} ${q.kind ? 'AND kind = ?' : ''}
+         ${q.source_id ? `AND (source_id = ? OR (json_valid(scope_json) AND json_extract(scope_json, '$.lecture_source_id') = ?))` : ''}
+       ORDER BY updated_at DESC, id DESC LIMIT 500`,
+      params,
     );
     return { cases: rows.map((r) => summaryView(ctx, r)), capabilities: casesCapabilities(ctx) };
   });

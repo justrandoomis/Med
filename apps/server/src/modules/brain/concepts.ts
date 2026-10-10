@@ -76,10 +76,12 @@ export function listConcepts(
 export function getConcept(ctx: AppContext, id: string): BrainConceptView & { merged_into: { id: string; name: string } | null } {
   const c = conceptRow(ctx, id);
   const target = c.merged_into_id ? conceptRow(ctx, resolveConceptId(ctx, id)) : null;
-  // mentions of this concept and of every concept merged into it
+  // mentions of this concept and of every concept merged into it — in the STUDY version of each source (frozen, else
+  // current), like the list: a superseded version's quotes are not mixed in with the current ones (review F2)
   const merged = ctx.db.all<{ id: string }>('WITH RECURSIVE m(id) AS (SELECT ? UNION SELECT c.id FROM concept c JOIN m ON c.merged_into_id = m.id) SELECT id FROM m', [id]).map((r) => r.id);
   const mentions = ctx.db.all<MentionRow>(
-    `${MENTION_SELECT} WHERE m.concept_id IN (${inList(merged.length)}) AND s.deleted_at IS NULL ORDER BY s.sort_order, s.created_at, p.page_index, r.reading_order`,
+    `${MENTION_SELECT} WHERE m.concept_id IN (${inList(merged.length)}) AND s.deleted_at IS NULL AND m.version_id = COALESCE(s.frozen_version_id, s.current_version_id)
+      ORDER BY s.sort_order, s.created_at, p.page_index, r.reading_order`,
     merged,
   );
   return { ...conceptView(ctx, c, mentions, true), merged_into: target ? { id: target.id, name: target.name_ar || target.name_en || target.id } : null };
@@ -180,17 +182,31 @@ function mergeCore(ctx: AppContext, src: ConceptRow, dst: ConceptRow, now: numbe
   const id = src.id;
   const target = dst.id;
   ctx.db.run('UPDATE concept_mention SET concept_id = ? WHERE concept_id = ?', [target, id]);
-  // relations: re-point both ends; a duplicate of an existing relation of the target is dropped (the target's row,
-  // which may carry the owner's decision, wins); a relation that would link the target to itself is dropped
-  for (const r of ctx.db.all<{ id: string; from_concept_id: string; to_concept_id: string; relation: string }>(
-    'SELECT id, from_concept_id, to_concept_id, relation FROM concept_relation WHERE from_concept_id = ? OR to_concept_id = ?',
+  // relations: re-point both ends; a relation that would link the target to itself is dropped. When the target already
+  // has the same relation, ONE row survives and it is the one that carries an owner decision: the target's row wins
+  // unless it is an undecided suggestion and the moved row is decided (accepted / rejected / owner-made) — a merge
+  // never silently undoes the owner's rejection or acceptance (review F2)
+  const decided = (x: { origin: string; status: string }) => x.origin === 'owner' || x.status !== 'suggested';
+  for (const r of ctx.db.all<{ id: string; from_concept_id: string; to_concept_id: string; relation: string; origin: string; status: string }>(
+    'SELECT id, from_concept_id, to_concept_id, relation, origin, status FROM concept_relation WHERE from_concept_id = ? OR to_concept_id = ?',
     [id, id],
   )) {
     const from = r.from_concept_id === id ? target : r.from_concept_id;
     const to = r.to_concept_id === id ? target : r.to_concept_id;
-    const dup = ctx.db.get('SELECT 1 AS x FROM concept_relation WHERE from_concept_id = ? AND to_concept_id = ? AND relation = ? AND id <> ?', [from, to, r.relation, r.id]);
-    if (from === to || dup) ctx.db.run('DELETE FROM concept_relation WHERE id = ?', [r.id]);
-    else ctx.db.run('UPDATE concept_relation SET from_concept_id = ?, to_concept_id = ?, updated_at = ? WHERE id = ?', [from, to, now, r.id]);
+    if (from === to) {
+      ctx.db.run('DELETE FROM concept_relation WHERE id = ?', [r.id]);
+      continue;
+    }
+    const dup = ctx.db.get<{ id: string; origin: string; status: string }>(
+      'SELECT id, origin, status FROM concept_relation WHERE from_concept_id = ? AND to_concept_id = ? AND relation = ? AND id <> ?',
+      [from, to, r.relation, r.id],
+    );
+    if (dup && !(decided(r) && !decided(dup))) {
+      ctx.db.run('DELETE FROM concept_relation WHERE id = ?', [r.id]);
+      continue;
+    }
+    if (dup) ctx.db.run('DELETE FROM concept_relation WHERE id = ?', [dup.id]);
+    ctx.db.run('UPDATE concept_relation SET from_concept_id = ?, to_concept_id = ?, updated_at = ? WHERE id = ?', [from, to, now, r.id]);
   }
   for (const n of [src.name_en, src.name_ar]) if (n && nameNorm(n) !== nameNorm(dst.name_en ?? '') && nameNorm(n) !== nameNorm(dst.name_ar ?? '')) addAlias(ctx, target, n, 'merge');
   ctx.db.run('UPDATE concept_alias SET concept_id = ? WHERE concept_id = ?', [target, id]);

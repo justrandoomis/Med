@@ -261,3 +261,18 @@ Remaining risks after the review (not fixed):
   exam / case title, artifact title or kind) and the route that opens them; the labels exist for every dependent type and
   an unknown type reads «عنصر مشتق». Tests: `g8-ac26.test.ts`, `apps/web/src/features/evidence/ContentAlertsPanel.g8.test.tsx`,
   `e2e/g8-ac26-correction.spec.ts`.
+
+## Track F4 — search in handwriting (§46, 2026-10-10)
+
+* New result type **`handwriting`** («خط يدي المقروء»; `SEARCH_RESULT_TYPES`, additive): owner_content_fts entity
+  `ink_recognition` holds the normalized key of a reading of the owner's pen strokes on a source page or note page
+  (written-answer readings are not indexed). The FTS `origin` is `recognized` for the machine reading and `owner` once the
+  owner corrected it; the result's `origin` is `recognized` («مقروء آليًا») or `owner_typed` («كتبته بنفسك»). Results are
+  ranked with the owner's own content (group 1), never as a source, `is_evidence: false`.
+* A reading is not a hit when every stroke it read was erased (tombstoned), when its note page is in the trash, or when it
+  was deleted (the derived text only); source filters (type, folder subtree, source) apply as for notes. A purge of the
+  page / note page removes the reading by cascade, and a trigger removes its FTS row (`0270_ink_recognition.sql`).
+* Location: the source page (with its AC-04 label) → the reader opens there; a note-page hit shows «في صفحة ملاحظات».
+* Tests: `srv:annotations/recognition.test.ts` («search in handwriting shows its origin; a correction keeps the machine
+  reading and becomes the owner text»: hit + highlight + location; correction → `owner_typed`, old word no longer found,
+  revert; erasing the strokes removes the hit; deleting a reading removes its FTS row).

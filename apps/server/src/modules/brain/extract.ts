@@ -63,7 +63,7 @@ const SECTION_RULES: Array<{ role: SectionRole; re: RegExp }> = [
   { role: 'definition', re: /\bdefinitions?\b|التعريف|تعريف/ },
   { role: 'classification', re: /\bclassifications?\b|\btypes?\b|\bcategories\b|\bsubtypes?\b|التصنيف|تصنيف|الانواع|انواع/ },
   { role: 'cause', re: /\ba?etiology\b|\bcauses?\b|\brisk factors?\b|الاسباب|اسباب|المسببات|عوامل الخطوره/ },
-  { role: 'mechanism', re: /\bpathophysiology\b|\bpathogenesis\b|\bmechanisms?\b|الاليه|الفيزيولوجيا المرضيه|الامراضيه/ },
+  { role: 'mechanism', re: /\bpathophysiology\b|\bpathogenesis\b|\bmechanisms?(?: of action)?\b|الاليه|الفيزيولوجيا المرضيه|الامراضيه/ },
   { role: 'complication', re: /\bcomplications?\b|المضاعفات|مضاعفات/ },
   { role: 'drug', re: /\bdrugs?\b|\bmedications?\b|\bpharmacolog\w*|الادويه|ادويه|العقاقير/ },
   { role: 'value', re: /\bnormal values?\b|\breference (?:values?|ranges?)\b|\blab(?:oratory)? values?\b|\bvalues\b|القيم الطبيعيه|القيم/ },
@@ -138,7 +138,8 @@ function trimStructural(name: string): string {
     const n = normLite(w).replace(/[^\p{L}\p{N}]/gu, '');
     return STRUCTURAL.has(n) || /^(?:of|in|for|by|and|or|the|a|an|to|with|on|from|في|من|الى|على|و|او|عن)$/.test(n);
   };
-  while (words.length && edge(words[0]!)) words.shift();
+  // «Type 2 …», «Class III …»: a structural word followed by a number belongs to the name
+  while (words.length && edge(words[0]!) && !(words.length > 1 && /^(?:[0-9٠-٩]+|[IVX]+)\b/.test(words[1]!))) words.shift();
   while (words.length && edge(words[words.length - 1]!)) words.pop();
   return words.join(' ');
 }
@@ -150,16 +151,32 @@ export function sectionRoleOf(heading: string): SectionRole | null {
   return null;
 }
 
-/** Heading part without its section keywords: «Types of shock» → «shock», «Management of X» → «X». */
+// a section keyword at the START / END of a heading (whole words only: «Drug-induced …» keeps its «Drug»)
+const SECTION_LEAD = SECTION_RULES.map((r) => new RegExp(`^(?:${r.re.source})(?=$|[\\s:،,;—–])`, 'i'));
+const SECTION_TRAIL = SECTION_RULES.map((r) => new RegExp(`(?:^|[\\s:،,;—–])(?:${r.re.source})$`, 'i'));
+/** «Type 2 …», «Class III …», «Stage 4 …»: the keyword is part of the name, not a section word */
+const NUMBERED = /^\s*(?:[0-9٠-٩]+|[IVX]+)\b/;
+
+/**
+ * Heading part without its section keywords: «Types of shock» → «shock», «Management of X» → «X», «X complications» →
+ * «X». Keywords are removed only at the EDGES, so the name is always a contiguous run of the printed heading — never a
+ * new phrase made by cutting a word out of its middle («Cardiac drug toxicity» stays whole, «Type 2 diabetes mellitus»
+ * keeps its «Type 2») (review F2: a stated mention's name must literally appear in its quote).
+ */
 function headingConceptPart(part: string): string {
   let s = cleanName(part);
-  const n = normLite(s);
-  for (const r of SECTION_RULES) {
-    if (!r.re.test(n)) continue;
-    // remove the keyword phrase from the printed text (English only — Arabic keywords make the part structural)
-    s = s.replace(new RegExp(r.re.source.replace(/\\b/g, '\\b'), 'gi'), ' ');
+  for (let guard = 0; guard < 16; guard++) {
+    const before = s;
+    for (let i = 0; i < SECTION_RULES.length; i++) {
+      const lead = SECTION_LEAD[i]!.exec(s);
+      if (lead && lead[0].length > 0 && !NUMBERED.test(s.slice(lead[0].length))) s = s.slice(lead[0].length).replace(/^[\s:،,;—–]+/u, '');
+      const trail = SECTION_TRAIL[i]!.exec(s);
+      if (trail && trail[0].trim().length > 0) s = s.slice(0, trail.index).replace(/[\s:،,;—–]+$/u, '');
+    }
+    s = trimStructural(s);
+    if (s === before) break;
   }
-  return trimStructural(s.replace(/\s+/g, ' ').trim());
+  return s.replace(/\s+/g, ' ').trim();
 }
 
 /** Sentences of a text with their exact substrings (decimal points and abbreviations survive). */

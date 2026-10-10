@@ -29,7 +29,7 @@ const MAX_MS = 24 * 3600 * 1000;
 const TIMING = /^\s*(\S+)\s+-->\s+(\S+)(?:\s+.*)?$/;
 
 export function detectFormat(text: string): 'vtt' | 'srt' | null {
-  const t = text.replace(/^﻿/, '').trimStart();
+  const t = text.replace(/^\uFEFF/, '').trimStart();
   if (/^WEBVTT(?:[ \t]|$|\r?\n)/.test(t)) return 'vtt';
   if (/^\d+\s*\r?\n\s*\d{1,2}:\d{2}:\d{2}[,.]\d{1,3}\s+-->/.test(t)) return 'srt';
   if (/^\d{1,2}:\d{2}:\d{2}[,.]\d{1,3}\s+-->/.test(t)) return 'srt';
@@ -82,7 +82,7 @@ function cleanText(lines: string[]): { text: string; speaker: string | null } {
 
 function blocks(text: string): string[][] {
   return text
-    .replace(/^﻿/, '')
+    .replace(/^\uFEFF/, '')
     .replace(/\r\n?/g, '\n')
     .split(/\n[ \t]*\n+/)
     .map((b) => b.split('\n').filter((l, i, arr) => !(l.trim() === '' && (i === 0 || i === arr.length - 1))))
@@ -129,7 +129,7 @@ export function parseSubtitles(input: string, format: 'vtt' | 'srt' | 'auto' = '
   for (const [i, b] of all.entries()) {
     if (detected === 'vtt') {
       if (i === 0) {
-        if (!/^WEBVTT(?:[ \t]|$)/.test(b[0]!.replace(/^﻿/, ''))) throw new SubtitleError('ملف WebVTT يجب أن يبدأ بالسطر «WEBVTT».');
+        if (!/^WEBVTT(?:[ \t]|$)/.test(b[0]!.replace(/^\uFEFF/, ''))) throw new SubtitleError('ملف WebVTT يجب أن يبدأ بالسطر «WEBVTT».');
         // the header block may be followed directly by a cue without a blank line (lenient)
         const rest = b.slice(1);
         if (!rest.some((l) => l.includes('-->'))) continue;

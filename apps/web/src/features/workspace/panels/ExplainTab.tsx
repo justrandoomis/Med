@@ -104,6 +104,8 @@ export function ExplainTab({ doc, page, pageIndex, online }: ExplainTabProps) {
   const [compareA, setCompareA] = useState('');
   const [compareB, setCompareB] = useState('');
   const [askFocus, setAskFocus] = useState(0);
+  // (track F4) a composed question from «اسأل عن المحدد» on handwriting (put in the composer, never auto-sent)
+  const [askPrefill, setAskPrefill] = useState<string | null>(null);
   const [history, setHistory] = useState<ArtifactListItem[]>([]);
   const abort = useRef<AbortController | null>(null);
   const pending = usePendingAiRequest();
@@ -123,7 +125,7 @@ export function ExplainTab({ doc, page, pageIndex, online }: ExplainTabProps) {
       .then((r) => setHistory(r.artifacts))
       .catch(() => undefined);
   };
-  useEffect(loadHistory, [sourceId, online]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(loadHistory, [sourceId, online]);
 
   const pageHistory = history.filter((h) => h.anchor_page_id === (effective?.anchor.page_id ?? null)).slice(0, 6);
 
@@ -185,6 +187,7 @@ export function ExplainTab({ doc, page, pageIndex, online }: ExplainTabProps) {
       setContext(ctx);
       if (pending.action === 'ask') {
         setMode('ask');
+        setAskPrefill(pending.prefill ?? null);
         setAskFocus((n) => n + 1);
       } else if (pending.action === 'compare') {
         setMode('compare');
@@ -344,6 +347,7 @@ export function ExplainTab({ doc, page, pageIndex, online }: ExplainTabProps) {
           gate={chatGate}
           online={online}
           focusKey={askFocus}
+          prefill={askPrefill}
           onScopeChange={setScope}
         />
       )}

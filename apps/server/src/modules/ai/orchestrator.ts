@@ -153,6 +153,11 @@ export class AiOrchestrator {
     return this.taskStatus(task, this.budget()).available;
   }
 
+  /** (track F4) the configured provider can run this task at all (ignores the budget) */
+  supportsTask(task: AiTask): boolean {
+    return this.provider?.supports(task) ?? false;
+  }
+
   private recordUsage(u: {
     task: AiTask;
     provider: string;

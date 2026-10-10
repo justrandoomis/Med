@@ -56,7 +56,7 @@ apps/server/src/
   db/migrations/NNNN_*.sql  migrations (0001 core). Module migrations use their range (below)
   lib/                      errors, hashing, http helpers, safe-zip, ssrf-guard, text utils
   modules/<module>/         one folder per module: index.ts (Fastify plugin), service files, routes
-                            (21 modules, registered in modules/index.ts)
+                            (22 modules, registered in modules/index.ts)
   cli/                      backup / restore-verify CLIs (`npm run backup`, `npm run restore:verify`)
 apps/server/test/           vitest tests; test/helpers/ (createTestApp, fixtures, fake AI provider);
                             test/acceptance/ (AC-01…AC-30 groups G1–G8); test/perf/ (opt-in, MEDLEVO_PERF=1)
@@ -64,7 +64,7 @@ apps/web/src/
   main.tsx, app/            router, providers, shell (nav), route table
   design/                   design system (tokens.css + components) — the ONLY place for base UI primitives
   lib/                      api client, localdb (Dexie), outbox/sync engine, offline download manager, capabilities
-  features/<feature>/       screens & feature components; each exports `routes` from routes.tsx (18 features)
+  features/<feature>/       screens & feature components; each exports `routes` from routes.tsx (19 features)
 apps/web/test/              web vitest tests (core, ink, learning) + the ink Playwright harness (test/ink/)
 fixtures/golden/            Golden Set fixture files (synthetic structural test documents) + README + expected.json
 fixtures/acceptance/        derived synthetic fixtures of the acceptance groups (make_g*_fixtures scripts) + README
@@ -78,7 +78,7 @@ docs/                       architecture, ADRs, module notes, requirement & capa
 **Module map** (§50): Library · Sources · Document Processing · Evidence · Study Book · Ink · Questions ·
 Learning · Sync · AI Orchestration · Personal Settings · Observability.
 
-All 21 server modules are mounted under `/api/<name>` (`settings` owns `/api/settings` and `/api/capabilities`). The
+All 22 server modules are mounted under `/api/<name>` (`settings` owns `/api/settings` and `/api/capabilities`). The
 base schema is `0001_core.sql`; the «files» column lists the migration files that exist (2026-10-10).
 
 | Module (server dir) | Owns tables | Migration range · files | Web feature dirs |
@@ -91,25 +91,27 @@ base schema is `0001_core.sql`; the «files» column lists the migration files t
 | `sync` | sync_operation, sync_change | 0040–0049 · — | `lib/sync.ts`, `features/offline` |
 | `library` | library_node, tag, tag_link, topic, topic_link | 0100–0149 · `0100_library_trash` | `features/library`, `features/home` |
 | `sources` | source, source_link, source_version, source_page, source_region | 0150–0199 · `0150_sources_registry` | `features/upload`, `features/sources` |
-| `processing` | document_chunk, chunk_fts, image_asset | 0200–0249 · `0200_processing` | (processing status: sources page, control → processing) |
-| `annotations` | note_page, annotation, annotation_target, note, ink_recognition, study_session, source_progress | 0250–0299 · `0250_annotations` | `features/workspace` |
+| `processing` | document_chunk, chunk_fts, image_asset, figure_reading (track F3: derived vision reading of a figure, uncertain until the owner reviews it) | 0200–0249 · `0200_processing`, `0210_figure_reading` (track F3) | (processing status: sources page, control → processing) |
+| `annotations` | note_page, annotation, annotation_target, note, ink_recognition, study_session, source_progress | 0250–0299 · `0250_annotations`, `0260_note_pages_links_images`, `0270_ink_recognition` (track F4) | `features/workspace` |
 | `evidence` | evidence, claim, citation, verification_result, artifact_dependency, content_alert, content_alert_item, content_alert_job, concept*, medical_term | 0300–0349 · `0300_evidence` | `features/evidence` (Source Inspector) |
 | `search` | (chunk_fts, question_fts, owner_content_fts, chunk_embedding) | 0350–0399 · — | `features/search` |
 | `ai` | usage_record | 0400–0449 · — | (control → intelligence) |
-| `studybook` | artifact, artifact_section, content_block, contextual_thread, message, explanation_rule_override, artifact_reanchor | 0450–0499 · `0450_studybook` | `features/studybook`, `features/workspace/studybook` |
-| `questions` | question*, answer_key_entry(_v2), answer_evidence, question_lecture_link, question_duplicate, question_extraction, question_fts | 0500–0549 · `0500_questions`, `0510_question_occurrence_lookup` | `features/questions` |
-| `exams` | exam, exam_attempt, question_attempt, written_attempt, exam_item_event, question_generation_run, generated_question_candidate | 0550–0599 · `0550_exams` | `features/exams` |
+| `studybook` | artifact, artifact_section, content_block, contextual_thread, message, explanation_rule_override, artifact_reanchor, study_diagram (track F3: timelines / flowcharts) | 0450–0499 · `0450_studybook`, `0460_study_diagram` (track F3) | `features/studybook`, `features/workspace/studybook` |
+| `questions` | question*, answer_key_entry(_v2), answer_evidence, question_lecture_link, question_duplicate, question_extraction, question_fts, question_derivation (track F3: translation / paraphrase requests → derived question_version rows) | 0500–0549 · `0500_questions`, `0510_question_occurrence_lookup`, `0520_question_derivation` (track F3) | `features/questions` |
+| `exams` | exam, exam_attempt, question_attempt, written_attempt, exam_item_event, question_generation_run, generated_question_candidate, simulation_run (track F3) | 0550–0599 · `0550_exams`, `0560_written_handwriting` (track F4), `0570_simulation` (track F3) | `features/exams` |
 | `learning` | flashcard, review_event, review_state, review_reset, flashcard_impact, flashcard_duplicate_decision, weakness, learning_profile, study_plan, plan_task, revision_session | 0600–0649 · `0600_learning` | `features/review`, `features/weakness`, `features/planner`, `features/home` |
-| `media` | media_overlay, audio_asset, transcript_segment, transcript_revision, transcript_import, media_region_link, image_meta, image_quiz, image_quiz_answer | 0650–0699 · `0650_media` | `features/media` |
-| `control` | review_queue_item, control_region_correction, evaluation_case | 0700–0749 · `0700_control` | `features/control` |
+| `media` | media_overlay, audio_asset, transcript_segment, transcript_revision, transcript_import, media_region_link, image_meta, image_quiz, image_quiz_answer, audio_recording (track F4) | 0650–0699 · `0650_media`, `0660_audio_recording` | `features/media` |
+| `control` | review_queue_item, control_region_correction, evaluation_case, evaluation_run, client_error (track F5: evaluation store, client error sink) | 0700–0749 · `0700_control`, `0710_quality_ops` (track F5) | `features/control` |
 | `data` (offline packages, export, backup / restore) | data_server_epoch, data_backup | 0750–0769 · `0750_data` | `features/offline`, `lib/offline.ts` |
 | `cases` | clinical_case, clinical_case_version, case_attempt, case_event | 0770–0799 · `0770_cases` | `features/cases` |
+| `brain` (Course Brain, track F2) | concept_alias, concept_extraction, concept_relation (+ columns on concept / concept_mention: merge pointer, origins, `support`, quote, section), `stated` concept_mention rows | 0800–0849 · `0800_course_brain` | `features/brain` (topics, concepts, knowledge map, coverage, student map; course page tabs) |
 
 Shared writers (documented in the module notes): `review_queue_item` rows are written by processing, evidence,
-questions, studybook and exams with their own `kind`; `concept` / `concept_mention` candidates are written by questions; the
+questions, studybook and exams with their own `kind`; `concept` / `concept_mention` candidates are written by questions,
+`stated` mentions, merges, aliases and relations by brain (`docs/modules/course-brain.md`); the
 sources purge deletes rows of other modules in one transaction (`docs/modules/library-sources.md`). Created but never
-written yet: `chunk_embedding` (no embeddings provider), `evaluation_case` (§57 store not built), `concept_relation`
-(Course Brain not built) — see `docs/REQUIREMENTS_MATRIX.md`.
+written yet: `chunk_embedding` (no embeddings provider) — see `docs/REQUIREMENTS_MATRIX.md`. (`evaluation_case` is
+written by the control module since track F5: the evaluation catalogue is synced into it at boot and by `npm run eval`.) (`concept_relation` is written by the brain module since track F2.)
 
 A module may READ any table. It WRITES only its own tables, or calls the owning module's service
 functions. Adding a column/table → new migration file in the module's range (never edit 0001 after it ships).
@@ -197,7 +199,8 @@ claiming process (`processing_job.worker_id` = host/pid/boot nonce) is provably 
 
 ```ts
 type AiTask = 'explain' | 'study_book' | 'chat' | 'summarize' | 'compare' | 'verify_support' | 'generate_questions'
-  | 'validate_question' | 'vision_figure' | 'grade_written' | 'case_sim' | 'classify' | 'embed' | 'transcribe';
+  | 'validate_question' | 'vision_figure' | 'grade_written' | 'case_sim' | 'classify' | 'embed' | 'transcribe'
+  | 'ink_recognize';   // (track F4) handwriting: a cropped black-on-white picture of the owner's strokes (vision)
 ai.status() → { configured, provider?, tasks: Record<AiTask, { available, model?, reason_ar? }>, budget }
 ai.isAvailable(task) → boolean
 ai.generateStructured<T>({ task, schema /* zod */, system, input /* untrusted content clearly delimited */,

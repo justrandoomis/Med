@@ -223,6 +223,7 @@ export function InkLayer({ targetKey, anchor, view, interactive, onStrokeActiveC
 function PageSummary({ store, targetKey }: { store: ReturnType<typeof useInkInternal>['store']; targetKey: string }) {
   const [version, setVersion] = useState(0);
   useEffect(() => store.subscribePage(targetKey, (e) => (e.kind === 'items' || e.kind === 'loaded') && setVersion((v) => v + 1)), [store, targetKey]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- `version` is the page's change counter: the store is mutable, so it is what invalidates the summary
   const text = useMemo(() => summarize(store.items(targetKey)), [store, targetKey, version]);
   return (
     <p className="ml-visually-hidden" dir="rtl">

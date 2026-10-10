@@ -13,9 +13,9 @@ import { AppError } from '../../lib/errors';
 import { newId } from '../../lib/ids';
 import { versionConcepts } from './coverage';
 import { EXTRACTOR_VERSION } from './extract';
-import { recomputeInferredRelations, relationsCount } from './relations';
+import { recomputeInferredRelations, relationsCount, type RecomputeStats } from './relations';
 import type { ExtractionSummary } from './run';
-import { courseKey, courseSources, locationOfRegion, nodeTitle, PROCESSED, studySource, type StudySource } from './store';
+import { courseKey, courseSources, locationOfRegion, nodeTitle, PROCESSED, sourcesOfCourseKey, studySource, type StudySource } from './store';
 
 function latestJob(ctx: AppContext, versionId: string): { id: string; status: string } | null {
   return (
@@ -60,9 +60,10 @@ function lectureStatus(ctx: AppContext, s: StudySource): BrainLectureStatus {
 // inferred relations follow the course's order, moves and owner merges: recompute when any of those changed
 const relationMemo = new WeakMap<Db, Map<string, string>>();
 
-function relationSignature(ctx: AppContext, key: string, sources: StudySource[]): string {
+function relationSignature(ctx: AppContext, key: string): string {
   const parts = [
-    sources.filter((s) => courseKey(s) === key).map((s) => [s.id, s.version_id, s.sort_order]),
+    // the same lectures the recompute reads (every source of the course group, in course order)
+    sourcesOfCourseKey(ctx, key).map((s) => [s.id, s.version_id, s.sort_order]),
     ctx.db.get('SELECT COUNT(*) AS c, MAX(updated_at) AS u FROM concept_extraction'),
     ctx.db.get('SELECT COUNT(*) AS c, MAX(updated_at) AS u, SUM(CASE WHEN merged_into_id IS NOT NULL THEN 1 ELSE 0 END) AS m FROM concept'),
     ctx.db.get('SELECT COUNT(*) AS c FROM concept_alias'),
@@ -77,11 +78,24 @@ export function refreshCourseRelations(ctx: AppContext, sources: StudySource[]):
     relationMemo.set(ctx.db, memo);
   }
   for (const key of new Set(sources.map(courseKey))) {
-    const sig = relationSignature(ctx, key, sources);
+    const sig = relationSignature(ctx, key);
     if (memo.get(key) === sig) continue;
     recomputeInferredRelations(ctx, key);
-    memo.set(key, relationSignature(ctx, key, sources));
+    memo.set(key, relationSignature(ctx, key));
   }
+}
+
+/** Recompute one course group's inferred relations now (extraction job) and remember the state it was computed for,
+ * so the next course page does not redo the same work (review F2: large courses). */
+export function recomputeCourseRelations(ctx: AppContext, key: string): RecomputeStats {
+  const stats = recomputeInferredRelations(ctx, key);
+  let memo = relationMemo.get(ctx.db);
+  if (!memo) {
+    memo = new Map();
+    relationMemo.set(ctx.db, memo);
+  }
+  memo.set(key, relationSignature(ctx, key));
+  return stats;
 }
 
 export function courseBrain(ctx: AppContext, nodeId: string): CourseBrainResponse {
@@ -105,6 +119,12 @@ export function courseBrain(ctx: AppContext, nodeId: string): CourseBrainRespons
   ];
   const notProcessed = lectures.filter((l) => !l.processed).length;
   if (notProcessed) notes.push(`${notProcessed} من مصادر الكورس لم تكتمل معالجتها بعد، فلا هيكل لها حتى تكتمل.`);
+  const cut = lectures.filter((l) => l.extraction && (l.extraction.counts.mentions_found ?? 0) > l.extraction.counts.mentions);
+  if (cut.length) {
+    notes.push(
+      `استُخرج جزء فقط من هيكل ${cut.map((l) => `«${l.title}» (أول ${l.extraction!.counts.mentions} من ${l.extraction!.counts.mentions_found} ذكرًا)`).join('، ')}: ما بعده من الصفحات بلا مفاهيم مستخرجة.`,
+    );
+  }
   const stale = lectures.filter((l) => l.extraction && !l.extraction.current).length;
   if (stale) notes.push(`${stale} من المصادر استُخرج هيكلها بإصدار أقدم من المستخرج؛ أعد الاستخراج لتحديثها (قراراتك تبقى).`);
   return {

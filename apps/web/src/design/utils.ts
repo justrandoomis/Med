@@ -99,9 +99,12 @@ export function useFocusTrap(
   active: boolean,
   opts: { initialFocus?: RefObject<HTMLElement | null>; returnFocus?: boolean } = {},
 ): void {
-  const { initialFocus, returnFocus = true } = opts;
+  // read at activation / deactivation time: a new `opts` object on every render must not re-run the trap
+  const optsRef = useRef(opts);
+  optsRef.current = opts;
   useEffect(() => {
     if (!active) return;
+    const { initialFocus, returnFocus = true } = optsRef.current;
     const root = ref.current;
     if (!root) return;
     const token = Symbol('focus-trap');
@@ -148,7 +151,7 @@ export function useFocusTrap(
         previouslyFocused.focus({ preventScroll: true });
       }
     };
-  }, [active]);
+  }, [active, ref]);
 }
 
 /** Calls `handler` on pointerdown outside every element in `refs` while `active`. */
@@ -159,12 +162,15 @@ export function useOutsidePointer(
 ): void {
   const handlerRef = useRef(handler);
   handlerRef.current = handler;
+  // the latest refs (callers pass a new array literal on every render)
+  const refsRef = useRef(refs);
+  refsRef.current = refs;
   useEffect(() => {
     if (!active) return;
     const onDown = (e: PointerEvent) => {
       const target = e.target as Node | null;
       if (!target) return;
-      if (refs.some((r) => r.current?.contains(target))) return;
+      if (refsRef.current.some((r) => r.current?.contains(target))) return;
       handlerRef.current(e);
     };
     document.addEventListener('pointerdown', onDown, true);

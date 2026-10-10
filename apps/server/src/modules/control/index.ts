@@ -12,6 +12,7 @@
 //   GET  /sources                      per-task source priority + each source's priority / selection reason
 //   GET  /storage                      data directory usage by category (measured)
 //   GET  /history?entity_type=&entity_id=&limit=&before=   audit log in words
+//   (track F5) GET /evaluation · GET /evaluation/runs/:id(.md) · GET /health · GET|POST|DELETE /client-errors (./quality.ts)
 //
 // Retry / cancel of jobs: /api/jobs/:id/retry|cancel. Page re-processing: /api/sources/versions/:id/reprocess.
 import type { FastifyInstance } from 'fastify';
@@ -36,6 +37,7 @@ import { processingOverview } from './processing';
 import { counts, listReview, resolveReview, reviewDetail } from './review';
 import { sourcesPriorities } from './sources';
 import { storageReport } from './storage';
+import { registerQualityRoutes } from './quality';
 
 const ID = z.string().min(1).max(64).regex(/^[0-9A-Za-z_-]+$/);
 
@@ -140,4 +142,7 @@ export default async function register(app: FastifyInstance, { ctx }: ModuleOpti
   app.get('/sources', async () => sourcesPriorities(ctx));
   app.get('/storage', async () => storageReport(ctx));
   app.get('/history', async (req) => history(ctx, parseQuery(historyQuery, req)));
+
+  // (track F5) quality ops: evaluation reports, daily trends, client error sink — see ./quality.ts
+  registerQualityRoutes(app, ctx);
 }

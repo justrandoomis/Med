@@ -2,11 +2,12 @@
 // never waits for the network; edits made while the create is still queued coalesce (one op, full state); once the
 // server acknowledged a revision, the next edit names it as base_rev (never mistaken for a stale edit); trash is a
 // tombstone + delete op; restore is an upsert; server seeding never overwrites a page with unsynced changes.
-import { beforeEach, describe, expect, it } from 'vitest';
-import { newId, type NotePageView } from '@medlevo/shared';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { newId, type AnnotationDTO, type NotePageView } from '@medlevo/shared';
+import { api } from '../../../lib/api';
 import { MedLevoDB } from '../../../lib/localdb';
 import type { WorkspaceNotePageRow } from './local';
-import { createNotePage, expectedRev, mergeServerNotePages, movedSortOrder, restoreNotePage, sortOrderAtEnd, sortOrderBetween, trashNotePage, updateNotePage } from './notePages';
+import { createNotePage, expectedRev, fetchNotePageInk, mergeServerNotePages, movedSortOrder, restoreNotePage, sortOrderAtEnd, sortOrderBetween, trashNotePage, updateNotePage } from './notePages';
 
 let db: MedLevoDB;
 beforeEach(async () => {
@@ -73,11 +74,50 @@ describe('note pages, local-first', () => {
     const trashed = (await db.notePages.get(row.id)) as WorkspaceNotePageRow;
     expect(trashed.deletedAt).toBeTruthy();
     expect((await ops(row.id)).at(-1)).toMatchObject({ op: 'delete', base_rev: 1 });
-    await restoreNotePage(db, trashed);
+    await restoreNotePage(db, trashed, { online: () => false });
     expect((await db.notePages.get(row.id))!.deletedAt).toBeNull();
     const last = (await ops(row.id)).at(-1)!;
     expect(last).toMatchObject({ op: 'upsert', base_rev: 2 });
     expect(last.payload).toMatchObject({ title: 'صفحة', template: 'ruled' });
+  });
+
+  it('restore brings the writing of a page this device never had (trashed before it was seeded) — online only (review F1)', async () => {
+    const row = await createNotePage(db, { nodeId: 'NODE', template: 'ruled', sortOrder: 1 });
+    await ack(row.id, 1);
+    await trashNotePage(db, row);
+    const trashed = (await db.notePages.get(row.id)) as WorkspaceNotePageRow;
+    const offline = vi.fn(async () => 0);
+    await restoreNotePage(db, trashed, { fetchInk: offline, online: () => false });
+    expect(offline).not.toHaveBeenCalled();
+    // online: the server's live annotations of that page land on this device (never over unsynced local changes)
+    const stroke: AnnotationDTO = {
+      id: newId(),
+      kind: 'ink',
+      tool: 'pen',
+      anchor: { type: 'note_page', note_page_id: row.id, space: 'page_norm' },
+      data: { v: 1, points: [[0.1, 0.1, 0, 0.5], [0.2, 0.2, 10, 0.5]], style: { tool: 'pen', color: 'ink', width: 0.004 }, bbox: { x: 0.1, y: 0.1, w: 0.1, h: 0.1 }, pressure_available: false, tilt_available: false },
+      layer: 'ink',
+      z: 1,
+      locked: false,
+      anchor_status: 'ok',
+      previous_anchor: null,
+      input: null,
+      device_id: 'OTHER',
+      rev: 1,
+      created_at: 1,
+      updated_at: 1,
+      deleted_at: null,
+    };
+    const get = vi.spyOn(api, 'get').mockResolvedValue({ annotations: [stroke] });
+    try {
+      let done: Promise<unknown> = Promise.resolve();
+      await restoreNotePage(db, trashed, { online: () => true, fetchInk: (id) => (done = fetchNotePageInk(id, db)) });
+      await done;
+      expect(get).toHaveBeenCalledWith('/annotations/by-targets', expect.objectContaining({ query: { keys: `note_page:${row.id}` } }));
+      expect(await db.annotations.get(stroke.id)).toMatchObject({ targetKey: `note_page:${row.id}`, kind: 'ink' });
+    } finally {
+      get.mockRestore();
+    }
   });
 
   it('server seeding: newer server rows land; a page with unsynced local changes is never overwritten', async () => {

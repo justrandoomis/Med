@@ -190,7 +190,9 @@ export function studentKnowledge(ctx: AppContext, opts: { courseNodeId?: string 
       `SELECT id, from_concept_id, support, status, origin FROM concept_relation WHERE to_concept_id = ? AND relation = 'prerequisite' AND status <> 'rejected'`,
       [v.concept_id],
     );
-    const prerequisites = rels.map((r) => {
+    // a prerequisite you REJECTED as a concept is not shown as something to study first (review F2)
+    const live = rels.filter((r) => ctx.db.get<{ status: string }>('SELECT status FROM concept WHERE id = ?', [resolveConceptId(ctx, r.from_concept_id)])?.status !== 'rejected');
+    const prerequisites = live.map((r) => {
       const pid = resolveConceptId(ctx, r.from_concept_id);
       const p = base.get(pid);
       const name = p?.name ?? ctx.db.get<{ n: string }>('SELECT COALESCE(name_ar, name_en, id) AS n FROM concept WHERE id = ?', [pid])?.n ?? pid;

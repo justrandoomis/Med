@@ -84,7 +84,6 @@ test.describe('G6 AC-21 ink stays on its source region', () => {
       const d = a!.data as InkData;
       expect(a!.anchor).toMatchObject({ type: 'page', page_id: pageId, page_index: 0, space: 'page_norm' });
       const xs = d.points.map((p) => p[0]);
-      const ys = d.points.map((p) => p[1]);
       expect(Math.min(...xs)).toBeGreaterThanOrEqual(expectedX[0] - 0.005);
       expect(Math.max(...xs)).toBeLessThanOrEqual(expectedX[1] + 0.005);
       const { regions } = await api.get<PageRegionsResponse>(`/api/sources/pages/${pageId}/regions`);

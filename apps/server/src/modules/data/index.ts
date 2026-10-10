@@ -32,7 +32,7 @@ import {
   startVerify,
 } from './backups';
 import { currentEpoch, ensureEpoch } from './epoch';
-import { exportAll, exportArtifact, exportNotes, exportQuestions, exportSource, type ExportFile } from './export';
+import { exportAll, exportArtifact, exportNotes, exportNotesDocx, exportQuestions, exportSource, type ExportFile } from './export';
 import { buildOfflinePackage, learningForSource, resolveOfflineTarget, type Forward } from './offline';
 
 export { currentEpoch, ensureEpoch, startRestoreEpoch, syncHeadSeq, type ServerEpoch } from './epoch';
@@ -85,7 +85,8 @@ export default async function register(app: FastifyInstance, { ctx }: ModuleOpti
   // PDF = print the HTML export from the browser (the UI says so); no server-side PDF renderer exists — the
   // capability says so too, so the Control Center never shows a bare «تعمل» for it (critic round)
   ctx.capabilities.set('export.pdf', 'available', EXPORT_PDF_LIMIT_AR);
-  ctx.capabilities.set('export.docx', 'not_implemented', 'تصدير DOCX غير مبني؛ استخدم Markdown أو HTML (والطباعة إلى PDF من المتصفح).');
+  // (track F5) Word export built on the server: RTL paragraphs, isolated LTR runs, citations as text, generated content labelled
+  ctx.capabilities.set('export.docx', 'available');
 
   const forwardFor =
     (req: FastifyRequest): Forward =>
@@ -168,17 +169,20 @@ export default async function register(app: FastifyInstance, { ctx }: ModuleOpti
   // ───────── exports ─────────
   app.get('/export/formats', async (): Promise<ExportFormatsResponse> => {
     const anki = ctx.capabilities.get('export.anki_tsv');
-    const docx = ctx.capabilities.get('export.docx');
     return {
       formats: [
         { format: 'md', label_ar: 'Markdown', note_ar: 'نص منظم مع الاستشهادات نصًّا (المصدر — الصفحة — الإصدار + الاقتباس). لا روابط داخلية.' },
         { format: 'html', label_ar: 'HTML للطباعة', note_ar: 'صفحة من اليمين لليسار مع عزل المصطلحات الإنجليزية، جاهزة للطباعة.' },
         { format: 'json', label_ar: 'JSON كامل', note_ar: 'البيانات المنظمة مع manifest للمعرّفات والإصدارات وبصمات المحتوى.' },
+        {
+          format: 'docx',
+          label_ar: 'Word (DOCX)',
+          note_ar: 'مستند Word من اليمين لليسار: المصطلحات والقيم الإنجليزية مقاطع مستقلة باتجاهها، الاستشهادات نصًّا (المصدر — الصفحة — الإصدار + الاقتباس) دون روابط، والمحتوى المولَّد معلَّم. الكتابة بالقلم ليست فيه.',
+        },
       ],
       pdf_note_ar: 'PDF عبر الطباعة من المتصفح: افتح تصدير HTML ثم «طباعة» ← «حفظ بصيغة PDF». لا يوجد مولّد PDF على الخادم.',
       other: [
         { key: 'export.anki_tsv', label_ar: 'بطاقات Anki (TSV)', available: anki.state === 'available', reason_ar: anki.state === 'available' ? 'من شاشة المراجعة (البطاقات).' : (anki.reason_ar ?? null) },
-        { key: 'export.docx', label_ar: 'DOCX', available: docx.state === 'available', reason_ar: docx.reason_ar ?? null },
       ],
     };
   });
@@ -197,7 +201,8 @@ export default async function register(app: FastifyInstance, { ctx }: ModuleOpti
 
   app.get('/export/notes', { config: { rateLimit: LIMITS.exportRoute } }, async (req, reply) => {
     const q = parseQuery(notesExportQuery, req);
-    return sendFile(reply, exportNotes(ctx, { sourceId: q.source_id, nodeId: q.node_id }, q.format));
+    const filter = { sourceId: q.source_id, nodeId: q.node_id };
+    return sendFile(reply, q.format === 'docx' ? await exportNotesDocx(ctx, filter) : exportNotes(ctx, filter, q.format));
   });
 
   app.get('/export/questions', { config: { rateLimit: LIMITS.exportRoute } }, async (req, reply) => {

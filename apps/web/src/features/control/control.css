@@ -1029,3 +1029,142 @@ ul.cc-outcome {
 .cc-roles__env {
   font-size: var(--ml-text-xs);
 }
+
+/* ───────── (track F5) evaluation (§57) ───────── */
+.cc-eval__rate {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--ml-space-1);
+}
+.cc-eval__rate-text {
+  font-size: var(--ml-text-xs);
+  line-height: var(--ml-leading-xs);
+  color: var(--ml-color-ink-2);
+}
+.cc-eval__table th[scope='row'] {
+  min-width: 10rem;
+}
+.cc-eval__cases,
+.cc-eval__runs,
+.cc-trends,
+.cc-errors {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-3);
+}
+.cc-eval__case,
+.cc-error {
+  padding: var(--ml-space-3);
+  border-radius: var(--ml-radius-md);
+  background: var(--ml-color-paper-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+  min-width: 0;
+}
+.cc-eval__case p,
+.cc-error p {
+  margin: 0;
+}
+.cc-eval__case-head,
+.cc-error__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-2);
+}
+.cc-eval__case summary,
+.cc-error summary,
+.cc-eval__how summary,
+.cc-trend__table summary {
+  cursor: pointer;
+  min-height: var(--ml-touch-target);
+  display: flex;
+  align-items: center;
+  color: var(--ml-color-accent);
+}
+.cc-eval__code,
+.cc-error__stack {
+  font-family: var(--ml-font-mono);
+  font-size: var(--ml-text-xs);
+  line-height: var(--ml-leading-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+.cc-error__stack {
+  margin: 0;
+  padding: var(--ml-space-2);
+  border-radius: var(--ml-radius-sm);
+  background: var(--ml-color-paper);
+}
+.cc-eval__sub {
+  font-size: var(--ml-text-md);
+  font-weight: var(--ml-weight-semibold);
+  margin: var(--ml-space-3) 0 var(--ml-space-1);
+}
+.cc-eval__runs li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ml-space-2) var(--ml-space-3);
+  font-size: var(--ml-text-sm);
+}
+.cc-error__msg {
+  overflow-wrap: anywhere;
+}
+.cc-error__kind {
+  font-weight: var(--ml-weight-semibold);
+}
+.cc-error__meta {
+  font-size: var(--ml-text-xs);
+}
+
+/* ───────── (track F5) daily trends (§56): one quiet strip per metric ───────── */
+.cc-trend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--ml-space-3);
+  padding-block: var(--ml-space-2);
+  border-top: 1px solid var(--ml-color-line);
+}
+.cc-trend:first-child {
+  border-top: 0;
+}
+.cc-trend__text {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+.cc-trend__text p {
+  margin: 0;
+}
+.cc-trend__label {
+  font-weight: var(--ml-weight-semibold);
+}
+.cc-trend__desc {
+  font-size: var(--ml-text-xs);
+  line-height: var(--ml-leading-xs);
+}
+.cc-strip {
+  flex: none;
+  display: block;
+  /* the oldest day sits at the inline start of the reading direction would be confusing in RTL: keep time left→right */
+  direction: ltr;
+}
+.cc-strip__bar {
+  fill: var(--ml-color-ink-3);
+}
+.cc-strip__bar--today {
+  fill: var(--ml-color-accent);
+}
+@media (forced-colors: active) {
+  .cc-strip__bar,
+  .cc-strip__bar--today {
+    fill: CanvasText;
+  }
+}

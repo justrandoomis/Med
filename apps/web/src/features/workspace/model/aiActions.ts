@@ -2,8 +2,8 @@
 // wired to the «الشرح والسؤال» rail tab: the toolbar hands the selection anchor over through a small store and
 // the workspace opens the tab. Create Flashcard (→ the card editor prefilled with the quote, whose evidence the server
 // creates) and Add to Revision (→ a «للمراجعة» page mark listed in the Review hub) are wired by the learning web track
-// (features/review). Create MCQ belongs to a later track and stays disabled with a specific, honest reason (§12, §61) —
-// or the capability's own reason when the feature is off.
+// (features/review). Create MCQ (track F3) hands the selection to the rail's «الأسئلة» section (mcqRequest.ts); without
+// an AI provider it is disabled with the capability's own reason (§12, §61).
 import { useSyncExternalStore } from 'react';
 import type { FeatureKey, NormBox, SelectionAnchor } from '@medlevo/shared';
 
@@ -27,7 +27,8 @@ export const SELECTION_AI_ACTIONS: readonly PendingAction[] = [
   { id: 'translate', label: 'ترجم', term: 'Translate', feature: 'ai.explain', wired: true },
   { id: 'ask', label: 'اسأل عن التحديد', term: 'Ask', feature: 'ai.chat', wired: true },
   { id: 'compare', label: 'قارن', term: 'Compare', feature: 'ai.summaries', wired: true },
-  { id: 'mcq', label: 'أنشئ سؤال اختيار من متعدد', term: 'Create MCQ', feature: 'ai.generate_questions', wired: false, notWiredReason: 'إنشاء سؤال من النص المحدد لم يُربط بالقارئ بعد. الأسئلة المولَّدة متاحة من «التدريب والامتحانات» ← «توليد أسئلة صعبة»، حيث تختار هذه المحاضرة وصفحاتها.' },
+  // (track F3) wired: the selection opens the Create MCQ panel in the rail's «الأسئلة» section (mcqRequest.ts)
+  { id: 'mcq', label: 'أنشئ سؤال اختيار من متعدد', term: 'Create MCQ', feature: 'ai.generate_questions', wired: true },
   { id: 'flashcard', label: 'أنشئ بطاقة مراجعة', term: 'Create Flashcard', feature: 'flashcards', wired: true },
   { id: 'revision', label: 'أضف إلى المراجعة', term: 'Add to Revision', feature: 'planner', wired: true },
   { id: 'explain_image', label: 'اشرح الصورة', term: 'Explain Image', feature: 'ai.figure_explain', wired: true },
@@ -61,6 +62,11 @@ export interface AiRequest {
   pageIndex: number;
   /** selection rectangles (normalized, unrotated page) → the rail resolves the region ids under them */
   rects: NormBox[];
+  /**
+   * (track F4) «اسأل عن المحدد» on handwriting: a composed question put in the chat composer for the owner to review
+   * and send — never sent automatically.
+   */
+  prefill?: string;
 }
 
 let pending: AiRequest | null = null;

@@ -240,18 +240,20 @@ Final command results (repo root, `NODE_OPTIONS='--disable-warning=ExperimentalW
 | `node apps/web/src/features/exams/real-server-check.mjs` | 36 PASS, «OK: 36 checks passed.» |
 
 ## 4. Not done / limits (honest)
-* **Translations of questions** (§37 «ترجمة مساعدة … نسخة مشتقة»): not built. The questions service can only create a
-  translation as a new *generated/owner* question (wrong origin label and no way to keep a `source_key`) or as the
-  new current version of the same question (would replace the original). Generated questions can be requested in
-  Arabic. The builder already groups translation/paraphrase lineages as one item.
+* ~~**Translations of questions** (§37): not built.~~ Built in track F3 as derived question versions
+  (`modules/questions/derived.ts`: translation / paraphrase, never the current version, option keys and the key kept,
+  independently validated, labelled «نسخة مشتقة مولدة»). AI-gated: tested with scripted providers only.
+  *(reconciled, track F5)*
 * `answer_evidence` rows are not written for generated questions (table of the questions module, no service); the
   option → evidence mapping lives in `generated_question_candidate.evidence_json` and the claims/citations.
 * No owner action to publish or edit a generated candidate from the review queue (by design: failing items are never
   published; the owner can request a new run).
-* Clinical cases / OSCE / viva (§42) and Exam DNA / generated simulation by question-source distribution (§40) are
-  not built (`is_generated_simulation` is only set when a simulation contains generated questions).
-* Handwriting recognition for written answers is not available (owner types the text); written attempts are online
-  (a local draft is kept on the device).
+* ~~Clinical cases / OSCE / viva (§42) and Exam DNA / generated simulation (§40) are not built.~~ Cases / OSCE /
+  viva: `modules/cases` (track D3); Exam DNA: `modules/learning` (track L1); generated simulation by the question-source
+  distribution: `modules/exams/simulation.ts` (track F3). *(reconciled, track F5)*
+* ~~Handwriting recognition for written answers is not available.~~ Track F4: a written answer can be handwritten
+  (`features/exams/HandwrittenAnswer.tsx`) and recognized when the capability is configured; the owner confirms the
+  text. Written attempts are still online (a local draft is kept on the device). *(reconciled, track F5)*
 * Difficulty is an estimate (generated estimate or personal accuracy), never a standard; concepts per item come from
   generated candidates and lecture-link concept ids only.
 * Offline: exams created online can be taken offline; creating exams, hints, checking, solutions, results and AI
@@ -260,9 +262,9 @@ Final command results (repo root, `NODE_OPTIONS='--disable-warning=ExperimentalW
   answer — answers are written immediately).
 * No real AI provider was run: every AI path is tested with the test-only scripted provider; without a key all AI
   features report `requires_configuration` and the UI shows the reason.
-* Navigation entry: `/exams` is reached from the workspace Questions tab («تدرّب» → `/practice`), the result /
-  history links and by URL; a link in the app shell navigation (core-web, `app/AppShell.tsx`) or on the home screen
-  belongs to those owners and was not added by this track.
+* Navigation entry: the review hub («المراجعة» → «التدريب والامتحانات» → `/exams/new`, track L2), the workspace
+  Questions tab, Exam DNA («محاكاة»), results / history links. There is still no item in the app shell's top navigation.
+  *(reconciled, track F5)*
 * Not run: real iPad/iPhone Safari, VoiceOver/NVDA, axe/Lighthouse.
 
 ## 5. Independent adversarial review (2026-10-09)
@@ -361,3 +363,74 @@ Commands after the fixes (repo root, `NODE_OPTIONS='--disable-warning=Experiment
   type on a correct answer, but `PATCH /question-attempts/:id/mistake` and the sync `upsert` accepted it. All three
   refuse now (409 / sync `rejected` with the Arabic reason).
 * Tests: `apps/server/test/acceptance/g8-ac27.test.ts`.
+
+## Track F4 — handwritten written answers (§41, 2026-10-10)
+
+* The written-answer screen has «طريقة الإجابة»: «لوحة المفاتيح» (unchanged) or «بخط اليد». The pad
+  (`features/workspace/handwriting/InkPad.tsx`) keeps its strokes on the device (`kv written-pad:<questionId>`) while
+  writing; «حوّل إلى نص» renders the strokes black on white (`renderPadPicture`) and sends them with the strokes to
+  `POST /api/annotations/recognitions` (purpose `written_answer`, `question_id`) — disabled with the server's reason when
+  no vision provider is configured (the keyboard path stays available).
+* The read text is shown with uncertain words marked; the owner edits it in «إجابتك كما تريد تقييمها» and must tick
+  «راجعت النص، وهو إجابتي» (editing again un-ticks it) before «احفظ الإجابة المؤكَّدة». The attempt carries
+  `answer_text` = the confirmed text, `recognized_text` = the machine reading, `recognized_confirmed: true` and
+  `recognition_id` (migration `0560_written_handwriting.sql`).
+* Server (`exams/written.ts`): with a `recognition_id` the reading must be a `written_answer` reading of THIS question
+  and finished (`annotations/recognition.ts writtenAnswerRecognition`); the machine reading is taken from the server's
+  record (a client-sent `recognized_text` is ignored); an unconfirmed reading is refused (400) — nothing unconfirmed is
+  ever saved for grading. Grading uses only the confirmed text; for a handwritten answer the grader is told never to
+  deduct for spelling, diacritics or reading artifacts, and the assessment notes «أي غموض في القراءة الآلية لا يُخصم منه
+  شيء». The attempts list says when an answer was handwritten and whether the owner edited the reading.
+* Tests: `srv:annotations/recognition.test.ts` («handwritten written answers»: pad strokes kept with the reading, not in
+  search; unconfirmed refused; confirmed + edited saved with the server's machine reading; grading prompt holds the
+  confirmed text, not the misread word, plus the no-deduction rule; another question's / an unfinished reading refused;
+  a pad without strokes refused) and `web:src/features/exams/handwritten.test.tsx` (draft restored; uncertain word
+  marked; save disabled until confirmed, re-confirm after an edit; saved body; disabled with the reason without a vision
+  provider).
+* Not run: grading with a real model (no key); real handwriting recognition quality (no vision provider here).
+* Review (2026-10-10): a pad may hold up to 4000 strokes (was 500, which a handwritten Arabic essay — many short strokes
+  for letters and dots — could exceed); past the bound the reason is in Arabic. Test: `recognition.test.ts` «a long
+  handwritten answer…».
+
+## Track F3 — Create MCQ from a selection, generated simulation, study-mode practice (2026-10-10; §30, §37–§40)
+
+* **Create MCQ from a selection** (`generation/pipeline.ts`, additive): `GenerateQuestionsRequest` gained `anchor`
+  `{page_id, region_ids?, quote?}` and `origin` (`builder | selection | simulation`). The anchor's page must belong to the
+  locked lecture version (else 409 `OUT_OF_SCOPE`), its regions must be on that page (409 `OUT_OF_SCOPE`), an empty anchor is refused
+  (400); the selected passage becomes the retrieval query (when no topic is given) and is named in the instruction as
+  the focus; the scope stays lecture-only by default. Everything after that is the regular pipeline (independent
+  validator, evidence checks on the explanation and each distractor, at most two repairs, review queue on failure,
+  abstention with its reason). `createGenerationRun(ctx, body, {enqueue})` / `executeGenerationRun(ctx, job)` are exported
+  so the simulation runs parts in its own job.
+* **Generated simulation** (`exams/simulation.ts`, migration `0570_simulation.sql`, table `simulation_run`, job
+  `exams.generate_simulation`): `POST /api/exams/simulations/preview` computes the plan WITHOUT AI from the owner's Exam
+  DNA (learning module): each lecture's share = unique sample questions linked to it / unique questions in the sample,
+  allocated by largest remainder, then item types inside each lecture by the sample's item-type distribution
+  (`largestRemainder`, `allocateSimulation` exported and unit-tested; unclassified items excluded); a course request uses
+  that course's sample AND its own lectures (a deduplicated sample question can also be linked to another course's
+  lecture — that lecture is listed as excluded «خارج الكورس المختار»); trashed lectures, question sources and lectures
+  without processed pages are excluded with the reason; the topic of each part comes from the concepts of the sample's
+  questions on that lecture. `POST /api/exams/simulations` (rate-limited) runs each part (≤ 5 questions) through the
+  generation pipeline with `origin: 'simulation'` (checkpointed, resumable), then assembles an exam `mode: 'simulation'`
+  of the PUBLISHED generated questions only (`is_generated_simulation`), titled «محاكاة مولدة (n)». Statuses: completed /
+  partial / abstained (nothing passed → no exam) / failed. Every view carries `SIMULATION_NOTICE_AR` («محاكاة مولدة —
+  ليست نسخة متوقعة من الامتحان القادم …»). `GET /api/exams/simulations`, `GET /api/exams/simulations/:id`.
+* **Web**: `/exams/simulate` (`SimulationScreen.tsx`): the plan (sample, counting note, warnings, one row per lecture
+  with «n من m», parts, item types; excluded lectures on demand), the notice, «ولّد المحاكاة وتحقق منها» (disabled with the
+  server's reason), live parts, «ابدأ المحاكاة» to the assembled exam, earlier simulations. Linked from `/exams` and from
+  Exam DNA (`/review/dna`, «اعرض خطة المحاكاة», keeps the course). The workspace's Create MCQ panel is described in
+  `docs/modules/workspace.md` «Track F3».
+* **Study-mode practice** (`PracticeEntry.tsx`): `/practice?…&mode=exam|revision` starts an assessed exam (hints off) or a
+  revision set, `anti_shortcut=1` turns on the anti-shortcut policy — the rail of «امتحن نفسك» / «راجع» / «تدرّب» starts
+  these (the policy is fixed by the exams module at creation).
+* Tests: `srv:f3/ai-tools.test.ts` (Create MCQ: published with origin selection and the anchor, review queue after three
+  rounds, abstention, Source Lock 409 / 400; simulation: plan with denominators, course restriction, generation →
+  exam of generated items only with mode simulation and hints off, abstained simulation), `srv:f3/unconfigured.test.ts`
+  (409s, plan without AI, allocation units), `web:src/features/workspace/modes/studyModes.test.tsx` (Create MCQ panel),
+  `web:src/features/exams/simulation.test.tsx`, `e2e:f3-study-modes.spec.ts`.
+* Not run: a real model generating a simulation (no key).
+* **F3 review (2026-10-10)**: a simulation part larger than one generation run (> 5 questions) now reports ALL its runs
+  (published summed, status combined) — it reported the first run only («طُلب 6، نُشر 5» for 6 / 6); when the exam
+  builder leaves out a published question (e.g. a duplicate) the summary says so and counts what entered the exam;
+  `origin` in a request accepts `builder | selection` only — `simulation` is set by the simulation job, never claimed by
+  a request (400) (`srv:f3/review.test.ts`).

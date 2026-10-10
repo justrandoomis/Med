@@ -4,11 +4,15 @@
 //    original text is kept and corrections are saved beside it with their history; deletions can be restored
 //  * a segment can be linked to a page of a source (MANUAL link — automatic linking is not built and nothing is
 //    invented); links say whether they are manual or automatic
-//  * automatic transcription and in-app recording are not available (reasons shown); the microphone never starts
+//  * automatic transcription is not available (reason shown); recording happens in the study workspace on an explicit
+//    action (track F4) — never here, the microphone never starts on this screen
+//  * (track F4) a recording made in the app lists the pen strokes written meanwhile (time links, «تلقائي» / «يدوي»):
+//    «استمع» plays that moment, «افتح الصفحة» opens the page
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { FileUp, History, Link2, Mic, Play, Plus, RotateCcw, Search, Trash2 } from 'lucide-react';
-import type { MediaStatusResponse, SegmentRevisionView, SourcePageView, TranscriptResponse, TranscriptSegmentView } from '@medlevo/shared';
+import type { MediaStatusResponse, RecordingView, SegmentRevisionView, SourcePageView, TranscriptResponse, TranscriptSegmentView } from '@medlevo/shared';
+import { AUDIO_LINK_ORIGIN_LABELS_AR } from '@medlevo/shared';
 import { pageDisplayLabel } from '@medlevo/shared';
 import { Breadcrumbs, Button, Checkbox, Dialog, ErrorState, IconButton, LoadingState, Select, StatusPill, TextArea, TextField } from '../../design';
 import { errorMessage } from '../../lib/api';
@@ -275,6 +279,21 @@ export function AudioScreen() {
       .then(setStatus)
       .catch(() => setStatus(null));
   }, []);
+  // (track F4) strokes written while this recording was made in the app
+  const [strokes, setStrokes] = useState<RecordingView['linked_strokes']>([]);
+  const audioSourceId = data?.audio.source_id ?? null;
+  useEffect(() => {
+    setStrokes([]);
+    if (!audioSourceId) return;
+    let alive = true;
+    mediaApi
+      .recordings(audioSourceId)
+      .then((list) => alive && setStrokes(list.filter((r) => r.source_id === audioSourceId).flatMap((r) => r.linked_strokes)))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [audioSourceId]);
 
   if (error) return <ErrorState message={error} onRetry={() => void load()} />;
   if (!data) return <LoadingState stage="جارٍ تحميل التسجيل…" />;
@@ -316,9 +335,11 @@ export function AudioScreen() {
           متصفحك لا يشغّل هذا الملف.
         </audio>
         <div className="md-player__caps">
-          <Button size="sm" variant="secondary" icon={<Mic size={14} />} disabled aria-describedby="md-rec-why">
-            سجّل
-          </Button>
+          {status?.recording.state !== 'available' && (
+            <Button size="sm" variant="secondary" icon={<Mic size={14} />} disabled aria-describedby="md-rec-why">
+              سجّل
+            </Button>
+          )}
           <p id="md-rec-why" className="md-muted">
             {status?.recording.reason_ar ?? 'التسجيل داخل التطبيق غير متاح.'}
           </p>
@@ -327,6 +348,31 @@ export function AudioScreen() {
       </div>
 
       {actionError && <ErrorState inline message={actionError} />}
+
+      {strokes.length > 0 && (
+        <section className="md-section" aria-labelledby="md-strokes-h">
+          <h2 id="md-strokes-h" className="md-section__title">
+            ملاحظات القلم أثناء التسجيل
+          </h2>
+          <ul className="md-links">
+            {strokes.map((st) => (
+              <li key={st.annotation_id}>
+                <Button size="sm" variant="secondary" icon={<Play size={14} />} onClick={() => seek(st.offset_ms)} aria-label={`استمع من ${formatMs(st.offset_ms)}`}>
+                  <bdi dir="ltr">{formatMs(st.offset_ms)}</bdi>
+                </Button>
+                <span>{st.page_label_ar ?? 'صفحة'}</span>
+                <StatusPill tone={st.origin === 'auto' ? 'info' : 'accent'}>{st.origin === 'auto' ? 'رابط تلقائي' : 'رابط يدوي'}</StatusPill>
+                <span className="md-muted">{AUDIO_LINK_ORIGIN_LABELS_AR[st.origin]}</span>
+                {st.source_id && (
+                  <Link to={studyUrl(st.source_id, { pageId: st.page_id })}>
+                    افتح الصفحة
+                  </Link>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section className="md-section" aria-labelledby="md-tr-h">
         <div className="md-head">

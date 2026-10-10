@@ -1,0 +1,192 @@
+/* Study modes, the rail «حالات» section and Create MCQ (track F3). Tokens only (design-system.md). */
+.wk-rail-mode-wrap {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.wk-rail-mode {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: var(--ml-space-2) var(--ml-space-4) var(--ml-space-1);
+  font-size: var(--ml-text-xs);
+  line-height: var(--ml-leading-xs);
+  color: var(--ml-color-ink-2);
+}
+.wk-rail-mode__name {
+  font-weight: var(--ml-weight-semibold);
+  color: var(--ml-color-ink);
+}
+.wk-rail-hidden {
+  margin: var(--ml-space-2) var(--ml-space-4) 0;
+  padding: var(--ml-space-2) var(--ml-space-3);
+  border-radius: var(--ml-radius-sm);
+  background: var(--ml-color-fill);
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-xs);
+  line-height: var(--ml-leading-xs);
+}
+
+/* the switch in the reading bar */
+.wk-modeswitch {
+  white-space: nowrap;
+}
+.wk-modeswitch__item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 22rem;
+}
+.wk-modeswitch__name {
+  font-weight: var(--ml-weight-medium);
+}
+.wk-modeswitch__hint {
+  font-size: var(--ml-text-xs);
+  line-height: var(--ml-leading-xs);
+  color: var(--ml-color-ink-2);
+  white-space: normal;
+}
+
+/* rail «حالات» */
+.wk-cases {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.wk-case {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-1);
+  padding: var(--ml-space-3);
+  border: 1px solid var(--ml-color-line);
+  border-radius: var(--ml-radius-md);
+  background: var(--ml-color-paper);
+}
+.wk-case__title {
+  margin: 0;
+  font-size: var(--ml-text-md);
+  font-weight: var(--ml-weight-medium);
+}
+.wk-case__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ml-space-1);
+  align-items: center;
+  font-size: var(--ml-text-xs);
+  color: var(--ml-color-ink-2);
+}
+
+/* Create MCQ from a selection */
+.wk-mcq {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-3);
+  padding: var(--ml-space-3);
+  border: 1px solid var(--ml-color-line);
+  border-radius: var(--ml-radius-md);
+  background: var(--ml-color-paper-2);
+}
+.wk-mcq__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ml-space-2);
+}
+.wk-mcq__title {
+  margin: 0;
+  font-size: var(--ml-text-md);
+  font-weight: var(--ml-weight-semibold);
+}
+.wk-mcq__quote {
+  margin: 0;
+  padding-inline-start: var(--ml-space-3);
+  border-inline-start: 3px solid var(--ml-color-line-strong);
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-sm);
+}
+.wk-mcq__fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  gap: var(--ml-space-2);
+}
+.wk-mcq__result {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+}
+.wk-mcq__cand {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-1);
+  padding: var(--ml-space-2) 0;
+  border-top: 1px solid var(--ml-color-line);
+}
+.wk-mcq__issues {
+  margin: 0;
+  padding-inline-start: var(--ml-space-5);
+  font-size: var(--ml-text-sm);
+  color: var(--ml-color-ink-2);
+}
+/* figure reading (vision step) under a figure region in «المصادر» */
+.wk-figread {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+  margin-top: var(--ml-space-2);
+  padding: var(--ml-space-3);
+  border: 1px dashed var(--ml-color-line-strong);
+  border-radius: var(--ml-radius-md);
+}
+.wk-figread__label {
+  margin: 0;
+  padding: var(--ml-space-2) var(--ml-space-3);
+  border-inline-start: 3px solid var(--ml-color-warning, var(--ml-color-line-strong));
+  background: var(--ml-color-warning-soft);
+  border-radius: var(--ml-radius-xs);
+  font-size: var(--ml-text-xs);
+  line-height: var(--ml-leading-xs);
+}
+.wk-figread__reading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+}
+.wk-figread__list {
+  margin: 0;
+  padding-inline-start: var(--ml-space-5);
+  font-size: var(--ml-text-sm);
+}
+.wk-figread__list li[data-certainty='uncertain'] {
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+.wk-figread__review {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-3);
+}
+.wk-figread__fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.wk-figread__fieldset > legend {
+  margin-bottom: var(--ml-space-1);
+  font-size: var(--ml-text-sm);
+  font-weight: var(--ml-weight-semibold);
+}
+/* five sections in a ~22rem rail: the words stay (they are the names), the icons go — as in the phone sheet */
+.wk-rail-tablist--dense .ml-btn__icon {
+  display: none;
+}
+.wk-rail-tablist--dense .ml-tab {
+  padding-inline: var(--ml-space-2);
+}

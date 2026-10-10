@@ -44,6 +44,7 @@ import {
 } from './book';
 import { archiveThread, createThread, getThread, listThreads, postMessage, saveAnswerAsNote } from './chat';
 import { compareItems, explainSelection } from './explain';
+import { registerDiagramRoutes } from './diagrams';
 import { nodeChain, nodeChainForSource, readOverride, resolveRules, rulesPatchSchema, templateForNode } from './rules';
 import { compareBodySchema, explainBodySchema, messageCreateSchema, saveNoteSchema, studyBookBodySchema, summaryBodySchema, threadCreateSchema } from './schema';
 
@@ -250,6 +251,9 @@ export function createStudybookModule(opts: StudybookModuleOptions = {}) {
       ctx.audit.record({ entityType: 'explanation_rules', entityId: nodeId, action: 'delete', summary: 'إزالة قواعد الشرح الخاصة بالمجلد' });
       return rulesResponse(ctx, { node_id: nodeId });
     });
+
+    // ───────── interactive timelines & flowcharts (§31, track F3) ─────────
+    registerDiagramRoutes(app, ctx);
 
     // ───────── terminology (§21) — forwarded to the owning evidence module ─────────
     const termParams = z.object({ id: ID });

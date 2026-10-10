@@ -36,6 +36,8 @@ export const TASK_ROLE: Record<AiTask, ModelRole | null> = {
   verify_support: 'verification',
   validate_question: 'verification',
   vision_figure: 'vision',
+  // (track F4) reading a cropped black-on-white picture of the owner's pen strokes
+  ink_recognize: 'vision',
   // the Messages API offers neither embeddings nor audio transcription → honestly unsupported
   embed: null,
   transcribe: null,
@@ -56,6 +58,8 @@ export const TASK_EFFORT: Record<AiTask, Effort> = {
   verify_support: 'high',
   validate_question: 'high',
   vision_figure: 'high',
+  // transcription of handwriting (no medical generation); medium keeps cost low while reading mixed Arabic/English
+  ink_recognize: 'medium',
   classify: 'low',
   embed: 'low',
   transcribe: 'low',
