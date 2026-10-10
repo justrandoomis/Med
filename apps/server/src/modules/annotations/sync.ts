@@ -155,6 +155,13 @@ function rowContentKey(r: AnnotationRow): string {
   return annotationContentKey({ kind: d.kind, tool: d.tool, anchor: d.anchor, data: d.data as Record<string, unknown>, layer: d.layer, z: d.z, locked: d.locked });
 }
 
+/** An image annotation now points at its uploaded bytes (prune keeps them while any annotation does). */
+function markImageReferenced(tx: SyncTx, f: AnnotationFields): void {
+  if (f.kind !== 'image') return;
+  const key = (f.data as { image_key?: unknown }).image_key;
+  if (typeof key === 'string') tx.db.run('UPDATE annotation_image SET referenced = 1 WHERE image_key = ? AND referenced = 0', [key]);
+}
+
 function insertAnnotation(tx: SyncTx, id: string, f: AnnotationFields, createdAt: number, conflictOf: string | null): void {
   tx.db.run(
     `INSERT INTO annotation (id, kind, tool, anchor_json, data_json, layer, z, locked, anchor_status, previous_anchor_json, input_json,
@@ -179,6 +186,7 @@ function insertAnnotation(tx: SyncTx, id: string, f: AnnotationFields, createdAt
     ],
   );
   writeAnnotationTarget(tx.db, id, f.anchor);
+  markImageReferenced(tx, f);
   tx.touch('annotation', id);
 }
 
@@ -204,6 +212,7 @@ function updateAnnotation(tx: SyncTx, id: string, f: AnnotationFields, restore: 
     ],
   );
   writeAnnotationTarget(tx.db, id, f.anchor);
+  markImageReferenced(tx, f);
   tx.touch('annotation', id);
 }
 
@@ -458,11 +467,14 @@ export function noteHandler(db: Db): SyncEntityHandler {
 }
 
 // ───────────────────────────── note_page ─────────────────────────────
-function notePageFields(db: Db, p: NotePagePayload): { fields: NotePagePayload & { node_id: string | null; source_id: string | null }; notes: string[] } {
+type NotePageFields = NotePagePayload & { node_id: string | null; source_id: string | null; after_page_id: string | null; color: string | null };
+
+function notePageFields(db: Db, p: NotePagePayload): { fields: NotePageFields; notes: string[] } {
   const notes: string[] = [];
   let nodeId = p.node_id ?? null;
   let sourceId = p.source_id ?? null;
   let after = p.after_page_index ?? null;
+  let afterPageId = p.after_page_id ?? null;
   if (nodeId && !db.get('SELECT 1 AS x FROM library_node WHERE id = ?', [nodeId])) {
     nodeId = null;
     notes.push('المجلد المحدد غير موجود على الخادم؛ حُفظت الصفحة دون مجلد.');
@@ -470,18 +482,46 @@ function notePageFields(db: Db, p: NotePagePayload): { fields: NotePagePayload &
   if (sourceId && !db.get('SELECT 1 AS x FROM source WHERE id = ?', [sourceId])) {
     sourceId = null;
     after = null;
+    afterPageId = null;
     notes.push('المصدر المرتبط غير موجود على الخادم؛ حُفظت صفحة الملاحظات منفصلة عنه.');
   }
-  return { notes, fields: { ...p, node_id: nodeId, source_id: sourceId, after_page_index: after, title: p.title ?? null } };
+  if (afterPageId) {
+    // the page it follows must be a page of that source (any version); otherwise the index alone places it
+    const pg = db.get<{ source_id: string }>('SELECT v.source_id FROM source_page p JOIN source_version v ON v.id = p.version_id WHERE p.id = ?', [afterPageId]);
+    if (!pg || pg.source_id !== sourceId) {
+      afterPageId = null;
+      notes.push('الصفحة التي أُضيفت صفحة الملاحظات بعدها غير موجودة في هذا المصدر على الخادم؛ تبقى في موضعها برقم الصفحة.');
+    }
+  }
+  return {
+    notes,
+    fields: { ...p, node_id: nodeId, source_id: sourceId, after_page_index: after, after_page_id: afterPageId, title: p.title ?? null, color: p.color ?? null },
+  };
 }
 
-function notePageContentKey(f: { node_id: string | null; source_id: string | null; after_page_index?: number | null | undefined; title?: string | null | undefined; template: string; width: number; height: number; sort_order: number }): string {
+function notePageContentKey(f: {
+  node_id: string | null;
+  source_id: string | null;
+  after_page_index?: number | null | undefined;
+  after_page_id?: string | null | undefined;
+  title?: string | null | undefined;
+  template: string;
+  kind?: string | null | undefined;
+  page_kind?: string | null | undefined;
+  color?: string | null | undefined;
+  width: number;
+  height: number;
+  sort_order: number;
+}): string {
   return stableStringify({
     node_id: f.node_id,
     source_id: f.source_id,
     after_page_index: f.after_page_index ?? null,
+    after_page_id: f.after_page_id ?? null,
     title: f.title ?? null,
     template: f.template,
+    kind: f.kind ?? f.page_kind ?? 'page',
+    color: f.color ?? null,
     width: f.width,
     height: f.height,
     sort_order: f.sort_order,
@@ -493,18 +533,19 @@ export function notePageHandler(db: Db): SyncEntityHandler {
     const r = getNotePage(db, id);
     return r ? toNotePageDTO(r) : null;
   };
-  const write = (tx: SyncTx, id: string, f: ReturnType<typeof notePageFields>['fields'], existing: NotePageRow | undefined, createdAt: number) => {
+  const write = (tx: SyncTx, id: string, f: NotePageFields, existing: NotePageRow | undefined, createdAt: number) => {
     if (!existing) {
       tx.db.run(
-        `INSERT INTO note_page (id, node_id, source_id, after_page_index, title, template, width, height, sort_order, deleted_at, created_at, updated_at, rev, device_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 1, ?)`,
-        [id, f.node_id, f.source_id, f.after_page_index ?? null, f.title ?? null, f.template, f.width, f.height, f.sort_order, createdAt, tx.now, tx.deviceId],
+        `INSERT INTO note_page (id, node_id, source_id, after_page_index, title, template, width, height, sort_order, deleted_at, created_at, updated_at, rev, device_id,
+                                page_kind, color, after_page_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 1, ?, ?, ?, ?)`,
+        [id, f.node_id, f.source_id, f.after_page_index ?? null, f.title ?? null, f.template, f.width, f.height, f.sort_order, createdAt, tx.now, tx.deviceId, f.kind, f.color, f.after_page_id],
       );
     } else {
       tx.db.run(
         `UPDATE note_page SET node_id = ?, source_id = ?, after_page_index = ?, title = ?, template = ?, width = ?, height = ?, sort_order = ?,
-                deleted_at = NULL, updated_at = ?, rev = rev + 1, device_id = ? WHERE id = ?`,
-        [f.node_id, f.source_id, f.after_page_index ?? null, f.title ?? null, f.template, f.width, f.height, f.sort_order, tx.now, tx.deviceId, id],
+                deleted_at = NULL, updated_at = ?, rev = rev + 1, device_id = ?, page_kind = ?, color = ?, after_page_id = ? WHERE id = ?`,
+        [f.node_id, f.source_id, f.after_page_index ?? null, f.title ?? null, f.template, f.width, f.height, f.sort_order, tx.now, tx.deviceId, f.kind, f.color, f.after_page_id, id],
       );
     }
     tx.touch('note_page', id);

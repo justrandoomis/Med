@@ -16,13 +16,16 @@ afterAll(async () => {
 });
 
 describe('weakness center sources note', () => {
-  it('says cases/OSCE are not read here yet — never that no attempt data exists', async () => {
+  // track F2: the center now READS case / OSCE / viva signals (each with its own type) — the note says so, and
+  // still never claims that no attempt data exists
+  it('says case / OSCE / viva attempts are read with their own type — never that no attempt data exists', async () => {
     const res = await t.app.inject({ method: 'GET', url: '/api/learning/weakness', headers: h });
     expect(res.statusCode).toBe(200);
     const note = (res.json() as WeaknessListResponse).sources_note_ar.join(' ');
     expect(note).toMatch(/OSCE/);
     expect(note).not.toContain('لا توجد بيانات محاولات');
-    expect(note).toContain('لا يقرؤها في هذا الإصدار');
-    expect(note).toContain('تقرير كل محاولة');
+    expect(note).not.toContain('لا يقرؤها في هذا الإصدار');
+    expect(note).toContain('إشارة بنوعها');
+    expect(note).toContain('تقدير');
   });
 });

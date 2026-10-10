@@ -3,7 +3,7 @@
 // and the Forgetting Forecast (an ESTIMATE from the review log — never a measurement of memory).
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { BookOpen, CircleCheck, CircleDot, CircleOff, Layers, Sparkles, TrendingUp, FileQuestion, Brain } from 'lucide-react';
+import { BookOpen, CircleCheck, CircleDot, CircleOff, Layers, Sparkles, TrendingUp, FileQuestion, Brain, Stethoscope } from 'lucide-react';
 import { MISTAKE_TYPES, MISTAKE_TYPE_LABELS_AR, type ForgettingForecastView, type MistakeGenomeView, type MistakeType, type WeaknessView } from '@medlevo/shared';
 import { Button, Select, StatusPill, buttonClass, useToast, type StatusTone } from '../../design';
 import { errorMessage } from '../../lib/api';
@@ -23,7 +23,7 @@ export const WEAKNESS_STATUS: Record<WeaknessView['status'], { label: string; to
   dismissed: { label: 'استبعدتها', tone: 'neutral', icon: <CircleOff size={14} /> },
 };
 
-export const WEAKNESS_KIND_AR: Record<string, string> = { concept: 'مفهوم', lecture: 'محاضرة', topic: 'موضوع', question: 'سؤال تكرر خطؤك فيه' };
+export const WEAKNESS_KIND_AR: Record<string, string> = { concept: 'مفهوم', lecture: 'محاضرة', topic: 'موضوع', question: 'سؤال تكرر خطؤك فيه', case: 'حالة / OSCE / شفهي' };
 
 export function WeaknessStatus({ status }: { status: WeaknessView['status'] }) {
   const s = WEAKNESS_STATUS[status];
@@ -91,6 +91,14 @@ export function ActionButton({ action, back }: { action: WeaknessView['suggested
       >
         {label}
       </Button>
+    );
+  }
+  if (action.kind === 'retry_case' && typeof ref.case_id === 'string') {
+    return (
+      <Link className={buttonClass({ variant: 'secondary', size: 'sm' })} to={`/cases/${encodeURIComponent(ref.case_id)}`}>
+        <Stethoscope size={16} aria-hidden="true" />
+        {label}
+      </Link>
     );
   }
   if (action.kind === 'simplified_explanation') {

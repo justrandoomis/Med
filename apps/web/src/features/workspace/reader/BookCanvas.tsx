@@ -3,16 +3,18 @@
 // are released. Structured text (DOCX / slide text) flows as paper sections. The owner's place (page +
 // offset under the reading line) survives zoom, rotation, layout and window changes.
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { SourcePageView } from '@medlevo/shared';
 import { cx } from '../../../design';
+import type { ReaderSheet } from '../model/sequence';
 import { clampZoom, fitWidthZoom } from '../model/zoom';
 import { ANCHOR_LINE, anchorAt, layoutContinuous, layoutSpread, pagesInRange, readingLineY, spreadOf, type Layout, type PageBox } from './geometry';
+import { NotePageView } from './NotePageView';
 import { PageView } from './PageView';
 import { SwipeTracker } from './swipe';
 import { useReaderPage, type MeasuredSize } from './readerContext';
 
 export type LayoutMode = 'single' | 'double' | 'continuous';
 
+/** A place in the canvas. `pageIndex` is the index in the SHEET sequence (source pages + inserted note pages). */
 export interface BookLocation {
   pageIndex: number;
   /** fraction of the page under the reading line */
@@ -29,12 +31,13 @@ export interface BookCanvasHandle {
 }
 
 export interface BookCanvasProps {
-  pages: readonly SourcePageView[];
+  /** what the book shows, in order: source pages and the owner's note pages (model/sequence.ts) */
+  sheets: readonly ReaderSheet[];
   /** fallback page size when a page has no stored size */
   fallbackSize: { w: number; h: number; unit: 'pt' | 'px' } | null;
   /** real PDF page boxes measured by pdf.js (override stored sizes) */
   measured?: ReadonlyMap<number, MeasuredSize>;
-  /** current page (paged layouts render its spread) */
+  /** current sheet (index in `sheets`; paged layouts render its spread) */
   pageIndex: number;
   /** place to restore on first layout */
   initialFrac?: number;
@@ -61,16 +64,19 @@ export interface BookCanvasProps {
 
 const VIEWED_MS = 2000;
 
-function boxesFor(pages: readonly SourcePageView[], fallbackIn: BookCanvasProps['fallbackSize'], measured?: ReadonlyMap<number, MeasuredSize>): PageBox[] {
+export function boxesFor(sheets: readonly ReaderSheet[], fallbackIn: BookCanvasProps['fallbackSize'], measured?: ReadonlyMap<number, MeasuredSize>): PageBox[] {
   const firstMeasured = measured && measured.size ? [...measured.values()][0]! : null;
   const fallback = fallbackIn ?? (firstMeasured ? { w: firstMeasured.w, h: firstMeasured.h, unit: 'pt' as const } : null);
-  return pages.map((p) => {
+  return sheets.map((sheet, index) => {
+    // a note page is paper of its own size (pt); it never rotates with the PDF's /Rotate
+    if (sheet.kind === 'note') return { index, w: sheet.note.width, h: sheet.note.height, unit: 'pt' as const, intrinsic: 0 };
+    const p = sheet.page;
     const m = measured?.get(p.page_index);
-    if (m) return { index: p.page_index, w: m.w, h: m.h, unit: 'pt' as const, intrinsic: m.rotate };
+    if (m) return { index, w: m.w, h: m.h, unit: 'pt' as const, intrinsic: m.rotate };
     const ok = p.width && p.height && p.width > 0 && p.height > 0;
     const unit: 'pt' | 'px' = (ok ? p.unit : fallback?.unit) === 'px' ? 'px' : 'pt';
     return {
-      index: p.page_index,
+      index,
       w: ok ? p.width! : (fallback?.w ?? 595),
       h: ok ? p.height! : (fallback?.h ?? 842),
       unit,
@@ -89,13 +95,13 @@ interface Anchor {
 }
 
 export const BookCanvas = forwardRef<BookCanvasHandle, BookCanvasProps>(function BookCanvas(props, ref) {
-  const { pages, fallbackSize, measured, pageIndex, zoom, fit, viewRotation, layout, spreadRtl, flipAnimation, label, onLocation, onEffectiveZoom, onZoomGesture, onViewed, onSwipe, strokeActive, className } = props;
+  const { sheets, fallbackSize, measured, pageIndex, zoom, fit, viewRotation, layout, spreadRtl, flipAnimation, label, onLocation, onEffectiveZoom, onZoomGesture, onViewed, onSwipe, strokeActive, className } = props;
   const ctx = useReaderPage();
   const flow = ctx.mode === 'text';
   const scrollerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
-  const boxes = useMemo(() => boxesFor(pages, fallbackSize, measured), [pages, fallbackSize, measured]);
+  const boxes = useMemo(() => boxesFor(sheets, fallbackSize, measured), [sheets, fallbackSize, measured]);
 
   // ── zoom: fit width uses the widest (rotated) page so every page fits ──
   const columns = layout === 'double' ? 2 : 1;
@@ -117,7 +123,7 @@ export const BookCanvas = forwardRef<BookCanvasHandle, BookCanvasProps>(function
   useEffect(() => onEffectiveZoom(effectiveZoom), [effectiveZoom, onEffectiveZoom]);
 
   // ── layout ──
-  const spread = useMemo(() => spreadOf(pageIndex, layout, pages.length), [pageIndex, layout, pages.length]);
+  const spread = useMemo(() => spreadOf(pageIndex, layout, sheets.length), [pageIndex, layout, sheets.length]);
   const geometry: Layout | null = useMemo(() => {
     if (flow || size.w === 0 || boxes.length === 0) return null;
     if (layout === 'continuous') return layoutContinuous(boxes, effectiveZoom, viewRotation, size.w);
@@ -142,7 +148,7 @@ export const BookCanvas = forwardRef<BookCanvasHandle, BookCanvasProps>(function
       const el = scrollerRef.current;
       if (!el) return;
       if (flow) {
-        const section = el.querySelector<HTMLElement>(`[data-page-index="${a.index}"]`);
+        const section = el.querySelector<HTMLElement>(`[data-seq="${a.index}"]`);
         if (section) el.scrollTop = Math.max(0, section.offsetTop + a.fy * section.offsetHeight - a.vy);
         return;
       }
@@ -216,12 +222,12 @@ export const BookCanvas = forwardRef<BookCanvasHandle, BookCanvasProps>(function
     const el = scrollerRef.current;
     if (!el || !restored.current) return;
     if (flow) {
-      const sections = Array.from(el.querySelectorAll<HTMLElement>('[data-page-index]'));
+      const sections = Array.from(el.querySelectorAll<HTMLElement>('[data-seq]'));
       const line = readingLineY(el.scrollTop, el.clientHeight, el.scrollHeight);
       let hit = sections[0];
       for (const s of sections) if (s.offsetTop <= line) hit = s;
       if (hit) {
-        const idx = Number(hit.dataset.pageIndex);
+        const idx = Number(hit.dataset.seq);
         const frac = hit.offsetHeight > 0 ? Math.min(1, Math.max(0, (line - hit.offsetTop) / hit.offsetHeight)) : 0;
         locRef.current = { pageIndex: idx, frac };
         onLocation(locRef.current);
@@ -252,7 +258,7 @@ export const BookCanvas = forwardRef<BookCanvasHandle, BookCanvasProps>(function
         const el = scrollerRef.current;
         locRef.current = { pageIndex: index, frac };
         const a: Anchor = { index, fy: frac, fx: 0.5, vy: (el?.clientHeight ?? 0) * ANCHOR_LINE, vx: (el?.clientWidth ?? 0) / 2 };
-        if (layout !== 'continuous' && !spreadOf(index, layout, pages.length).every((i) => spread.includes(i))) {
+        if (layout !== 'continuous' && !spreadOf(index, layout, sheets.length).every((i) => spread.includes(i))) {
           // a different spread: the parent changes pageIndex, the layout effect restores the anchor
           pendingAnchor.current = a;
           return;
@@ -267,7 +273,7 @@ export const BookCanvas = forwardRef<BookCanvasHandle, BookCanvasProps>(function
       },
       element: () => scrollerRef.current,
     }),
-    [applyAnchor, layout, pages.length, spread, onLocation],
+    [applyAnchor, layout, sheets.length, spread, onLocation],
   );
 
   // ── gesture zoom: Ctrl/⌘ + wheel, Safari trackpad gestures, two-finger pinch ──
@@ -411,7 +417,7 @@ export const BookCanvas = forwardRef<BookCanvasHandle, BookCanvasProps>(function
   const viewedSent = useRef(new Set<number>());
   useEffect(() => {
     viewedSent.current = new Set();
-  }, [pages]);
+  }, [sheets]);
   const visible = useRef(new Map<number, number>());
   useEffect(() => {
     const root = scrollerRef.current;
@@ -419,7 +425,7 @@ export const BookCanvas = forwardRef<BookCanvasHandle, BookCanvasProps>(function
     const io = new IntersectionObserver(
       (entries) => {
         for (const en of entries) {
-          const idx = Number((en.target as HTMLElement).dataset.pageIndex);
+          const idx = Number((en.target as HTMLElement).dataset.seq);
           if (en.isIntersecting && en.intersectionRatio >= 0.5) {
             if (!visible.current.has(idx)) visible.current.set(idx, performance.now());
           } else {
@@ -429,7 +435,7 @@ export const BookCanvas = forwardRef<BookCanvasHandle, BookCanvasProps>(function
       },
       { root, threshold: [0, 0.5, 1] },
     );
-    const sections = root.querySelectorAll('[data-page-index]');
+    const sections = root.querySelectorAll('[data-seq]');
     sections.forEach((s) => io.observe(s));
     const timer = window.setInterval(() => {
       if (document.visibilityState === 'hidden') return;
@@ -453,8 +459,8 @@ export const BookCanvas = forwardRef<BookCanvasHandle, BookCanvasProps>(function
   const swipeable = !flow && layout !== 'continuous' && !!onSwipe && !!geometry && geometry.contentW <= size.w + 1;
 
   // ── render ──
-  const pageByIndex = useMemo(() => new Map(pages.map((p) => [p.page_index, p])), [pages]);
   const boxByIndex = useMemo(() => new Map(boxes.map((b) => [b.index, b])), [boxes]);
+  const flowW = Math.min(760, Math.max(280, size.w - 32));
 
   return (
     <div
@@ -473,9 +479,14 @@ export const BookCanvas = forwardRef<BookCanvasHandle, BookCanvasProps>(function
     >
       {flow ? (
         <div ref={contentRef} className="wk-flow">
-          {pages.map((p) => (
-            <PageView key={p.id} page={p} geom={{ index: p.page_index, viewW: Math.min(760, Math.max(280, size.w - 32)), viewH: 240, top: 0, left: 0, scale: effectiveZoom, rotation: 0 }} unrotated={{ w: 1, h: 1 }} near />
-          ))}
+          {sheets.map((sh, i) =>
+            sh.kind === 'source' ? (
+              <PageView key={sh.key} seq={i} page={sh.page} geom={{ index: i, viewW: flowW, viewH: 240, top: 0, left: 0, scale: effectiveZoom, rotation: 0 }} unrotated={{ w: 1, h: 1 }} near />
+            ) : (
+              // paper keeps its page geometry among flowing text sections (ink needs fixed page space)
+              <NotePageView key={sh.key} sheet={sh} geom={{ index: i, viewW: flowW, viewH: (flowW / sh.note.width) * sh.note.height, top: 0, left: 0, scale: flowW / sh.note.width, rotation: 0 }} near />
+            ),
+          )}
         </div>
       ) : (
         geometry && (
@@ -485,12 +496,17 @@ export const BookCanvas = forwardRef<BookCanvasHandle, BookCanvasProps>(function
             style={{ width: geometry.contentW, height: geometry.contentH }}
           >
             {geometry.pages.map((g) => {
-              const p = pageByIndex.get(g.index);
+              const sh = sheets[g.index];
               const b = boxByIndex.get(g.index);
-              if (!p || !b) return null;
+              if (!sh || !b) return null;
+              if (sh.kind === 'note') {
+                return <NotePageView key={sh.key} sheet={sh} geom={g} near={near.has(g.index)} style={{ position: 'absolute', top: g.top, left: g.left, width: g.viewW }} />;
+              }
+              const p = sh.page;
               return (
                 <PageView
-                  key={p.id}
+                  key={sh.key}
+                  seq={g.index}
                   page={p}
                   geom={g}
                   unrotated={{ w: b.w, h: b.h }}

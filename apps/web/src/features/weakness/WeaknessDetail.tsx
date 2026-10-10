@@ -19,7 +19,7 @@ import { ActionButton, WEAKNESS_KIND_AR, WeaknessStatus } from './parts';
 import '../review/learning.css';
 import './weakness.css';
 
-const TYPE_AR: Record<string, string> = { mcq: 'سؤال اختيار', card: 'مراجعة بطاقة', written: 'إجابة مقالية', case: 'حالة سريرية', osce: 'OSCE' };
+const TYPE_AR: Record<string, string> = { mcq: 'سؤال اختيار', card: 'مراجعة بطاقة', written: 'إجابة مقالية', case: 'حالة سريرية', osce: 'OSCE', viva: 'امتحان شفهي' };
 const CONF_AR: Record<(typeof CONFIDENCE_LEVELS)[number], string> = { guess: 'تخمين', unsure: 'غير متأكد', confident: 'واثق' };
 
 export function WeaknessDetail() {

@@ -36,6 +36,34 @@ export interface ReaderPageContextValue {
   textLang: string | null;
   /** the PDF's real page box (pt) once a page is loaded — corrects stored sizes that disagree */
   reportPageSize: (pageIndex: number, size: MeasuredSize) => void;
+  /** note pages (paper) take ink even where the source pages cannot (text sources) — track F1 */
+  notePageInk?: boolean;
+  /** the note pages' menu (rename, paper, move, trash); absent → no menu (read-only places) */
+  notePageActions?: NotePageActions | null;
+  /** Arabic paper: the ruled margin line on the right */
+  paperRtl?: boolean;
+  /** PDF internal / external link annotations (track F1); absent → links are not drawn */
+  pdfLinks?: PdfLinkActions | null;
+}
+
+/** What the owner can do with a note page from the page itself. */
+export interface NotePageActions {
+  rename(id: string): void;
+  setTemplate(id: string, template: 'blank' | 'ruled' | 'dotted' | 'grid'): void;
+  move(id: string, dir: -1 | 1): void;
+  trash(id: string): void;
+  /** a new note page right after this one */
+  insertAfter(id: string): void;
+  /** can it move earlier / later in its place */
+  canMove(id: string, dir: -1 | 1): boolean;
+}
+
+/** Following links inside a PDF (pdf.js link annotations). */
+export interface PdfLinkActions {
+  /** an internal destination resolved to a page of this version */
+  goToPage(pageIndex: number, label: string): void;
+  /** an external URL — the host asks for an explicit confirmation before opening it (never fetched by the server) */
+  openExternal(url: string): void;
 }
 
 export interface MeasuredSize {

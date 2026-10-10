@@ -2,7 +2,7 @@
 // recent / archive / trash views. Read-only (from this device's cache) when the server is unreachable.
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { LayoutTemplate, Library, NotebookPen, Plus, Upload } from 'lucide-react';
+import { LayoutTemplate, Library, NotebookPen, Plus, Tags, Upload } from 'lucide-react';
 import {
   SORT_MODE_LABELS_AR,
   SORT_MODES,
@@ -25,6 +25,7 @@ import { TemplatesDialog } from './components/TemplatesDialog';
 import { childrenOf, filterByTags, type LibraryIndex, searchLibrary } from './model';
 import { TrashView } from './TrashView';
 import { readRootSort, useLibrary, writeRootSort } from './useLibrary';
+import { TopicFilterSelect, TopicFilterView } from '../brain/TopicFilter';
 import './library.css';
 
 const VIEWS = [
@@ -77,12 +78,24 @@ export function LibraryScreen() {
     setParams(next, { replace: true });
   };
   const toggleTag = (id: string) => setTagIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+  // §05: a topic is also a library filter (?topic=<id>) — track F2
+  const topicFilter = params.get('topic');
+  const setTopicFilter = (id: string | null) => {
+    const next = new URLSearchParams(params);
+    if (id) next.set('topic', id);
+    else next.delete('topic');
+    setParams(next, { replace: true });
+  };
 
   return (
     <div className="ml-page ml-library">
       <header className="ml-library__header">
         <h1 className="ml-page__title">المكتبة</h1>
         <div className="ml-library__actions">
+          <Link to="/library/topics" className={buttonClass({ variant: 'secondary' })}>
+            <Tags size={18} aria-hidden="true" />
+            الموضوعات
+          </Link>
           <Menu trigger={<Button icon={<Plus size={18} />} disabled={readOnly}>جديد</Button>} label="إنشاء">
             <MenuItem icon={<NotebookPen size={16} />} onSelect={() => setDialog('notebook')}>
               دفتر جديد
@@ -106,6 +119,8 @@ export function LibraryScreen() {
 
       {lib.fromCache && <OfflineNotice cachedAt={lib.cachedAt} />}
 
+      {topicFilter && <TopicFilterView topicId={topicFilter} onClear={() => setTopicFilter(null)} />}
+      {!topicFilter && (
       <Tabs value={view} onValueChange={setView}>
         <div className="ml-library__tools">
           <div className="ml-library__views">
@@ -127,6 +142,7 @@ export function LibraryScreen() {
             fieldClassName="ml-library__search"
             dir="auto"
           />
+          <TopicFilterSelect value={topicFilter} onChange={setTopicFilter} />
         </div>
         {(view === 'shelf' || query) && allTags.length > 0 && (
           <div style={{ marginBottom: 'var(--ml-space-5)' }}>
@@ -169,6 +185,7 @@ export function LibraryScreen() {
             </TabPanel>
           ))}
       </Tabs>
+      )}
       {dnd.ghost}
 
       <NodeDialog open={dialog === 'notebook'} mode={{ type: 'create', parentId: null, kind: 'notebook' }} onClose={() => setDialog(null)} onSaved={(n) => navigate(`/library/${n.id}`)} />

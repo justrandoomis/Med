@@ -22,6 +22,7 @@ import controlModule from './control';
 import dataModule from './data';
 import casesModule from './cases';
 import mediaModule from './media';
+import brainModule from './brain';
 
 export interface ModuleEntry {
   name: string;
@@ -53,4 +54,6 @@ export const MODULES: ModuleEntry[] = [
   { name: 'data', prefix: '/api/data', plugin: dataModule },
   { name: 'cases', prefix: '/api/cases', plugin: casesModule },
   { name: 'media', prefix: '/api/media', plugin: mediaModule },
+  // Course Brain (track F2): knowledge structure, concept corrections, maps, coverage
+  { name: 'brain', prefix: '/api/brain', plugin: brainModule },
 ];

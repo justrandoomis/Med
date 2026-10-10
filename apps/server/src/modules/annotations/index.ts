@@ -4,9 +4,13 @@
 //  * read APIs for the reader, the ink engine, offline download and Continue Studying
 //  * reading progress (pages shown) — Reading Progress only, never mastery (§45)
 import type {
+  AnnotationImageUploadResponse,
+  AnnotationImageView,
   AnnotationsByTargetsResponse,
   LatestSessionResponse,
   NeedsReanchorResponse,
+  NotebookContentResponse,
+  NotePagesResponse,
   NotesResponse,
   ReadingProgressView,
   RecentSessionsResponse,
@@ -16,7 +20,9 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { ModuleOptions } from '../../context';
 import { AppError } from '../../lib/errors';
-import { parseBody, parseParams, parseQuery } from '../../lib/http';
+import { parseBody, parseParams, parseQuery, RATE_LIMITS } from '../../lib/http';
+import { sendStoredFile } from '../files';
+import { assertImageKey, getAnnotationImage, toImageView, uploadAnnotationImage } from './images';
 import { AnnotationsService, MAX_TARGET_KEYS } from './service';
 import { registerAnnotationSync } from './sync';
 
@@ -34,6 +40,11 @@ const notesQuery = z.object({
   page_id: ID.optional(),
   limit: z.coerce.number().int().min(1).max(1000).default(500),
 });
+const notePagesQuery = z
+  .object({ node_id: ID.optional(), source_id: ID.optional(), include_deleted: z.enum(['0', '1', 'true', 'false']).optional() })
+  .refine((q) => !!q.node_id || !!q.source_id, { message: 'حدّد الدفتر (node_id) أو المصدر (source_id).' });
+const nodeParams = z.object({ nodeId: ID });
+const imageParams = z.object({ key: ID });
 const reanchorQuery = z.object({ source_id: ID.optional(), limit: z.coerce.number().int().min(1).max(500).default(200) });
 const latestQuery = z.object({ source_id: ID });
 const recentQuery = z.object({ limit: z.coerce.number().int().min(1).max(20).default(5) });
@@ -76,6 +87,39 @@ export default async function register(app: FastifyInstance, { ctx }: ModuleOpti
   app.get('/notes', async (req): Promise<NotesResponse> => {
     const q = parseQuery(notesQuery, req);
     return { notes: svc.notes(q) };
+  });
+
+  // ── notebook pages (track F1): trashed pages are listed only for the restore list ──
+  app.get('/note-pages', async (req): Promise<NotePagesResponse> => {
+    const q = parseQuery(notePagesQuery, req);
+    return { note_pages: svc.notePages({ node_id: q.node_id, source_id: q.source_id, include_deleted: q.include_deleted === '1' || q.include_deleted === 'true' }) };
+  });
+
+  app.get('/notebook/:nodeId', async (req): Promise<NotebookContentResponse> => {
+    const { nodeId } = parseParams(nodeParams, req);
+    return svc.notebook(nodeId);
+  });
+
+  // ── pictures placed on pages: bytes by image_key, independent of the annotation's sync op ──
+  app.post('/images', { config: { rateLimit: RATE_LIMITS.upload } }, async (req): Promise<AnnotationImageUploadResponse> => uploadAnnotationImage(ctx, req));
+
+  const missingImage = () => new AppError('NOT_FOUND', 'لم تصل هذه الصورة إلى الخادم بعد؛ تُرفع من الجهاز الذي أُضيفت منه عندما يتصل.', 404);
+
+  app.get('/images/:key/meta', async (req): Promise<AnnotationImageView> => {
+    const { key } = parseParams(imageParams, req);
+    assertImageKey(key);
+    const row = getAnnotationImage(ctx, key);
+    if (!row) throw missingImage();
+    return toImageView(ctx, row);
+  });
+
+  app.get('/images/:key', async (req, reply) => {
+    const { key } = parseParams(imageParams, req);
+    assertImageKey(key);
+    const row = getAnnotationImage(ctx, key);
+    const file = row ? ctx.files.stat(row.file_id) : null;
+    if (!row || !file) throw missingImage();
+    return sendStoredFile(ctx.files, file, req, reply);
   });
 
   app.get('/needs-reanchor', async (req): Promise<NeedsReanchorResponse> => {

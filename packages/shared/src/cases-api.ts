@@ -651,7 +651,7 @@ export interface CaseAttemptListResponse {
 
 /** Signals for the Weakness Center (shared WeaknessSignal shape + grouping hints). */
 export interface CaseWeaknessSignal {
-  type: 'case' | 'osce';
+  type: 'case' | 'osce' | 'viva';
   ref_id: string;
   at: number;
   correct: boolean | null;

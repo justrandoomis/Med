@@ -1,0 +1,435 @@
+/* Course Brain (features/brain) — tokens only, logical properties, one level of paper (no cards in cards).
+   The knowledge map uses the dataviz «emphasis» form: the selected node's links in the accent (--lw-chart-mark),
+   everything else in a neutral hairline (--ml-color-line-strong); validated with the dataviz palette script: both
+   ≥ 3:1 against paper in light (#3A47A8 / #7E848E on #FFFDF8) and dark (#7E8AE8 / #807D76 on #1D1C1A), CVD ΔE ≥ 16.
+   Node identity is column + icon + shape + words — never colour. */
+
+.kb-notes {
+  margin: 0;
+  padding-inline-start: var(--ml-space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-1);
+}
+.kb-filter-row,
+.kb-actions,
+.kb-graph-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--ml-space-3);
+}
+.kb-graph-tools {
+  align-items: center;
+  margin-bottom: var(--ml-space-3);
+}
+.kb-cell-note {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--ml-text-xs);
+  line-height: var(--ml-leading-xs);
+}
+.kb-linkbtn {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.kb-course-tabs .ml-tablist {
+  margin-bottom: var(--ml-space-4);
+  overflow-x: auto;
+}
+
+/* ───────── knowledge map ───────── */
+.kb-graph-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-3);
+  min-width: 0;
+}
+.kb-map-layout {
+  display: grid;
+  gap: var(--ml-space-3);
+  min-width: 0;
+}
+@media (min-width: 72rem) {
+  .kb-map-layout {
+    grid-template-columns: minmax(0, 1fr) 20rem;
+    align-items: start;
+  }
+  .kb-map-layout .kb-help {
+    grid-column: 1;
+  }
+  .kb-map-layout .kb-details {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    position: sticky;
+    top: calc(var(--ml-topbar-h) + var(--ml-space-3));
+  }
+}
+/* the map keeps a readable width; on a phone it scrolls inside its frame (never the page) */
+.kb-scroll {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  padding-bottom: var(--ml-space-2);
+}
+.kb-columns-head,
+.kb-map {
+  position: relative;
+  min-width: 36rem;
+}
+.kb-columns-head {
+  height: 1.75rem;
+}
+.kb-colhead {
+  position: absolute;
+  top: 0;
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-xs);
+  font-weight: var(--ml-weight-semibold);
+}
+.kb-edges {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+.kb-edge {
+  fill: none;
+  stroke: var(--ml-color-line-strong);
+  stroke-width: 1px;
+}
+.kb-edge--inferred {
+  stroke-dasharray: 4 3;
+}
+.kb-map--has-selection .kb-edge--dim {
+  stroke: var(--ml-color-line);
+}
+.kb-edge--active {
+  stroke: var(--lw-chart-mark);
+  stroke-width: 2px;
+}
+.kb-node {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: var(--ml-space-2);
+  min-height: var(--ml-touch-target);
+  padding-inline: var(--ml-space-2);
+  border: 1px solid var(--ml-color-control-border);
+  background: var(--ml-color-paper);
+  color: var(--ml-color-ink);
+  font: inherit;
+  font-size: var(--ml-text-sm);
+  text-align: start;
+  cursor: pointer;
+  transition: background-color var(--ml-duration-fast) var(--ml-ease-standard);
+}
+.kb-node:hover {
+  background: var(--ml-color-fill);
+}
+.kb-node:focus-visible {
+  outline: 2px solid var(--ml-color-focus);
+  outline-offset: 2px;
+  z-index: 1;
+}
+/* shapes: a lecture is a squared «book», a concept a pill, a question a rounded card */
+.kb-node--lecture {
+  border-radius: var(--ml-radius-xs);
+  border-inline-start-width: 4px;
+}
+.kb-node--concept {
+  border-radius: var(--ml-radius-pill);
+}
+.kb-node--question {
+  border-radius: var(--ml-radius-md);
+}
+.kb-node--suggested {
+  border-style: dashed;
+}
+.kb-node--linked {
+  background: var(--ml-color-fill-strong);
+}
+.kb-node--selected {
+  background: var(--ml-color-accent-soft);
+  color: var(--ml-color-accent-soft-ink);
+  border-color: var(--ml-color-accent);
+  border-width: 2px;
+}
+.kb-node__icon {
+  flex: none;
+}
+.kb-node__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kb-details {
+  min-height: 6rem;
+}
+.kb-links,
+.kb-twin__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+}
+.kb-link {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-block: var(--ml-space-1);
+  border-bottom: 1px solid var(--ml-color-line);
+}
+.kb-pages {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0 var(--ml-space-3);
+}
+.kb-twin {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-4);
+}
+.kb-twin__list li {
+  line-height: var(--ml-leading-sm);
+}
+
+/* ───────── course page status ───────── */
+.kb-lectures {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+}
+.kb-lecture {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-2) var(--ml-space-3);
+  padding-block: var(--ml-space-2);
+  border-top: 1px solid var(--ml-color-line);
+}
+.kb-lecture__title {
+  flex: 1 1 12rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.kb-objectives {
+  flex-basis: 100%;
+  font-size: var(--ml-text-sm);
+}
+.kb-objectives summary,
+.kb-why summary,
+details.lw-sheet summary {
+  min-height: var(--ml-touch-target);
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+.kb-objectives ul,
+.kb-why ul {
+  margin: 0;
+  padding-inline-start: var(--ml-space-5);
+}
+
+/* ───────── coverage ───────── */
+.kb-pages-grid {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  gap: var(--ml-space-2);
+}
+.kb-page-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--ml-space-1);
+  padding: var(--ml-space-2) var(--ml-space-3);
+  border: 1px solid var(--ml-color-line);
+  border-radius: var(--ml-radius-md);
+}
+.kb-page-cell[data-status='uncovered'] {
+  border-style: dashed;
+}
+.kb-page-cell__label {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--ml-touch-target);
+  color: var(--ml-color-accent);
+  font-weight: var(--ml-weight-medium);
+}
+
+/* ───────── concepts, relations, topics ───────── */
+.kb-concepts,
+.kb-relations,
+.kb-topics,
+.kb-topic-links,
+.kb-know-list,
+.kb-mention-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-radius: var(--ml-radius-lg);
+  background-color: var(--ml-color-paper);
+  background-image: var(--ml-paper-texture-active);
+  box-shadow: var(--ml-shadow-paper);
+}
+.lw-sheet .kb-relations,
+.lw-sheet .kb-topic-links,
+.lw-sheet .kb-mention-list,
+.kb-topics--nested {
+  background: none;
+  box-shadow: none;
+  border-radius: 0;
+}
+.kb-topics--nested {
+  padding-inline-start: var(--ml-space-5);
+}
+.kb-concept,
+.kb-relation,
+.kb-topic,
+.kb-topic-link,
+.kb-know,
+.kb-mention {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+  padding: var(--ml-space-3) var(--ml-space-4);
+}
+.kb-concept + .kb-concept,
+.kb-relation + .kb-relation,
+.kb-topic + .kb-topic,
+.kb-topic-link + .kb-topic-link,
+.kb-know + .kb-know,
+.kb-mention + .kb-mention {
+  border-top: 1px solid var(--ml-color-line);
+}
+.lw-sheet .kb-relation,
+.lw-sheet .kb-topic-link,
+.lw-sheet .kb-mention {
+  padding-inline: 0;
+}
+.kb-concept__head,
+.kb-topic-link__main,
+.kb-relation__meta,
+.kb-mention__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-2) var(--ml-space-3);
+}
+.kb-concept__name,
+.kb-topic__title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ml-space-2);
+  min-height: var(--ml-touch-target);
+  color: var(--ml-color-ink);
+  font-size: var(--ml-text-lg);
+  font-weight: var(--ml-weight-semibold);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.kb-concept__name:hover,
+.kb-topic__title:hover {
+  color: var(--ml-color-accent);
+}
+.kb-concept__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ml-space-2);
+}
+.kb-relation__text {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 var(--ml-space-2);
+}
+.kb-relation[data-support='inferred'] {
+  border-inline-start: 2px dashed var(--ml-color-line-strong);
+  padding-inline-start: var(--ml-space-3);
+}
+.lw-sheet .kb-relation[data-support='inferred'] {
+  padding-inline-start: var(--ml-space-3);
+}
+.kb-support,
+.kb-role {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--ml-space-2);
+  border: 1px solid var(--ml-color-line-strong);
+  border-radius: var(--ml-radius-pill);
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-xs);
+  line-height: var(--ml-leading-xs);
+}
+.kb-reasons {
+  margin: 0;
+  padding-inline-start: var(--ml-space-5);
+}
+.kb-quote {
+  margin: 0;
+  padding: var(--ml-space-2) var(--ml-space-3);
+  border-inline-start: 3px solid var(--ml-color-line-strong);
+  background: var(--ml-color-paper-2);
+  font-family: var(--ml-font-reading);
+  line-height: var(--ml-leading-reading);
+  overflow-wrap: anywhere;
+}
+.kb-topic-filter {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-3);
+}
+
+/* ───────── student knowledge map ───────── */
+.kb-state-counts {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ml-space-2) var(--ml-space-4);
+}
+.kb-state-counts li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ml-space-2);
+  font-variant-numeric: tabular-nums;
+}
+.kb-know__facts {
+  margin: 0;
+  display: grid;
+  gap: var(--ml-space-1) var(--ml-space-4);
+}
+@media (min-width: 48rem) {
+  .kb-know__facts {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+.kb-know__facts dt {
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-xs);
+}
+.kb-know__facts dd {
+  margin: 0;
+  font-size: var(--ml-text-sm);
+}
+.kb-prereqs ul {
+  margin: 0;
+  padding-inline-start: var(--ml-space-5);
+}
+.kb-next {
+  margin: 0;
+  font-size: var(--ml-text-sm);
+}

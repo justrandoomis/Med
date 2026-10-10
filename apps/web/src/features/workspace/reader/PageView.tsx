@@ -14,6 +14,7 @@ import { pdfPageUsesRegionText, regionTextRuns } from '../model/regionText';
 import { clientRectsToNorm, rangeFromOffsets } from '../model/textQuote';
 import type { PageGeom } from './geometry';
 import { BoxesLayer, RegionHighlight, TextHighlightsLayer } from './overlays';
+import { PdfLinkLayer } from './pdfLinks';
 import { useReaderPage } from './readerContext';
 import { logicalTextContent } from './textOrder';
 
@@ -21,6 +22,8 @@ const MAX_CANVAS_PIXELS = 12_000_000; // stays under iOS Safari's canvas memory 
 
 export interface PageViewProps {
   page: SourcePageView;
+  /** index of this page in the reader's sheet sequence (data-seq; defaults to page_index) */
+  seq?: number;
   geom: PageGeom;
   /** unrotated page size in page units */
   unrotated: { w: number; h: number };
@@ -30,7 +33,7 @@ export interface PageViewProps {
   style?: React.CSSProperties;
 }
 
-export const PageView = memo(function PageView({ page, geom, unrotated, near, style }: PageViewProps) {
+export const PageView = memo(function PageView({ page, seq, geom, unrotated, near, style }: PageViewProps) {
   const ctx = useReaderPage();
   const f = folio(page);
   const label = fullPageLabel(page);
@@ -86,6 +89,7 @@ export const PageView = memo(function PageView({ page, geom, unrotated, near, st
       className="wk-page"
       style={style}
       data-page-index={page.page_index}
+      data-seq={seq ?? page.page_index}
       data-page-id={page.id}
       aria-label={label}
       aria-roledescription="صفحة"
@@ -264,6 +268,7 @@ function PdfSheet({
         {children}
         <div ref={textRef} className={cx('wk-textlayer', !textInteractive && 'wk-textlayer--inert')} lang={textLang ?? undefined} />
         {regionText && <OcrTextLayer layerRef={ocrRef} runs={runs} interactive={textInteractive} />}
+        <PdfLinkLayer pageIndex={pageIndex} />
       </div>
     </>
   );

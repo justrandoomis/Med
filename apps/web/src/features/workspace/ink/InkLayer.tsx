@@ -3,12 +3,14 @@
 // text boxes, sticky notes and the lasso selection. Pointer input is handled imperatively by
 // PageInkController: a pointermove never causes a React render.
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { StickyNote as StickyIcon } from 'lucide-react';
-import { newId, normToView, richTextFromPlain, richTextToPlain, viewSize, type NormBox, type StickyData, type TextBoxData } from '@medlevo/shared';
+import { ImageOff, Link2, StickyNote as StickyIcon } from 'lucide-react';
+import { newId, normToView, richTextFromPlain, richTextToPlain, viewSize, type ImageAnnotationData, type LinkData, type NormBox, type StickyData, type TextBoxData } from '@medlevo/shared';
 import { cx, RichTextView } from '../../../design';
+import { useInkHost, type InkLinkHost } from './host';
+import { insertImage, useImageSource } from './images';
 import { useInk, useInkInternal } from './InkProvider';
 import { PageInkController } from './layerController';
-import { isSticky, isTextBox, makeStickyItem, makeTextItem, type InkItem, type InkItemOf } from './model';
+import { isImage, isLink, isSticky, isTextBox, makeLinkItem, makeStickyItem, makeTextItem, type InkItem, type InkItemOf } from './model';
 import { resolveInkColor } from './palette';
 import { paperToneOf } from './render';
 import { SelectionOverlay } from './SelectionOverlay';
@@ -37,6 +39,11 @@ export function InkLayer({ targetKey, anchor, view, interactive, onStrokeActiveC
   const activeCb = useRef(onStrokeActiveChange);
   activeCb.current = onStrokeActiveChange;
   const ar = view.pageHeight / view.pageWidth;
+  const host = useInkHost();
+  const hostRef = useRef(host);
+  hostRef.current = host;
+  /** a link box waiting for its target (shown dashed while the host's chooser is open) */
+  const [pendingLink, setPendingLink] = useState<NormBox | null>(null);
   const [objectsVersion, setObjectsVersion] = useState(0);
   const [, setSelectionVersion] = useState(0);
   const objectIds = useRef(new Set<string>());
@@ -64,6 +71,21 @@ export function InkLayer({ targetKey, anchor, view, interactive, onStrokeActiveC
       getInteractive: () => interactiveRef.current,
       onStrokeActive: (a) => activeCb.current?.(a),
       onTextRequest: ({ kind, at }) => setEditing({ targetKey, kind, id: null, at }),
+      onLinkRequest: ({ box }) => {
+        const links = hostRef.current?.links;
+        if (!links) return;
+        setPendingLink(box);
+        const from = { targetKey, anchor: anchorRef.current };
+        void links
+          .pickTarget(from)
+          .then((choice) => {
+            if (!choice) return;
+            const item = makeLinkItem({ id: newId(), anchor: from.anchor, now: Date.now(), z: store.nextZ(targetKey), box, target: choice.target, label: choice.label, targetLabel: choice.targetLabel });
+            store.commit('رابط إلى صفحة', [{ id: item.id, targetKey, before: null, after: item }]);
+          })
+          .catch(() => undefined)
+          .finally(() => setPendingLink(null));
+      },
       onSelectionChanged: () => setSelectionVersion((v) => v + 1),
     });
     ctrlRef.current = c;
@@ -104,17 +126,21 @@ export function InkLayer({ targetKey, anchor, view, interactive, onStrokeActiveC
       if (e.kind === 'loaded' || (e.kind === 'items' && e.dirty === 'all')) setObjectsVersion((v) => v + 1);
       else if (e.kind === 'items') {
         const page = store.page(targetKey);
-        if (e.ids.some((id) => objectIds.current.has(id) || (page?.items.get(id) && (isTextBox(page.items.get(id)!) || isSticky(page.items.get(id)!))))) setObjectsVersion((v) => v + 1);
+        if (e.ids.some((id) => objectIds.current.has(id) || (page?.items.get(id) && isDomObject(page.items.get(id)!)))) setObjectsVersion((v) => v + 1);
       } else if (e.kind === 'hidden' && e.ids.some((id) => objectIds.current.has(id))) setObjectsVersion((v) => v + 1);
     });
   }, [store, targetKey]);
 
-  const objects = useMemo(() => {
-    const list = store.items(targetKey).filter((i): i is InkItemOf<TextBoxData> | InkItemOf<StickyData> => isTextBox(i) || isSticky(i));
+  const all = useMemo(() => {
+    const list = store.items(targetKey).filter(isDomObject);
     objectIds.current = new Set(list.map((i) => i.id));
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [store, targetKey, objectsVersion]);
+  const objects = useMemo(() => all.filter((i): i is InkItemOf<TextBoxData> | InkItemOf<StickyData> => isTextBox(i) || isSticky(i)), [all]);
+  // pictures sit under the ink (rendered before the canvases), links above it; both in paint order
+  const images = useMemo(() => all.filter((i): i is InkItemOf<ImageAnnotationData> => isImage(i)).sort((a, b) => a.z - b.z || a.created_at - b.created_at), [all]);
+  const links = useMemo(() => all.filter((i): i is InkItemOf<LinkData> => isLink(i)), [all]);
 
   const { width, height } = viewSize(view);
   const writing = ink.isWritingTool && interactive;
@@ -132,6 +158,9 @@ export function InkLayer({ targetKey, anchor, view, interactive, onStrokeActiveC
       data-pen-only={ink.toolState.penOnly ? '' : undefined}
       dir="ltr"
     >
+      {images.map((o) => (
+        <ImageView key={o.id} item={o} view={view} hidden={store.isHidden(o.id)} />
+      ))}
       <canvas ref={hlRef} className="ml-ink-layer__canvas ml-ink-layer__canvas--highlight" aria-hidden="true" />
       <canvas ref={inkRef} className="ml-ink-layer__canvas" aria-hidden="true" />
       <canvas ref={liveRef} className="ml-ink-layer__canvas ml-ink-layer__canvas--live" aria-hidden="true" />
@@ -157,7 +186,21 @@ export function InkLayer({ targetKey, anchor, view, interactive, onStrokeActiveC
           />
         ),
       )}
-      {editingHere && (
+      {links.map((o) => (
+        <LinkView
+          key={o.id}
+          item={o}
+          view={view}
+          hidden={store.isHidden(o.id)}
+          host={host?.links ?? null}
+          followable={!ink.isWritingTool || !interactive}
+          onFollow={() => host?.links?.open(o.data.target, { targetKey, anchor: anchorRef.current })}
+        />
+      ))}
+      {pendingLink && <span className="ml-ink-link ml-ink-link--pending" style={boxStyle(pendingLink, view)} aria-hidden="true" />}
+      {editingHere && editingHere.kind === 'image' ? (
+        <ImageInsertCard key={`img:${editingHere.at.join(',')}`} at={editingHere.at} view={view} targetKey={targetKey} getAnchor={() => anchorRef.current} onDone={() => setEditing(null)} />
+      ) : editingHere ? (
         <ObjectEditor
           key={`${editingHere.id ?? 'draft'}:${editingHere.at.join(',')}`}
           editing={editingHere}
@@ -165,7 +208,7 @@ export function InkLayer({ targetKey, anchor, view, interactive, onStrokeActiveC
           onDone={() => setEditing(null)}
           getAnchor={() => anchorRef.current}
         />
-      )}
+      ) : null}
       {selectionHere && ink.toolState.tool === 'lasso' && (
         <SelectionOverlay targetKey={targetKey} view={view} controller={ctrlRef} onStrokeActiveChange={(a) => activeCb.current?.(a)} />
       )}
@@ -194,6 +237,8 @@ function summarize(items: readonly InkItem[]): string {
   let shapes = 0;
   let text = 0;
   let sticky = 0;
+  let images = 0;
+  let links = 0;
   for (const i of items) {
     if (i.kind === 'ink') {
       if ((i.data as { style?: { tool?: string } }).style?.tool === 'highlighter') hl++;
@@ -201,9 +246,25 @@ function summarize(items: readonly InkItem[]): string {
     } else if (i.kind === 'shape') shapes++;
     else if (i.kind === 'text') text++;
     else if (i.kind === 'sticky') sticky++;
+    else if (i.kind === 'image') images++;
+    else if (i.kind === 'link') links++;
   }
-  if (!ink && !hl && !shapes && !text && !sticky) return 'لا توجد كتابة على هذه الصفحة.';
-  return `على هذه الصفحة: خطوط بالقلم ${ink}، تظليل ${hl}، أشكال ${shapes}، مربعات نص ${text}، ملاحظات لاصقة ${sticky}.`;
+  if (!ink && !hl && !shapes && !text && !sticky && !images && !links) return 'لا توجد كتابة على هذه الصفحة.';
+  const extra = `${images ? `، صور ${images}` : ''}${links ? `، روابط ${links}` : ''}`;
+  return `على هذه الصفحة: خطوط بالقلم ${ink}، تظليل ${hl}، أشكال ${shapes}، مربعات نص ${text}، ملاحظات لاصقة ${sticky}${extra}.`;
+}
+
+/** Text boxes, sticky notes, pictures and links are DOM objects of the layer (not canvas paths). */
+function isDomObject(i: InkItem): boolean {
+  return isTextBox(i) || isSticky(i) || isImage(i) || isLink(i);
+}
+
+/** A normalized box placed in the (rotated) view: centred where the box's centre lands, rotated with the page. */
+export function boxStyle(box: NormBox, view: InkPageView): CSSProperties {
+  const w = box.w * view.pageWidth * view.scale;
+  const h = box.h * view.pageHeight * view.scale;
+  const [cx, cy] = normToView(box.x + box.w / 2, box.y + box.h / 2, view);
+  return { left: cx - w / 2, top: cy - h / 2, width: w, height: h, transform: view.rotation ? `rotate(${view.rotation}deg)` : undefined };
 }
 
 function textBoxStyle(box: NormBox, fontScale: number, view: InkPageView): CSSProperties {
@@ -269,6 +330,122 @@ const StickyView = memo(function StickyView({ item, view, hidden, open, onOpen }
       title={preview}
     >
       <StickyIcon size={16} aria-hidden="true" />
+    </button>
+  );
+});
+
+// ───────────────────────────── pictures (track F1) ─────────────────────────────
+/** Why a picture cannot be shown — honest about the two cases (no connection / not uploaded by its device yet). */
+function missingReason(): string {
+  return typeof navigator !== 'undefined' && navigator.onLine === false
+    ? 'الصورة غير محمّلة على هذا الجهاز؛ تظهر عند عودة الاتصال.'
+    : 'لم تصل الصورة إلى الخادم بعد؛ تُرفع من الجهاز الذي أُضيفت منه عند اتصاله.';
+}
+
+const ImageView = memo(function ImageView({ item, view, hidden }: { item: InkItemOf<ImageAnnotationData>; view: InkPageView; hidden: boolean }) {
+  const src = useImageSource(item.data.image_key);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [src.src]);
+  const alt = item.data.alt || (item.data.name ? `صورة أضفتها: ${item.data.name}` : 'صورة أضفتها إلى الصفحة');
+  const style: CSSProperties = { ...boxStyle(item.data.box, view), visibility: hidden ? 'hidden' : undefined };
+  return (
+    <figure className={cx('ml-ink-image', failed && 'ml-ink-image--missing')} style={style} data-image-key={item.data.image_key} data-ink-id={item.id}>
+      {src.src && !failed ? (
+        <img src={src.src} alt={alt} draggable={false} onError={() => setFailed(true)} />
+      ) : (
+        <span className="ml-ink-image__missing" role="img" aria-label={`${alt} — ${missingReason()}`}>
+          <ImageOff size={18} aria-hidden="true" />
+          <span>{missingReason()}</span>
+        </span>
+      )}
+      {src.upload === 'pending' && <figcaption className="ml-ink-image__badge">محفوظة على هذا الجهاز — بانتظار الرفع</figcaption>}
+      {src.upload === 'rejected' && <figcaption className="ml-ink-image__badge ml-ink-image__badge--error">لم يقبلها الخادم: {src.uploadError ?? 'سبب غير معروف'} (ما زالت على هذا الجهاز)</figcaption>}
+    </figure>
+  );
+});
+
+/** «إدراج صورة هنا»: choose a file (or paste) — placed centred on the tapped point. */
+function ImageInsertCard({ at, view, targetKey, getAnchor, onDone }: { at: [number, number]; view: InkPageView; targetKey: string; getAnchor: () => InkLayerProps['anchor']; onDone: () => void }) {
+  const { store, announce } = useInkInternal();
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [x, y] = normToView(at[0], at[1], view);
+  const { width } = viewSize(view);
+  const left = Math.min(Math.max(0, x - 12), Math.max(0, width - 260));
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+  const choose = async (file: File | undefined) => {
+    if (!file) return;
+    setBusy(true);
+    setError(null);
+    const r = await insertImage({ store, targetKey, anchor: getAnchor(), file, at, ar: view.pageHeight / view.pageWidth, pageWidthPt: view.pageWidth });
+    setBusy(false);
+    if (!r.ok) {
+      setError(r.reason);
+      return;
+    }
+    announce('أُدرجت الصورة. حرّكها أو غيّر حجمها بأداة التحديد الحر.');
+    onDone();
+  };
+  return (
+    <div className="ml-ink-sticky-card ml-ink-image-card" style={{ left, top: y + 12 }} data-ink-ui="" dir="rtl" role="group" aria-label="إدراج صورة هنا">
+      <p className="ml-ink-image-card__title">إدراج صورة هنا</p>
+      <label className="ml-ink-linkbtn ml-ink-image-card__pick">
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          className="ml-visually-hidden"
+          aria-label="اختر صورة من الجهاز"
+          disabled={busy}
+          onChange={(e) => void choose(e.target.files?.[0])}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') onDone();
+          }}
+        />
+        {busy ? 'جارٍ الإدراج…' : 'اختر صورة من الجهاز…'}
+      </label>
+      <p className="ml-ink-options__note">أو الصق صورة (Ctrl/⌘ V). PNG أو JPEG أو WebP أو GIF، حتى 10 ميغابايت. لا تُغيَّر الصفحة نفسها.</p>
+      {error && (
+        <p className="ml-ink-image-card__error" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="ml-ink-sticky-card__actions">
+        <button type="button" className="ml-ink-linkbtn" onClick={onDone}>
+          إلغاء
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ───────────────────────────── page links (track F1) ─────────────────────────────
+const LinkView = memo(function LinkView({ item, view, hidden, host, followable, onFollow }: { item: InkItemOf<LinkData>; view: InkPageView; hidden: boolean; host: InkLinkHost | null; followable: boolean; onFollow: () => void }) {
+  const d = item.data;
+  const where = host?.describe?.(d.target) ?? d.target_label ?? (d.target.type === 'note_page' ? 'صفحة ملاحظات' : `الصفحة ${d.target.page_index + 1} في الملف`);
+  const text = d.label?.trim() || where;
+  const style: CSSProperties = { ...boxStyle(d.box, view), visibility: hidden ? 'hidden' : undefined };
+  const active = followable && !!host;
+  return (
+    <button
+      type="button"
+      className={cx('ml-ink-link', active && 'ml-ink-link--active')}
+      style={style}
+      data-ink-ui={active ? '' : undefined}
+      data-ink-id={item.id}
+      tabIndex={active ? 0 : -1}
+      aria-hidden={active ? undefined : true}
+      aria-label={`رابط: ${d.label?.trim() ? `${d.label.trim()} — ` : ''}يفتح ${where}`}
+      title={`يفتح ${where}`}
+      onClick={active ? onFollow : undefined}
+    >
+      <Link2 size={14} aria-hidden="true" />
+      <span className="ml-ink-link__text" dir="auto">
+        {text}
+      </span>
     </button>
   );
 });

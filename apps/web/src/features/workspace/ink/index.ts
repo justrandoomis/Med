@@ -8,3 +8,6 @@ export type * from './types';
 export { registerAnnotationApplier } from './persistence';
 export { onAnnotationRowsChanged } from './events';
 export { CapabilityPanel, CapabilityDialog } from './CapabilityPanel';
+// Track F1 (additive): the screen around the engine (page links + current page for pictures), picture helpers.
+export { InkHost, useInkHost, type InkHostValue, type InkLinkHost, type LinkChoice } from './host';
+export { insertImage, kickImageUploads, imageBoxAt, checkImageFile, startImageUploader } from './images';

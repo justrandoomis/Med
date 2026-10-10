@@ -133,8 +133,14 @@ only. Non-PNG / interlaced images are skipped and listed. Capability `export.ank
 * **Signals**: MCQ attempts (`masterySignal` → `MASTERY_WEIGHTS`; unscored answers listed but not scored; confidence
   / mistake types before a profile reset are ignored), card reviews in review state (Again = lapse −0.6, Hard 0.6,
   Good/Easy 1 — from the same fold as the schedule), graded written answers (estimated score < 50 % wrong, 50–80 %
-  partial 0, ≥ 80 % 0.6; qualitative-only not scored). Case / OSCE attempts: **not collected** (no data contract yet —
-  said in `sources_note_ar`).
+  partial 0, ≥ 80 % 0.6; qualitative-only not scored). **Case / OSCE / viva attempts (since track F2)**: read from
+  `cases/signals.ts` (`caseSignals`) — one signal per checklist item / viva point of a COMPLETED attempt, typed
+  `case` | `osce` | `viva` (never folded into `mcq`); met = a hesitant correct (`MASTERY_WEIGHTS.correct_unsure`, a
+  checklist estimate is never a confident recall), missed = wrong; grouped by the case itself (weakness kind `case`,
+  label «حالة سريرية / OSCE / امتحان شفهي: <title>») and by the sources its evidence cites (never by a similar name);
+  `reasons_ar` counts missed items; actions add `retry_case` (→ `/cases/:id`); `excluded_refs` accept
+  `case|osce|viva:<id>`; the input signature includes `case_attempt`, `case_event`, `clinical_case`. Said in
+  `sources_note_ar`. Merged concepts (Course Brain) are resolved to the surviving concept when grouping.
 * **Groups**: concept and lecture via the question's lecture links (accepted or directly / strongly / partially
   covered) and their concepts, topic links, the card's concept / topic / source; a question with REPEATED mistakes and
   no group is its own weakness.
@@ -285,8 +291,9 @@ create card with duplicate check 0.1 s.
   `parity_check`) and fold `schedule_resets` like the server.
 * **No AI generation** in this track: no generated cards, the reasoning-replay completion and the simplified
   explanation are AI-gated pointers to the evidence-checked explain flow (studybook). Nothing here produces medical text.
-* Case / OSCE attempts are not collected by the Weakness Center (no case module data yet); Student Knowledge Map and
-  prerequisite graph (§44) are not built.
+* Case / OSCE / viva attempts are collected by the Weakness Center since track F2 (see §6). The Student Knowledge Map
+  and the prerequisite graph (§44) live in the `brain` module (`docs/modules/course-brain.md`), not here. A case
+  attempt has no per-part reset yet (profile resets apply to MCQ confidence / mistake types only).
 * Image occlusion export draws masks only on non-interlaced PNG images (others are skipped and listed); native Anki
   Image Occlusion notes are not produced; media must be copied into `collection.media` by hand (Anki's text import
   does not copy media) — the README says so. Anki notetype names may be localized in the owner's Anki; the README says

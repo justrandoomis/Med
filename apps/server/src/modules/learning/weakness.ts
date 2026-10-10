@@ -1,6 +1,7 @@
 // Weakness Center (§44, AC-27). Signals from MCQ attempts (question_attempt), card lapses / recalls (review_event),
-// graded written answers (written_attempt) — case / OSCE attempts have no data contract yet and are listed as not
-// collected. Signals are grouped by concept, lecture and topic (via the question's lecture links and their concepts,
+// graded written answers (written_attempt) and — since track F2 — completed clinical case / OSCE / viva attempts
+// (cases/signals.ts: one signal per checklist item / viva point, typed 'case' | 'osce' | 'viva', grouped by the case
+// and by the sources of the item's evidence; never by name similarity). Signals are grouped by concept, lecture and topic (via the question's lecture links and their concepts,
 // the card's concept / topic / source); a question with repeated mistakes and no group is its own weakness.
 //
 // Score (transparent estimate, shown with its formula): Σ|wrong weights| ÷ (Σ|wrong weights| + Σ correct weights),
@@ -36,12 +37,14 @@ import { newId } from '../../lib/ids';
 import { classificationVisible } from './mistakes';
 import { signalResets, type SignalResets } from './profile';
 import { foldReviews, State } from './srs';
+import { resolveConceptIdDb } from '../brain/resolve';
+import { caseSignals } from '../cases/signals';
 import { clip, pushTo, srsContext } from './store';
 
 // ───────── signals ─────────
 export interface RawSignal {
   ref: string;
-  type: 'mcq' | 'card' | 'written';
+  type: 'mcq' | 'card' | 'written' | 'case' | 'osce' | 'viva';
   at: number;
   correct: boolean | null;
   category: string | null;
@@ -57,6 +60,8 @@ export interface RawSignal {
   /** independent confident recall (weight 1) */
   independent: boolean;
   groups: string[];
+  /** case / OSCE / viva signals: the case they come from */
+  case_id?: string | null;
 }
 
 interface GroupInfo {
@@ -89,7 +94,8 @@ function questionGroups(db: Db, questionId: string, cache: Map<string, QuestionG
     if (l.status !== 'accepted' && !RELATIONS_FOR_GROUPS.has(l.relation)) continue;
     const rj = fromJson<{ concepts?: string[]; lecture_page_ids?: string[] }>(l.reason_json, {}) ?? {};
     lectures.push({ id: l.lecture_source_id, title: l.title, page_ids: rj.lecture_page_ids ?? [] });
-    for (const c of rj.concepts ?? []) conceptIds.add(c);
+    // merged concepts (Course Brain) count as the concept they joined
+    for (const c of rj.concepts ?? []) conceptIds.add(resolveConceptIdDb(db, c));
   }
   const concepts = conceptIds.size
     ? db
@@ -115,6 +121,12 @@ const CARD_CATEGORY_AR = {
   card_recall_hard: 'تذكّر البطاقة بصعوبة (Hard)',
   card_recall: 'تذكّر البطاقة (Good/Easy)',
 };
+const CASE_CATEGORY_AR = {
+  case_item_met: 'بند تحقق في حالة سريرية / OSCE / شفهي (تقدير من قائمة التقييم)',
+  case_item_missed: 'بند لم يتحقق في حالة سريرية / OSCE / شفهي (تقدير من قائمة التقييم)',
+};
+const CASE_TYPE_AR = { case: 'حالة سريرية', osce: 'OSCE', viva: 'امتحان شفهي' } as const;
+
 const WRITTEN_CATEGORY_AR = {
   written_low: 'إجابة مقالية بتقدير منخفض (أقل من النصف — تقديري)',
   written_partial: 'إجابة مقالية بتقدير متوسط (تقديري)',
@@ -291,6 +303,40 @@ export function collectSignals(ctx: AppContext, resets: SignalResets = signalRes
       groups: groupsOfQuestion(w.question_id, label),
     });
   }
+
+  // 4) clinical cases / OSCE stations / viva (track F2): each checklist item / viva point of a COMPLETED attempt is one
+  //    signal of its own type. Met → a correct answer weighted like a hesitant one (a checklist estimate is never a
+  //    confident independent recall); missed → a mistake. Grouped by the case itself and by the sources its evidence
+  //    cites — never by a similar name.
+  for (const c of caseSignals(ctx).signals) {
+    const caseRow = db.get<{ title: string }>('SELECT title FROM clinical_case WHERE id = ?', [c.case_id]);
+    const caseTitle = caseRow?.title ?? 'حالة';
+    const keys = [group(`case:${c.case_id}`, { kind: 'case', label: `${CASE_TYPE_AR[c.type]}: ${caseTitle}`, concept_id: null, topic_id: null })];
+    for (const sid of c.source_ids) {
+      const s = db.get<{ title: string }>('SELECT title FROM source WHERE id = ? AND deleted_at IS NULL', [sid]);
+      if (s) keys.push(group(`lecture:${sid}`, { kind: 'lecture', label: s.title, concept_id: null, topic_id: null, source_id: sid }));
+    }
+    const cat = c.correct ? 'case_item_met' : 'case_item_missed';
+    signals.push({
+      ref: `${c.type}:${c.ref_id}`,
+      type: c.type,
+      at: c.at,
+      correct: c.correct,
+      category: c.correct === null ? null : cat,
+      category_label_ar: c.correct === null ? 'غير محسوبة' : CASE_CATEGORY_AR[cat],
+      weight: c.correct === null ? null : c.correct ? MASTERY_WEIGHTS.correct_unsure : MASTERY_WEIGHTS.wrong,
+      confidence: null,
+      hints_used: 0,
+      mistake_type: null,
+      mistake_origin: null,
+      question_id: null,
+      card_id: null,
+      label: `${CASE_TYPE_AR[c.type]} — ${c.label}${c.owner_judged ? ' (بحكمك)' : ''}`,
+      independent: false,
+      groups: keys,
+      case_id: c.case_id,
+    });
+  }
   return { signals, groups, wrongByQuestion, lapsesByCard, questionPages };
 }
 
@@ -421,6 +467,10 @@ function inputSignature(ctx: AppContext): string {
     db.get('SELECT COUNT(*) AS c, MAX(updated_at) AS u, SUM(rev) AS r FROM flashcard'),
     db.get('SELECT COUNT(*) AS c, MAX(updated_at) AS u, SUM(CASE WHEN deleted_at IS NOT NULL THEN 1 ELSE 0 END) AS d FROM question'),
     db.get('SELECT SUM(CASE WHEN deleted_at IS NOT NULL THEN 1 ELSE 0 END) AS d FROM source'),
+    // case / OSCE / viva attempts: finishing, owner verdicts after finishing (events), deleted cases
+    db.get('SELECT COUNT(*) AS c, MAX(updated_at) AS u, SUM(CASE WHEN status = \'completed\' THEN 1 ELSE 0 END) AS f FROM case_attempt'),
+    db.get('SELECT COUNT(*) AS c FROM case_event'),
+    db.get('SELECT SUM(CASE WHEN deleted_at IS NOT NULL THEN 1 ELSE 0 END) AS d, MAX(updated_at) AS u FROM clinical_case'),
     ctx.capabilities.get('ai.explain').state,
   ];
   return createHash('sha256').update(JSON.stringify(parts)).digest('hex');
@@ -465,6 +515,8 @@ function recomputeWeaknesses(ctx: AppContext): WeaknessDetailView[] {
       if (sc.correctAssisted > 0) reasons.push(`${countAr(sc.correctAssisted, 'إجابة صحيحة واحدة كانت', 'إجابتان صحيحتان كانتا', 'إجابات صحيحة كانت', 'إجابة صحيحة كانت')} بتردد أو بالتخمين أو بعد تلميح أو رؤية الحل أو كانت جزئية، فوزنها أقل من الإجابة المستقلة الواثقة.`);
       if (sc.lapses > 0) reasons.push(`${countAr(sc.lapses, 'بطاقة نُسيت', 'بطاقتان نُسيتا', 'مرات نُسيت فيها بطاقات', 'مرة نُسيت فيها بطاقات')} بعد أن كانت في مرحلة المراجعة (Again).`);
       if (repeatedQ.length) reasons.push(`أخطاء متكررة في ${countAr(repeatedQ.length, 'سؤال واحد', 'سؤالين', 'أسئلة', 'سؤالًا')} (أكثر من مرة في السؤال نفسه) — لذلك جلسة مراجعة مخصصة.`);
+      const caseMissed = signals.filter((s) => s.category === 'case_item_missed').length;
+      if (caseMissed) reasons.push(`${countAr(caseMissed, 'بند واحد', 'بندان', 'بنود', 'بندًا')} لم ${caseMissed === 1 ? 'يتحقق' : 'تتحقق'} في حالات أو محطات OSCE أو امتحان شفهي (تقدير من قائمة التقييم).`);
       const writtenLow = signals.filter((s) => s.category === 'written_low').length;
       if (writtenLow) reasons.push(`${countAr(writtenLow, 'إجابة مقالية', 'إجابتان مقاليتان', 'إجابات مقالية', 'إجابة مقالية')} بتقدير منخفض (التقييم آلي تقديري).`);
       const mt = new Map<MistakeType, number>();
@@ -524,6 +576,11 @@ function recomputeWeaknesses(ctx: AppContext): WeaknessDetailView[] {
       const withoutCard = mistakeAttempts.filter((a) => !withCards.has(a)).slice(0, 10);
       if (lapsedCards.length) actions.push({ kind: 'flashcards', label_ar: `راجع ${countAr(lapsedCards.length, 'البطاقة التي نسيتها', 'البطاقتين اللتين نسيتهما', 'بطاقات نسيتها', 'بطاقة نسيتها')}`, ref: { card_ids: lapsedCards.slice(0, 20) } });
       if (withoutCard.length) actions.push({ kind: 'flashcards', label_ar: `اصنع بطاقة من ${countAr(withoutCard.length, 'خطئك', 'خطأيك', 'أخطائك', 'خطأً')} هنا`, ref: { create_from_attempt_ids: withoutCard } });
+      const missedCases = [...new Set(signals.filter((s) => s.category === 'case_item_missed' && s.case_id).map((s) => s.case_id!))].slice(0, 3);
+      for (const cid of missedCases) {
+        const t = db.get<{ title: string | null }>('SELECT title FROM clinical_case WHERE id = ?', [cid]);
+        actions.push({ kind: 'retry_case', label_ar: `أعد محاولة «${t?.title ?? 'الحالة'}»`, ref: { case_id: cid } });
+      }
       if (wrongQs.length) actions.push({ kind: 'practice_questions', label_ar: `أعد حل ${countAr(wrongQs.length, 'السؤال الذي أخطأت فيه', 'السؤالين اللذين أخطأت فيهما', 'أسئلة أخطأت فيها', 'سؤالًا أخطأت فيه')}`, ref: { question_ids: wrongQs } });
       const firstPages = [...pages.entries()][0];
       actions.push({
@@ -660,8 +717,7 @@ export function listWeaknesses(ctx: AppContext, status?: WeaknessView['status'] 
     items: listStored(ctx, status ?? 'open'),
     sources_note_ar: [
       'المصادر: إجاباتك في أسئلة الاختيار من متعدد، البطاقات التي نسيتها أو تذكرتها، وتقييم إجاباتك المقالية (تقديري).',
-      // critic round: case / OSCE / viva attempts DO exist (each has its own report); only this center does not read them yet
-      'نتائج الحالات السريرية وOSCE والامتحان الشفهي لا تُجمع هنا بعد: تجدها في تقرير كل محاولة، لكن مركز الضعف لا يقرؤها في هذا الإصدار.',
+      'ومحاولاتك المكتملة في الحالات السريرية ومحطات OSCE والامتحان الشفهي: كل بند في قائمة التقييم إشارة بنوعها (حالة / OSCE / شفهي)، وهي تقدير من القائمة لا قياس لأدائك الفعلي.',
       'الضعف تقدير من سجلك وليس حكمًا نهائيًا؛ يمكنك تعديل الاسم أو إخفاء نقطة أو استبعاد إشارة لا تخصها.',
     ],
     generated_at: ctx.clock.now(),
@@ -696,7 +752,11 @@ export function patchWeakness(ctx: AppContext, id: string, patch: WeaknessPatchR
     }
     if (patch.excluded_refs !== undefined) {
       set.push('excluded_refs_json = ?');
-      params.push(toJson([...new Set(patch.excluded_refs.filter((x) => typeof x === 'string' && /^(mcq|card|written):[A-Za-z0-9_-]{1,64}$/.test(x)))].slice(0, 500)));
+      params.push(
+        toJson(
+          [...new Set(patch.excluded_refs.filter((x) => typeof x === 'string' && (/^(mcq|card|written):[A-Za-z0-9_-]{1,64}$/.test(x) || /^(case|osce|viva):[A-Za-z0-9_:-]{1,200}$/.test(x))))].slice(0, 500),
+        ),
+      );
     }
     if (!set.length) return;
     ctx.db.run(`UPDATE weakness SET ${set.join(', ')}, updated_at = ? WHERE id = ?`, [...params, now, id]);

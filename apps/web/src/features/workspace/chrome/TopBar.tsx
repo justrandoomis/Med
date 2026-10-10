@@ -64,6 +64,8 @@ export interface TopBarProps {
   inkAvailable: boolean;
   /** extra items for the overflow menu (e.g. «نزّل للعمل دون اتصال…» from features/offline) */
   extraMenuItems?: ReactNode;
+  /** the reading line is on an inserted note page (track F1): the indicator names the source page before it */
+  noteLabel?: string | null;
 }
 
 const ZOOM_PRESETS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
@@ -158,6 +160,7 @@ export function TopBar(p: TopBarProps) {
               {p.title}
             </h1>
             <GoToPage pages={p.pages} pageIndex={p.pageIndex} onGo={p.onGoToPage} compact />
+            {p.noteLabel && <span className="wk-note-chip">{p.noteLabel}</span>}
           </div>
           <SaveStatus state={p.saveState} detail={p.saveDetail} compact />
           <Hint label="البحث في المصدر">
@@ -226,6 +229,7 @@ export function TopBar(p: TopBarProps) {
               {p.title}
             </h1>
             <GoToPage pages={p.pages} pageIndex={p.pageIndex} onGo={p.onGoToPage} />
+            {p.noteLabel && <span className="wk-note-chip">{p.noteLabel}</span>}
           </div>
           {backButton}
         </div>

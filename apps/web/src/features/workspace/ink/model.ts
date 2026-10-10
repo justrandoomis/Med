@@ -5,10 +5,12 @@ import {
   annotationTargetKey,
   type AnnotationAnchor,
   type AnnotationDTO,
+  type ImageAnnotationData,
   type InkData,
   type InkPenTool,
   type InkPoint,
   type InkStyle,
+  type LinkData,
   type NormBox,
   type ShapeData,
   type StickyData,
@@ -18,8 +20,8 @@ import type { AnnotationRow } from '../../../lib/localdb';
 import { applyMat, bboxOf, expandBox, maxWidthFactor, roundTo, rotationOf, uniformScaleOf, type Mat, type Vec } from './math';
 
 export type InkItem = AnnotationDTO;
-export type InkItemKind = 'ink' | 'shape' | 'text' | 'sticky';
-export const INK_ITEM_KINDS: readonly InkItemKind[] = ['ink', 'shape', 'text', 'sticky'];
+export type InkItemKind = 'ink' | 'shape' | 'text' | 'sticky' | 'image' | 'link';
+export const INK_ITEM_KINDS: readonly InkItemKind[] = ['ink', 'shape', 'text', 'sticky', 'image', 'link'];
 
 export type InkItemOf<D> = Omit<InkItem, 'data'> & { data: D };
 
@@ -34,6 +36,21 @@ export function isTextBox(i: InkItem): i is InkItemOf<TextBoxData> {
 }
 export function isSticky(i: InkItem): i is InkItemOf<StickyData> {
   return i.kind === 'sticky';
+}
+/** A picture placed on the page (track F1): a box, drawn as DOM under the ink. */
+export function isImage(i: InkItem): i is InkItemOf<ImageAnnotationData> {
+  return i.kind === 'image';
+}
+/** A page link (track F1): a box that opens another page. */
+export function isLink(i: InkItem): i is InkItemOf<LinkData> {
+  return i.kind === 'link';
+}
+/** Items placed as a box (moved / resized as a whole, lasso membership = entirely inside). */
+export function isBoxItem(i: InkItem): i is InkItemOf<TextBoxData> | InkItemOf<ImageAnnotationData> | InkItemOf<LinkData> {
+  return i.kind === 'text' || i.kind === 'image' || i.kind === 'link';
+}
+export function boxOf(i: InkItem): NormBox | null {
+  return isBoxItem(i) ? (i.data as { box: NormBox }).box : null;
 }
 /** Items this engine renders (other kinds — text_highlight, bookmark … — belong to the reader). */
 export function isEngineItem(i: InkItem): boolean {
@@ -96,7 +113,8 @@ export function limitScaleToRange(s: number, anchor: Vec, box: NormBox, ar: numb
 }
 
 function layerFor(kind: InkItemKind, tool: InkPenTool | null): InkItem['layer'] {
-  if (kind === 'text' || kind === 'sticky') return 'text';
+  if (kind === 'image') return 'media';
+  if (kind === 'text' || kind === 'sticky' || kind === 'link') return 'text';
   return tool === 'highlighter' ? 'highlight' : 'ink';
 }
 
@@ -168,6 +186,16 @@ export function makeStickyItem(b: BaseInput & { at: Vec; text: string; color: st
   return base('sticky', 'sticky', data, b) as InkItemOf<StickyData>;
 }
 
+export function makeImageItem(b: BaseInput & { data: ImageAnnotationData }): InkItemOf<ImageAnnotationData> {
+  const data: ImageAnnotationData = { ...b.data, box: roundBox(b.data.box) };
+  return base('image', 'image', data, b) as InkItemOf<ImageAnnotationData>;
+}
+
+export function makeLinkItem(b: BaseInput & { box: NormBox; target: LinkData['target']; label?: string | null; targetLabel?: string | null }): InkItemOf<LinkData> {
+  const data: LinkData = { v: 1, box: roundBox(b.box), target: b.target, label: b.label ?? null, target_label: b.targetLabel ?? null };
+  return base('link', 'link', data, b) as InkItemOf<LinkData>;
+}
+
 // ─── geometry per item (iso space), cached by object identity ───────────────────────────────
 export interface ItemGeometry {
   /** polylines in iso units */
@@ -229,8 +257,8 @@ export function itemGeometry(item: InkItem, ar: number): ItemGeometry {
     };
   } else if (isShape(item)) {
     g = { lines: shapeOutline(item.data, ar), halfWidth: item.data.style.width / 2 };
-  } else if (isTextBox(item)) {
-    const b = item.data.box;
+  } else if (isBoxItem(item)) {
+    const b = (item.data as { box: NormBox }).box;
     const poly: Vec[] = [
       [b.x, b.y * ar],
       [b.x + b.w, b.y * ar],
@@ -257,7 +285,7 @@ export function itemGeometry(item: InkItem, ar: number): ItemGeometry {
 
 /** Normalized bounding box including the stroke width (for the spatial index and dirty rects). */
 export function itemBBox(item: InkItem, ar: number): NormBox {
-  if (isTextBox(item)) return { ...item.data.box };
+  if (isBoxItem(item)) return { ...(item.data as { box: NormBox }).box };
   const g = itemGeometry(item, ar);
   const all: Vec[] = [];
   for (const l of g.lines) for (const p of l) all.push([p[0], p[1] / ar]);
@@ -267,8 +295,8 @@ export function itemBBox(item: InkItem, ar: number): NormBox {
 
 /** Points used to decide lasso membership (norm). */
 export function lassoSamplePoints(item: InkItem, ar: number): Vec[] {
-  if (isTextBox(item)) {
-    const b = item.data.box;
+  if (isBoxItem(item)) {
+    const b = (item.data as { box: NormBox }).box;
     return [[b.x + b.w / 2, b.y + b.h / 2]];
   }
   if (isSticky(item)) return [[item.data.at[0], item.data.at[1]]];
@@ -348,6 +376,15 @@ export function transformItem(item: InkItem, m: Mat, ar: number, now: number): I
     const w = b.w * s;
     const h = b.h * s;
     return touched(item, { ...item.data, box: roundBox({ x: cx - w / 2, y: cy - h / 2, w, h }), font_scale: roundTo(item.data.font_scale * s, 6) }, now);
+  }
+  if (isImage(item) || isLink(item)) {
+    // moved and resized as a whole (aspect kept: uniform scale about its centre); a rotation moves its centre only
+    const b = item.data.box;
+    const [cx, cy] = mapIso(m, b.x + b.w / 2, b.y + b.h / 2, ar);
+    const w = b.w * s;
+    const h = b.h * s;
+    const box = roundBox({ x: cx - w / 2, y: cy - h / 2, w, h });
+    return isImage(item) ? touched(item, { ...item.data, box }, now) : touched(item as InkItemOf<LinkData>, { ...(item.data as LinkData), box }, now);
   }
   if (isSticky(item)) {
     const [x, y] = mapIso(m, item.data.at[0], item.data.at[1], ar);

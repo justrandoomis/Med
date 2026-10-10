@@ -7,7 +7,7 @@ import { Tab, TabList, TabPanel, Tabs } from '../../../design';
 import type { SourceDocument } from '../data/useSourceDocument';
 import { ExplainTab } from './ExplainTab';
 import { QuestionsTab } from './QuestionsTab';
-import { MineTab, type MineTabValue, type NoteDraft } from './MineTab';
+import { MineTab, type MineNotePages, type MineTabValue, type NoteDraft } from './MineTab';
 import { SourcesTab } from './SourcesTab';
 
 export type RailTab = 'explain' | 'questions' | 'sources' | 'mine';
@@ -27,6 +27,8 @@ export interface StudyRailProps {
   onOpenSplit: (sourceId: string) => void;
   splitReason: string | null;
   online: boolean;
+  /** the source's inserted note pages (track F1) */
+  notePages?: MineNotePages;
 }
 
 export function StudyRail(p: StudyRailProps) {
@@ -66,6 +68,7 @@ export function StudyRail(p: StudyRailProps) {
           anchorFor={p.anchorFor}
           onGoToPage={p.onGoToPage}
           online={p.online}
+          notePages={p.notePages}
         />
       </TabPanel>
     </Tabs>

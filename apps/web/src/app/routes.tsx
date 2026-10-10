@@ -22,6 +22,7 @@ import { routes as settings } from '../features/settings/routes';
 import { routes as offline } from '../features/offline/routes';
 import { routes as cases } from '../features/cases/routes';
 import { routes as media } from '../features/media/routes';
+import { routes as brain } from '../features/brain/routes';
 
 /** Every feature's routes (see routeTypes.ts for the placement contract). */
 export const FEATURES: Record<string, FeatureRoutes> = {
@@ -43,6 +44,7 @@ export const FEATURES: Record<string, FeatureRoutes> = {
   offline,
   cases,
   media,
+  brain,
 };
 
 export function buildRoutes(features: Record<string, FeatureRoutes> = FEATURES): RouteObject[] {

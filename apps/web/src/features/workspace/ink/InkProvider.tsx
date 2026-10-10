@@ -11,7 +11,7 @@ import type { InkController, InkProviderProps, InkToolId, InkToolState } from '.
 /** A text box / sticky note being written (draft = not saved yet; empty drafts are discarded). */
 export interface InkEditing {
   targetKey: string;
-  kind: 'text' | 'sticky';
+  kind: 'text' | 'sticky' | 'image';
   /** existing item id, or null for a draft */
   id: string | null;
   /** normalized position for a draft */
@@ -50,6 +50,8 @@ export const TOOL_LABELS_AR: Record<InkToolId, string> = {
   ellipse: 'شكل بيضاوي',
   text: 'مربع نص',
   sticky: 'ملاحظة لاصقة',
+  image: 'إدراج صورة',
+  link: 'رابط إلى صفحة',
   laser: 'مؤشر الليزر',
 };
 

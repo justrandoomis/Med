@@ -103,7 +103,7 @@ export interface AnnotationDTO {
   kind: AnnotationKind;
   tool: string | null;
   anchor: AnnotationAnchor;
-  data: InkData | ShapeData | TextBoxData | StickyData | TextHighlightData | BookmarkData | Record<string, unknown>;
+  data: InkData | ShapeData | TextBoxData | StickyData | TextHighlightData | BookmarkData | LinkData | ImageAnnotationData | Record<string, unknown>;
   layer: 'ink' | 'highlight' | 'text' | 'media';
   z: number;
   locked: boolean;
@@ -181,3 +181,88 @@ export interface StudySessionDTO {
 
 /** Entity types synced through /api/sync for this contract. */
 export const ANNOTATION_SYNC_ENTITIES = ['annotation', 'note', 'note_page', 'study_session'] as const;
+
+// ───────── Notebook pages, page links and images (§26, §25, §5 — track F1) ─────────
+
+/** Paper templates of a note page (subtle, token-based, never reducing contrast). */
+export const NOTE_PAGE_TEMPLATES = ['blank', 'ruled', 'dotted', 'grid'] as const;
+export type NotePageTemplate = (typeof NOTE_PAGE_TEMPLATES)[number];
+export const NOTE_PAGE_TEMPLATE_LABELS_AR: Record<NotePageTemplate, string> = {
+  blank: 'فارغة',
+  ruled: 'مسطّرة',
+  dotted: 'منقّطة',
+  grid: 'مربعات',
+};
+
+/** A note page is a writing page, or a section divider that starts a tab of the notebook. */
+export const NOTE_PAGE_KINDS = ['page', 'divider'] as const;
+export type NotePageKind = (typeof NOTE_PAGE_KINDS)[number];
+
+/**
+ * NotePageDTO fields added by the notebook track (always sent by the server; optional for older clients/rows).
+ *  * kind          — 'page' (default) or 'divider' (a section start; its title names the tab)
+ *  * color         — a cover colour token (COVER_COLORS) for a divider's tab, or null
+ *  * after_page_id — the source page the page was inserted after (placement survives a re-numbered version:
+ *                    the page is placed after that page when it exists in the version shown, else by
+ *                    after_page_index; it is never dropped, §25)
+ */
+export interface NotePageExtra {
+  kind?: NotePageKind;
+  color?: string | null;
+  after_page_id?: string | null;
+}
+export type NotePageView = NotePageDTO & NotePageExtra;
+
+/** Where a page link leads: a page (optionally a region on it) of a source version, or a note page. */
+export type LinkTarget =
+  | {
+      type: 'source_page';
+      source_id: string;
+      /** the version the link was made against (null → the active version) */
+      version_id: string | null;
+      page_id: string | null;
+      page_index: number;
+      /** region on the target page (normalized, unrotated) — highlighted on arrival */
+      bbox?: NormBox | null;
+      region_id?: string | null;
+    }
+  | { type: 'note_page'; note_page_id: string; bbox?: NormBox | null };
+
+/** `annotation.kind = 'link'`: a clickable box on a page that opens another page (Back returns, §11). */
+export interface LinkData {
+  v: 1;
+  /** the clickable area on THIS page (normalized) */
+  box: NormBox;
+  target: LinkTarget;
+  /** what the owner called the link (shown on the page), e.g. «انظر الجدول» */
+  label?: string | null;
+  /** the target as the owner saw it when linking, e.g. «ص 12 — محاضرة الزائدة» (display only) */
+  target_label?: string | null;
+}
+
+/**
+ * `annotation.kind = 'image'`: a picture the owner placed on a page. Non-destructive (the page is never changed).
+ * The bytes travel separately (POST /api/annotations/images, keyed by `image_key`, a client ULID), so a page with an
+ * image syncs even while the upload waits for a connection; other devices show «لم تصل الصورة بعد» until it arrives.
+ */
+export interface ImageAnnotationData {
+  v: 1;
+  image_key: string;
+  /** placement on the page (normalized; the aspect ratio of the picture is kept) */
+  box: NormBox;
+  mime: AnnotationImageMime;
+  natural_w: number;
+  natural_h: number;
+  bytes: number;
+  /** owner-written description (alt text); null → «صورة أضفتها» */
+  alt?: string | null;
+  /** original file name, display only */
+  name?: string | null;
+}
+
+export const ANNOTATION_IMAGE_MIMES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const;
+export type AnnotationImageMime = (typeof ANNOTATION_IMAGE_MIMES)[number];
+/** Size limit of one inserted picture (server and web enforce the same number). */
+export const ANNOTATION_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+/** Largest side accepted (pixels) — larger pictures are refused with a reason, never silently scaled. */
+export const ANNOTATION_IMAGE_MAX_SIDE = 12_000;

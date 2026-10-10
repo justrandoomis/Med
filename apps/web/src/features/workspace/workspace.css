@@ -1099,3 +1099,199 @@
     min-height: var(--ml-touch-target);
   }
 }
+
+/* ───────────── note pages: paper templates (track F1, §26) ─────────────
+   Warm paper (token) with a faint pattern in page units (model/paper.ts). The rule colour is a hairline token, so
+   the pattern never competes with what the owner writes; dark paper follows the theme (the ink engine reads the
+   paper tone from the sheet and switches to its light-on-dark ink values). */
+.wk-sheet--note {
+  --wk-paper-bg: var(--ml-color-paper);
+  --wk-paper-rule: var(--ml-color-line-strong);
+  background: var(--wk-paper-bg);
+}
+.wk-paper {
+  background-color: var(--wk-paper-bg);
+  pointer-events: none;
+}
+.wk-sheet--divider {
+  --wk-paper-bg: var(--ml-color-paper-2);
+  border-inline-start: 10px solid var(--wk-tab-color, var(--ml-color-accent));
+}
+.wk-sheet--divider[data-color='indigo'] { --wk-tab-color: var(--ml-cover-indigo, #34437e); }
+.wk-sheet--divider[data-color='teal'] { --wk-tab-color: var(--ml-cover-teal, #2b6264); }
+.wk-sheet--divider[data-color='rose'] { --wk-tab-color: var(--ml-cover-rose, #8c4455); }
+.wk-sheet--divider[data-color='amber'] { --wk-tab-color: var(--ml-cover-amber, #8a5b1e); }
+.wk-sheet--divider[data-color='slate'] { --wk-tab-color: var(--ml-cover-slate, #46505e); }
+.wk-sheet--divider[data-color='green'] { --wk-tab-color: var(--ml-cover-green, #3a5f41); }
+.wk-sheet--divider[data-color='plum'] { --wk-tab-color: var(--ml-cover-plum, #5d446f); }
+.wk-sheet--divider[data-color='sky'] { --wk-tab-color: var(--ml-cover-sky, #2b6286); }
+.wk-paper__divider-title {
+  margin: 0;
+  padding: 14% 10% 0;
+  color: var(--ml-color-ink);
+  font-weight: var(--ml-weight-semibold);
+  line-height: 1.3;
+  text-align: start;
+  direction: rtl;
+}
+@media (prefers-contrast: more) {
+  .wk-sheet--note {
+    --wk-paper-rule: var(--ml-color-ink-3);
+  }
+}
+@media (forced-colors: active) {
+  .wk-sheet--note {
+    --wk-paper-rule: GrayText;
+  }
+}
+@media print {
+  .wk-folio__menu {
+    display: none;
+  }
+}
+
+.wk-folio--note {
+  align-items: center;
+  padding-top: 2px;
+}
+.wk-folio__menu {
+  position: relative;
+  width: 26px;
+  height: 26px;
+  min-height: 26px;
+}
+.wk-folio__menu::before {
+  /* 44 px touch target without a bigger visual */
+  content: '';
+  position: absolute;
+  inset: -9px;
+}
+
+/* ───────────── PDF link annotations ───────────── */
+.wk-pdflinks {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+.wk-pdflink {
+  position: absolute;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.wk-pdflink:hover {
+  background: var(--ml-color-fill);
+  box-shadow: inset 0 -2px 0 var(--ml-color-accent);
+}
+.wk-pdflink:focus-visible {
+  outline: 2px solid var(--ml-color-focus);
+  outline-offset: 1px;
+}
+.wk-pdflinks--inert .wk-pdflink {
+  pointer-events: none;
+}
+
+/* ───────────── dialogs of the notebook track ───────────── */
+.wk-dialog-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-4);
+}
+.wk-dialog-form__error {
+  margin: 0;
+  color: var(--ml-color-danger);
+  font-size: var(--ml-text-sm);
+}
+.wk-paper-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+}
+.wk-paper-picker__grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--ml-space-2);
+}
+.wk-paper-picker__option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--ml-space-1);
+  min-height: var(--ml-touch-target);
+  padding: var(--ml-space-2);
+  border: 1px solid var(--ml-color-line-strong);
+  border-radius: var(--ml-radius-md);
+  background: var(--ml-color-paper);
+  color: var(--ml-color-ink);
+  font: inherit;
+  font-size: var(--ml-text-sm);
+  cursor: pointer;
+}
+.wk-paper-picker__option.is-selected {
+  border-color: var(--ml-color-accent);
+  box-shadow: 0 0 0 1px var(--ml-color-accent);
+  background: var(--ml-color-accent-soft);
+}
+.wk-paper-picker__option:focus-visible {
+  outline: 2px solid var(--ml-color-focus);
+  outline-offset: 2px;
+}
+.wk-paper-picker__sheet {
+  --wk-paper-bg: var(--ml-color-paper);
+  --wk-paper-rule: var(--ml-color-line-strong);
+  display: block;
+  width: 3.4rem;
+  aspect-ratio: 595 / 842;
+  border-radius: 2px;
+  background-color: var(--wk-paper-bg);
+  box-shadow: var(--ml-shadow-paper);
+}
+.wk-paper-picker__option.is-selected .wk-paper-picker__name {
+  font-weight: var(--ml-weight-semibold);
+}
+@media (max-width: 420px) {
+  .wk-paper-picker__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.wk-external-url {
+  display: flex;
+  align-items: center;
+  gap: var(--ml-space-2);
+  margin: 0;
+  padding: var(--ml-space-2) var(--ml-space-3);
+  border-radius: var(--ml-radius-md);
+  background: var(--ml-color-paper-2);
+  overflow-wrap: anywhere;
+  font-size: var(--ml-text-sm);
+}
+
+/* ───────────── split study: notes of the second source ───────────── */
+.wk-split__notes {
+  flex: none;
+  max-height: 40%;
+  overflow: auto;
+  padding: var(--ml-space-3);
+  border-bottom: 1px solid var(--ml-color-line);
+  background: var(--ml-color-paper);
+}
+.wk-mark-row--static {
+  justify-content: space-between;
+  cursor: default;
+}
+.wk-note-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.5rem;
+  padding: 0 var(--ml-space-2);
+  border-radius: var(--ml-radius-pill);
+  background: var(--ml-color-accent-soft);
+  color: var(--ml-color-accent-soft-ink);
+  font-size: var(--ml-text-xs);
+  white-space: nowrap;
+}

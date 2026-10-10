@@ -26,6 +26,7 @@ import { AppError } from '../../lib/errors';
 import { safeEqual, sha256 } from '../../lib/hash';
 import { newId } from '../../lib/ids';
 import { deriveKey, loadOrCreateServerSecret } from '../../lib/secret';
+import { pruneAnnotationImages } from '../annotations/images';
 
 /** temp table → id source */
 const SETS = [
@@ -719,6 +720,12 @@ export function executePurge(
   cancelProcessingOf(ctx, versionIds);
   let removedFiles = 0;
   for (const f of fileIds) if (removeStoredFileIfUnreferenced(ctx, f)) removedFiles++;
+  // pictures placed on the purged pages (image annotations, annotations module): removed once no other page shows them
+  try {
+    pruneAnnotationImages(ctx);
+  } catch (e) {
+    ctx.log.warn({ err: e }, 'could not prune annotation images after a purge');
+  }
   return { counts, removedFiles };
 }
 

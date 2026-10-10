@@ -3,11 +3,12 @@
 // Each becomes a `concept` (origin auto, status suggested — the owner can accept or reject it) with
 // `concept_mention` rows pointing at the regions it came from (role 'candidate_*'). Matching uses accepted and
 // suggested candidates, never rejected ones. A rejected concept is never resurrected by a later run.
-import { normalizeForSearch, stripBidiControls, type ConceptCandidateView, type TableStructure } from '@medlevo/shared';
+import { stripBidiControls, type ConceptCandidateView, type TableStructure } from '@medlevo/shared';
 import type { AppContext } from '../../context';
 import { fromJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
 import { newId } from '../../lib/ids';
+import { findConceptByName } from '../brain/resolve';
 import { pageLabel } from './store';
 import { contentTokens } from './text';
 
@@ -136,11 +137,9 @@ export function extractConceptCandidates(ctx: AppContext, versionId: string): nu
       if (!key) continue;
       let conceptId = byKey.get(key);
       if (!conceptId) {
-        const norm = normalizeForSearch(c.name);
-        const existing = ctx.db.get<{ id: string }>(
-          `SELECT id FROM concept WHERE ml_norm(coalesce(name_en, '')) = ? OR ml_norm(coalesce(name_ar, '')) = ? ORDER BY origin = 'owner' DESC, created_at LIMIT 1`,
-          [norm, norm],
-        );
+        // names, owner renames (aliases) and merges all resolve through the Course Brain resolver (track F2): an owner
+        // correction is never undone by a later candidate run
+        const existing = findConceptByName(ctx, c.name);
         if (existing) conceptId = existing.id;
         else {
           conceptId = newId(now);
@@ -172,12 +171,13 @@ export interface LectureConcept {
   pageIds: string[];
 }
 
-/** Concepts mentioned in a lecture version (rejected ones excluded). */
+/** Concepts mentioned in a lecture version by the CANDIDATE extractor (rejected / merged ones excluded) — the Course
+ * Brain's stated mentions do not change question matching. */
 export function lectureConcepts(ctx: AppContext, versionId: string): LectureConcept[] {
   const rows = ctx.db.all<{ id: string; name_en: string | null; name_ar: string | null; status: 'suggested' | 'accepted' | 'rejected'; page_id: string | null }>(
     `SELECT c.id, c.name_en, c.name_ar, c.status, r.page_id FROM concept_mention m
        JOIN concept c ON c.id = m.concept_id JOIN source_region r ON r.id = m.region_id
-      WHERE m.version_id = ? AND c.status <> 'rejected'`,
+      WHERE m.version_id = ? AND c.status <> 'rejected' AND c.merged_into_id IS NULL AND m.role LIKE 'candidate%'`,
     [versionId],
   );
   const map = new Map<string, LectureConcept>();

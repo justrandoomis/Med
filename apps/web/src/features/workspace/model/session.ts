@@ -10,6 +10,10 @@ import type { StudyLocation, StudySessionDTO } from '@medlevo/shared';
 /** Reader location as the workspace stores it (StudyLocation + the fit mode). */
 export interface ReaderLocation extends StudyLocation {
   fit?: 'width' | null;
+  /** the owner was on an inserted note page (track F1); page_index / page_offset name the source page before it */
+  note_page_id?: string;
+  /** offset inside that note page, fraction [0,1] */
+  note_page_offset?: number;
 }
 
 export interface LocalSession {

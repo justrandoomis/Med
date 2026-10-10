@@ -8,6 +8,7 @@ import {
   type AnnotationDTO,
   type NoteDTO,
   type NotePageDTO,
+  type NotePageExtra,
   type RichText,
   type StudySessionDTO,
 } from '@medlevo/shared';
@@ -219,7 +220,15 @@ export async function mergeServerNotes(db: MedLevoDB, list: readonly NoteDTO[]):
 }
 
 // ───────── note pages ─────────
-export function notePageRowFromDTO(p: NotePageDTO): NotePageRow {
+/** A note page row on this device (baseline NotePageRow + the notebook fields of NotePageView, track F1). */
+export interface WorkspaceNotePageRow extends NotePageRow {
+  kind?: 'page' | 'divider';
+  color?: string | null;
+  afterPageId?: string | null;
+  deviceId?: string | null;
+}
+
+export function notePageRowFromDTO(p: NotePageDTO & NotePageExtra): WorkspaceNotePageRow {
   return {
     id: p.id,
     nodeId: p.node_id,
@@ -230,6 +239,9 @@ export function notePageRowFromDTO(p: NotePageDTO): NotePageRow {
     width: p.width,
     height: p.height,
     sortOrder: p.sort_order,
+    kind: p.kind ?? 'page',
+    color: p.color ?? null,
+    afterPageId: p.after_page_id ?? null,
     rev: p.rev,
     createdAt: p.created_at,
     updatedAt: p.updated_at,

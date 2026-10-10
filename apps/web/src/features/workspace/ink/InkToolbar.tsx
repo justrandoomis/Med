@@ -9,12 +9,15 @@ import {
   Eraser,
   Hand,
   Highlighter,
+  ImagePlus,
   Info,
   Lasso,
+  Link2,
   Minus,
   PenLine,
   Pointer,
   Redo2,
+  SlidersHorizontal,
   Square,
   StickyNote,
   TextCursor,
@@ -28,9 +31,11 @@ import { colorLabel, colorsForTool, isHexColor, resolveInkColor } from './palett
 import { presetKeyFor, WIDTH_RANGE, type PresetKey } from './prefs';
 import { currentPaperTone } from './render';
 import { getClipboard } from './store';
+import { useInkHost } from './host';
+import { insertImage } from './images';
 import type { InkToolId } from './types';
 
-type Family = 'hand' | 'select_text' | 'pen' | 'highlighter' | 'eraser' | 'lasso' | 'shape' | 'text' | 'sticky' | 'laser';
+type Family = 'hand' | 'select_text' | 'pen' | 'highlighter' | 'eraser' | 'lasso' | 'shape' | 'text' | 'sticky' | 'image' | 'link' | 'laser';
 
 function familyOf(t: InkToolId): Family {
   if (t === 'pen' || t === 'fountain' || t === 'ball') return 'pen';
@@ -49,6 +54,8 @@ const FAMILY_ICONS: Record<Family, ReactNode> = {
   shape: <Square size={18} />,
   text: <Type size={18} />,
   sticky: <StickyNote size={18} />,
+  image: <ImagePlus size={18} />,
+  link: <Link2 size={18} />,
   laser: <Pointer size={18} />,
 };
 
@@ -62,15 +69,17 @@ const FAMILY_LABELS: Record<Family, string> = {
   shape: 'الأشكال',
   text: TOOL_LABELS_AR.text,
   sticky: TOOL_LABELS_AR.sticky,
+  image: TOOL_LABELS_AR.image,
+  link: TOOL_LABELS_AR.link,
   laser: TOOL_LABELS_AR.laser,
 };
 
 const FAMILY_SHORTCUT: Partial<Record<Family, string>> = { pen: 'P', highlighter: 'H', eraser: 'E', lasso: 'L', shape: 'S', text: 'T' };
 
-const ALL_FAMILIES: Family[] = ['hand', 'select_text', 'pen', 'highlighter', 'eraser', 'lasso', 'shape', 'text', 'sticky', 'laser'];
+const ALL_FAMILIES: Family[] = ['hand', 'select_text', 'pen', 'highlighter', 'eraser', 'lasso', 'shape', 'text', 'sticky', 'image', 'link', 'laser'];
 type Slot = Family | 'options' | 'undo' | 'redo';
 /** what keeps a place in the bar first when space is short (the rest moves to «المزيد») */
-const PRIORITY: Slot[] = ['pen', 'options', 'undo', 'eraser', 'highlighter', 'hand', 'lasso', 'redo', 'shape', 'text', 'sticky', 'select_text', 'laser'];
+const PRIORITY: Slot[] = ['pen', 'options', 'undo', 'eraser', 'highlighter', 'hand', 'lasso', 'redo', 'shape', 'text', 'sticky', 'image', 'link', 'select_text', 'laser'];
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 const MOD = isMac ? '⌘' : 'Ctrl';
@@ -84,14 +93,16 @@ function buttonSize(): number {
 }
 
 /** How many controls fit in `width` px (the overflow button always keeps its place). */
-export function visibleSlots(width: number, btn: number, gap = 4): Set<Slot> {
-  if (!(width > 0)) return new Set(PRIORITY);
+export function visibleSlots(width: number, btn: number, gap = 4, without?: Slot): Set<Slot> {
+  const order = without ? PRIORITY.filter((p) => p !== without) : PRIORITY;
+  if (!(width > 0)) return new Set(order);
   const n = Math.max(1, Math.floor((width - 12 + gap) / (btn + gap)) - 1); // −1: «المزيد»; 12: separator
-  return new Set(PRIORITY.slice(0, n));
+  return new Set(order.slice(0, n));
 }
 
 export function InkToolbar() {
   const ink = useInk();
+  const host = useInkHost();
   const { store, prefs, capabilitiesOpen, setCapabilitiesOpen, announce } = useInkInternal();
   const status = useSyncExternalStore(store.subscribeStatus, store.getStatus, store.getStatus);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -120,17 +131,19 @@ export function InkToolbar() {
         return ink.setTool(f as InkToolId);
     }
   };
-  const shown = visibleSlots(width, buttonSize());
+  // links need a host that knows the pages they can open (reader / notebook)
+  const families = ALL_FAMILIES.filter((f) => f !== 'link' || !!host?.links);
+  const shown = visibleSlots(width, buttonSize(), 4, host?.links ? undefined : 'link');
   const presetKey = presetKeyFor(tool);
-  const hasOptions = presetKey !== null || fam === 'eraser';
-  const overflow = ALL_FAMILIES.filter((f) => !shown.has(f));
+  const hasOptions = presetKey !== null || fam === 'eraser' || fam === 'image' || fam === 'link';
+  const overflow = families.filter((f) => !shown.has(f));
   const clip = getClipboard();
   const compact = width > 0 && overflow.length > 0;
 
   return (
     <div ref={rootRef} className={cx('ml-ink-toolbar', compact && 'ml-ink-toolbar--compact')} dir="rtl">
       <Toolbar label="أدوات الكتابة">
-        {ALL_FAMILIES.filter((f) => shown.has(f)).map((f) => {
+        {families.filter((f) => shown.has(f)).map((f) => {
           const shortcut = FAMILY_SHORTCUT[f];
           const name = f === fam && f !== 'hand' && f !== 'select_text' ? `${FAMILY_LABELS[f]}: ${TOOL_LABELS_AR[tool]}` : FAMILY_LABELS[f];
           return (
@@ -251,7 +264,7 @@ function ToolOptions() {
     <Popover
       label={label}
       trigger={
-        <IconButton label={label} className="ml-ink-style-btn" icon={key ? <span className="ml-ink-swatch" style={{ background: shown }} /> : <Ellipsis size={18} />} />
+        <IconButton label={label} className="ml-ink-style-btn" icon={key ? <span className="ml-ink-swatch" style={{ background: shown }} /> : <SlidersHorizontal size={18} />} />
       }
     >
       <div className="ml-ink-options" dir="rtl">
@@ -265,10 +278,50 @@ function ToolOptions() {
               : 'تمحو كل خط تلمسه. زر الممحاة في القلم (إن وُجد) يمحو دائمًا.'}
           </p>
         )}
+        {fam === 'image' && <ImageOptions />}
+        {fam === 'link' && <p className="ml-ink-options__note">اسحب مستطيلًا حول ما تريد ربطه (أو المس الصفحة)، ثم اختر الصفحة التي يفتحها. الرابط لا يغيّر الصفحة، ويُفتح بأداة اليد أو تحديد النص، و«العودة» ترجعك.</p>}
         {key && <ColorPicker presetKey={key} />}
         {key && <WidthSlider presetKey={key} />}
       </div>
     </Popover>
+  );
+}
+
+/** «اختر صورة…» for the page the owner is on (keyboard path to the image tool; the tap card does the same). */
+function ImageOptions() {
+  const host = useInkHost();
+  const { store, announce } = useInkInternal();
+  const [error, setError] = useState<string | null>(null);
+  const here = host?.currentPage() ?? null;
+  return (
+    <div className="ml-ink-options__group">
+      <p className="ml-ink-options__note">المس الصفحة حيث تريد الصورة، أو الصقها (Ctrl/⌘ V)، أو اخترها هنا لتوضع في وسط الصفحة الحالية. لا تُغيَّر الصفحة نفسها.</p>
+      <label className="ml-ink-linkbtn ml-ink-image-card__pick">
+        <input
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          className="ml-visually-hidden"
+          aria-label="اختر صورة لإدراجها في الصفحة الحالية"
+          disabled={!here}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = '';
+            if (!file || !here) return;
+            setError(null);
+            void insertImage({ store, targetKey: here.targetKey, anchor: here.anchor, file, at: [0.5, 0.4], ar: here.ar, pageWidthPt: here.pageWidthPt }).then((r) => {
+              if (r.ok) announce('أُدرجت الصورة في الصفحة الحالية.');
+              else setError(r.reason);
+            });
+          }}
+        />
+        {here ? 'اختر صورة للصفحة الحالية…' : 'افتح صفحة أولًا'}
+      </label>
+      {error && (
+        <p className="ml-ink-image-card__error" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }
 

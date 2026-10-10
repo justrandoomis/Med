@@ -8,7 +8,7 @@ import {
   type AnnotationAnchor,
   type AnnotationDTO,
   type NoteDTO,
-  type NotePageDTO,
+  type NotePageView,
   type RichText,
   type StudyLocation,
   type StudySessionDTO,
@@ -62,7 +62,7 @@ export interface NotePageRow {
   source_id: string | null;
   after_page_index: number | null;
   title: string | null;
-  template: NotePageDTO['template'];
+  template: NotePageView['template'];
   width: number;
   height: number;
   sort_order: number;
@@ -71,6 +71,10 @@ export interface NotePageRow {
   updated_at: number;
   rev: number;
   device_id: string | null;
+  /** migration 0260 (notebook track F1) */
+  page_kind: 'page' | 'divider';
+  color: string | null;
+  after_page_id: string | null;
 }
 
 export interface StudySessionRow {
@@ -130,7 +134,7 @@ export function toNoteDTO(r: NoteRow): NoteDTO {
   };
 }
 
-export function toNotePageDTO(r: NotePageRow): NotePageDTO {
+export function toNotePageDTO(r: NotePageRow): NotePageView {
   return {
     id: r.id,
     node_id: r.node_id,
@@ -145,6 +149,9 @@ export function toNotePageDTO(r: NotePageRow): NotePageDTO {
     created_at: r.created_at,
     updated_at: r.updated_at,
     deleted_at: r.deleted_at,
+    kind: r.page_kind ?? 'page',
+    color: r.color ?? null,
+    after_page_id: r.after_page_id ?? null,
   };
 }
 

@@ -10,6 +10,8 @@ export interface ReaderPosition {
   fit: 'width' | null;
   rotation: number;
   layout: 'single' | 'double' | 'continuous';
+  /** on an inserted note page of the reader (track F1) — pageOffset is then the offset inside it */
+  notePageId?: string | null;
 }
 
 export interface BackEntry {
@@ -17,18 +19,20 @@ export interface BackEntry {
   /** e.g. «ص 12 — محاضرة الزائدة» */
   label: string;
   createdAt: number;
+  /** a place outside the reader (a notebook page, track F1): going back navigates to this app route */
+  route?: string;
 }
 
 export const BACK_STACK_MAX = 30;
 
 export function samePlace(a: ReaderPosition, b: ReaderPosition): boolean {
-  return a.sourceId === b.sourceId && a.versionId === b.versionId && a.pageIndex === b.pageIndex && Math.abs(a.pageOffset - b.pageOffset) < 0.02;
+  return a.sourceId === b.sourceId && a.versionId === b.versionId && a.pageIndex === b.pageIndex && (a.notePageId ?? null) === (b.notePageId ?? null) && Math.abs(a.pageOffset - b.pageOffset) < 0.02;
 }
 
 /** Push the current position before a jump. A jump from the same place twice records it once. */
 export function pushBack(stack: readonly BackEntry[], entry: BackEntry, max = BACK_STACK_MAX): BackEntry[] {
   const top = stack[stack.length - 1];
-  if (top && samePlace(top.position, entry.position)) return [...stack.slice(0, -1), entry];
+  if (top && (top.route ?? null) === (entry.route ?? null) && samePlace(top.position, entry.position)) return [...stack.slice(0, -1), entry];
   const next = [...stack, entry];
   return next.length > max ? next.slice(next.length - max) : next;
 }

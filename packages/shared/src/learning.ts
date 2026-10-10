@@ -75,7 +75,7 @@ export interface ReviewStateView {
 
 // ───────── weakness & mistakes (§44) ─────────
 export interface WeaknessSignal {
-  type: 'mcq' | 'card' | 'written' | 'case' | 'osce';
+  type: 'mcq' | 'card' | 'written' | 'case' | 'osce' | 'viva';
   ref_id: string;
   at: number;
   correct: boolean | null;
@@ -96,7 +96,7 @@ export interface WeaknessView {
   score: number;
   reasons_ar: string[];
   status: 'active' | 'improving' | 'resolved' | 'dismissed';
-  suggested_actions: Array<{ kind: 'review_pages' | 'flashcards' | 'practice_questions' | 'simplified_explanation'; label_ar: string; ref: Record<string, unknown> }>;
+  suggested_actions: Array<{ kind: 'review_pages' | 'flashcards' | 'practice_questions' | 'simplified_explanation' | 'retry_case'; label_ar: string; ref: Record<string, unknown> }>;
   updated_at: number;
 }
 

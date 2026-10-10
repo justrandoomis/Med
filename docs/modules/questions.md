@@ -163,7 +163,13 @@ From a processed lecture's headings (split on «—»), table first columns / me
 term sequences and abbreviations (generic heading words EN + AR filtered): `concept` rows origin `auto`,
 status `suggested`, kind `candidate`, `concept_mention` role `candidate_*` with the region. Listed with
 `GET /concepts?source_id=`, accepted/renamed/rejected with `PATCH /concepts/:id`. Used by the matcher as topical
-terms. No Course Brain relations.
+terms.
+
+Since track F2 (`brain` module, `docs/modules/course-brain.md`): a candidate name is looked up with
+`findConceptByName` from `brain/resolve.ts`, which follows `merged_into_id` and owner aliases (a concept the owner
+renamed or merged is reused, never re-created); the matcher's lecture concepts read only `candidate*` mentions of
+non-merged concepts, so the brain's `stated` mentions do not change matching (matching stays deterministic). Concept
+correction (merge, relations, rename with alias) is in the brain module; `PATCH /concepts/:id` here is unchanged.
 
 ## Lecture ↔ question matching (`match.ts`, AC-16)
 
@@ -300,8 +306,8 @@ console errors.
 * Answer keys in a separate file (keys are bound within the same version only); manual binding of an unbound
   key entry to a question (the owner sets an owner key instead).
 * Splitting / merging occurrences from the UI (merged questions are flagged, not split interactively).
-* Question Coverage Map / Exam DNA (only `item_type` data is stored).
-* Course Brain concept relations (concepts are candidates only).
+* Question Coverage Map / Exam DNA here (the Coverage Map is in the brain module since F2; Exam DNA in learning).
+* Course Brain concept relations here (built in the brain module since F2; this module writes candidates only).
 * Vision on figures (figures are attached as regions; their content is not read).
 * Screen-reader and real-device testing.
 

@@ -1,7 +1,6 @@
-// Case / OSCE signals for the Weakness Center (§44). The learning module collects MCQ, card and written signals and
-// does NOT expose an input for other modules yet (docs/modules/learning.md: «Case / OSCE attempts: not collected»),
-// so this module publishes its signals in the shared WeaknessSignal shape (+ grouping hints) at
-// GET /api/cases/signals for the learning track to consume. Only COMPLETED attempts count; each checklist item /
+// Case / OSCE / viva signals for the Weakness Center (§44), in the shared WeaknessSignal shape (+ grouping hints), at
+// GET /api/cases/signals and through caseSignals() — which the Weakness Center (learning/weakness.ts) reads since
+// track F2, each kind with its own signal type. Only COMPLETED attempts count; each checklist item /
 // viva point is one signal (met → correct). Items judged by the owner say so. Nothing here is a mastery score.
 import type { CaseSignalsResponse, CaseWeaknessSignal } from '@medlevo/shared';
 import type { AppContext } from '../../context';
@@ -33,7 +32,8 @@ export function caseSignals(ctx: AppContext, opts: { since?: number } = {}): Cas
     } catch {
       continue; // a log that no longer replays is reported by the attempt itself, never guessed here
     }
-    const type: CaseWeaknessSignal['type'] = def.kind === 'osce' ? 'osce' : 'case';
+    // each kind is its own signal type in the Weakness Center (track F2): case · osce · viva
+    const type: CaseWeaknessSignal['type'] = def.kind === 'osce' ? 'osce' : def.kind === 'viva' ? 'viva' : 'case';
     const at = a.finished_at ?? a.updated_at;
     for (const j of judgeChecklist(def, state)) {
       signals.push({
@@ -56,7 +56,7 @@ export function caseSignals(ctx: AppContext, opts: { since?: number } = {}): Cas
       for (const p of q.question.points) {
         const covered = q.covered.find((c) => c.id === p.id);
         signals.push({
-          type: 'case',
+          type,
           ref_id: `${a.id}:${q.question.id}:${p.id}`,
           at,
           correct: !!covered,
@@ -75,6 +75,6 @@ export function caseSignals(ctx: AppContext, opts: { since?: number } = {}): Cas
   }
   return {
     signals,
-    note_ar: 'إشارات من محاولات الحالات ومحطات OSCE والامتحان الشفهي المكتملة (بند تحقق / لم يتحقق). تقدير من قوائم التقييم فقط؛ لم يُربط بعد بمركز نقاط الضعف لأن وحدة التعلّم لا تستقبل إشارات من وحدات أخرى في هذا الإصدار.',
+    note_ar: 'إشارات من محاولات الحالات ومحطات OSCE والامتحان الشفهي المكتملة (بند تحقق / لم يتحقق). تقدير من قوائم التقييم فقط، ويقرؤها مركز نقاط الضعف بنوعها الخاص (حالة / OSCE / شفهي).',
   };
 }

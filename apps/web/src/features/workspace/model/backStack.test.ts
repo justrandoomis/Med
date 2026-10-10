@@ -40,3 +40,25 @@ describe('Source Jump & Back (§11)', () => {
     expect(loadBackStack()).toEqual([]);
   });
 });
+
+describe('Back from page links and note pages (track F1, §26)', () => {
+  it('a note page inserted after a source page is its own place: jumping from it and from the page before it records both', () => {
+    let s = pushBack([], entry({ pageIndex: 3 }, 'ص 14'));
+    s = pushBack(s, entry({ pageIndex: 3, notePageId: 'NP1' }, 'صفحة ملاحظات بعد ص 14'));
+    expect(s.map((e) => e.label)).toEqual(['ص 14', 'صفحة ملاحظات بعد ص 14']);
+    expect(samePlace(pos({ notePageId: 'NP1' }), pos({ notePageId: 'NP2' }))).toBe(false);
+    expect(samePlace(pos({ notePageId: null }), pos())).toBe(true);
+    // going back restores the note page and the offset inside it
+    expect(popBack(s).entry?.position).toMatchObject({ pageIndex: 3, notePageId: 'NP1', pageOffset: 0.4 });
+  });
+  it('an entry from a notebook page carries its route; the same position in another route is another place', () => {
+    const notebook = (page: string, label: string): BackEntry => ({ ...entry({ sourceId: 'notebook:N1', notePageId: page }, label), route: `/notebook/N1?page=${page}` });
+    let s = pushBack([], notebook('A', 'الصفحة 1'));
+    s = pushBack(s, notebook('A', 'الصفحة 1 (مكرر)'));
+    expect(s).toHaveLength(1);
+    s = pushBack(s, { ...notebook('A', 'نفس الموضع من مسار آخر'), route: '/notebook/N2?page=A' });
+    expect(s).toHaveLength(2);
+    saveBackStack(s);
+    expect(loadBackStack().map((e) => e.route)).toEqual(['/notebook/N1?page=A', '/notebook/N2?page=A']);
+  });
+});

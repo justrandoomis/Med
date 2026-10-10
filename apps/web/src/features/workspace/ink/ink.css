@@ -557,3 +557,141 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* ───────────── pictures on pages (track F1) ───────────── */
+.ml-ink-layer[data-tool='image'] {
+  cursor: copy;
+}
+.ml-ink-layer[data-tool='link'] {
+  cursor: crosshair;
+}
+.ml-ink-image {
+  position: absolute;
+  box-sizing: border-box;
+  margin: 0;
+  /* under the ink canvases (DOM order); never captures input: the lasso selects it by geometry */
+  pointer-events: none;
+  transform-origin: center;
+}
+.ml-ink-image img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.ml-ink-image__missing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ml-space-1);
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  padding: var(--ml-space-2);
+  border: 1px dashed var(--ml-color-line-strong);
+  border-radius: var(--ml-radius-sm);
+  background: var(--ml-color-paper-2);
+  color: var(--ml-color-ink-2);
+  font-family: var(--ml-font-ui);
+  font-size: var(--ml-text-xs, 0.75rem);
+  text-align: center;
+  direction: rtl;
+  overflow: hidden;
+}
+.ml-ink-image__badge {
+  position: absolute;
+  inset-inline-start: 0;
+  bottom: 0;
+  max-width: 100%;
+  padding: 2px var(--ml-space-1);
+  border-radius: var(--ml-radius-xs);
+  background: var(--ml-color-elevated);
+  color: var(--ml-color-ink-2);
+  font-family: var(--ml-font-ui);
+  font-size: var(--ml-text-xs, 0.75rem);
+  direction: rtl;
+  box-shadow: var(--ml-shadow-paper);
+}
+.ml-ink-image__badge--error {
+  color: var(--ml-color-danger);
+}
+.ml-ink-image-card {
+  border-top-color: var(--ml-color-accent);
+  width: 16rem;
+}
+.ml-ink-image-card__title {
+  margin: 0;
+  font-weight: var(--ml-weight-medium);
+  color: var(--ml-color-ink);
+}
+.ml-ink-image-card__pick {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--ml-color-control-border);
+}
+.ml-ink-image-card__pick:focus-within {
+  outline: 2px solid var(--ml-color-focus);
+  outline-offset: 1px;
+}
+.ml-ink-image-card__error {
+  margin: 0;
+  color: var(--ml-color-danger);
+  font-size: var(--ml-text-sm);
+}
+
+/* ───────────── page links (track F1) ───────────── */
+.ml-ink-link {
+  position: absolute;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 0 6px;
+  margin: 0;
+  border: 1.5px dashed var(--ml-color-accent);
+  border-radius: var(--ml-radius-xs);
+  background: transparent;
+  color: var(--ml-color-accent);
+  font: inherit;
+  font-family: var(--ml-font-ui);
+  font-size: var(--ml-text-sm);
+  line-height: 1.2;
+  direction: rtl;
+  overflow: hidden;
+  /* while writing (and for the lasso) the pen goes through; the lasso selects it by geometry */
+  pointer-events: none;
+  transform-origin: center;
+}
+.ml-ink-link__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.ml-ink-link--active {
+  pointer-events: auto;
+  cursor: pointer;
+}
+.ml-ink-link--active::before {
+  /* a touch target of at least 44 px around small links */
+  content: '';
+  position: absolute;
+  inset: min(0px, calc((100% - 44px) / 2)) 0;
+}
+.ml-ink-link--active:hover {
+  background: var(--ml-color-fill);
+}
+.ml-ink-link--active:focus-visible {
+  outline: 2px solid var(--ml-color-focus);
+  outline-offset: 2px;
+}
+.ml-ink-link--pending {
+  border-style: dotted;
+  pointer-events: none;
+}

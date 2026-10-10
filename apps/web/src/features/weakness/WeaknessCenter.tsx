@@ -38,6 +38,9 @@ export function WeaknessCenter() {
       <header className="ml-page__header">
         <h1 className="ml-page__title">نقاط الضعف</h1>
         <p className="ml-page__lede">أين تخطئ ولماذا، وما الذي يستحق المراجعة الآن. الإجابة الصحيحة بالتخمين أو بعد تلميح لا تُحسب كإتقان.</p>
+        <Link className="lw-link" to="/knowledge">
+          خريطة معرفتي: كل مفهوم بحالته ومتطلباته السابقة
+        </Link>
       </header>
       {(list.fromCache || genome.fromCache) && <p className="lw-note">معروضة من آخر نسخة محفوظة على هذا الجهاز (دون اتصال).</p>}
 

@@ -5,6 +5,8 @@ import type {
   ContinueStudyingItem,
   NeedsReanchorItem,
   NoteDTO,
+  NotebookContentResponse,
+  NotePageView,
   ReadingProgressView,
   SourceAnnotationsResponse,
   SourceType,
@@ -103,6 +105,45 @@ export class AnnotationsService {
     }
     const notes = this.db.all<NoteRow>('SELECT * FROM note WHERE source_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC', [sourceId]).map(toNoteDTO);
     return { source_id: sourceId, version_ids: versionIds, annotations, notes, note_pages: notePages.map(toNotePageDTO) };
+  }
+
+  // ───────── note pages (notebook track F1) ─────────
+  /** Note pages of a notebook / folder or of a source, in their order. Trashed ones only when asked (restore list). */
+  notePages(q: { node_id?: string; source_id?: string; include_deleted?: boolean }): NotePageView[] {
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (q.node_id) {
+      if (!this.db.get('SELECT 1 AS x FROM library_node WHERE id = ?', [q.node_id])) throw Errors.notFound('الدفتر أو المجلد');
+      where.push('node_id = ?');
+      params.push(q.node_id);
+    }
+    if (q.source_id) {
+      if (!this.db.get('SELECT 1 AS x FROM source WHERE id = ?', [q.source_id])) throw Errors.notFound('المصدر');
+      where.push('source_id = ?');
+      params.push(q.source_id);
+    }
+    if (where.length === 0) throw new AppError('VALIDATION_FAILED', 'حدّد الدفتر أو المصدر لعرض صفحات الملاحظات.', 400);
+    if (!q.include_deleted) where.push('deleted_at IS NULL');
+    return this.db
+      .all<NotePageRow>(`SELECT * FROM note_page WHERE ${where.join(' AND ')} ORDER BY sort_order, created_at, id LIMIT 5000`, params)
+      .map(toNotePageDTO);
+  }
+
+  /** A notebook's live pages and everything written on them (seeding a device / reading offline later). */
+  notebook(nodeId: string): NotebookContentResponse {
+    const pages = this.notePages({ node_id: nodeId });
+    const annotations: AnnotationDTO[] = [];
+    for (let i = 0; i < pages.length; i += 400) {
+      const ids = pages.slice(i, i + 400).map((p) => p.id);
+      const rows = this.db.all<AnnotationRow>(
+        `SELECT a.* FROM annotation_target t JOIN annotation a ON a.id = t.annotation_id
+         WHERE t.target_type = 'note_page' AND t.target_id IN (${inList(ids.length)}) AND a.deleted_at IS NULL
+         ORDER BY a.z, a.created_at, a.id`,
+        ids,
+      );
+      annotations.push(...rows.map(toAnnotationDTO));
+    }
+    return { node_id: nodeId, note_pages: pages, annotations };
   }
 
   // ───────── notes ─────────

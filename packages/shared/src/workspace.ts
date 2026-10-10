@@ -2,7 +2,7 @@
 // Written by the annotations server module (track B1) and consumed by the workspace reader,
 // the ink engine and the home screen (Continue Studying). Sync payloads use the DTOs from
 // ./annotations (AnnotationDTO, NoteDTO, NotePageDTO, StudySessionDTO).
-import type { AnnotationDTO, NoteDTO, NotePageDTO, StudySessionDTO } from './annotations';
+import type { AnnotationDTO, NoteDTO, NotePageDTO, NotePageView, StudySessionDTO } from './annotations';
 import type { SourceType } from './enums';
 
 /** GET /api/annotations/by-targets?keys=source_page:<id>,note_page:<id>,… (live annotations only). */
@@ -78,4 +78,36 @@ export interface ContinueStudyingItem {
 }
 export interface RecentSessionsResponse {
   items: ContinueStudyingItem[];
+}
+
+// ───────── Notebook pages, images (track F1) ─────────
+
+/** GET /api/annotations/note-pages?node_id=|source_id=[&include_deleted=1] — sorted by sort_order, created_at. */
+export interface NotePagesResponse {
+  note_pages: NotePageView[];
+}
+
+/** GET /api/annotations/notebook/:nodeId — a notebook's live pages and everything written on them (seeding / offline). */
+export interface NotebookContentResponse {
+  node_id: string;
+  note_pages: NotePageView[];
+  annotations: AnnotationDTO[];
+}
+
+/** One uploaded picture of an image annotation (POST /api/annotations/images, GET …/images/:key/meta). */
+export interface AnnotationImageView {
+  image_key: string;
+  file_id: string;
+  mime: string;
+  bytes: number;
+  width: number | null;
+  height: number | null;
+  /** live annotations that show it */
+  used_by: number;
+  created_at: number;
+}
+export interface AnnotationImageUploadResponse {
+  image: AnnotationImageView;
+  /** the same key was uploaded before (idempotent retry) */
+  duplicate: boolean;
 }

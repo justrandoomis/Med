@@ -257,7 +257,10 @@ describe('learning on the Golden Set', () => {
     for (const c of dna.by_concept) expect(c.denominator_unique).toBe(9);
     for (const c of dna.by_item_type) expect(c.denominator).toBe(9);
     expect(dna.by_item_type.reduce((a, x) => a + x.count, 0)).toBe(9);
-    const appendicitis = dna.by_concept.find((c) => c.label === 'Acute Appendicitis')!;
+    // track F2: the bilingual heading «Acute Appendicitis — التهاب الزائدة الدودية الحاد» names ONE concept (the Course
+    // Brain joins the two candidate halves), shown Arabic-first
+    const appendicitis = dna.by_concept.find((c) => c.label === 'التهاب الزائدة الدودية الحاد' || c.label === 'Acute Appendicitis')!;
+    expect(dna.by_concept.filter((c) => c.label === 'التهاب الزائدة الدودية الحاد' || c.label === 'Acute Appendicitis')).toHaveLength(1);
     expect(appendicitis.unique).toBe(1);
     expect(appendicitis.occurrences).toBe(2);
     expect(dna.warnings_ar.join(' ')).toMatch(/العينة صغيرة/);

@@ -370,6 +370,7 @@ class VersionRun {
         jobId: run.id,
       });
       if (final.status !== 'failed') enqueueQuestionFollowUp(ctx, version.id, run.id);
+      if (final.status !== 'failed') enqueueKnowledgeFollowUp(ctx, version.id, run.id);
       const output: ProcessOutput = {
         version_id: version.id,
         status: final.status,
@@ -1149,6 +1150,22 @@ export function finalizeRegions(regions: LayoutRegion[], lowQuality: boolean, te
     }
   }
   return reviews;
+}
+
+/**
+ * Hook for the Course Brain (track F2): once a study source (lecture, reference, textbook…) is processed, queue the
+ * deterministic knowledge-structure extraction. Guarded like the question hook: nothing happens without the brain
+ * module (its job kind), a failure here never fails processing, idempotent per processing run.
+ */
+function enqueueKnowledgeFollowUp(ctx: AppContext, versionId: string, processJobId: string): void {
+  try {
+    const kind = 'extract_knowledge';
+    const src = ctx.db.get<{ source_type: string }>('SELECT s.source_type FROM source_version v JOIN source s ON s.id = v.source_id WHERE v.id = ?', [versionId]);
+    if (!src || !['lecture', 'course_reference', 'textbook', 'practical_manual', 'guideline'].includes(src.source_type) || !ctx.jobs.isRegistered(kind)) return;
+    ctx.jobs.enqueue(kind, { version_id: versionId }, { idempotencyKey: `${kind}:${versionId}:${processJobId}`, parentJobId: processJobId });
+  } catch (e) {
+    ctx.log.warn({ err: e, versionId }, 'could not enqueue the knowledge-extraction follow-up job');
+  }
 }
 
 /**

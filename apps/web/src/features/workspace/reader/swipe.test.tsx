@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render } from '@testing-library/react';
 import type { SourcePageView } from '@medlevo/shared';
 import { BookCanvas } from './BookCanvas';
+import { buildSequence } from '../model/sequence';
 import { ReaderPageContext, type ReaderPageContextValue } from './readerContext';
 import { flipBlocked, STROKE_SETTLE_MS, SwipeTracker, type SwipePointer } from './swipe';
 
@@ -115,7 +116,7 @@ describe('BookCanvas swipe (component)', () => {
       <ReaderPageContext.Provider value={ctx}>
         <BookCanvas
           id="book"
-          pages={[page(0), page(1), page(2)]}
+          sheets={buildSequence([page(0), page(1), page(2)], [])}
           fallbackSize={null}
           pageIndex={0}
           zoom={1}

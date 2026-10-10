@@ -1,7 +1,7 @@
 // «ملاحظاتي»: notes on this source (local-first; save status per note), bookmarks, and writing that
 // «تحتاج إعادة ربط» (§25: never deleted, never moved silently — listed with where it used to be).
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Bookmark, BookmarkMinus, BookmarkPlus, MapPin, NotebookPen, Pencil, Trash2 } from 'lucide-react';
+import { Bookmark, BookmarkMinus, BookmarkPlus, FilePlus2, FileText, MapPin, NotebookPen, Pencil, RotateCcw, Trash2 } from 'lucide-react';
 import {
   detectDir,
   newId,
@@ -25,7 +25,16 @@ import { clearNoteDraft, writeNoteDraft } from '../data/noteDrafts';
 import type { SourceDocument } from '../data/useSourceDocument';
 import { fullPageLabel } from '../model/pages';
 
-export type MineTabValue = 'notes' | 'bookmarks' | 'reanchor';
+export type MineTabValue = 'notes' | 'bookmarks' | 'reanchor' | 'pages';
+
+/** The note pages inserted in this source (track F1): open one, restore a trashed one, add one here. */
+export interface MineNotePages {
+  live: ReadonlyArray<{ id: string; label: string }>;
+  trashed: ReadonlyArray<{ id: string; label: string }>;
+  onGo: (id: string) => void;
+  onRestore: (id: string) => void;
+  onNew: () => void;
+}
 
 export interface NoteDraft {
   pageIndex: number;
@@ -42,6 +51,7 @@ export interface MineTabProps {
   anchorFor: (pageIndex: number) => AnnotationAnchor | null;
   onGoToPage: (pageIndex: number) => void;
   online: boolean;
+  notePages?: MineNotePages;
 }
 
 export function MineTab(p: MineTabProps) {
@@ -59,12 +69,57 @@ export function MineTab(p: MineTabProps) {
           { value: 'notes', label: 'الملاحظات' },
           { value: 'bookmarks', label: 'العلامات' },
           { value: 'reanchor', label: reanchorLocal.length ? `إعادة ربط (${reanchorLocal.length})` : 'إعادة ربط' },
+          ...(p.notePages ? [{ value: 'pages' as const, label: p.notePages.live.length ? `صفحات (${p.notePages.live.length})` : 'صفحات' }] : []),
         ]}
       />
       {p.sub === 'notes' && <NotesSection {...p} pageKeys={pageKeys} />}
       {p.sub === 'bookmarks' && <BookmarksSection doc={p.doc} pageIndex={p.pageIndex} pageKeys={pageKeys} anchorFor={p.anchorFor} onGoToPage={p.onGoToPage} />}
       {p.sub === 'reanchor' && <ReanchorSection doc={p.doc} local={reanchorLocal} online={p.online} onGoToPage={p.onGoToPage} />}
+      {p.sub === 'pages' && p.notePages && <NotePagesSection pages={p.notePages} />}
     </div>
+  );
+}
+
+// ───────────────────────────── note pages (track F1) ─────────────────────────────
+function NotePagesSection({ pages }: { pages: MineNotePages }) {
+  return (
+    <>
+      <div className="wk-rail-actions">
+        <Button size="sm" variant="secondary" icon={<FilePlus2 size={16} />} onClick={pages.onNew}>
+          صفحة ملاحظات بعد هذه الصفحة
+        </Button>
+      </div>
+      <h3 className="wk-rail-h">صفحات الملاحظات في هذا المصدر</h3>
+      {pages.live.length === 0 ? (
+        <p className="wk-muted">لا صفحات ملاحظات بعد. أضف صفحة ورقية (فارغة أو مسطّرة أو منقّطة أو مربعات) بين صفحات المحاضرة واكتب عليها بالقلم.</p>
+      ) : (
+        <ul className="wk-marks" role="list">
+          {pages.live.map((n) => (
+            <li key={n.id}>
+              <button type="button" className="wk-mark-row" onClick={() => pages.onGo(n.id)}>
+                <FileText size={16} aria-hidden="true" />
+                <bdi>{n.label}</bdi>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {pages.trashed.length > 0 && (
+        <>
+          <h3 className="wk-rail-h">المحذوفة</h3>
+          <ul className="wk-marks" role="list">
+            {pages.trashed.map((n) => (
+              <li key={n.id} className="wk-mark-row wk-mark-row--static">
+                <bdi>{n.label}</bdi>
+                <Button size="sm" variant="plain" icon={<RotateCcw size={14} />} onClick={() => pages.onRestore(n.id)}>
+                  استعادة
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </>
   );
 }
 

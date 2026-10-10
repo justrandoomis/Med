@@ -17,6 +17,8 @@ export const FEATURE_KEYS = [
   'questions.vault', 'questions.extraction', 'questions.matching', 'exams',
   // learning
   'flashcards', 'weakness', 'planner', 'exam_dna',
+  // course brain (track F2): deterministic knowledge structure, maps and coverage
+  'course_brain', 'knowledge_map', 'coverage_map',
   // devices & data
   'sync', 'offline', 'backup', 'export.markdown', 'export.anki_tsv', 'export.pdf', 'export.docx',
 ] as const;

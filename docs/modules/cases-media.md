@@ -236,9 +236,11 @@ passed.
 - **Voice mode, automatic transcription, in-app recording, automatic segment-to-page linking and external image
   search are not built.** Each is reported with its reason. No automatic linker exists, so the auto-link label and
   its controls are only exercised with a test fixture.
-- **Weakness Center integration**: the learning module has no signal input for other modules, so case signals are
-  published at `GET /api/cases/signals` in the `WeaknessSignal` shape (with `case_id`, `item_id`, `source_ids`,
-  `owner_judged`). The learning track does not read them yet.
+- **Weakness Center integration**: case signals are published at `GET /api/cases/signals` in the `WeaknessSignal`
+  shape (with `case_id`, `item_id`, `source_ids`, `owner_judged`). Since track F2 the learning Weakness Center reads
+  them (`caseSignals(ctx)` in `learning/weakness.ts`) as their OWN types: `case` for a case, `osce` for an OSCE
+  station, `viva` for a viva point (the `viva` type was added in F2; before it viva points were typed `case`). They are
+  grouped by the case and by the sources their evidence cites — see `docs/modules/learning.md` §6.
 - Phrase matching is a heuristic. It can miss a correct paraphrase or accept a passing mention; a double negation
   («never forget to ask about fever») counts as negated. The report says this, and the owner can override any item.
 - AC-09 caption checks are lexical: a hedged caption («possible pneumothorax») or a caption that names the finding

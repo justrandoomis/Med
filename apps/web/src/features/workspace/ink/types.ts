@@ -20,6 +20,8 @@ export type InkToolId =
   | 'ellipse'
   | 'text'
   | 'sticky'
+  | 'image' // place a picture on the page (tap → choose / paste; track F1)
+  | 'link' // drag a box → choose the page it opens (track F1)
   | 'laser'; // presentation pointer — never saved
 
 export interface InkToolState {

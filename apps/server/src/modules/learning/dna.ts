@@ -7,6 +7,7 @@
 //  * Exam Relevance: an importance indicator inside the archive with its reasons — explicitly NOT a probability.
 import { type ExamDnaDetail, type ExamRelevanceView } from '@medlevo/shared';
 import type { AppContext } from '../../context';
+import { resolveConceptId } from '../brain/resolve';
 import { fromJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
 
@@ -55,7 +56,8 @@ function sample(ctx: AppContext, opts: { courseNodeId?: string | null; sourceIds
 function conceptsOf(ctx: AppContext, questionId: string): Array<{ id: string; label: string }> {
   const ids = new Set<string>();
   for (const l of ctx.db.all<{ reason_json: string | null }>(`SELECT reason_json FROM question_lecture_link WHERE question_id = ? AND status <> 'rejected'`, [questionId])) {
-    for (const c of fromJson<{ concepts?: string[] }>(l.reason_json, {})?.concepts ?? []) ids.add(c);
+    // a concept merged in the Course Brain (owner merge / bilingual heading) counts as the concept it joined
+    for (const c of fromJson<{ concepts?: string[] }>(l.reason_json, {})?.concepts ?? []) ids.add(resolveConceptId(ctx, c));
   }
   if (ids.size === 0) return [];
   return ctx.db

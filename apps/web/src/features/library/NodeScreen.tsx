@@ -27,6 +27,8 @@ import { countAr, NOUN } from './labels';
 import { childrenOf, groupForCourse, type LibraryIndex, pathOf, sourcesIn, sourcesInSubtree, subtreeCounts } from './model';
 import { OfflineNotice, useMoveByDrag } from './shared';
 import { useLibrary } from './useLibrary';
+import { CourseBrainTabs } from '../brain/CourseBrain';
+import { NotebookSection } from '../workspace/notebook/NotebookSection';
 import './library.css';
 
 export function NodeScreen() {
@@ -142,7 +144,8 @@ function NodeView({ node, index, readOnly, cachedAt, dnd }: { node: LibraryNodeV
         </div>
       </header>
 
-      {isCourse && <CourseSources node={node} index={index} readOnly={readOnly} dnd={dnd} />}
+      {/* the course page (§23): sources · knowledge map · progress · question coverage (Course Brain, track F2) */}
+      {isCourse && <CourseBrainTabs courseNodeId={node.id} readOnly={readOnly} sources={<CourseSources node={node} index={index} readOnly={readOnly} dnd={dnd} />} />}
 
       {children.length > 0 && (
         <section className="ml-library__section" aria-labelledby="folders-title">
@@ -185,6 +188,8 @@ function NodeView({ node, index, readOnly, cachedAt, dnd }: { node: LibraryNodeV
           headingLevel={2}
         />
       )}
+      {/* the owner's note pages of this notebook / folder (workspace track F1) — local-first, so also offline */}
+      <NotebookSection nodeId={node.id} />
       {dnd.ghost}
 
       {dialog && dialog !== 'template' && (

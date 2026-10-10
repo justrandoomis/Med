@@ -12,7 +12,7 @@ import { penProbe } from './capabilities';
 import { itemHitByPath, PointEraseSession } from './eraser';
 import { classifyPointerDown, StrokeCapture, type InputSample } from './input';
 import { bboxOf, boxContains, expandBox, fractionInside, pointInPolygon, unionBox, type Mat, type Vec } from './math';
-import { isInkStroke, isShape, isSticky, isTextBox, itemBBox, itemGeometry, lassoSamplePoints, makeInkItem, makeShapeItem, transformItem, type InkItem } from './model';
+import { isBoxItem, isInkStroke, isShape, isSticky, isTextBox, itemBBox, itemGeometry, lassoSamplePoints, makeInkItem, makeShapeItem, transformItem, type InkItem } from './model';
 import { LASER_COLOR, resolveInkColor } from './palette';
 import { canvasScale, deviceRectOf, drawItem, HIGHLIGHT_ALPHA, HIGHLIGHT_ALPHA_ISOLATED, highlightBlendIsolated, pageMatrix, paintOrder, paperToneOf, setMatrix, type RenderEnv } from './render';
 import { recognizeShape, type RecognizedShape } from './shapes';
@@ -42,7 +42,9 @@ export interface LayerDeps {
   getTool: () => InkToolState;
   getInteractive: () => boolean;
   onStrokeActive: (active: boolean) => void;
-  onTextRequest: (req: { kind: 'text' | 'sticky'; at: [number, number] }) => void;
+  onTextRequest: (req: { kind: 'text' | 'sticky' | 'image'; at: [number, number] }) => void;
+  /** the link tool finished a box (normalized); the layer asks the host where it leads (track F1) */
+  onLinkRequest?: (req: { box: NormBox }) => void;
   onSelectionChanged?: () => void;
 }
 
@@ -52,7 +54,8 @@ type Gesture =
   | { kind: 'erase_point'; pointerId: number; last: Vec; session: PointEraseSession; wholes: Map<string, InkItem>; cursor: [number, number] }
   | { kind: 'lasso'; pointerId: number; points: Vec[]; startClient: [number, number]; moved: boolean }
   | { kind: 'shape'; pointerId: number; shape: 'line' | 'arrow' | 'rect' | 'ellipse'; from: Vec; to: Vec; startClient: [number, number] }
-  | { kind: 'tap'; pointerId: number; tool: 'text' | 'sticky'; startClient: [number, number]; moved: boolean }
+  | { kind: 'tap'; pointerId: number; tool: 'text' | 'sticky' | 'image'; startClient: [number, number]; moved: boolean }
+  | { kind: 'link_box'; pointerId: number; from: Vec; to: Vec; startClient: [number, number] }
   | { kind: 'laser'; pointerId: number };
 
 export class PageInkController {
@@ -365,12 +368,14 @@ export class PageInkController {
     } else if (g?.kind === 'shape') {
       const item = this.shapeFromGesture(g, 'live');
       if (item) drawItem(ctx, item, this.env);
+    } else if (g?.kind === 'link_box') {
+      this.outline(ctx, linkBoxOf(g.from, g.to));
     }
     if (this.transformPreview) {
       for (const it of this.d.store.selectedItems()) {
         const moved = transformItem(it, this.transformPreview, this.ar, 0);
         if (isInkStroke(moved) || isShape(moved)) drawItem(ctx, moved, this.env);
-        else if (isTextBox(moved) || isSticky(moved)) this.outline(ctx, itemBBox(moved, this.ar));
+        else if (isBoxItem(moved) || isSticky(moved)) this.outline(ctx, itemBBox(moved, this.ar));
       }
     }
     // device-pixel overlays (cursor, lasso, laser)
@@ -517,8 +522,11 @@ export class PageInkController {
     } else if (SHAPE_TOOLS.has(effective)) {
       const n = this.toNorm(e.clientX, e.clientY);
       start({ kind: 'shape', pointerId: e.pointerId, shape: effective as 'line', from: n, to: n, startClient: [e.clientX, e.clientY] });
-    } else if (effective === 'text' || effective === 'sticky') {
+    } else if (effective === 'text' || effective === 'sticky' || effective === 'image') {
       start({ kind: 'tap', pointerId: e.pointerId, tool: effective, startClient: [e.clientX, e.clientY], moved: false });
+    } else if (effective === 'link') {
+      const n = this.toNorm(e.clientX, e.clientY);
+      start({ kind: 'link_box', pointerId: e.pointerId, from: n, to: n, startClient: [e.clientX, e.clientY] });
     } else if (effective === 'laser') {
       start({ kind: 'laser', pointerId: e.pointerId });
       this.laser.push({ x: local[0], y: local[1], t: performance.now() });
@@ -575,6 +583,7 @@ export class PageInkController {
         break;
       }
       case 'shape':
+      case 'link_box':
         g.to = this.toNorm(e.clientX, e.clientY);
         break;
       case 'tap':
@@ -630,6 +639,14 @@ export class PageInkController {
       case 'tap':
         if (!cancelled && !g.moved) this.d.onTextRequest({ kind: g.tool, at: this.toNorm(e.clientX, e.clientY) });
         break;
+      case 'link_box': {
+        if (cancelled) break;
+        const moved = Math.hypot(e.clientX - g.startClient[0], e.clientY - g.startClient[1]) > TAP_PX;
+        // a tap makes a link of a readable default size around the point
+        const box = moved ? linkBoxOf(g.from, this.toNorm(e.clientX, e.clientY)) : linkBoxAround(g.from);
+        if (box.w > 0.004 && box.h > 0.004) this.d.onLinkRequest?.({ box });
+        break;
+      }
       case 'laser':
         break;
     }
@@ -818,7 +835,7 @@ export class PageInkController {
     const ids: string[] = [];
     for (const it of store.query(this.d.targetKey, box)) {
       const samples = lassoSamplePoints(it, ar);
-      const inside = isTextBox(it) || isSticky(it) ? samples.every((p) => pointInPolygon(p, poly)) : fractionInside(samples, poly) >= 0.5;
+      const inside = isBoxItem(it) || isSticky(it) ? samples.every((p) => pointInPolygon(p, poly)) : fractionInside(samples, poly) >= 0.5;
       if (inside) ids.push(it.id);
     }
     store.setSelection(ids.length ? { targetKey: this.d.targetKey, ids } : null);
@@ -837,6 +854,20 @@ export class PageInkController {
     }
     return null;
   }
+}
+
+/** The normalized box between two corners, inside the page. */
+export function linkBoxOf(a: Vec, b: Vec): NormBox {
+  const x0 = Math.max(0, Math.min(a[0], b[0]));
+  const y0 = Math.max(0, Math.min(a[1], b[1]));
+  const x1 = Math.min(1, Math.max(a[0], b[0]));
+  const y1 = Math.min(1, Math.max(a[1], b[1]));
+  return { x: x0, y: y0, w: Math.max(0, x1 - x0), h: Math.max(0, y1 - y0) };
+}
+
+/** A tap with the link tool: a box of a comfortable size centred on the point (inside the page). */
+export function linkBoxAround(p: Vec, w = 0.22, h = 0.04): NormBox {
+  return { x: Math.min(Math.max(0, p[0] - w / 2), 1 - w), y: Math.min(Math.max(0, p[1] - h / 2), 1 - h), w, h };
 }
 
 const LIVE_BASE = {

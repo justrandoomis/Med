@@ -3,7 +3,7 @@
 // Server-managed fields (rev, created_at/updated_at, deleted_at, conflict ids) sent by a client are ignored.
 // `data` objects are validated for the fields the contract defines and keep any extra keys (forward
 // compatible ink formats); free-form records are size-limited.
-import { richTextSchema } from '@medlevo/shared';
+import { ANNOTATION_IMAGE_MAX_BYTES, ANNOTATION_IMAGE_MAX_SIDE, ANNOTATION_IMAGE_MIMES, COVER_COLORS, NOTE_PAGE_KINDS, richTextSchema } from '@medlevo/shared';
 import { z } from 'zod';
 
 const ID = z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/, 'معرّف غير صالح.');
@@ -80,6 +80,45 @@ export const textHighlightDataSchema = z.looseObject({
   region_ids: z.array(ID).max(200).optional(),
 });
 const bookmarkDataSchema = z.looseObject({ v: z.literal(1), label: z.string().max(300).optional() });
+
+/** a box placed on the page: inside the stored range, with a real size */
+const placedBoxSchema = normBoxSchema.refine((b) => b.w > 0 && b.h > 0, 'المساحة على الصفحة يجب أن يكون لها عرض وارتفاع.');
+/** a region on the target page of a link (normalized to that page) */
+const targetBoxSchema = z.object({ x: unit, y: unit, w: unit, h: unit });
+
+/** Link target (shared LinkTarget): a page of a source version (optionally a region on it) or a note page. */
+export const linkTargetSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('source_page'),
+    source_id: ID,
+    version_id: ID.nullable(),
+    page_id: ID.nullable(),
+    page_index: z.number().int().min(0).max(100_000),
+    bbox: targetBoxSchema.nullish(),
+    region_id: ID.nullish(),
+  }),
+  z.object({ type: z.literal('note_page'), note_page_id: ID, bbox: targetBoxSchema.nullish() }),
+]);
+export const linkDataSchema = z.looseObject({
+  v: z.literal(1),
+  box: placedBoxSchema,
+  target: linkTargetSchema,
+  label: z.string().max(200).nullish(),
+  target_label: z.string().max(300).nullish(),
+});
+
+/** Image annotation data (shared ImageAnnotationData): the picture itself travels separately by image_key. */
+export const imageDataSchema = z.looseObject({
+  v: z.literal(1),
+  image_key: ID,
+  box: placedBoxSchema,
+  mime: z.enum(ANNOTATION_IMAGE_MIMES, 'نوع الصورة غير مدعوم (PNG أو JPEG أو WebP أو GIF).'),
+  natural_w: z.number().int().min(1).max(ANNOTATION_IMAGE_MAX_SIDE),
+  natural_h: z.number().int().min(1).max(ANNOTATION_IMAGE_MAX_SIDE),
+  bytes: z.number().int().min(1).max(ANNOTATION_IMAGE_MAX_BYTES, 'الصورة أكبر من الحد المسموح (10 ميغابايت).'),
+  alt: z.string().max(500).nullish(),
+  name: z.string().max(255).nullish(),
+});
 /** any other kind: a JSON object, size-limited by the caller */
 const freeDataSchema = z.record(z.string(), z.unknown());
 
@@ -93,9 +132,9 @@ const DATA_BY_KIND: Record<(typeof ANNOTATION_KINDS)[number], z.ZodType> = {
   shape: shapeDataSchema,
   text: textBoxDataSchema,
   sticky: stickyDataSchema,
-  image: freeDataSchema,
+  image: imageDataSchema,
   bookmark: bookmarkDataSchema,
-  link: freeDataSchema,
+  link: linkDataSchema,
   text_highlight: textHighlightDataSchema,
 };
 
@@ -136,18 +175,33 @@ export const notePayloadSchema = z.object({
 });
 export type NotePayload = z.infer<typeof notePayloadSchema>;
 
-export const notePagePayloadSchema = z.object({
-  id: ID.optional(),
-  node_id: ID.nullish(),
-  source_id: ID.nullish(),
-  after_page_index: z.number().int().min(-1).max(100_000).nullish(),
-  title: z.string().max(500).nullish(),
-  template: z.enum(['blank', 'ruled', 'dotted', 'grid']).default('blank'),
-  width: finite.refine((n) => n > 0 && n <= 20_000).default(595),
-  height: finite.refine((n) => n > 0 && n <= 20_000).default(842),
-  sort_order: finite.default(0),
-  created_at: z.number().int().nonnegative().optional(),
-});
+export const notePagePayloadSchema = z
+  .object({
+    id: ID.optional(),
+    node_id: ID.nullish(),
+    source_id: ID.nullish(),
+    after_page_index: z.number().int().min(-1).max(100_000).nullish(),
+    /** the source page it was inserted after (placement survives a re-numbered version) */
+    after_page_id: ID.nullish(),
+    title: z.string().max(500).nullish(),
+    template: z.enum(['blank', 'ruled', 'dotted', 'grid']).default('blank'),
+    /** 'divider' starts a section (tab) of a notebook */
+    kind: z.enum(NOTE_PAGE_KINDS).default('page'),
+    /** a divider's tab colour: a cover colour token */
+    color: z.enum(COVER_COLORS, 'لون القسم غير معروف.').nullish(),
+    width: finite.refine((n) => n >= 100 && n <= 20_000, 'مقاس الصفحة غير صالح.').default(595),
+    height: finite.refine((n) => n >= 100 && n <= 20_000, 'مقاس الصفحة غير صالح.').default(842),
+    sort_order: finite.refine((n) => Math.abs(n) <= 1e12, 'ترتيب الصفحة غير صالح.').default(0),
+    created_at: z.number().int().nonnegative().optional(),
+  })
+  .refine((p) => !!p.node_id || !!p.source_id, {
+    message: 'صفحة الملاحظات يجب أن تكون داخل دفتر أو مجلد، أو بعد صفحة من مصدر.',
+    path: ['node_id'],
+  })
+  .refine((p) => p.after_page_index == null || !!p.source_id, {
+    message: 'موضع الصفحة بعد صفحة من مصدر يحتاج المصدر نفسه.',
+    path: ['after_page_index'],
+  });
 export type NotePagePayload = z.infer<typeof notePagePayloadSchema>;
 
 export const studyLocationSchema = z.looseObject({

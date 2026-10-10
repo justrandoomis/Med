@@ -206,3 +206,19 @@ Reviewed adversarially (server + web), probed against the real modules, then fix
   after inflating everything). Every office upload is now inflated once under the zip limits (total, per entry,
   measured ratio), keeping nothing, before it is accepted; lying, bombed or corrupt packages are refused with an Arabic
   reason and no processing job. Test: `apps/server/test/acceptance/g8-security.test.ts`.
+
+## F2 Course Brain additions (2026-10-10, §05 topics)
+* **Topic link validation** (`tags.ts ownerLinkTopic`): `POST /topics/:id/links` now refuses an unknown `entity_type`
+  (400, the supported list is `TOPIC_ENTITY_TYPES` in `packages/shared/src/brain-api.ts`: source, source_region,
+  question, library_node, concept, image_asset, flashcard, note) and a missing entity (404). Before, any string was
+  stored. Test: `apps/server/test/brain/relations.test.ts`.
+* **Suggested topic links**: the `brain` module calls `suggestTopicLink` after each knowledge extraction (concept /
+  lecture / region / question suggestions with their reason); an owner decision (accepted, rejected, deleted auto
+  link) is never overridden — see `docs/modules/course-brain.md`.
+* **Web**: «الموضوعات» button in the library header opens `/library/topics` (topic list, create / rename / reparent /
+  delete, topic page with linked sources, regions, questions, concepts; accept / reject suggestions; link a source or a
+  question). The library takes `?topic=<id>` as a filter (a chip with the topic's linked items replaces the tabs; a
+  «موضوع» select sits in the tools row). Screens live in `apps/web/src/features/brain/` (`TopicsScreen.tsx`,
+  `TopicFilter.tsx`); `LibraryScreen.tsx` was changed additively. Course pages (`NodeScreen.tsx`) render the course
+  content inside `CourseBrainTabs` (المصادر / خريطة المعرفة / التقدم / تغطية الأسئلة); the sources tab is the existing
+  course view unchanged.

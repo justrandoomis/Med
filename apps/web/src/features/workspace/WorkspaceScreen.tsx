@@ -6,16 +6,16 @@
 // (optional synchronized scrolling). Explanation actions from the selection toolbar open the «الشرح والسؤال» tab.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowRight, Focus, Link2, X } from 'lucide-react';
-import { normalizeRotation, type AnnotationAnchor, type SourceDetail, type TextQuote } from '@medlevo/shared';
-import { Button, ErrorState, IconButton, LoadingState, Sheet, buttonClass, cx, useResizablePanel } from '../../design';
+import { ArrowRight, FilePlus2, Focus, Link2, X } from 'lucide-react';
+import { normalizeRotation, type AnnotationAnchor, type LinkTarget, type SourceDetail, type TextQuote } from '@medlevo/shared';
+import { Button, ErrorState, IconButton, LoadingState, MenuItem, Sheet, buttonClass, cx, useResizablePanel, useToast } from '../../design';
 import { useCapabilities } from '../../lib/capabilities';
 import { getDb } from '../../lib/localdb';
 import { useSettings } from '../../lib/settings';
 import { describeSyncSnapshot, getSyncEngine, useSyncSnapshot } from '../../lib/sync';
 import { useOnline } from '../../lib/useOnline';
 import { usePageTitle } from '../../lib/usePageTitle';
-import { InkProvider, useInk } from './ink';
+import { InkHost, InkProvider, useInk, type InkLinkHost, type LinkChoice } from './ink';
 import { fetchSourceAnnotations, markOpened } from './data/api';
 import { mergeServerAnnotations, registerWorkspaceAppliers } from './data/local';
 import { activeVersionId, useSourceDetail, useVersionDocument, type SourceDocument } from './data/useSourceDocument';
@@ -45,6 +45,9 @@ import { SecondaryPane, SplitPicker } from './split/SplitPane';
 import { StudyBookPane } from './studybook/StudyBookPane';
 import { useStudyBookAvailability } from './studybook/useStudyBook';
 import { useOfflineDownloadAction } from '../offline/OnDevice';
+import { ExternalLinkDialog, LinkTargetDialog } from './notes/NotePageDialogs';
+import { useReaderNotePages } from './notes/readerNotePages';
+import { sheetLabel } from './model/sequence';
 import './workspace.css';
 
 // per-device view preferences (UI conveniences, never owner data): the Study Book view per source, sync scrolling
@@ -73,6 +76,8 @@ interface UrlPlace {
   bbox: ReturnType<typeof parseBbox>;
   regionId: string | null;
   offset: number | null;
+  /** an inserted note page to open (a page link from elsewhere, track F1) */
+  noteId: string | null;
 }
 
 function readUrl(params: URLSearchParams): UrlPlace {
@@ -85,6 +90,7 @@ function readUrl(params: URLSearchParams): UrlPlace {
     bbox: parseBbox(params.get('bbox')),
     regionId: params.get('region'),
     offset: off != null && Number.isFinite(Number(off)) ? Math.min(1, Math.max(0, Number(off))) : null,
+    noteId: params.get('note'),
   };
 }
 
@@ -214,6 +220,14 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
   }, []);
   const [pageIndex, setPageIndex] = useState(initial.pageIndex);
   const locRef = useRef<BookLocation>(initial);
+  // an inserted note page under the reading line (track F1): pageIndex / locRef then name the source page before it
+  const [notePageId, setNotePageId] = useState<string | null>(null);
+  const noteRef = useRef<string | null>(null);
+  const noteFracRef = useRef(0);
+  /** a note page to open once the note pages are loaded (URL ?note=, or the restored session) */
+  const pendingNote = useRef<{ id: string; frac: number } | null>(
+    url.noteId ? { id: url.noteId, frac: 0 } : url.pageIndex == null && !url.pageId && decision.location.note_page_id ? { id: decision.location.note_page_id, frac: decision.location.note_page_offset ?? 0 } : null,
+  );
   const loc0 = decision.location;
   const keepZoom = decision.keepZoom && typeof loc0.zoom === 'number' && loc0.fit !== 'width';
   const [zoom, setZoom] = useState(keepZoom ? clampZoom(loc0.zoom!) : 1);
@@ -237,7 +251,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
   const panels = decidePanels({ width, railOpen: railOpen && !focusMode, railWidth: rail.width, leftOpen: leftOpen && !focusMode, last: lastPanel });
 
   // ── split study ──
-  const [split, setSplit] = useState<{ sourceId: string; pageIndex: number } | null>(loc0.split?.secondary_source_id ? { sourceId: loc0.split.secondary_source_id, pageIndex: loc0.split.secondary_page_index ?? 0 } : null);
+  const [split, setSplit] = useState<{ sourceId: string; pageIndex: number; zoom?: number | null } | null>(loc0.split?.secondary_source_id ? { sourceId: loc0.split.secondary_source_id, pageIndex: loc0.split.secondary_page_index ?? 0 } : null);
   const [splitPicker, setSplitPicker] = useState(false);
   const splitReason = panels.phone || !canSplit(panels.canvasWidth + (panels.rail === 'docked' ? Math.min(panels.railWidth, 200) : 0)) ? 'العرض جنبًا إلى جنب يحتاج شاشة أعرض (1024 بكسل على الأقل).' : null;
 
@@ -276,6 +290,18 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
   const [draft, setDraft] = useState<NoteDraft | null>(null);
   // polite announcements for explicit navigation (go to page, jump to a region, back)
   const [announcement, setAnnouncement] = useState('');
+  const toast = useToast();
+
+  // ── note pages inserted after source pages (track F1): the canvas shows the sequence ──
+  const goToNoteRef = useRef<(id: string, frac?: number) => boolean>(() => false);
+  const notes = useReaderNotePages({ sourceId, pages, online, onCreated: (id) => void goToNoteRef.current(id), announce: setAnnouncement });
+  const sheetsRef = useRef(notes.sheets);
+  sheetsRef.current = notes.sheets;
+  const seqRef = useRef(notes.index);
+  seqRef.current = notes.index;
+  const notePageInk = caps.feature('workspace.ink').available;
+  const hasNotePages = notes.sheets.some((sh) => sh.kind === 'note');
+  const seqCurrent = notePageId != null && notes.index.ofNote(notePageId) >= 0 ? notes.index.ofNote(notePageId) : notes.index.ofSource(pageIndex);
   const strokeActive = useRef(false);
   /** when the last stroke ended (a swipe right after it is the same hand, not a page turn) */
   const lastStrokeEndAt = useRef<number | null>(null);
@@ -294,10 +320,10 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
 
   // a place given in the URL is applied once; then the URL is cleaned so a reload resumes the session
   useEffect(() => {
-    if (url.pageIndex != null || url.pageId || url.bbox || url.regionId || url.offset != null) {
+    if (url.pageIndex != null || url.pageId || url.bbox || url.regionId || url.offset != null || url.noteId) {
       setParams((p) => {
         const n = new URLSearchParams(p);
-        ['page', 'page_id', 'bbox', 'region', 'offset'].forEach((k) => n.delete(k));
+        ['page', 'page_id', 'bbox', 'region', 'offset', 'note'].forEach((k) => n.delete(k));
         return n;
       }, { replace: true });
     }
@@ -330,6 +356,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
       rail: { open: s.railOpen, width: s.railWidth, tab: s.railTab },
       left_panel: { open: s.leftOpen, tab: s.leftTab },
       split: s.split ? { mode: 'source', secondary_source_id: s.split.sourceId, secondary_page_index: s.split.pageIndex } : s.splitBook ? { mode: 'study_book' } : null,
+      ...(noteRef.current ? { note_page_id: noteRef.current, note_page_offset: Math.round(Math.min(1, Math.max(0, noteFracRef.current)) * 1000) / 1000 } : {}),
     };
   }, [pages]);
   const save = useCallback(() => session.save(buildLocation(), versionId, stateRef.current.split || stateRef.current.splitBook ? 'split' : 'original'), [session, buildLocation, versionId]);
@@ -346,29 +373,100 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
     [save],
   );
 
+  /** the canvas reports places in its sheet sequence: source pages → onLocation, note pages → their own place */
+  const onCanvasLocation = useCallback(
+    (l: BookLocation) => {
+      const sh = sheetsRef.current[l.pageIndex];
+      if (sh?.kind === 'note') {
+        noteFracRef.current = l.frac;
+        if (noteRef.current !== sh.note.id) {
+          noteRef.current = sh.note.id;
+          setNotePageId(sh.note.id);
+        }
+        const src = Math.max(0, sh.after);
+        locRef.current = { pageIndex: src, frac: sh.after >= 0 ? 1 : 0 };
+        setPageIndex((p) => (p === src ? p : src));
+        save();
+        return;
+      }
+      if (noteRef.current !== null) {
+        noteRef.current = null;
+        setNotePageId(null);
+      }
+      onLocation({ pageIndex: sh ? sh.page.page_index : l.pageIndex, frac: l.frac });
+    },
+    [onLocation, save],
+  );
+
   // ── navigation ──
   const blockFlip = (gesture: 'key' | 'swipe' = 'key') =>
     flipBlocked({ strokeActive: strokeActive.current, lastStrokeEndAt: lastStrokeEndAt.current, now: performance.now(), hasSelection: hasBookSelection(canvasRef.current?.element() ?? null), gesture });
   const goToPage = useCallback(
     (index: number, frac = 0) => {
       const i = Math.min(Math.max(0, index), pages.length - 1);
+      noteRef.current = null;
+      setNotePageId(null);
       setPageIndex(i);
       locRef.current = { pageIndex: i, frac };
-      canvasRef.current?.goTo(i, frac);
+      canvasRef.current?.goTo(seqRef.current.ofSource(i), frac);
       save();
     },
     [pages.length, save],
   );
+  /** an inserted note page (false when it is not in this version's sequence) */
+  const goToNote = useCallback(
+    (id: string, frac = 0) => {
+      const seq = seqRef.current.ofNote(id);
+      if (seq < 0) return false;
+      const sh = sheetsRef.current[seq];
+      const src = sh?.kind === 'note' ? Math.max(0, sh.after) : seqRef.current.sourceAtOrBefore(seq);
+      noteRef.current = id;
+      noteFracRef.current = frac;
+      setNotePageId(id);
+      setPageIndex(src);
+      locRef.current = { pageIndex: src, frac: sh?.kind === 'note' && sh.after >= 0 ? 1 : 0 };
+      canvasRef.current?.goTo(seq, frac);
+      save();
+      return true;
+    },
+    [save],
+  );
+  goToNoteRef.current = goToNote;
+  const goToSeq = useCallback(
+    (seq: number, frac = 0) => {
+      const sh = sheetsRef.current[seq];
+      if (!sh) return;
+      if (sh.kind === 'note') goToNote(sh.note.id, frac);
+      else goToPage(sh.page.page_index, frac);
+    },
+    [goToNote, goToPage],
+  );
+  const currentSeq = () => (noteRef.current && seqRef.current.ofNote(noteRef.current) >= 0 ? seqRef.current.ofNote(noteRef.current) : seqRef.current.ofSource(locRef.current.pageIndex));
   const step = useCallback(
     (dir: 1 | -1, gesture: 'key' | 'swipe' = 'key') => {
       if (blockFlip(gesture)) return; // never flip during (or from) a pen stroke, or during a text selection (§24)
-      const cur = locRef.current.pageIndex;
-      const next = layout === 'continuous' ? cur + dir : stepSpread(cur, dir, layout, pages.length);
-      if (next !== cur && next >= 0 && next < pages.length) goToPage(next, 0);
+      const cur = currentSeq();
+      const count = sheetsRef.current.length;
+      const next = layout === 'continuous' ? cur + dir : stepSpread(cur, dir, layout, count);
+      if (next !== cur && next >= 0 && next < count) goToSeq(next, 0);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [layout, pages.length, goToPage],
+    [layout, goToSeq],
   );
+
+  // a note page to open (URL / restored session) once the note pages are on this device; a trashed current page → its place
+  useEffect(() => {
+    const want = pendingNote.current;
+    if (want && notes.index.ofNote(want.id) >= 0) {
+      pendingNote.current = null;
+      requestAnimationFrame(() => goToNote(want.id, want.frac));
+    }
+    if (noteRef.current && notes.index.ofNote(noteRef.current) < 0 && notes.rows.length > 0) {
+      noteRef.current = null;
+      setNotePageId(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notes.index]);
 
   // ── Source Jump & Back (§11) ──
   const [backStack, setBackStack] = useState<BackEntry[]>(() => loadBackStack());
@@ -383,6 +481,8 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
       fit: stateRef.current.fit,
       rotation: stateRef.current.viewRotation,
       layout: stateRef.current.layoutPref,
+      notePageId: noteRef.current,
+      ...(noteRef.current ? { pageOffset: noteFracRef.current } : {}),
     }),
     [sourceId, versionId],
   );
@@ -395,7 +495,9 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
     const page = pages[p.pageIndex];
     const createdAt = Date.now();
     if (bookOnlyRef.current) bookBackMarks.current.add(createdAt);
-    setBackStack((s) => pushBack(s, { position: p, label: `${page ? fullPageLabel(page) : ''} — ${detail.title}${bookOnlyRef.current ? ' (كتاب الدراسة)' : ''}`, createdAt }));
+    const noteSheet = p.notePageId ? sheetsRef.current[seqRef.current.ofNote(p.notePageId)] : undefined;
+    const where = noteSheet ? sheetLabel(noteSheet, pages) : page ? fullPageLabel(page) : '';
+    setBackStack((s) => pushBack(s, { position: p, label: `${where} — ${detail.title}${bookOnlyRef.current ? ' (كتاب الدراسة)' : ''}`, createdAt }));
   }, [position, pages, detail.title]);
 
   /** leave the full Study Book view for the original lecture at `index` (Lecture Twin / a citation jump) */
@@ -450,6 +552,11 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
         setBackStack(stack);
         setHighlight(null);
         const p = entry.position;
+        if (entry.route) {
+          // a place outside the reader (a notebook page)
+          navigate(entry.route);
+          return true;
+        }
         if (p.sourceId !== sourceId || p.versionId !== versionId) {
           navigate(studyUrl({ sourceId: p.sourceId, versionId: p.versionId, pageIndex: p.pageIndex, offset: p.pageOffset }));
           return true;
@@ -471,7 +578,9 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
         setViewRotation(normalizeRotation(p.rotation));
         setLayoutPref(p.layout);
         // after the layout settles at the restored zoom
-        requestAnimationFrame(() => goToPage(p.pageIndex, p.pageOffset));
+        requestAnimationFrame(() => {
+          if (!(p.notePageId && goToNote(p.notePageId, p.pageOffset))) goToPage(p.pageIndex, p.pageOffset);
+        });
         setAnnouncement(`عدت إلى ${entry.label}.`);
         return true;
       },
@@ -479,7 +588,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
       backLabel: top?.label ?? null,
       clearHighlight: () => setHighlight(null),
     };
-  }, [backStack, sourceId, versionId, detail.versions, pages, navigate, pushHere, goToPage, panels.phone, showOriginalAt]);
+  }, [backStack, sourceId, versionId, detail.versions, pages, navigate, pushHere, goToPage, goToNote, panels.phone, showOriginalAt]);
 
   // ── selection ──
   const canvasEl = useCallback(() => canvasRef.current?.element() ?? null, []);
@@ -583,7 +692,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
         case 'End':
           if (inWidget) return;
           e.preventDefault();
-          if (!blockFlip()) goToPage(key === 'Home' ? 0 : pages.length - 1, 0);
+          if (!blockFlip()) goToSeq(key === 'Home' ? 0 : sheetsRef.current.length - 1, 0);
           return;
         case '+':
         case '=':
@@ -616,7 +725,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selection, searchOpen, highlight, focusMode, layout, step, goToPage, toggleLeft, toggleRail, toggleFocus, pages.length, bookOnly]);
+  }, [selection, searchOpen, highlight, focusMode, layout, step, goToPage, goToSeq, toggleLeft, toggleRail, toggleFocus, pages.length, bookOnly]);
 
   // ── explanation actions from the selection toolbar → the «الشرح والسؤال» tab (it consumes the request) ──
   const pendingAi = usePendingAiRequest();
@@ -709,9 +818,24 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageIndex]);
 
+  // ── PDF link annotations: internal → that page (Back returns), external → only after an explicit confirmation ──
+  const [externalUrl, setExternalUrl] = useState<string | null>(null);
+  const pdfLinks = useMemo(
+    () => ({
+      goToPage: (i: number, label: string) => {
+        void nav.openSourceLocation({ sourceId, versionId, pageIndex: i, label }).then((r) => {
+          if (!r.ok) toast.show({ title: 'لم يُفتح الرابط', description: r.reason_ar, tone: 'warning' });
+        });
+      },
+      openExternal: (u: string) => setExternalUrl(u),
+    }),
+    [nav, sourceId, versionId, toast],
+  );
+
   // ── page context ──
   const tool = ink.toolState.tool;
-  const writing = inkAvailable && ink.isWritingTool;
+  // note pages take ink even in a text source (fixed paper), so writing is possible whenever there is somewhere to write
+  const writing = (inkAvailable || (notePageInk && hasNotePages)) && ink.isWritingTool;
   const registerTextRoot = useCallback((i: number, el: HTMLElement | null) => {
     if (el) textRoots.current.set(i, el);
     else textRoots.current.delete(i);
@@ -737,9 +861,82 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
       anchorFor,
       reportPageSize,
       textLang: detail.language === 'en' || detail.language === 'ar' ? detail.language : null,
+      notePageInk,
+      notePageActions: notes.actions,
+      paperRtl: detail.language !== 'en',
+      pdfLinks,
     }),
-    [sourceId, versionId, doc.mode, doc.pdf, writing, inkAvailable, onStrokeActiveChange, highlight, searchOpen, results, currentResult, registerTextRoot, anchorFor, reportPageSize, detail.language],
+    [sourceId, versionId, doc.mode, doc.pdf, writing, inkAvailable, onStrokeActiveChange, highlight, searchOpen, results, currentResult, registerTextRoot, anchorFor, reportPageSize, detail.language, notePageInk, notes.actions, pdfLinks],
   );
+
+  // ── page links (ink kind 'link') and PDF links (track F1): following one records Back (§11) ──
+  const navRef = useRef(nav);
+  navRef.current = nav;
+  const [linkPick, setLinkPick] = useState<{ resolve: (c: LinkChoice | null) => void } | null>(null);
+  const followLink = useCallback(
+    async (target: LinkTarget) => {
+      if (target.type === 'source_page') {
+        const r = await navRef.current.openSourceLocation({
+          sourceId: target.source_id,
+          versionId: target.version_id,
+          pageId: target.page_id,
+          pageIndex: target.page_index,
+          bbox: target.bbox ?? null,
+          regionId: target.region_id ?? null,
+          label: 'الموضع المرتبط',
+        });
+        if (!r.ok) toast.show({ title: 'لم يُفتح الرابط', description: r.reason_ar, tone: 'warning' });
+        return;
+      }
+      const id = target.note_page_id;
+      if (seqRef.current.ofNote(id) >= 0) {
+        pushHere();
+        goToNote(id);
+        setAnnouncement('فُتحت صفحة الملاحظات المرتبطة. للعودة استخدم «العودة إلى موضعك».');
+        return;
+      }
+      const row = (await getDb().notePages.get(id)) ?? null;
+      if (!row || row.deletedAt) {
+        toast.show({
+          title: row ? 'الصفحة المرتبطة في المحذوفات' : 'الصفحة المرتبطة غير موجودة على هذا الجهاز',
+          description: row ? 'استعدها من قائمة المحذوفات ثم افتح الرابط مرة أخرى.' : 'ربما حُذفت نهائيًا، أو لم تصل إلى هذا الجهاز بعد.',
+          tone: 'warning',
+        });
+        return;
+      }
+      pushHere();
+      if (row.nodeId) navigate(`/notebook/${encodeURIComponent(row.nodeId)}?page=${encodeURIComponent(id)}`);
+      else if (row.sourceId) navigate(`${studyUrl({ sourceId: row.sourceId })}?note=${encodeURIComponent(id)}`);
+    },
+    [toast, pushHere, goToNote, navigate],
+  );
+  const linkHost = useMemo<InkLinkHost>(
+    () => ({
+      pickTarget: () => new Promise<LinkChoice | null>((resolve) => setLinkPick({ resolve })),
+      open: (target) => void followLink(target),
+      describe: (t) => {
+        if (t.type !== 'note_page') return null;
+        const sh = sheetsRef.current[seqRef.current.ofNote(t.note_page_id)];
+        return sh ? sheetLabel(sh, pages) : null;
+      },
+    }),
+    [followLink, pages],
+  );
+  const currentInkPage = useCallback(() => {
+    const id = noteRef.current;
+    if (id) {
+      const sh = sheetsRef.current[seqRef.current.ofNote(id)];
+      if (sh?.kind === 'note') return { targetKey: `note_page:${id}`, anchor: { type: 'note_page' as const, note_page_id: id, space: 'page_norm' as const }, ar: sh.note.height / sh.note.width, pageWidthPt: sh.note.width };
+    }
+    if (!inkAvailable) return null;
+    const pg = pages[locRef.current.pageIndex];
+    const a = anchorFor(locRef.current.pageIndex);
+    if (!pg || !a) return null;
+    const m = measured.get(pg.page_index);
+    const w = m?.w ?? pg.width ?? 595;
+    const h = m?.h ?? pg.height ?? 842;
+    return { targetKey: `source_page:${pg.id}`, anchor: a, ar: h / w, pageWidthPt: w };
+  }, [inkAvailable, pages, anchorFor, measured]);
 
   // ── session prompts ──
   const conflict = session.conflict;
@@ -774,6 +971,16 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
       onOpenSplit={(id) => setSplit({ sourceId: id, pageIndex: 0 })}
       splitReason={splitReason}
       online={online}
+      notePages={{
+        live: notes.sheets.flatMap((sh) => (sh.kind === 'note' ? [{ id: sh.note.id, label: sheetLabel(sh, pages) }] : [])),
+        trashed: notes.rows.filter((r) => r.deletedAt).map((r) => ({ id: r.id, label: r.title ? `«${r.title}» — صفحة ملاحظات` : 'صفحة ملاحظات بلا عنوان' })),
+        onGo: (id) => {
+          if (panels.phone) setRailOpen(false);
+          goToNote(id);
+        },
+        onRestore: (id) => void notes.restore(id),
+        onNew: () => notes.openNew(seqCurrent),
+      }}
     />
   );
   const leftNode = (
@@ -791,6 +998,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
   );
 
   return (
+    <InkHost links={linkHost} currentPage={currentInkPage} notify={(m) => toast.show({ title: m, tone: 'warning' })}>
     <SourceNavigationContext.Provider value={nav}>
       <ReaderPageContext.Provider value={pageCtx}>
         <div
@@ -866,8 +1074,16 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
               saveDetail={describeSyncSnapshot(sync)}
               back={backTop ? { label: 'العودة إلى موضعك', title: backTop.label } : null}
               onBack={() => nav.goBack()}
-              inkAvailable={inkAvailable && !bookOnly}
-              extraMenuItems={offlineAction.item}
+              inkAvailable={(inkAvailable || (notePageInk && hasNotePages)) && !bookOnly}
+              noteLabel={notePageId && notes.index.ofNote(notePageId) >= 0 ? 'صفحة ملاحظات بعدها' : null}
+              extraMenuItems={
+                <>
+                  <MenuItem icon={<FilePlus2 size={16} />} disabled={bookOnly} disabledReason="صفحات الملاحظات تُضاف في المحاضرة الأصلية." onSelect={() => notes.openNew(seqCurrent)}>
+                    صفحة ملاحظات بعد هذه الصفحة…
+                  </MenuItem>
+                  {offlineAction.item}
+                </>
+              }
             />
           ) : (
             <div className="wk-focusbar">
@@ -938,10 +1154,10 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
                 <BookCanvas
                   ref={canvasRef}
                   id="wk-book"
-                  pages={pages}
+                  sheets={notes.sheets}
                   fallbackSize={null}
                   measured={measured}
-                  pageIndex={pageIndex}
+                  pageIndex={seqCurrent}
                   initialFrac={canvasStart.frac}
                   zoom={zoom}
                   fit={fit}
@@ -950,13 +1166,17 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
                   spreadRtl={detail.language === 'ar'}
                   flipAnimation={settings.page_flip_animation}
                   label={`صفحات ${detail.title}`}
-                  onLocation={onLocation}
+                  onLocation={onCanvasLocation}
                   onEffectiveZoom={setEffectiveZoom}
                   onZoomGesture={(z) => {
                     setFit(null);
                     setZoom(clampZoom(z));
                   }}
-                  onViewed={markViewed}
+                  onViewed={(seq) => {
+                    // reading progress counts source pages only (§45)
+                    const sh = sheetsRef.current[seq];
+                    if (sh?.kind === 'source') markViewed(sh.page.page_index);
+                  }}
                   onSwipe={(dir) => step(dir, 'swipe')}
                   strokeActive={() => strokeActive.current}
                   className={cx(writing && 'wk-canvas--writing')}
@@ -994,7 +1214,16 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
                   />
                 )}
                 {splitActive && split && (
-                  <SecondaryPane sourceId={split.sourceId} initialPage={split.pageIndex} onPage={(i) => setSplit((s) => (s && s.pageIndex !== i ? { ...s, pageIndex: i } : s))} onClose={() => setSplit(null)} />
+                  <SecondaryPane
+                    key={split.sourceId}
+                    sourceId={split.sourceId}
+                    initialPage={split.pageIndex}
+                    initialZoom={split.zoom ?? null}
+                    online={online}
+                    onPage={(i) => setSplit((s) => (s && s.pageIndex !== i ? { ...s, pageIndex: i } : s))}
+                    onZoom={(z) => setSplit((s) => (s ? { ...s, zoom: z } : s))}
+                    onClose={() => setSplit(null)}
+                  />
                 )}
               </div>
             </main>
@@ -1059,8 +1288,24 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
             />
           )}
           {offlineAction.dialog}
+          {notes.dialogs}
+          <LinkTargetDialog
+            open={!!linkPick}
+            sources={[{ sourceId, versionId, title: detail.title, pages, current: pageIndex }]}
+            notePages={notes.sheets.flatMap((sh) => (sh.kind === 'note' ? [{ id: sh.note.id, label: sheetLabel(sh, pages) }] : []))}
+            onCancel={() => {
+              linkPick?.resolve(null);
+              setLinkPick(null);
+            }}
+            onChoose={(c) => {
+              linkPick?.resolve(c);
+              setLinkPick(null);
+            }}
+          />
+          <ExternalLinkDialog url={externalUrl} onClose={() => setExternalUrl(null)} />
         </div>
       </ReaderPageContext.Provider>
     </SourceNavigationContext.Provider>
+    </InkHost>
   );
 }

@@ -27,3 +27,4 @@ export * from './learning-api';
 export * from './control-api';
 export * from './cases-api';
 export * from './media-api';
+export * from './brain-api';

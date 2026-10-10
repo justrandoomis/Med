@@ -1,6 +1,6 @@
 // Tags (owner labels on nodes and sources) and topics (concept links; auto suggestions are
 // correctable and the owner's decision persists — §05, §06).
-import type { TagView, TopicLinkView, TopicView } from '@medlevo/shared';
+import { TOPIC_ENTITY_TYPES, type TagView, type TopicEntityType, type TopicLinkView, type TopicView } from '@medlevo/shared';
 import type { AppContext } from '../../context';
 import { AppError, Errors } from '../../lib/errors';
 import { newId } from '../../lib/ids';
@@ -199,11 +199,31 @@ function linkView(ctx: AppContext, id: string): TopicLinkView {
   return l;
 }
 
+const TOPIC_ENTITY_TABLES: Record<TopicEntityType, string> = {
+  source: 'source',
+  source_region: 'source_region',
+  question: 'question',
+  library_node: 'library_node',
+  concept: 'concept',
+  image_asset: 'image_asset',
+  flashcard: 'flashcard',
+  note: 'note',
+};
+
+/** A topic link must point at something real (known entity type, existing row) — track F2. */
+function assertTopicEntity(ctx: AppContext, entityType: string, entityId: string): void {
+  if (!(TOPIC_ENTITY_TYPES as readonly string[]).includes(entityType)) {
+    throw new AppError('BAD_REQUEST', 'نوع العنصر غير مدعوم للربط بموضوع.', 400, { entity_type: entityType });
+  }
+  if (!ctx.db.get(`SELECT 1 AS x FROM ${TOPIC_ENTITY_TABLES[entityType as TopicEntityType]} WHERE id = ?`, [entityId])) throw Errors.notFound('العنصر المراد ربطه');
+}
+
 /** Owner links a topic: accepted immediately (or updates an existing suggestion to accepted). */
 export function ownerLinkTopic(ctx: AppContext, topicId: string, entityType: string, entityId: string): TopicLinkView {
   let id = '';
   ctx.db.tx(() => {
     topicRow(ctx, topicId);
+    assertTopicEntity(ctx, entityType, entityId);
     const existing = ctx.db.get<{ id: string }>('SELECT id FROM topic_link WHERE topic_id = ? AND entity_type = ? AND entity_id = ?', [topicId, entityType, entityId]);
     if (existing) {
       id = existing.id;

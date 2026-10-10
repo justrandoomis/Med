@@ -44,6 +44,9 @@ const FEATURE_LABELS_AR: Record<FeatureKey, string> = {
   weakness: 'مركز نقاط الضعف',
   planner: 'خطة الدراسة',
   exam_dna: 'بصمة الامتحان',
+  course_brain: 'هيكل المعرفة للكورس (دون ذكاء اصطناعي)',
+  knowledge_map: 'خريطة المعرفة وخريطة معرفتي',
+  coverage_map: 'خريطة تغطية الأسئلة',
   sync: 'المزامنة بين الأجهزة',
   offline: 'العمل دون اتصال',
   backup: 'النسخ الاحتياطي',
@@ -57,7 +60,7 @@ const GROUPS: Array<{ title: string; prefix: (k: FeatureKey) => boolean }> = [
   { title: 'المصادر والمعالجة', prefix: (k) => k === 'library' || k === 'upload' || k.startsWith('processing.') },
   { title: 'القراءة والكتابة والبحث', prefix: (k) => k.startsWith('workspace.') || k.startsWith('search.') || k === 'evidence.citations' },
   { title: 'الذكاء الاصطناعي والمصادر الخارجية', prefix: (k) => k.startsWith('ai.') || k.startsWith('external.') },
-  { title: 'الأسئلة والتعلّم', prefix: (k) => k.startsWith('questions.') || ['exams', 'flashcards', 'weakness', 'planner', 'exam_dna'].includes(k) },
+  { title: 'الأسئلة والتعلّم', prefix: (k) => k.startsWith('questions.') || ['exams', 'flashcards', 'weakness', 'planner', 'exam_dna', 'course_brain', 'knowledge_map', 'coverage_map'].includes(k) },
   { title: 'الأجهزة والبيانات', prefix: (k) => ['sync', 'offline', 'backup'].includes(k) || k.startsWith('export.') },
 ];
 

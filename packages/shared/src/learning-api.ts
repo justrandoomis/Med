@@ -401,12 +401,13 @@ export interface ForgettingForecastView {
 }
 
 // ───────── weakness center & mistake genome (§44, AC-27) ─────────
-export type WeaknessKind = 'concept' | 'lecture' | 'topic' | 'question';
+/** 'case' = one clinical case / OSCE station / viva whose checklist items were missed (track F2) */
+export type WeaknessKind = 'concept' | 'lecture' | 'topic' | 'question' | 'case';
 
 export interface WeaknessSignalView {
   /** stable reference used to exclude a signal ('mcq:<attempt id>', 'card:<event id>', 'written:<id>') */
   ref: string;
-  type: 'mcq' | 'card' | 'written' | 'case' | 'osce';
+  type: 'mcq' | 'card' | 'written' | 'case' | 'osce' | 'viva';
   at: number;
   correct: boolean | null;
   /** AC-27 category and its weight (MASTERY_WEIGHTS) */
