@@ -138,3 +138,37 @@ Run after the fix and after the documentation of this round was written (11:03 �
 | ~~ESLint (`npm run lint`)~~ | ~~the repository has no `eslint.config.*`~~ — runs since track F5 (see «Track F5» below) | TypeScript strict checks (`npm run typecheck`) |
 | A deployment behind a real reverse proxy with TLS | not available here | the E2E servers run the production path (`NODE_ENV=production`, built app) on loopback; since track F5 `apps/server/test/deploy/tls-proxy.test.ts` runs the real entry point behind a local TLS-terminating Node proxy with a self-signed certificate (not nginx / Caddy, not a public certificate) |
 | Embeddings, speech-to-text, external image / evidence search | the providers are not built | the features report their state with a reason (`GET /api/capabilities`) |
+
+## Track F5 — quality ops (2026-10-10, run in this container; another track was editing the tree in parallel)
+
+| command | result |
+|---|---|
+| `npm test -w @medlevo/shared` | 7 files · **55 passed** |
+| `npm test -w @medlevo/server` | 112 files passed, 7 skipped · **1257 passed**, 7 skipped (first run: 1 failure — AC-30 found that the evaluation catalogue sync rewrote `evaluation_case` at every boot, so a restored database was no longer row-for-row identical; fixed: an unchanged catalogue writes nothing, with a regression test; second run green) |
+| `npm test -w @medlevo/web` | 105 files passed, 1 skipped · **713 passed**, 1 skipped |
+| `npx tsc -p packages/shared --noEmit` · `-p apps/server` · `-p apps/web` · `-p e2e` | exit 0 · 0 · 0 · 0 |
+| `npm run build -w @medlevo/web` | exit 0 (PWA: 265 precache entries) |
+| `npm run lint` (`eslint . --max-warnings 0`) | exit 0 — the first run of the new config found 55 problems, all fixed in code |
+| `npx playwright test e2e/f5-quality-ops.spec.ts` | **6 passed** (3 tests × phone + desktop; the first run failed on a real overflow of the four-format export control at 390 px — fixed — and on two test assumptions) |
+| `npm run eval -- --set=regression --compare=docs/eval/baseline.json --no-record` (the CI command) | exit 0 — regression 79 / 80 (95% CI 93%–99%), no case stopped passing |
+| `.github/workflows/ci.yml` | **not run** on a GitHub runner (none here); YAML parsed, each command run locally |
+
+Not run in this track: the full E2E suite (only the new spec), the live-model evaluation (`--mode=live`, no key), opening
+the DOCX files in Microsoft Word (LibreOffice only), the deployment on a real host / certificate.
+
+## Adversarial review of track F5 (2026-10-10, run in this container; another track was editing the tree in parallel)
+
+| command | result |
+|---|---|
+| ReDoS probe of `redactStack` (tsx script: a stack line «at» + 15 000 spaces) | **~27 700 ms** before the fix (one line; the route accepts 20 × 16 000-character stacks) · 0 ms after |
+| `npm test -w @medlevo/shared` | 7 files · **57 passed** (+2: Bearer / curly-quote redaction, hostile stacks in linear time) |
+| `npx vitest run test/control/evaluation.test.ts test/control/quality-ops.test.ts` | 30 passed (+3: not-compared comparisons, CLI exit 6 for a filtered run and for another catalogue hash, rate limit 429, hostile stacks through the route) |
+| `npm test -w @medlevo/server` | 112 files passed, 7 skipped · **1260 passed**, 7 skipped |
+| `npm test -w @medlevo/web` | 105 files passed, 1 skipped · **715 passed**, 1 skipped (+2 in `quality.test.tsx`) |
+| `npx tsc -p packages/shared` · `-p apps/server` · `-p apps/web` · `-p e2e` `--noEmit` | exit 0 · 0 · 0 · 0 |
+| `npm run build -w @medlevo/web` | exit 0 (PWA: 265 precache entries) |
+| `npm run lint` | exit 0 |
+| `npm run eval -- --set=regression --compare=docs/eval/baseline.json --no-record` (the CI gate) | exit 0 — regression 79 / 80 (95% CI 93%–99%), `no_regressions` |
+| `npx playwright test e2e/f5-quality-ops.spec.ts` | **6 passed** (phone + desktop) |
+
+Not run in this review: the full E2E suite, `.github/workflows/ci.yml` on a GitHub runner, the live-model evaluation.

@@ -54,7 +54,11 @@ const DEFS: Array<{ key: TrendSeriesKey; label_ar: string; description_ar: strin
   {
     key: 'citation_invalid',
     label_ar: 'استشهادات مرفوضة',
-    description_ar: 'جمل استشهدت بدليل غير موجود، أو لم يُسلَّم للمولّد، أو خارج النطاق المقفل؛ لم يتحول شيء منها إلى استشهاد.',
+    // (review of track F5) worded after what evidence_exists / in_scope really reject: no evidence at all, an alias never
+    // handed out or a fabricated id (never a citation), out of the locked scope / deleted / unusable — and a sentence whose
+    // ONLY evidence is an uncertain reading, which keeps its citation but stays «needs review» (so not «none became a citation»)
+    description_ar:
+      'جمل رُفض دليلها عند التحقق: بلا دليل، أو بدليل غير موجود أو لم يُسلَّم للمولّد (لا يصبح استشهادًا أبدًا)، أو من خارج النطاق المقفل أو مصدر محذوف؛ ومعها جمل دليلها الوحيد قراءة غير مؤكدة، تبقى «تحتاج مراجعة».',
     of: 'claims_checked',
     sql: `SELECT MIN(created_at) AS t FROM verification_result
            WHERE subject_type = 'claim' AND check_name IN ('evidence_exists','in_scope') AND passed = 0 AND created_at >= ? AND created_at < ?

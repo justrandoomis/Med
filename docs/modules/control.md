@@ -294,7 +294,9 @@ in; the reporter never logs to the console and never retries forever. The server
 the sink (30 / min).
 
 **Daily trends (§56)** — `modules/control/trends.ts`: per owner-timezone day (DST-safe), computed from existing rows:
-claims checked, citations rejected, claims the evidence did not establish (entailment failures only), changes received
+claims checked, citations rejected, claims the evidence did not establish (a value / negation / unit or a quote that is
+not in the evidence, or the independent verifier's «not supported / partial / contradicts» — an absent verifier is not
+counted), changes received
 from devices, changes refused, conflicts kept as both copies. Each failure count is shown next to its denominator.
 
 Routes (owner session; the DELETE and POST need the CSRF header): `GET /api/control/evaluation`,
@@ -307,12 +309,12 @@ with «امسح السجل» behind a confirm dialog) and «تقييم الجو�
 recorded; else the latest report — regression and tuning apart, per-axis rates with intervals, what did not pass and
 why, the comparison with the previous run, earlier runs, the Markdown report download).
 
-Tests (run 2026-10-10): server `test/control/evaluation.test.ts` (17: Wilson / small-sample wording, never 100 %,
-regression hash, compare, store sync / retire, a real subset run, scripted AI axes, live mode without a key),
-`test/control/quality-ops.test.ts` (9: sink redaction, grouping by fingerprint, the batch cap, auth / CSRF,
-retention, the audited clear, browser family instead of the user agent; trends per local day with denominators; the
-rate limit itself is configured, not tested); shared `packages/shared/test/quality.test.ts` (7); web
-`src/features/control/quality.test.tsx` (5) and `test/error-reporter.test.ts` (7); E2E `e2e/f5-quality-ops.spec.ts`
+Tests (run 2026-10-10): server `test/control/evaluation.test.ts` (19 after the review below: Wilson / small-sample wording, never 100 %,
+regression hash, compare, store sync / retire, a real subset run, scripted AI axes, live mode without a key, an unchanged catalogue writes nothing at boot),
+`test/control/quality-ops.test.ts` (11 after the review: sink redaction, grouping by fingerprint, the batch cap, auth /
+CSRF, retention, the audited clear, browser family instead of the user agent, the 30 / min rate limit (429), a hostile
+stack redacted in linear time; trends per local day with denominators); shared `packages/shared/test/quality.test.ts`
+(9); web `src/features/control/quality.test.tsx` (7) and `test/error-reporter.test.ts` (7); E2E `e2e/f5-quality-ops.spec.ts`
 (3 tests × phone + desktop: a dispatched error and rejection reach «صحة النظام» redacted; clear; the real
 `npm run eval` records a report the screen shows with denominators and no «100%»; DOCX export).
 
@@ -325,4 +327,34 @@ Not done / limits:
 * The fixtures are synthetic; no rate is an accuracy claim beyond these cases. Image match covers the AC-09 validator,
   not open-ended figure recognition.
 * Client errors are captured only while the app runs and is signed in; errors before sign-in are dropped by design.
+
+### Adversarial review of track F5 (2026-10-10)
+
+Confirmed and fixed (each with a regression test):
+* **ReDoS in the server-side redaction (major, availability).** `redactStack` matched frames with
+  `([…\s]{0,80}?)\s*\(`: a stack line «at» + 15 000 spaces took **~28 s** of the server's single event loop (measured);
+  `POST /client-errors` accepts 20 stacks of 16 000 characters, so one authenticated request could freeze the server for
+  minutes. Now the frame pattern is linear (single spaces in a function name, one optional space before «(») and lines
+  over 600 characters are skipped; a long path keeps only its end. Tests: shared `quality.test.ts` (hostile stacks
+  < 500 ms, real V8 / Firefox frames still parse), server `quality-ops.test.ts` (5 hostile stacks through the route).
+* **«No regressions» claimed for cases that were not compared (major, honesty / CI).** `compareReports` skipped every
+  regression case the head run did not evaluate, so `--mode=live` without a key, an `--axis` / `--only` run, or two
+  Control Center runs with different filters compared as `no_regressions`; and `--compare` exited 0 when the regression
+  set itself had changed (another hash), so CI's evaluation gate passed after an edit of the «frozen» set. Now:
+  `not_compared` lists them, the verdict is `not_comparable` (a real regression still wins), the CLI exits **6**, and
+  «تقييم الجودة» lists «نجحت سابقًا ولم تُقيَّم في هذا التشغيل».
+* **The regression set was called «held-out»** (catalogue comment, docs/EVALUATION.md); G3–G5 fixed code against these
+  fixtures («pass_after_fix»), so it is a *frozen* set, not held-out data — reworded, and every report's notes say so.
+* Redaction gaps (minor): «Authorization: Bearer <token>» kept the token (the key=value rule ate «Bearer» first);
+  long text in curly quotes “…” / ‘…’ was kept. Fixed in the shared `redactText`.
+* The rate limit (30 / min) is now tested (429, nothing stored past it). «صحة النظام» says «يُعرض أحدث n من N» when the
+  log is longer than the page. The «استشهادات مرفوضة» description claimed «none became a citation», which is false for
+  a sentence whose only evidence is an uncertain reading (it keeps its citation, «needs review») — reworded.
+
+Checked and not changed: auth + CSRF on every new route (global guard; tests), zod-strict bodies, the report download
+(`text/markdown`, attachment, nosniff, id pattern), XSS (React text only), the trend SQL against the evidence module's
+real check names, the TLS-proxy test (real entry point, real TLS, Secure / HSTS / trust-proxy on and off / Origin /
+Sec-Fetch-Site / setup token), DOCX isolates and citations (mirrors the Markdown / HTML exports), the lint fixes in
+other modules (regex classes reordered or unescaped with the same meaning, unused code removed, hook dependencies read
+through refs — their unit tests pass).
 

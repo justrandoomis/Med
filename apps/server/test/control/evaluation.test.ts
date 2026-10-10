@@ -109,6 +109,23 @@ describe('compare-and-rollback: side-by-side runs', () => {
     expect(compareReports(base, t2).verdict).toBe('no_regressions');
   });
 
+  it('(review F5) a regression case the base passed and the head did not evaluate is never «no regressions»', () => {
+    const base = fakeReport('base', [res('a', 'key_binding', 'regression', 'pass'), res('b', 'claim_support', 'regression', 'pass'), res('t', 'text_accuracy', 'tuning', 'pass')]);
+    // filtered out (e.g. `--axis=key_binding`): b is absent from the head run
+    const filtered = compareReports(base, fakeReport('head1', [res('a', 'key_binding', 'regression', 'pass')]));
+    expect(filtered).toMatchObject({ verdict: 'not_comparable', comparable: false, not_compared: [{ case_id: 'b', head: null }] });
+    expect(filtered.reason_ar).toContain('لم تُقيَّم');
+    // not run (e.g. `--mode=live` without a key): the AI case is not_run
+    const live = compareReports(base, fakeReport('head2', [res('a', 'key_binding', 'regression', 'pass'), res('b', 'claim_support', 'regression', 'not_run'), res('t', 'text_accuracy', 'tuning', 'pass')]));
+    expect(live).toMatchObject({ verdict: 'not_comparable', not_compared: [{ case_id: 'b', head: 'not_run' }] });
+    expect(renderCompareMarkdown(live)).toContain('not evaluated here (1)');
+    // a real regression is still reported as such even when other cases were not compared
+    expect(compareReports(base, fakeReport('head3', [res('a', 'key_binding', 'regression', 'fail')])).verdict).toBe('regressions');
+    // a TUNING case missing from the head (a `--set=regression` run, what CI does) changes nothing
+    const ci = compareReports(base, fakeReport('head4', [res('a', 'key_binding', 'regression', 'pass'), res('b', 'claim_support', 'regression', 'pass')]));
+    expect(ci).toMatchObject({ verdict: 'no_regressions', comparable: true, not_compared: [] });
+  });
+
   it('runs on different regression sets are not comparable (the hash differs)', () => {
     const base = fakeReport('base', [res('a', 'key_binding', 'regression', 'pass')]);
     const head = fakeReport('head', [res('a', 'key_binding', 'regression', 'fail')]);
@@ -321,7 +338,17 @@ describe('`npm run eval` (the CLI itself)', () => {
     expect(code).toBe(stillFails ? 4 : 0);
     const cmp = readdirSync(out).find((f) => f.startsWith('compare-baseline-x-') && f.endsWith('.md'))!;
     expect(readFileSync(join(out, cmp), 'utf8')).toContain(stillFails ? 'Verdict: **regressions**' : 'Verdict: **no_regressions**');
-  }, 240_000);
+
+    // (review F5) a gate never passes silently: a baseline with a regression case this run did not evaluate (here: a
+    // filtered run), or with another regression set (catalogue hash), exits 6 — not 0
+    const wider = { ...headReport, run_id: 'baseline-wide', cases: [...baseline.cases, { ...baseline.cases.find((c) => c.case_id === 'bidi.dir.1')!, case_id: 'bidi.dir.2' }] };
+    writeFileSync(join(out, 'baseline-wide.json'), JSON.stringify(wider));
+    const exit = (args: string[]) => run(tsx, [cli, ...args, '--no-record', `--out=${out}`], { cwd: REPO_ROOT, env, timeout: 120_000 }).then(() => 0, (e: { code?: number }) => e.code ?? -1);
+    expect(await exit(['--only=bidi.dir.1', `--compare=${join(out, 'baseline-wide.json')}`])).toBe(6);
+    const otherSet = { ...baseline, run_id: 'baseline-other', catalogue: { ...baseline.catalogue, regression_hash: 'another-catalogue' } };
+    writeFileSync(join(out, 'baseline-other.json'), JSON.stringify(otherSet));
+    expect(await exit(['--only=bidi.dir.1', `--compare=${join(out, 'baseline-other.json')}`])).toBe(6);
+  }, 360_000);
 });
 
 // ───────── helpers ─────────

@@ -230,6 +230,19 @@ export function EvaluationScreen() {
                   ))}
                 </ul>
               )}
+              {/* (review F5) regression cases the previous run passed and this one did not evaluate: never «no regression» */}
+              {(d.compare_with_previous.not_compared?.length ?? 0) > 0 && (
+                <>
+                  <h3 className="cc-eval__sub">نجحت سابقًا ولم تُقيَّم في هذا التشغيل</h3>
+                  <ul className="cc-notes">
+                    {d.compare_with_previous.not_compared.map((r) => (
+                      <li key={r.case_id}>
+                        {r.title_ar} — {r.head === null ? 'لم تُشغَّل في هذا التشغيل (مرشح)' : EVAL_OUTCOME_LABELS_AR[r.head]}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
               {d.compare_with_previous.system_changes.length > 0 && (
                 <>
                   <h3 className="cc-eval__sub">ما تغيّر في النظام بين التشغيلين</h3>

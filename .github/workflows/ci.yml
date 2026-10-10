@@ -73,7 +73,9 @@ jobs:
       - name: Web build (PWA)
         run: npm run build -w @medlevo/web
 
-      - name: Evaluation (regression set, scripted provider; fails on a regression against the committed baseline)
+      # exit 4 = a regression-set case that passed in the baseline does not pass now; exit 6 = not comparable (the regression
+      # set changed — re-write docs/eval/baseline.* in the same reviewed change — or baseline-passed cases were not run)
+      - name: Evaluation (regression set, scripted provider; fails on a regression or when not comparable with the committed baseline)
         run: npm run eval -- --set=regression --compare=docs/eval/baseline.json --no-record --out=eval-reports
 
       - name: Keep the evaluation report

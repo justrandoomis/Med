@@ -224,8 +224,10 @@ describe('exam runner (assessed)', () => {
     expect(await screen.findByText('السؤال 1 من 2')).toBeTruthy();
     expect(screen.queryByText(/سؤال مولد بواسطة MedLevo/)).toBeNull();
     expect(screen.queryByText(EXAM_ITEM_ORIGIN_LABELS_AR.source)).toBeNull();
+    // flush the passive effect that attaches the keyboard listener before pressing a key (see the keyboard test above)
+    await act(async () => {});
     fireEvent.keyDown(window, { key: 'ArrowLeft' });
-    expect(await screen.findByText('السؤال 2 من 2')).toBeTruthy();
+    expect(await screen.findByText('السؤال 2 من 2', {}, { timeout: 5000 })).toBeTruthy();
     expect(screen.getByText(EXAM_ITEM_ORIGIN_LABELS_AR.generated).textContent).toContain('سؤال مولد بواسطة MedLevo');
   });
 

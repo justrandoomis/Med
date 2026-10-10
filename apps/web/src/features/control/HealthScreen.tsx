@@ -135,6 +135,12 @@ function ClientErrors() {
       ) : (
         <>
           <p className="cc-muted">{d.retention_ar}</p>
+          {/* (review F5) the list is the newest page of the log: say so instead of letting it read as the whole log */}
+          {d.total > d.items.length && (
+            <p className="cc-muted">
+              يُعرض أحدث {formatCount(d.items.length)} من {formatCount(d.total)} خطأ مختلف مسجل.
+            </p>
+          )}
           {d.items.length === 0 ? (
             <EmptyState headingLevel={3} title="لا أخطاء مسجلة" description="لم تُبلّغ الواجهة عن أي خطأ في المدة المحفوظة." />
           ) : (

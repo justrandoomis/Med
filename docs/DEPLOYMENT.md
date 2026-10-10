@@ -99,7 +99,19 @@ server {
 server { listen 80; server_name medlevo.example.org; return 301 https://$host$request_uri; }
 ```
 
-Caddy: `medlevo.example.org { reverse_proxy 127.0.0.1:8787 { header_up X-Forwarded-For {remote_host} } request_body { max_size 210MB } }`.
+Caddy (a Caddyfile block opens a line with `{` and closes on its own line; one-line blocks are not valid):
+
+```caddyfile
+medlevo.example.org {
+	request_body {
+		max_size 210MB
+	}
+	reverse_proxy 127.0.0.1:8787 {
+		# overwrite, do not append (Caddy also drops an X-Forwarded-For from untrusted clients by default)
+		header_up X-Forwarded-For {remote_host}
+	}
+}
+```
 
 What the server then guarantees (and the test checks through https):
 

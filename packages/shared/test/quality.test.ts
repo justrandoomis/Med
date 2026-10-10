@@ -34,6 +34,16 @@ describe('redactText', () => {
     expect(redactText("Cannot read properties of undefined (reading 'map')")).toBe("Cannot read properties of undefined (reading 'map')");
   });
 
+  it('(review F5) «Authorization: Bearer <token>» loses the token; curly-quoted document text goes too', () => {
+    const s = redactText('request failed: Authorization: Bearer abc.def.ghi1234 (retry)');
+    expect(s).not.toContain('abc.def');
+    expect(s).toContain('Authorization=[redacted]');
+    const curly = redactText(`Unexpected value “${'The appendix is a blind-ended tube connected to the cecum'}” in ‘${'Pain usually begins in the periumbilical region and migrates'}’`);
+    expect(curly).not.toContain('cecum');
+    expect(curly).not.toContain('periumbilical');
+    expect(curly.match(/\[quoted-text\]/g)).toHaveLength(2);
+  });
+
   it('strips bidi controls and control characters, collapses whitespace and caps the length', () => {
     expect(redactText('a\u202eb\u0000c\n\n d')).toBe('ab c d');
     const long = redactText('x '.repeat(1000));
@@ -57,6 +67,25 @@ describe('redactStack / redactRoute / redactClientError', () => {
     expect(r).not.toContain('سر المريض');
     expect(redactStack('no frames here')).toBeNull();
     expect(redactStack(null)).toBeNull();
+  });
+
+  it('(review F5) is linear on hostile stacks (the server redacts untrusted bodies) and keeps a code location short', () => {
+    // a 15 000-space «frame» took ~28 s with the earlier pattern (catastrophic backtracking on the server's event loop)
+    const hostile = [`at ${' '.repeat(15_000)}x`, `at ${' '.repeat(590)}(x`, `at a${' a'.repeat(8000)}`, `at ${'\t'.repeat(15_000)}x`].join('\n');
+    const t0 = performance.now();
+    expect(redactStack(hostile)).toBeNull();
+    expect(performance.now() - t0).toBeLessThan(500);
+    // the frames real browsers print still parse (async / new / [as alias] / Firefox)
+    expect(redactStack(['    at async load (https://h/a.js:1:2)', '    at new Foo (https://h/b.js:3:4)', '    at fn [as alias] (https://h/c.js:5:6)', 'render@https://h/d.js:7:8'].join('\n'))!.split('\n')).toEqual([
+      'async load (/a.js:1:2)',
+      'new Foo (/b.js:3:4)',
+      'fn [as alias] (/c.js:5:6)',
+      'render (/d.js:7:8)',
+    ]);
+    // an absurdly long path keeps only its end (the file name)
+    const long = redactStack(`at f (https://h/${'a'.repeat(400)}/app.js:1:2)`)!;
+    expect(long.length).toBeLessThan(260);
+    expect(long.endsWith('/app.js:1:2)')).toBe(true);
   });
 
   it('routes lose their query and hash', () => {

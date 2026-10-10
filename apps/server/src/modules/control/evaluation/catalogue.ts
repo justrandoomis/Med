@@ -7,10 +7,13 @@
 //   * tuning     — the Golden Set (fixtures/golden): the extractors, parsers and matchers were DEVELOPED against these
 //                  files, and the AC-09 caption examples were written while fixing the validator. Rates here show how
 //                  well the system fits what it was tuned on; they are not evidence of generalization.
-//   * regression — held-out checks frozen at CATALOGUE_VERSION: the acceptance fixtures built later by the adversarial
-//                  groups G3–G5 and the behavioural checks written for F5 (citation validity, claim support, abstention,
-//                  over-abstention, bidi). Their expected values change only with a reviewed catalogue bump (the
-//                  regression hash in every report changes with them, and runs are compared only on the same hash).
+//   * regression — checks FROZEN at CATALOGUE_VERSION: the acceptance fixtures built later by the adversarial groups
+//                  G3–G5 and the behavioural checks written for F5 (citation validity, claim support, abstention,
+//                  over-abstention, bidi). NOT held-out data: G3–G5 fixed defects against these very fixtures
+//                  (docs/ACCEPTANCE.md «pass_after_fix»), so a rate here is not evidence of generalization either; what
+//                  makes the set useful is that it no longer moves. Expected values change only with a reviewed catalogue
+//                  bump (the regression hash in every report changes with them, and runs are compared only on the same
+//                  hash; `npm run eval --compare` exits 6 when they differ).
 // When rules / prompts are tuned, new examples go to the TUNING set; the regression set is not edited to make a run pass.
 import { createHash } from 'node:crypto';
 import type { AbstainReason, EvalAxis, EvalSet, ImageRequest } from '@medlevo/shared';

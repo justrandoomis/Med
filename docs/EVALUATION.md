@@ -20,7 +20,7 @@ npm run eval -- --only=key.g4_,cite.          # case id prefixes
 npm run eval -- --label="chunker v2" --compare=docs/eval/baseline.json
 npm run eval -- --mode=live                   # AI axes with the configured provider (needs ANTHROPIC_API_KEY)
 npm run eval -- --strict                      # exit 5 when any regression case fails or errors (a gate for a fully green set)
-npm run eval -- --set=regression --compare=docs/eval/baseline.json --no-record   # what CI runs: exit 4 only on a NEW failure
+npm run eval -- --set=regression --compare=docs/eval/baseline.json --no-record   # what CI runs: exit 4 on a NEW failure, 6 if not comparable
 npm run eval -- --help
 ```
 
@@ -38,7 +38,10 @@ npm run eval -- --help
    comparison with the previous run; «نزّل التقرير الكامل» downloads the Markdown).
 
 Exit codes: 0 report written · 1 the run failed · 2 usage · 4 `--compare` found a regression · 5 `--strict` and the
-regression set has failures or errors.
+regression set has failures or errors · 6 `--compare` could not compare: the regression set changed (another catalogue
+hash), or regression cases the base run passed were **not evaluated** in this run (filtered out by `--set` / `--axis` /
+`--only`, or `not_run` — e.g. `--mode=live` without a key). «No regressions» is never claimed for cases that were not
+compared (review of track F5: before, such a run compared as `no_regressions` and exited 0).
 
 ### Outcomes
 
@@ -80,10 +83,13 @@ the expected values and where they come from); a case removed from the catalogue
 * **tuning** — the Golden Set (`fixtures/golden`, ground truth `expected.json`): the extractors, parsers and matchers
   were *developed against these files*, and the AC-09 caption examples were written while fixing the validator. A high
   rate here shows fit to what the system was tuned on, not generalization.
-* **regression** — held-out checks frozen at `CATALOGUE_VERSION` (`eval-catalogue-2026.10-1`): the acceptance fixtures
+* **regression** — checks **frozen** at `CATALOGUE_VERSION` (`eval-catalogue-2026.10-1`): the acceptance fixtures
   built later by the adversarial groups G3–G5 (`fixtures/acceptance`) and the behavioural checks written for this track.
+  They are **not held-out data**: G3–G5 fixed defects against these very fixtures (`docs/ACCEPTANCE.md`,
+  «pass_after_fix»), so a high regression rate is not evidence of generalization either.
   Their expected values change only with a **reviewed catalogue bump**; every report carries the **regression hash**
-  (sha256 of ids + checks + expected values) and two runs are compared only on the same hash.
+  (sha256 of ids + checks + expected values) and two runs are compared only on the same hash (`--compare` exits 6
+  otherwise, so CI fails until the baseline is re-written in the same reviewed change).
 * When rules or prompts are tuned, new examples go to the **tuning** set. The regression set is never edited to make a
   run pass. Honest limit: both sets were seen by the people who wrote the code; the regression set is held fixed from
   now on, which is what keeps it useful.
@@ -143,7 +149,9 @@ an artifact built by the old one.
    a version is still visible through the git commit in the report, but the version bump is what invalidates caches.
 3. **After**: `npm run eval -- --label="after <change>" --compare=<before>.json`. The comparison
    (`compare-<base>-<head>.md|json`) lists the system changes, the per-axis regression rates side by side, every case
-   that **stopped passing** and every case that **now passes**. Exit 4 = a regression-set case stopped passing.
+   that **stopped passing**, every case that **now passes**, and every regression case the «before» run passed that
+   this run did **not evaluate**. Exit 4 = a regression-set case stopped passing; exit 6 = not comparable (another
+   regression set, or regression cases not evaluated — run the whole regression set).
 4. **Decide**: a regression case that stopped passing blocks the change until it is explained (a real improvement
    that reveals a wrong expectation needs a reviewed catalogue bump — never a silent edit). Record the decision in the
    change log of the PR. Tuning-only differences are reported but do not block.
@@ -163,16 +171,23 @@ an artifact built by the old one.
 
 ## 5. Tests and limits
 
-* `apps/server/test/control/evaluation.test.ts` (17): Wilson bounds, denominators, no «100%» (Arabic, English, Markdown,
+* `apps/server/test/control/evaluation.test.ts` (19): Wilson bounds, denominators, no «100%» (Arabic, English, Markdown,
   large samples too), catalogue integrity (unique ids, every axis, both sets, fixtures exist, no Golden Set file in the
   regression set), regression hash, case selection and upload order, compare (regressions / fixes / system changes /
   not comparable), the runner on the real pipeline (a subset: citation, support, abstention, over-abstention, keys,
   links, bidi, captions), wrong expectations → fail, missing question → fail, unscripted generator call → fail with its
-  reason, invalid request → evaluation error, live mode without a key → not_run, the store (catalogue upsert / retire,
-  50 runs kept), the Control Center routes (auth, 404, Markdown download), and the CLI itself (files written, `--compare`
+  reason, invalid request → evaluation error, live mode without a key → not_run, the store (catalogue upsert / retire;
+  an unchanged catalogue writes nothing at boot, so a restored database stays identical to its backup — AC-30; 50 runs kept), the Control Center routes (auth, 404, Markdown download), and the CLI itself (files written, `--compare`
   exit code follows the comparison).
+* **Review of track F5 (2026-10-10):** a comparison used to skip every regression case the head run did not evaluate,
+  so `--mode=live` without a key, an `--axis` / `--only` run, or two Control Center runs with different filters
+  compared as `no_regressions`, and `--compare` exited 0 also when the regression set itself had changed (another hash)
+  — a CI gate that a catalogue edit or a skipped axis passed silently. Now those cases are listed (`not_compared`), the
+  verdict is `not_comparable` (a real regression still wins) and the CLI exits 6. Tests: `compareReports` (filtered /
+  `not_run` / CI-shaped `--set=regression` head) and the CLI (exit 6 for a filtered run and for another catalogue hash);
+  web: the not-compared list in «مقارنة بالتقييم السابق».
 * `apps/web/src/features/control/quality.test.tsx`: the evaluation view (empty state, denominators, no «100%», failed
-  cases with reasons, comparison, Markdown link).
+  cases with reasons, comparison, regression cases not compared, Markdown link).
 * Limits: the cases are synthetic; per-axis sets are small; scripted AI axes measure the server, not a model;
   semantic retrieval does not exist (no embeddings provider), so the catalogue has no semantic-search axis; Vision
   (figure structure) and handwriting recognition are not evaluated (no vision provider here).

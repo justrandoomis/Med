@@ -83,6 +83,7 @@ describe('evaluation view', () => {
           axes: [],
           regressions: [{ case_id: 'bad1', axis: 'over_abstention', set: 'regression', title_ar: 'حالة bad1', base: 'pass', head: 'fail' }],
           fixes: [],
+          not_compared: [],
           system_changes: [{ key: 'index', base: 'chunk-v1', head: 'chunk-v2' }],
         }),
       ),
@@ -109,6 +110,30 @@ describe('evaluation view', () => {
     expect(screen.getByText('index: chunk-v1 → chunk-v2')).toBeTruthy();
     expect(screen.getByRole('link', { name: /نزّل التقرير الكامل/ }).getAttribute('href')).toBe('/api/control/evaluation/runs/eval-2/report.md');
     expect(screen.getByText('مزود مكتوب مسبقًا للتقييم فقط: يقيس ضمانات الخادم (الأدلة، الامتناع)، لا جودة نموذج.')).toBeTruthy();
+  });
+
+  it('(review F5) regression cases the previous run passed and this one skipped: «not comparable», listed — never «no regression»', async () => {
+    setFetchImpl(async () =>
+      json(
+        overview(report('eval-3'), {
+          base_run_id: 'eval-2',
+          head_run_id: 'eval-3',
+          comparable: false,
+          reason_ar: '1 حالة من عينة الانحدار نجحت في التشغيل الأساس ولم تُقيَّم في هذا التشغيل؛ لا يمكن القول إنه لا تراجع.',
+          verdict: 'not_comparable',
+          axes: [],
+          regressions: [],
+          fixes: [],
+          not_compared: [{ case_id: 'sup1', axis: 'claim_support', set: 'regression', title_ar: 'حالة sup1', base: 'pass', head: 'not_run' }],
+          system_changes: [],
+        }),
+      ),
+    );
+    wrap(<EvaluationScreen />);
+    expect(await screen.findByText(/لا يمكن القول إنه لا تراجع/)).toBeTruthy();
+    expect(screen.queryByText('لا حالة من عينة الانحدار كانت تنجح ثم توقفت.')).toBeNull();
+    expect(screen.getByRole('heading', { name: 'نجحت سابقًا ولم تُقيَّم في هذا التشغيل' })).toBeTruthy();
+    expect(screen.getByText('حالة sup1 — لم يُشغَّل')).toBeTruthy();
   });
 
   it('a server error is one honest sentence with a retry', async () => {
@@ -171,6 +196,8 @@ describe('system health view', () => {
     });
     wrap(<HealthScreen />);
     expect(await screen.findByText("Cannot read properties of undefined (reading 'map')")).toBeTruthy();
+    // the whole log is one item here: no «newest n of total» line
+    expect(screen.queryByText(/يُعرض أحدث/)).toBeNull();
     expect(screen.getByText(/3 مرات/)).toBeTruthy();
     expect(screen.getByText('/questions')).toBeTruthy();
     expect(screen.getByText('Chrome 131')).toBeTruthy();
@@ -182,5 +209,11 @@ describe('system health view', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'امسح السجل' }));
     await waitFor(() => expect(calls.some((c) => c.startsWith('DELETE') && c.includes('/api/control/client-errors'))).toBe(true));
     expect(await screen.findByText('لا أخطاء مسجلة')).toBeTruthy();
+  });
+
+  it('(review F5) a log longer than the page says it shows the newest n of the total', async () => {
+    setFetchImpl(async (url) => json(String(url).includes('/control/health') ? trends : { ...errors, total: 240 }));
+    wrap(<HealthScreen />);
+    expect(await screen.findByText('يُعرض أحدث 1 من 240 خطأ مختلف مسجل.')).toBeTruthy();
   });
 });

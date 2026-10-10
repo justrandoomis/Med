@@ -192,13 +192,19 @@ export interface EvalCompareAxis {
 export interface EvalCompare {
   base_run_id: string;
   head_run_id: string;
-  /** false when the regression sets differ (another catalogue hash) — rates are then not comparable */
+  /**
+   * false when the regression sets differ (another catalogue hash), or when regression cases that passed in the base
+   * run were not evaluated in the head run (filtered out, or not_run — e.g. live mode without a key): «no regressions»
+   * is then never claimed (review of track F5)
+   */
   comparable: boolean;
   reason_ar: string | null;
   verdict: 'no_regressions' | 'regressions' | 'not_comparable';
   axes: EvalCompareAxis[];
   /** cases that passed in the base run and do not pass in the head run */
   regressions: Array<{ case_id: string; axis: EvalAxis; set: EvalSet; title_ar: string; base: EvalOutcome; head: EvalOutcome }>;
+  /** regression-set cases that passed in the base run and were NOT evaluated in the head run (absent or not_run) */
+  not_compared: Array<{ case_id: string; axis: EvalAxis; set: EvalSet; title_ar: string; base: EvalOutcome; head: EvalOutcome | null }>;
   /** cases that did not pass in the base run and pass now */
   fixes: Array<{ case_id: string; axis: EvalAxis; set: EvalSet; title_ar: string; base: EvalOutcome; head: EvalOutcome }>;
   /** versions / models that differ between the two runs (what changed) */
@@ -290,11 +296,12 @@ export function redactText(s: string, max = CLIENT_ERROR_MESSAGE_MAX): string {
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ') // eslint-disable-line no-control-regex -- strip control characters from untrusted text
     .replace(DATA_URL, '[data-url]')
     .replace(/\bhttps?:\/\/[^\s)'"]+/g, (m) => stripUrl(m))
-    .replace(KEY_VALUE_SECRET, (_m, k: string) => `${k}=[redacted]`)
+    // tokens first: «Authorization: Bearer <token>» must lose the token, not only the word «Bearer» (review of track F5)
     .replace(SECRETISH, '[redacted]')
+    .replace(KEY_VALUE_SECRET, (_m, k: string) => `${k}=[redacted]`)
     .replace(EMAIL, '[email]')
-    // quoted segments longer than 40 characters may hold document text («…», "…", '…', `…`)
-    .replace(/«[^»]{41,}»|"[^"\n]{41,}"|'[^'\n]{41,}'|`[^`\n]{41,}`/g, '[quoted-text]')
+    // quoted segments longer than 40 characters may hold document text («…», "…", “…”, '…', ‘…’, `…`)
+    .replace(/«[^»]{41,}»|"[^"\n]{41,}"|“[^”\n]{41,}”|'[^'\n]{41,}'|‘[^’\n]{41,}’|`[^`\n]{41,}`/g, '[quoted-text]')
     .replace(LONG_ARABIC, ' [نص محذوف] ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -302,17 +309,27 @@ export function redactText(s: string, max = CLIENT_ERROR_MESSAGE_MAX): string {
   return out;
 }
 
+/** Longest stack line looked at: a real frame is «fn (url:line:col)»; anything longer is not a code location. */
+const STACK_LINE_MAX = 600;
+// V8: "at fn (http://host/assets/x.js:1:2)" / "at http://host/x.js:1:2"; Firefox / Safari: "fn@http://host/x.js:1:2".
+// Linear on hostile input (review of track F5): the function name may hold single spaces («async fn», «new Foo») but
+// no other whitespace, and exactly one optional space precedes «(» — the earlier «[…\s]{0,80}?\s*\(» backtracked
+// quadratically (a 15 000-space line held the server's event loop for ~28 s).
+const STACK_FRAME = /^(?:at +)?(?:([\w$.<>[\] ]{0,80}?) ?\(|([\w$.<>[\]]{0,80})@)?((?:https?|file|webpack|vite):\/\/[^\s)]+|\/[^\s)]+):(\d+):(\d+)\)?$/;
+
 /** Keep only code locations of a stack: `fn (path:line:col)` / `fn@path:line:col`, origin and query removed. */
 export function redactStack(stack: string | null | undefined): string | null {
   if (!stack) return null;
   const frames: string[] = [];
   for (const raw of String(stack).split('\n')) {
     const line = raw.trim();
-    // V8: "at fn (http://host/assets/x.js:1:2)" / "at http://host/x.js:1:2"; Firefox / Safari: "fn@http://host/x.js:1:2"
-    const m = /^(?:at\s+)?(?:([\w$.<>[\]\s]{0,80}?)\s*\(|([\w$.<>[\]]{0,80})@)?((?:https?|file|webpack|vite):\/\/[^\s)]+|\/[^\s)]+):(\d+):(\d+)\)?$/.exec(line);
+    if (line.length > STACK_LINE_MAX) continue;
+    const m = STACK_FRAME.exec(line);
     if (!m) continue;
     const fn = (m[1] ?? m[2] ?? '').trim().replace(/^at\s+/, '');
-    const where = `${stripUrl(m[3]!)}:${m[4]}:${m[5]}`;
+    // a code location, not a payload: an absurdly long path keeps only its end (the file name), so a stored row stays small
+    const path = stripUrl(m[3]!);
+    const where = `${path.length > 200 ? `…${path.slice(-199)}` : path}:${m[4]}:${m[5]}`;
     frames.push(fn ? `${fn.slice(0, 80)} (${where})` : where);
     if (frames.length >= CLIENT_ERROR_STACK_MAX_FRAMES) break;
   }

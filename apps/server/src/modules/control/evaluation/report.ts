@@ -141,8 +141,9 @@ export function renderMarkdown(r: EvalReport): string {
 
 /** Side-by-side comparison of two runs (base = before the change, head = after it). */
 export function compareReports(base: EvalReport, head: EvalReport): EvalCompare {
-  const comparable = base.catalogue.regression_hash === head.catalogue.regression_hash;
+  const sameCatalogue = base.catalogue.regression_hash === head.catalogue.regression_hash;
   const baseById = new Map(base.cases.map((c) => [c.case_id, c]));
+  const headById = new Map(head.cases.map((c) => [c.case_id, c]));
   const regressions: EvalCompare['regressions'] = [];
   const fixes: EvalCompare['fixes'] = [];
   for (const h of head.cases) {
@@ -151,6 +152,18 @@ export function compareReports(base: EvalReport, head: EvalReport): EvalCompare 
     if (b.outcome === 'pass' && h.outcome !== 'pass') regressions.push({ case_id: h.case_id, axis: h.axis, set: h.set, title_ar: h.title_ar, base: b.outcome, head: h.outcome });
     if (b.outcome !== 'pass' && h.outcome === 'pass') fixes.push({ case_id: h.case_id, axis: h.axis, set: h.set, title_ar: h.title_ar, base: b.outcome, head: h.outcome });
   }
+  // (review of track F5) a regression case the base passed and the head did not evaluate — filtered out (--set / --axis /
+  // --only, or a Control Center run with another filter) or not_run (live mode without a key) — is not «no regression»:
+  // without this, a head run that skipped the AI axes compared as `no_regressions` and the CLI exited 0
+  const notCompared: EvalCompare['not_compared'] = [];
+  if (sameCatalogue) {
+    for (const b of base.cases) {
+      if (b.set !== 'regression' || b.outcome !== 'pass') continue;
+      const h = headById.get(b.case_id);
+      if (!h || h.outcome === 'not_run') notCompared.push({ case_id: b.case_id, axis: b.axis, set: b.set, title_ar: b.title_ar, base: b.outcome, head: h?.outcome ?? null });
+    }
+  }
+  const comparable = sameCatalogue && notCompared.length === 0;
   const keys = new Set([...Object.keys(base.system.versions), ...Object.keys(head.system.versions)]);
   const systemChanges: EvalCompare['system_changes'] = [];
   for (const k of [...keys].sort()) {
@@ -174,15 +187,22 @@ export function compareReports(base: EvalReport, head: EvalReport): EvalCompare 
     base: ba.get(axis)!.regression,
     head: ha.get(axis)!.regression,
   }));
+  const regressed = regressions.some((x) => x.set === 'regression');
   return {
     base_run_id: base.run_id,
     head_run_id: head.run_id,
     comparable,
-    reason_ar: comparable ? null : 'عينة الانحدار مختلفة بين التشغيلين (بصمة الكتالوج تغيرت)، فلا تُقارن النسب مباشرة؛ أعد تشغيل التقييم القديم على الكتالوج الجديد.',
-    verdict: !comparable ? 'not_comparable' : regressions.some((x) => x.set === 'regression') ? 'regressions' : 'no_regressions',
+    reason_ar: !sameCatalogue
+      ? 'عينة الانحدار مختلفة بين التشغيلين (بصمة الكتالوج تغيرت)، فلا تُقارن النسب مباشرة؛ أعد تشغيل التقييم القديم على الكتالوج الجديد.'
+      : notCompared.length
+        ? `${notCompared.length} حالة من عينة الانحدار نجحت في التشغيل الأساس ولم تُقيَّم في هذا التشغيل (استُبعدت بمرشح أو لم تُشغَّل، مثل محاور الذكاء الاصطناعي دون مفتاح)؛ لا يمكن القول إنه لا تراجع. شغّل عينة الانحدار كاملة ثم قارن.`
+        : null,
+    // a case that stopped passing is reported even when others could not be compared; «no regressions» only when all were
+    verdict: !sameCatalogue ? 'not_comparable' : regressed ? 'regressions' : notCompared.length ? 'not_comparable' : 'no_regressions',
     axes,
     regressions,
     fixes,
+    not_compared: notCompared,
     system_changes: systemChanges,
   };
 }
@@ -213,6 +233,11 @@ export function renderCompareMarkdown(c: EvalCompare): string {
   out.push('');
   for (const r of c.fixes) out.push(`* ${r.case_id} (${EVAL_SET_LABELS_AR[r.set]}, ${r.axis}) — ${r.title_ar}`);
   if (!c.fixes.length) out.push('None.');
+  out.push('');
+  out.push(`## Regression cases passed in the base run and not evaluated here (${c.not_compared.length})`);
+  out.push('');
+  for (const r of c.not_compared) out.push(`* ${r.case_id} (${r.axis}): ${r.head === null ? 'not in this run (filtered out)' : EVAL_OUTCOME_LABELS_AR[r.head]} — ${r.title_ar}`);
+  if (!c.not_compared.length) out.push('None.');
   out.push('');
   return out.join('\n');
 }

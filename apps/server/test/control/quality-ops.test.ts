@@ -113,6 +113,49 @@ describe('client error sink', () => {
   });
 });
 
+describe('(review F5) the sink is rate limited and cheap on hostile bodies', () => {
+  let t2: TestApp;
+  let h2: AuthHeaders;
+  beforeAll(async () => {
+    t2 = await createTestApp();
+    h2 = await t2.login();
+  });
+  afterAll(async () => {
+    await t2?.close();
+  });
+
+  it('30 batches a minute per client, then 429 with a retry hint; nothing more is stored', async () => {
+    const send = (i: number) => t2.app.inject({ method: 'POST', url: '/api/control/client-errors', headers: h2, payload: { errors: [{ kind: 'error', message: `burst ${String.fromCharCode(65 + (i % 26))}${String.fromCharCode(65 + Math.floor(i / 26))}` }] } });
+    const codes: number[] = [];
+    for (let i = 0; i < 32; i++) codes.push((await send(i)).statusCode);
+    expect(codes.slice(0, 30).every((c) => c === 200)).toBe(true);
+    const limited = await send(99);
+    expect(limited.statusCode).toBe(429);
+    expect(limited.json().error.code).toBe('RATE_LIMITED');
+    expect(codes.slice(30)).toEqual([429, 429]);
+    const n = t2.ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM client_error')!.n;
+    expect(n).toBe(30);
+    // another route of the control module is not affected by this limit
+    expect((await t2.app.inject({ method: 'GET', url: '/api/control/client-errors', headers: h2 })).statusCode).toBe(200);
+  });
+
+  it('a hostile stack (catastrophic-backtracking shape) is redacted in linear time, not minutes', async () => {
+    const t3 = await createTestApp();
+    try {
+      const h3 = await t3.login();
+      const stack = [`at ${' '.repeat(15_000)}x`].join('\n');
+      const errors = Array.from({ length: 5 }, (_, i) => ({ kind: 'error', message: `hostile ${i}`, stack }));
+      const t0 = Date.now();
+      const res = await t3.app.inject({ method: 'POST', url: '/api/control/client-errors', headers: h3, payload: { errors } });
+      expect(res.statusCode).toBe(200);
+      expect(Date.now() - t0).toBeLessThan(3000);
+      expect(t3.ctx.db.all<{ stack: string | null }>('SELECT stack FROM client_error').every((r) => r.stack === null)).toBe(true);
+    } finally {
+      await t3.close();
+    }
+  });
+});
+
 describe('daily trends (owner time zone, with denominators)', () => {
   it('day boundaries are local midnights (Asia/Baghdad = UTC+3) and the window ends tomorrow', () => {
     const now = Date.UTC(2026, 9, 10, 22, 30); // 01:30 on Oct 11 in Baghdad
