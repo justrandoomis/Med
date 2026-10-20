@@ -215,6 +215,12 @@ export interface TableStructure {
   cols: number;
   cells: TableCell[];
   caption_region_id?: string | null;
+  /**
+   * How the grid was found: ruling lines, aligned digital text, an office table, or (H2) the positions of OCR words on
+   * a scanned page — `ocr_aligned` grids are inferred, so they carry `certainty: 'uncertain'`.
+   */
+  method?: 'ruled' | 'aligned' | 'office' | 'ocr_aligned';
+  certainty?: 'uncertain';
 }
 export interface DiagramStructure {
   type: 'diagram';

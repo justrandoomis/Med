@@ -278,12 +278,54 @@ function assertRecognitionAvailable(ctx: AppContext): void {
   }
 }
 
+/** The target key a create request is for (page / note page), or `question:<id>` for a written answer. */
+function requestTargetKey(input: RecognitionCreateInput): string | null {
+  if (input.purpose === 'written_answer') return input.question_id ? `question:${input.question_id}` : null;
+  const a = input.anchor;
+  return a ? annotationTargetKey({ ...a, space: 'page_norm' } as AnnotationAnchor) : null;
+}
+
+/**
+ * H1: the strokes a page reading names must be strokes the server holds, not deleted, on THE anchored page (or note
+ * page) — a reading is listed and searched under that page, so a stroke from another page would be misattributed.
+ */
+function assertStrokesOnTarget(ctx: AppContext, ids: string[], target: { type: 'source_page' | 'note_page'; id: string }): void {
+  const rows: Array<{ id: string; deleted_at: number | null; target_type: string | null; target_id: string | null }> = [];
+  for (let i = 0; i < ids.length; i += 400) {
+    const part = ids.slice(i, i + 400);
+    rows.push(
+      ...ctx.db.all<{ id: string; deleted_at: number | null; target_type: string | null; target_id: string | null }>(
+        `SELECT a.id, a.deleted_at, t.target_type, t.target_id FROM annotation a LEFT JOIN annotation_target t ON t.annotation_id = a.id
+          WHERE a.id IN (${part.map(() => '?').join(',')})`,
+        part,
+      ),
+    );
+  }
+  const found = new Map(rows.map((r) => [r.id, r]));
+  if (ids.some((id) => !found.has(id))) {
+    throw new AppError('CONFLICT', 'بعض الكتابة المحددة لم تصل إلى الخادم بعد. انتظر حتى تتم المزامنة ثم أعد المحاولة؛ كتابتك محفوظة على جهازك.', 409, { reason: 'not_synced' });
+  }
+  if (rows.some((r) => r.deleted_at !== null)) {
+    throw new AppError('CONFLICT', 'بعض الكتابة المحددة حُذفت؛ حدّد الكتابة الموجودة ثم أعد المحاولة.', 409, { reason: 'deleted' });
+  }
+  const elsewhere = rows.filter((r) => r.target_type !== target.type || r.target_id !== target.id).map((r) => r.id);
+  if (elsewhere.length) {
+    throw new AppError('VALIDATION_FAILED', 'بعض الكتابة المحددة على صفحة أخرى غير الصفحة المطلوبة؛ حدّد كتابة هذه الصفحة فقط.', 400, { annotation_ids: elsewhere.slice(0, 20) });
+  }
+}
+
 export function createRecognition(ctx: AppContext, body: unknown): { view: InkRecognitionView; created: boolean } {
   const input = parseWith(recognitionCreateSchema, body, 'body');
   // a retried request (lost response) returns what was stored — never a second reading of the same request
   const existing = ctx.db.get<RecognitionRow>(`SELECT ${COLS} FROM ink_recognition WHERE id = ?`, [input.id]);
   if (existing) {
+    // H1: a reading the owner deleted is never resurrected or handed back by a late retry of its request
+    if (existing.deleted_at !== null) throw new AppError('CONFLICT', 'هذه القراءة حُذفت؛ حدّد الكتابة من جديد لقراءة جديدة.', 409, { reason: 'deleted' });
     if (existing.purpose !== input.purpose) throw new AppError('CONFLICT', 'هذا المعرّف مستخدم لقراءة أخرى.', 409);
+    // the same request only: a different page / question with this id is another reading
+    const want = requestTargetKey(input);
+    const have = existing.purpose === 'written_answer' ? (existing.question_id ? `question:${existing.question_id}` : null) : existing.target_key;
+    if (want !== have) throw new AppError('CONFLICT', 'هذا المعرّف مستخدم لقراءة أخرى.', 409);
     return { view: recognitionView(ctx, existing), created: false };
   }
   assertRecognitionAvailable(ctx);
@@ -307,6 +349,7 @@ export function createRecognition(ctx: AppContext, body: unknown): { view: InkRe
       versionId = a.version_id;
       pageId = a.page_id;
       anchor = { ...a, space: 'page_norm' };
+      assertStrokesOnTarget(ctx, [...new Set(input.annotation_ids)], { type: 'source_page', id: a.page_id });
     } else {
       const np = ctx.db.get<{ source_id: string | null; deleted_at: number | null }>('SELECT source_id, deleted_at FROM note_page WHERE id = ?', [a.note_page_id]);
       if (!np) {
@@ -316,6 +359,7 @@ export function createRecognition(ctx: AppContext, body: unknown): { view: InkRe
       notePageId = a.note_page_id;
       sourceId = np.source_id;
       anchor = { ...a, space: 'page_norm' };
+      assertStrokesOnTarget(ctx, [...new Set(input.annotation_ids)], { type: 'note_page', id: a.note_page_id });
     }
   } else {
     const q = ctx.db.get<{ id: string; deleted_at: number | null }>('SELECT id, deleted_at FROM question WHERE id = ?', [input.question_id!]);

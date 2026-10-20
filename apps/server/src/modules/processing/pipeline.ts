@@ -1259,6 +1259,7 @@ export function finalizeRegions(regions: LayoutRegion[], lowQuality: boolean, te
   for (const r of regions) {
     const reasons: string[] = [];
     if (r.suspicions?.length) reasons.push(suspicionReasonAr(r.suspicions));
+    if (r.reviewNoteAr) reasons.push(r.reviewNoteAr);
     const ocrText = r.textOrigin === 'ocr' && r.kind !== 'diagram' && r.text;
     const weakWord = typeof r.minWordConf === 'number' && r.minWordConf < OCR_REVIEW_WORD_CONF;
     const weakRegion = typeof r.confidence === 'number' && r.confidence < OCR_REVIEW_WORD_CONF / 100;
@@ -1278,6 +1279,8 @@ export function finalizeRegions(regions: LayoutRegion[], lowQuality: boolean, te
       });
     } else if (r.kind === 'diagram') r.status = 'uncertain';
     else if (lowQuality && r.textOrigin === 'ocr') r.status = 'needs_review';
+    // H2 item 2: rows and columns inferred from the positions of OCR words — readable, never presented as certain
+    else if (r.table?.method === 'ocr_aligned') r.status = 'uncertain';
     else r.status = 'extracted';
   }
   // a table with a flagged cell needs review as a whole

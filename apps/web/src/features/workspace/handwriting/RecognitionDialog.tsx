@@ -82,7 +82,15 @@ export function writingIds(items: readonly InkItem[]): string[] {
 /** An existing reading of exactly this writing (same strokes), the newest first. */
 export function matchingRecognition(list: readonly InkRecognitionView[], ids: readonly string[]): InkRecognitionView | null {
   const want = new Set(ids);
-  return list.find((r) => r.purpose === 'page_ink' && r.annotation_ids.length === want.size && r.annotation_ids.every((id) => want.has(id))) ?? null;
+  const same = list.filter((r) => r.purpose === 'page_ink' && r.annotation_ids.length === want.size && r.annotation_ids.every((id) => want.has(id)));
+  // H1: a complete (or running) reading of the same strokes wins over a failed one; a failed one alone is still shown
+  // — as a failure that can be retried
+  return same.find((r) => r.status !== 'failed') ?? same[0] ?? null;
+}
+
+/** H1: a failed reading is always said to be one («فشلت القراءة»), with its reason when there is one. */
+function failedMessage(rec: InkRecognitionView): string {
+  return rec.error_ar ? `${rec.status_label_ar}: ${rec.error_ar}` : `${rec.status_label_ar}.`;
 }
 
 export function RecognitionDialog({ target, onClose, recognition, chat, online, onAsk, deps = {} }: RecognitionDialogProps) {
@@ -126,6 +134,7 @@ export function RecognitionDialog({ target, onClose, recognition, chat, online, 
         .then((list) => {
           const hit = alive ? matchingRecognition(list, ids) : null;
           if (!hit) return;
+          if (hit.status === 'failed') return setPhase({ kind: 'error', message: failedMessage(hit), rec: hit });
           setPhase(hit.status === 'queued' || hit.status === 'running' ? { kind: 'reading', rec: hit } : { kind: 'result', rec: hit });
           setCorrection(hit.effective_text);
           if (hit.status === 'queued' || hit.status === 'running') void follow(hit.id);
@@ -146,7 +155,7 @@ export function RecognitionDialog({ target, onClose, recognition, chat, online, 
     try {
       const rec = await wait(id, { signal: ac.signal, onUpdate: (r) => setPhase({ kind: 'reading', rec: r }) });
       if (ac.signal.aborted) return;
-      if (rec.status === 'failed') setPhase({ kind: 'error', message: rec.error_ar ?? 'فشلت القراءة.', rec });
+      if (rec.status === 'failed') setPhase({ kind: 'error', message: failedMessage(rec), rec });
       else {
         setPhase({ kind: 'result', rec });
         setCorrection(rec.effective_text);

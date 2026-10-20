@@ -498,15 +498,25 @@ function tableRegion(t: TableOut, nextKey: (p: string) => string, origin: 'digit
   };
   const cells: LayoutRegion[] = t.cells
     .filter((c) => c.text.trim())
-    .map((c) => ({
-      key: nextKey('cell'),
-      kind: 'table_cell' as const,
-      box: c.box,
-      text: c.text,
-      textOrigin: origin,
-      parentKey: key,
-      locator: { r: c.r, c: c.c, rowspan: c.rowspan, colspan: c.colspan, header: c.header },
-    }));
+    .map((c) => {
+      const cell: LayoutRegion = {
+        key: nextKey('cell'),
+        kind: 'table_cell' as const,
+        box: c.box,
+        text: c.text,
+        textOrigin: origin,
+        parentKey: key,
+        locator: { r: c.r, c: c.c, rowspan: c.rowspan, colspan: c.colspan, header: c.header },
+      };
+      if (origin === 'ocr' && typeof c.conf === 'number') {
+        cell.confidence = c.conf / 100;
+        cell.minWordConf = c.minConf ?? null;
+        if (c.weakWords?.length) cell.lowConfWords = c.weakWords;
+        if (c.words?.length) cell.words = c.words;
+      }
+      if (c.crossesColumn) cell.reviewNoteAr = 'نص هذه الخلية يمتد إلى حدود العمود التالي في الصورة؛ قد يكون جمع خليتين أو قُسّم الصف بشكل غير صحيح. قارنه بالصورة.';
+      return cell;
+    });
   return { table, cells };
 }
 

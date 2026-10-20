@@ -9,9 +9,13 @@ export function pdfPageUsesRegionText(page: Pick<SourcePageView, 'text_status'>)
   return page.text_status === 'ocr' || page.text_status === 'mixed';
 }
 
-/** The runs of a positioned page's text layer: regions with a box and text (not the figure itself), in reading order. */
+/**
+ * The runs of a positioned page's text layer: regions with a box and text, in reading order — not the figure itself,
+ * and not a table's serialized summary («Header: value | …», which is not what the page shows): its cells carry the
+ * table's text at their own places (H2 item 2: tables are now found on scanned pages too).
+ */
 export function regionTextRuns<R extends Pick<SourceRegionView, 'bbox' | 'text' | 'kind' | 'reading_order'>>(regions: readonly R[]): R[] {
-  return regions.filter((r) => r.bbox && r.text && r.kind !== 'figure').sort((a, b) => a.reading_order - b.reading_order);
+  return regions.filter((r) => r.bbox && r.text && r.kind !== 'figure' && r.kind !== 'table').sort((a, b) => a.reading_order - b.reading_order);
 }
 
 /** The searchable text of a positioned page: the runs concatenated exactly as the text layer renders them. */

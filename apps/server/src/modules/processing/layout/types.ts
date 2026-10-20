@@ -71,6 +71,13 @@ export interface TableCellOut {
   header: boolean;
   text: string;
   box: Box;
+  /** OCR cells (H2 item 2): mean / weakest word confidence (0–100), weak words, word boxes in reading order */
+  conf?: number;
+  minConf?: number;
+  weakWords?: string[];
+  words?: Array<{ text: string; box: Box }>;
+  /** the cell's text runs over the next column's edge: its column split is uncertain */
+  crossesColumn?: boolean;
 }
 
 export interface TableOut {
@@ -78,8 +85,8 @@ export interface TableOut {
   rows: number;
   cols: number;
   cells: TableCellOut[];
-  /** how the grid was found */
-  method: 'ruled' | 'aligned' | 'office';
+  /** how the grid was found; 'ocr_aligned' = rows and columns inferred from OCR word positions (never certain) */
+  method: 'ruled' | 'aligned' | 'office' | 'ocr_aligned';
 }
 
 /** A region produced by layout analysis, before ids exist. `key` is local to one page. */
@@ -120,6 +127,8 @@ export interface LayoutRegion {
   ligatureFixes?: number;
   status?: 'extracted' | 'needs_review' | 'uncertain';
   reviewReasonAr?: string | null;
+  /** a layout-specific reason for review (added to the review reasons by finalizeRegions) */
+  reviewNoteAr?: string | null;
 }
 
 export function boxOf(boxes: Box[]): Box {

@@ -192,6 +192,28 @@ describe('«تحويل إلى نص»', () => {
   });
 });
 
+describe('H1 — a FAILED earlier reading', () => {
+  const failed = () => view({ status: 'failed', status_label_ar: 'فشلت القراءة', recognized_text: '', effective_text: '', lines: [], uncertain_count: 0, engine: null, error_ar: 'تعذّر الاتصال بمزود الذكاء الاصطناعي.' });
+
+  it('is shown as a failure with its reason and «أعد المحاولة» — never as a machine reading', async () => {
+    const d = deps({ list: vi.fn(async () => [failed()]), retry: vi.fn(async () => view({ status: 'queued', status_label_ar: 'في انتظار القراءة' })) });
+    render(<RecognitionDialog target={target()} onClose={() => {}} recognition={{ available: true, reason: null }} chat={{ available: true, reason: null }} online onAsk={() => {}} deps={d} />);
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('فشلت القراءة');
+    expect(alert.textContent).toContain('تعذّر الاتصال بمزود الذكاء الاصطناعي.');
+    expect(screen.queryByText('مقروء آليًا')).toBeNull();
+    expect(screen.queryByLabelText('صحّح النص إن لزم')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'أعد المحاولة' }));
+    await waitFor(() => expect(d.api.retry).toHaveBeenCalledWith('REC1'));
+    await screen.findByText('مقروء آليًا');
+  });
+
+  it('a complete reading of the same strokes is preferred over a newer failed one', () => {
+    expect(matchingRecognition([failed(), view({ id: 'REC0' })], ['A1', 'A2'])?.id).toBe('REC0');
+    expect(matchingRecognition([failed()], ['A1', 'A2'])?.status).toBe('failed');
+  });
+});
+
 describe('«اسأل عن المحدد»', () => {
   it('composes the handwriting + the paragraph next to it and hands it to the chat composer (nothing is sent)', async () => {
     const onAsk = vi.fn();

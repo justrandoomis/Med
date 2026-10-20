@@ -412,3 +412,79 @@ describe('with the test-only FakeAiProvider', () => {
     });
   });
 });
+
+describe('H1 hardening — recognition requests', () => {
+  beforeEach(async () => {
+    ai = new FakeAiProvider();
+    t = await createTestApp({ ai, jobs: { backoffBaseMs: 0, backoffMaxMs: 0 } });
+    h = await t.login();
+    f = createSourceFixture(t);
+  });
+  afterEach(async () => t.close());
+
+  it('annotation_ids must be strokes anchored to the requested page: another page → refused, nothing stored', async () => {
+    const here = await stroke(0.6);
+    const elsewhereId = newId();
+    const res0 = await post('/api/sync/push', { ops: [op({ entity_type: 'annotation', entity_id: elsewhereId, op: 'append', payload: inkPayload(f, { pageIndex: 1, x: 0.4 }) })] });
+    expect(res0.json().results[0].result).toBe('applied');
+    const res = await post('/api/annotations/recognitions', pageReq([here, elsewhereId]));
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('VALIDATION_FAILED');
+    expect(res.json().error.message).toMatch(/صفحة أخرى/);
+    expect(count('SELECT COUNT(*) AS n FROM ink_recognition')).toBe(0);
+    expect(count(`SELECT COUNT(*) AS n FROM processing_job WHERE kind = 'ink.recognize'`)).toBe(0);
+  });
+
+  it('strokes the server has not received yet → 409 «wait for sync», nothing stored; deleted strokes are refused too', async () => {
+    const res = await post('/api/annotations/recognitions', pageReq([newId()]));
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.message).toMatch(/لم تصل إلى الخادم/);
+    const gone = await stroke(0.5);
+    t.ctx.db.run('UPDATE annotation SET deleted_at = 1 WHERE id = ?', [gone]);
+    const res2 = await post('/api/annotations/recognitions', pageReq([gone]));
+    expect(res2.statusCode).toBe(409);
+    expect(res2.json().error.message).toMatch(/حُذفت/);
+    expect(count('SELECT COUNT(*) AS n FROM ink_recognition')).toBe(0);
+  });
+
+  it('a retried create with the id of a soft-deleted reading never resurrects or returns it', async () => {
+    const id = await stroke();
+    ai.push(reading([[['bilirubin']]]));
+    const req = pageReq([id]);
+    expect((await post('/api/annotations/recognitions', req)).statusCode).toBe(202);
+    await t.ctx.jobs.drain();
+    expect((await t.app.inject({ method: 'DELETE', url: `/api/annotations/recognitions/${req.id}`, headers: h })).statusCode).toBe(200);
+    const again = await post('/api/annotations/recognitions', req);
+    expect(again.statusCode).toBe(409);
+    expect(again.json()).not.toHaveProperty('recognition');
+    expect(again.json().error.message).toMatch(/حُذفت/);
+    expect(t.ctx.db.get<{ d: number | null }>('SELECT deleted_at AS d FROM ink_recognition WHERE id = ?', [req.id])!.d).not.toBeNull();
+    expect((await get(`/api/annotations/recognitions/${req.id}`)).statusCode).toBe(404);
+    expect(count(`SELECT COUNT(*) AS n FROM owner_content_fts WHERE entity_type = 'ink_recognition'`)).toBe(0);
+    expect(count(`SELECT COUNT(*) AS n FROM processing_job WHERE kind = 'ink.recognize'`)).toBe(1);
+  });
+
+  it('a same-id retry for ANOTHER page is a conflict (never the other reading)', async () => {
+    const id = await stroke();
+    ai.push(reading([[['bilirubin']]]));
+    const req = pageReq([id]);
+    expect((await post('/api/annotations/recognitions', req)).statusCode).toBe(202);
+    const other = await post('/api/annotations/recognitions', { ...req, anchor: { type: 'page', source_id: f.sourceId, version_id: f.versionId, page_id: f.pageIds[1], page_index: 1 } });
+    expect(other.statusCode).toBe(409);
+  });
+
+  it('a FAILED reading is labelled «فشلت القراءة» with its reason and can be retried until it is read', async () => {
+    const id = await stroke();
+    ai.push({ json: { nope: 1 } }, { json: { still: 'bad' } });
+    const bad = await recognize([id]);
+    expect(bad.status).toBe('failed');
+    expect(bad.status_label_ar).toBe('فشلت القراءة');
+    expect(bad.error_ar).toBeTruthy();
+    ai.push(reading([[['appendix']]]));
+    const retried = await post(`/api/annotations/recognitions/${bad.id}/retry`, {});
+    expect(retried.statusCode).toBe(200);
+    await t.ctx.jobs.drain();
+    const after = (await get(`/api/annotations/recognitions/${bad.id}`)).json().recognition as InkRecognitionView;
+    expect(after).toMatchObject({ status: 'recognized', effective_text: 'appendix', error_ar: null });
+  });
+});

@@ -27,7 +27,43 @@ export function groupRows(items: TextItem[]): TextItem[][] {
     else loose.push(it);
   }
   const lineRows = [...byLine.values()].map((r) => r.sort((a, b) => a.x0 - b.x0));
-  return [...lineRows, ...groupRowsGeometric(attachScripts(loose))];
+  return [...mergeSideBySideLines(lineRows), ...groupRowsGeometric(attachScripts(loose))];
+}
+
+/**
+ * Row bands for OCR (H2 item 2): tesseract reads each cell of a ruled table — and often each column of a borderless
+ * one — as its own text line, so a table row arrived as 3 «lines» and never formed a row. Lines that sit SIDE BY SIDE
+ * on one baseline band (strong vertical overlap, similar height, no horizontal overlap) are one visual row; `splitRow`
+ * still splits the row at the column gaps, exactly as for digital text. Lines are never split, and the band of a row
+ * is not grown (a tall line never swallows the next one).
+ */
+export function mergeSideBySideLines(rows: TextItem[][]): TextItem[][] {
+  type Band = { items: TextItem[]; top: number; bottom: number };
+  const bands: Band[] = rows
+    .filter((r) => r.length > 0)
+    .map((items) => ({ items: [...items], top: Math.min(...items.map((i) => i.top)), bottom: Math.max(...items.map((i) => i.bottom)) }))
+    .sort((a, b) => a.top + a.bottom - (b.top + b.bottom));
+  const out: Band[] = [];
+  for (const b of bands) {
+    const h = Math.max(0.1, b.bottom - b.top);
+    const bx0 = Math.min(...b.items.map((i) => i.x0));
+    const bx1 = Math.max(...b.items.map((i) => i.x1));
+    let target: Band | null = null;
+    for (let k = out.length - 1; k >= 0 && k >= out.length - 6; k--) {
+      const o = out[k]!;
+      const oh = Math.max(0.1, o.bottom - o.top);
+      const minH = Math.min(h, oh);
+      const ov = overlap1d(b.top, b.bottom, o.top, o.bottom);
+      if (ov < 0.6 * minH || Math.abs((b.top + b.bottom) / 2 - (o.top + o.bottom) / 2) > 0.5 * minH) continue;
+      if (Math.abs(h - oh) > 0.6 * Math.max(h, oh)) continue;
+      if (o.items.some((it) => overlap1d(it.x0, it.x1, bx0, bx1) > 0)) continue;
+      target = o;
+      break;
+    }
+    if (target) target.items.push(...b.items);
+    else out.push(b);
+  }
+  return out.map((o) => o.items.sort((a, b) => a.x0 - b.x0));
 }
 
 const SUPERSCRIPT: Record<string, string> = {

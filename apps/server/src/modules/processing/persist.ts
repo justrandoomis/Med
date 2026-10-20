@@ -142,6 +142,8 @@ export function persistPage(
         }),
         caption_region_id: r.tableCaptionKey ? (ids.get(r.tableCaptionKey) ?? null) : null,
       };
+      s.method = r.table.method;
+      if (r.table.method === 'ocr_aligned') s.certainty = 'uncertain';
       return s;
     }
     if (r.kind === 'figure') {

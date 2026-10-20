@@ -5,7 +5,8 @@
 //  * ALIGNED (borderless) tables: ≥ 3 consecutive rows of short segments whose left (or, for RTL, right)
 //    edges align on the same column anchors. Conservative: long text lines (two-column prose) never qualify.
 // Cell text is verbatim (units, signs and thresholds preserved: "> 10 ×10⁹/L", "≥ 37.3 °C").
-import { decideDir, joinLines, logicalLineText } from './lines';
+import { cleanRun } from '../text';
+import { decideDir, joinLines, logicalLineItems, logicalLineText } from './lines';
 import type { Box, Rule, Segment, TableCellOut, TableOut } from './types';
 import { boxOf, cx, cy, median, overlap1d } from './types';
 
@@ -98,6 +99,24 @@ function cellText(segs: Segment[], cell: Box, pageWidth: number): string {
     .sort((a, b) => a[0]!.top - b[0]!.top)
     .map((rowSegs) => logicalLineText(rowSegs.flatMap((s) => s.items).sort((a, b) => a.x0 - b.x0), dir));
   return joinLines(lines);
+}
+
+/** OCR facts of a cell from its segments: confidence, weak words, word boxes in reading order (H2 items 2, 6). */
+function ocrCellFacts(cell: TableCellOut, segs: Segment[], pageWidth: number, weakBelow = 60): void {
+  const confs = segs.flatMap((s) => s.items.map((i) => i.conf)).filter((c): c is number => typeof c === 'number');
+  if (confs.length === 0) return;
+  cell.conf = confs.reduce((a, b) => a + b, 0) / confs.length;
+  cell.minConf = Math.min(...confs);
+  const weak = segs.flatMap((s) => s.items.filter((i) => typeof i.conf === 'number' && i.conf < weakBelow).map((i) => i.text));
+  if (weak.length) cell.weakWords = weak;
+  const dir = decideDir(segs, cell.box.x0, cell.box.x1, Math.max(4, pageWidth * 0.01));
+  const rows = new Map<number, Segment[]>();
+  for (const s of segs) rows.set(s.rowId, [...(rows.get(s.rowId) ?? []), s]);
+  cell.words = [...rows.values()]
+    .sort((a, b) => a[0]!.top - b[0]!.top)
+    .flatMap((row) => logicalLineItems(row.flatMap((s) => s.items).sort((a, b) => a.x0 - b.x0), dir))
+    .map((i) => ({ text: cleanRun(i.text).trim(), box: { x0: i.x0, top: i.top, x1: i.x1, bottom: i.bottom } }))
+    .filter((w) => w.text);
 }
 
 function buildCells(
@@ -205,6 +224,7 @@ export function detectRuledTables(rulesIn: Rule[], segments: Segment[], ctx: Tab
     const filled = cells.filter((c) => c.text.trim()).length;
     if (filled < 2) continue;
     markHeaders(cells, segsByCell, C);
+    for (const [cell, segs] of segsByCell) ocrCellFacts(cell, segs, ctx.pageWidth);
     for (const s of inside) used.add(s.id);
     tables.push({ box: frame, rows: R, cols: C, cells, method: 'ruled' });
   }
@@ -251,20 +271,39 @@ export function detectAlignedTables(segments: Segment[], ctx: TableContext): { t
     const order = rtl ? [...anchors.keys()].reverse() : [...anchors.keys()];
     const colOf = (s: Segment) => order.indexOf(anchorOf(s));
     const C = anchors.length;
+    // two columns of running prose (lines that fill their column, several words each) are not a table
+    if (C === 2) {
+      const words = median(segs.map((s) => s.items.reduce((n, i) => n + i.text.split(/\s+/).filter(Boolean).length, 0)));
+      const fills = [0, 1].flatMap((c) => {
+        const col = segs.filter((s) => colOf(s) === c);
+        const w = Math.max(...col.map((s) => s.x1)) - Math.min(...col.map((s) => s.x0));
+        return col.map((s) => (w > 0 ? (s.x1 - s.x0) / w : 1));
+      });
+      if (words >= 4 && median(fills) >= 0.75) continue;
+    }
+    const ocr = segs.some((s) => s.conf !== undefined);
     const cells: TableCellOut[] = [];
     const segsByCell = new Map<TableCellOut, Segment[]>();
+    // the edge where each column starts (left edge, or right edge in RTL) — a cell's text must not run past the next one
+    const colEdge = order.map((k) => anchors[k]!);
     run.forEach((row, r) => {
       for (let c = 0; c < C; c++) {
         const inCell = row.filter((s) => colOf(s) === c);
         const box = inCell.length ? boxOf(inCell) : { x0: 0, top: row[0]!.top, x1: 0, bottom: row[0]!.bottom };
         const cell: TableCellOut = { r, c, rowspan: 1, colspan: 1, header: false, text: cellText(inCell, box, ctx.pageWidth), box };
+        if (ocr && inCell.length && c + 1 < C) {
+          const next = colEdge[c + 1]!;
+          cell.crossesColumn = rtl ? box.x0 < next - 1 : box.x1 > next + 1;
+        }
         cells.push(cell);
         segsByCell.set(cell, inCell);
       }
     });
     markHeaders(cells, segsByCell, C);
+    if (ocr) for (const [cell, inCell] of segsByCell) ocrCellFacts(cell, inCell, ctx.pageWidth);
     for (const s of segs) used.add(s.id);
-    tables.push({ box: boxOf(segs), rows: run.length, cols: C, cells, method: 'aligned' });
+    // H2 item 2: a grid inferred from OCR word positions is its own method, never a certain structure
+    tables.push({ box: boxOf(segs), rows: run.length, cols: C, cells, method: ocr ? 'ocr_aligned' : 'aligned' });
   }
   return { tables, used };
 }
