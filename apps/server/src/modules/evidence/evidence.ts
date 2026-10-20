@@ -4,12 +4,13 @@
 // Views carry a human locator («ص 12 (الصفحة 14 في الملف)», «شريحة 3», «فقرة 7», «الدقيقة 12:05») and the
 // CURRENT availability: a citation of a trashed source or of a replaced version says so (§11) instead of
 // pointing at a substitute page.
-import { pageDisplayLabel, type EvidenceView, type NormBox, type SourceType } from '@medlevo/shared';
+import { type EvidenceView, type NormBox, type SourceType } from '@medlevo/shared';
 import type { AppContext } from '../../context';
 import type { Db } from '../../db/db';
 import { fromJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
 import { newId } from '../../lib/ids';
+import { pageLabelAr, type LabelPage } from '../sources/pagelabel';
 
 export interface EvidenceRow {
   id: string;
@@ -146,7 +147,7 @@ function formatMs(ms: number): string {
  * Human locator: printed page + file page when they differ (AC-04), slide, DOCX paragraph (never an invented
  * page number), audio timestamp.
  */
-export function locatorLabelAr(page: PageForLabel | null, locator: Record<string, unknown> | null, opts: { withFileIndex?: boolean } = {}): string {
+export function locatorLabelAr(db: Db, page: LabelPage | null, locator: Record<string, unknown> | null, opts: { withFileIndex?: boolean } = {}): string {
   const paragraph = typeof locator?.paragraph_index === 'number' ? (locator.paragraph_index as number) : null;
   const startMs = typeof locator?.start_ms === 'number' ? (locator.start_ms as number) : null;
   if (startMs !== null) return `الدقيقة ${formatMs(startMs)}`;
@@ -154,7 +155,7 @@ export function locatorLabelAr(page: PageForLabel | null, locator: Record<string
     return paragraph !== null ? `فقرة ${paragraph + 1}` : `قسم ${(page?.page_index ?? 0) + 1}`;
   }
   if (page?.kind === 'audio_segment') return `مقطع ${page.page_index + 1}`;
-  if (page) return pageDisplayLabel(page, opts);
+  if (page) return pageLabelAr(db, page, opts);
   return 'موضع غير محدد';
 }
 
@@ -199,12 +200,12 @@ const VIEW_SQL = `SELECT e.id, e.version_id, e.source_id, e.page_id, e.region_id
   LEFT JOIN source_page p ON p.id = e.page_id
   LEFT JOIN source_region r ON r.id = e.region_id`;
 
-function toView(r: ViewRow, pinned: Set<string>): EvidenceView {
+function toView(db: Db, r: ViewRow, pinned: Set<string>): EvidenceView {
   const active = r.frozen_version_id ?? r.current_version_id;
   let availability: EvidenceView['availability'] = 'available';
   if (r.source_deleted_at !== null || r.source_title === null) availability = 'source_deleted';
   else if (active !== r.version_id && !pinned.has(r.version_id)) availability = 'version_replaced';
-  const page: PageForLabel | null =
+  const page: LabelPage | null =
     r.page_index !== null && r.page_kind ? { page_index: r.page_index, printed_label: r.printed_label, kind: r.page_kind, numbered_version: r.version_numbered === 1 } : null;
   const bbox = fromJson<NormBox>(r.bbox_json) ?? fromJson<NormBox>(r.region_bbox_json) ?? null;
   return {
@@ -216,7 +217,7 @@ function toView(r: ViewRow, pinned: Set<string>): EvidenceView {
     version_no: r.version_no ?? 0,
     page_id: r.page_id,
     page_index: r.page_index,
-    locator_label_ar: locatorLabelAr(page, fromJson<Record<string, unknown>>(r.locator_json)),
+    locator_label_ar: locatorLabelAr(db, page, fromJson<Record<string, unknown>>(r.locator_json)),
     region_id: r.region_id,
     region_kind: r.region_kind,
     quote: r.quote,
@@ -244,7 +245,7 @@ export function getViewsWithMissing(ctx: AppContext, ids: string[], opts: GetVie
   const missing: string[] = [];
   for (const id of unique) {
     const r = rows.get(id);
-    if (r) evidence.push(toView(r, pinned));
+    if (r) evidence.push(toView(ctx.db, r, pinned));
     else missing.push(id);
   }
   return { evidence, missing };

@@ -13,7 +13,7 @@ import { Link, useParams } from 'react-router-dom';
 import { FileUp, History, Link2, Mic, Play, Plus, RotateCcw, Search, Trash2 } from 'lucide-react';
 import type { MediaStatusResponse, RecordingView, SegmentRevisionView, SourcePageView, TranscriptResponse, TranscriptSegmentView } from '@medlevo/shared';
 import { AUDIO_LINK_ORIGIN_LABELS_AR } from '@medlevo/shared';
-import { pageDisplayLabel } from '@medlevo/shared';
+import { pageDisplayLabel, withNumberedVersion } from '@medlevo/shared';
 import { Breadcrumbs, Button, Checkbox, Dialog, ErrorState, IconButton, LoadingState, Select, StatusPill, TextArea, TextField } from '../../design';
 import { errorMessage } from '../../lib/api';
 import { formatDateTime } from '../../lib/time';
@@ -39,7 +39,7 @@ function LinkDialog({ segment, open, onClose, onLinked }: { segment: TranscriptS
     if (!s?.active_version_id) return;
     void mediaApi
       .pages(s.id, s.active_version_id)
-      .then((r) => setPages(r.pages))
+      .then((r) => setPages(withNumberedVersion(r.pages)))
       .catch((e) => setError(errorMessage(e, 'تعذّر تحميل الصفحات.')));
   }, [sourceId, sources]);
   return (

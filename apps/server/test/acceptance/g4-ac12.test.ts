@@ -166,12 +166,15 @@ describe('G4 AC-12 — sections that restart at 1, a key per section, no cross-b
     expect(unread?.reason).toMatch(/تبقى الأسئلة «بلا مفتاح»/);
   });
 
-  it('keys printed after EACH part: Part 1\'s binds to Part 1; Part 2\'s trailing unlabeled key stays unbound (review), never applied by number', async () => {
+  it('keys printed after EACH part: Part 1\'s binds to Part 1; Part 2\'s trailing unlabeled key binds to Part 2 (the only reading, H2 item 10b)', async () => {
     expect(correctTexts((await detail(t, questionAt(t, inline.sourceId, '1', '1'))).question)).toEqual(['Phrenic']);
     expect(correctTexts((await detail(t, questionAt(t, inline.sourceId, '1', '2'))).question)).toEqual(['Left anterior descending']);
-    for (const n of ['1', '2', '3']) expect((await detail(t, questionAt(t, inline.sourceId, '2', n))).question.current.answer_status, n).toBe('missing_key');
+    // before H2 the trailing block stayed `ambiguous_section` (3 review items) although Part 1 was already keyed and
+    // every number exists in Part 2: it is the key of Part 2 (parser-level refutations in srv:questions/h2-extraction)
+    const part2 = await Promise.all(['1', '2', '3'].map(async (n) => correctTexts((await detail(t, questionAt(t, inline.sourceId, '2', n))).question)));
+    expect(part2).toEqual([['Calcaneus'], ['Brachialis'], ['Hip']]);
     expect(crossBindings(inline.versionId)).toEqual([]);
     const rq = (await api(t).get(`/api/questions/review-queue?source_id=${inline.sourceId}`)).json() as ReviewQueueResponse;
-    expect(rq.items.filter((i) => i.kind === 'conflicting_key' && /بلا قسم محدد/.test(i.reason))).toHaveLength(3);
+    expect(rq.items.filter((i) => i.kind === 'conflicting_key' && /بلا قسم محدد/.test(i.reason))).toHaveLength(0);
   });
 });

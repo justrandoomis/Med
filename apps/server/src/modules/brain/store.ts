@@ -1,9 +1,11 @@
 // Course Brain — shared reads: course sources (subtree of a library node, course order), study versions, page labels,
 // concept views. Reads tables of other modules (allowed); writes only brain-owned rows (see index.ts).
-import { BRAIN_SOURCE_TYPES, conceptRoleLabelAr, pageDisplayLabel, type BrainConceptView, type BrainLocation, type ConceptMentionView, type ConceptStatus } from '@medlevo/shared';
+import { BRAIN_SOURCE_TYPES, conceptRoleLabelAr, type BrainConceptView, type BrainLocation, type ConceptMentionView, type ConceptStatus } from '@medlevo/shared';
 import type { AppContext } from '../../context';
+import type { Db } from '../../db/db';
 import { AppError } from '../../lib/errors';
 import { subtreeIds } from '../library/service';
+import { pageLabelAr as pageLabelFor, pageLabelKnown, type LabelPage } from '../sources/pagelabel';
 
 export const PROCESSED = ['ready', 'partial', 'needs_review'];
 
@@ -85,8 +87,9 @@ export interface PageRow {
   kind: string;
 }
 
-export function pageLabelAr(p: Pick<PageRow, 'page_index' | 'printed_label' | 'kind'>): string {
-  return pageDisplayLabel({ page_index: p.page_index, printed_label: p.printed_label, kind: p.kind as never });
+/** AC-04: the one server page label (an unnumbered page among numbered ones is named by its file position). */
+export function pageLabelAr(db: Db, p: LabelPage): string {
+  return pageLabelFor(db, p);
 }
 
 export function pagesOf(ctx: AppContext, versionId: string): PageRow[] {
@@ -107,7 +110,7 @@ export function locationOfRegion(ctx: AppContext, regionId: string): BrainLocati
     version_id: r.version_id,
     page_id: r.page_id,
     page_index: r.page_index,
-    page_label_ar: r.page_index !== null ? pageLabelAr({ page_index: r.page_index, printed_label: r.printed_label, kind: r.page_kind ?? 'page' }) : null,
+    page_label_ar: r.page_index !== null ? pageLabelFor(ctx.db, { version_id: r.version_id, page_index: r.page_index, printed_label: r.printed_label, kind: r.page_kind ?? 'page' }) : null,
     region_id: r.region_id,
   };
 }
@@ -168,10 +171,13 @@ export interface MentionRow {
   page_index: number | null;
   printed_label: string | null;
   page_kind: string | null;
+  /** 1 when some page of the mention's version carries a printed number (AC-04) */
+  version_numbered: number | null;
 }
 
 export const MENTION_SELECT = `SELECT m.id, m.concept_id, m.region_id, m.version_id, m.role, m.support, m.quote, m.section,
-    v.source_id, s.title AS source_title, p.id AS page_id, p.page_index, p.printed_label, p.kind AS page_kind
+    v.source_id, s.title AS source_title, p.id AS page_id, p.page_index, p.printed_label, p.kind AS page_kind,
+    (SELECT 1 FROM source_page pn_ WHERE pn_.version_id = m.version_id AND pn_.kind = 'page' AND pn_.printed_label IS NOT NULL LIMIT 1) AS version_numbered
   FROM concept_mention m JOIN source_version v ON v.id = m.version_id JOIN source s ON s.id = v.source_id
   LEFT JOIN source_region r ON r.id = m.region_id LEFT JOIN source_page p ON p.id = r.page_id`;
 
@@ -183,7 +189,7 @@ export function mentionView(m: MentionRow): ConceptMentionView {
     version_id: m.version_id,
     page_id: m.page_id,
     page_index: m.page_index,
-    page_label_ar: m.page_index !== null ? pageLabelAr({ page_index: m.page_index, printed_label: m.printed_label, kind: m.page_kind ?? 'page' }) : null,
+    page_label_ar: m.page_index !== null ? pageLabelKnown({ page_index: m.page_index, printed_label: m.printed_label, kind: m.page_kind ?? 'page', numbered_version: m.version_numbered === 1 }) : null,
     region_id: m.region_id,
     role: m.role ?? '',
     role_label_ar: conceptRoleLabelAr(m.role),

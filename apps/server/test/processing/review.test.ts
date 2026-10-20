@@ -57,7 +57,7 @@ describe('reversed lam-alef: plain «لا» after the article is repaired; ambig
     expect(hasReversedLamAlef('يسبب الالتهاب والعلاج')).toBe(false);
   });
 
-  it('a LibreOffice-exported Arabic PDF: repaired words are stored correctly, the others are flagged for review', async () => {
+  it('a LibreOffice-exported Arabic PDF: every reversed word is stored correctly, nothing is left to guess', async () => {
     const t = await createProcessingApp();
     try {
       const { versionId } = await addSource(t, 'arabic_lam_alef.pdf', 'pdf', { data: readFileSync(join(LOCAL, 'arabic_lam_alef.pdf')) });
@@ -66,13 +66,13 @@ describe('reversed lam-alef: plain «لا» after the article is repaired; ambig
       const all = rs.map((r) => r.text ?? '').join('\n');
       expect(all).toContain('يسبب الالتهاب الانسداد في الأمعاء والاختبار بالالتهاب');
       for (const reversed of ['االلتهاب', 'االنسداد', 'واالختبار', 'بااللتهاب', 'األمعاء']) expect(all).not.toContain(reversed);
-      // «العلاج» comes out as «العالج»: it cannot be repaired safely, so the region must not pass silently
-      const region = rs.find((r) => r.text?.includes('العالج'))!;
-      expect(region.status).toBe('needs_review');
-      const item = t.ctx.db.get<{ kind: string; reason: string }>('SELECT kind, reason FROM review_queue_item WHERE entity_id = ?', [region.id]);
-      expect(item?.kind).toBe('ocr_error');
-      expect(item?.reason).toContain('«العالج»');
-      expect(pages(t, versionId)[0]!.processing_status).toBe('needs_review');
+      // «العلاج» came out as «العالج» and could only be flagged (review fix); since H2 item 9 the word is rebuilt from
+      // the PDF's lam-alef glyph, so it is stored right and nothing ambiguous is left (the no-glyph fallback still
+      // flags — see the unit test above)
+      expect(all).toContain('العلاج');
+      expect(all).not.toContain('العالج');
+      expect(rs.filter((r) => r.status === 'needs_review').map((r) => r.text)).toEqual([]);
+      expect(pages(t, versionId)[0]!.processing_status).toBe('ready');
     } finally {
       await t.close();
     }

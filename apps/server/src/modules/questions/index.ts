@@ -13,6 +13,7 @@ import {
 import type { ModuleOptions } from '../../context';
 import { detectNearDuplicates } from './duplicates';
 import { runExtraction } from './extract';
+import { refingerprintVersions } from './fingerprints';
 import { matchQuestions, matchSourceVersion, MATCHER_VERSION } from './match';
 import { PARSER_VERSION } from './parser';
 import { registerRoutes } from './routes';
@@ -28,6 +29,9 @@ const matchInput = z
   .refine((i) => !!i.version_id !== !!i.question_ids, 'version_id أو question_ids (أحدهما فقط)');
 
 export default async function register(app: FastifyInstance, { ctx }: ModuleOptions): Promise<void> {
+  // H2 item 10f: fingerprints written before the G5 fix are recomputed once (migration 0530 marks them)
+  const refingerprinted = refingerprintVersions(ctx);
+  if (refingerprinted > 0) ctx.log.info({ versions: refingerprinted }, 'question fingerprints recomputed with the current algorithm');
   ctx.capabilities.set('questions.vault', 'available');
   ctx.capabilities.set('questions.extraction', 'available');
   ctx.capabilities.set('questions.matching', 'available');

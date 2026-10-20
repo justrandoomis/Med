@@ -7,9 +7,10 @@ import type { AppContext } from '../../context';
 import { fromJson } from '../../db/db';
 import { newId } from '../../lib/ids';
 import type { ParseResult, ParsedKey, ParsedQuestion } from './parser';
-import { occurrenceVersionState, optionRows, pageLabel, stemText, type VersionRow } from './store';
+import { occurrenceVersionState, optionRows, stemText, type VersionRow } from './store';
 import { labelInfo } from './text';
 import { richTextToPlain, type RichText } from '@medlevo/shared';
+import { pageLabelAr } from '../sources/pagelabel';
 
 export interface OccurrenceRef {
   id: string;
@@ -41,25 +42,96 @@ export interface BindResult {
   marks: number;
 }
 
+const baseKey = (sectionKey: string) => sectionKey.replace(/-\d+$/, '');
+
+function romanValue(s: string): number | null {
+  if (!/^(?:X{0,3})(?:IX|IV|V?I{0,3})$/.test(s) || !s) return null;
+  const v: Record<string, number> = { I: 1, V: 5, X: 10 };
+  let n = 0;
+  for (let i = 0; i < s.length; i++) {
+    const a = v[s[i]!]!;
+    const b = i + 1 < s.length ? v[s[i + 1]!]! : 0;
+    n += a < b ? -a : a;
+  }
+  return n;
+}
+
+/**
+ * H2 item 10a: a section label for comparison — «Paper I» and «Paper 1» are the same section. A roman numeral counts
+ * as its number unless the file labels its sections with LETTERS (then «Section I» is the ninth letter, not 1).
+ */
+function sectionCanon(parsed: ParseResult): (label: string) => string {
+  const letters = parsed.sections.some((s) => /^[A-HJ-UWYZ]$/.test(baseKey(s.key)));
+  return (label) => {
+    if (!letters) {
+      const n = romanValue(label);
+      if (n !== null) return String(n);
+    }
+    return label;
+  };
+}
+
+/** The section a section-labelled key names (unique match on the canonical label), or why not. */
+function labelledSection(label: string, parsed: ParseResult): { sectionKey: string | null; binding: KeyBinding } {
+  const withQuestions = parsed.sections.map((s) => s.key);
+  const canon = sectionCanon(parsed);
+  // sections printed with the same label («Part A» of two papers → keys 'A' and 'A-3'): the label alone does
+  // not say which one the key belongs to → never guessed
+  const byBase = withQuestions.filter((s) => canon(baseKey(s)) === canon(label));
+  if (byBase.length > 1) return { sectionKey: null, binding: 'ambiguous_section' };
+  if (byBase.length === 1) return { sectionKey: byBase[0]!, binding: 'bound' };
+  if (withQuestions.includes(label)) return { sectionKey: label, binding: 'bound' };
+  return { sectionKey: label, binding: 'no_matching_question' };
+}
+
+/**
+ * H2 item 10b: an UNLABELLED key block printed after the LAST section binds to that section only when that is the
+ * only reading: the file keys its sections one by one (every earlier section already has its own key — printed between
+ * the sections, labelled, or inline), it is the only such trailing block, and every number it lists is a question of
+ * the last section. Otherwise it could be the key of the whole file (or of another section) → null (review item).
+ */
+function trailingBlockSection(k: ParsedKey, parsed: ParseResult): string | null {
+  const sections = parsed.sections.map((s) => s.key);
+  const last = sections[sections.length - 1];
+  const block = parsed.keyBlocks.find((b) => b.ordinal === k.keyBlock);
+  if (!last || !block || block.followedBySection || block.afterSectionKey !== last) return null;
+  const official = (x: ParsedKey) => x.markKind === 'printed_key' || x.markKind === 'key_table';
+  const blockKeys = parsed.keys.filter((x) => x.keyBlock === k.keyBlock && official(x));
+  if (blockKeys.some((x) => x.sectionLabel !== null || x.inlineFor)) return null;
+  const trailingBlocks = new Set(
+    parsed.keys
+      .filter((x) => official(x) && x.sectionLabel === null && !x.inlineFor)
+      .map((x) => parsed.keyBlocks.find((b) => b.ordinal === x.keyBlock))
+      .filter((b) => b && !b.followedBySection && b.afterSectionKey === last)
+      .map((b) => b!.ordinal),
+  );
+  if (trailingBlocks.size !== 1) return null;
+  const keyedElsewhere = (sec: string) =>
+    parsed.keys.some((x) => {
+      if (!official(x)) return false;
+      if (x.inlineFor) return x.inlineFor.sectionKey === sec;
+      if (x.sectionLabel !== null) return labelledSection(x.sectionLabel, parsed).sectionKey === sec;
+      const b = parsed.keyBlocks.find((y) => y.ordinal === x.keyBlock);
+      return !!b && b.followedBySection && x.afterSectionKey === sec;
+    });
+  if (!sections.slice(0, -1).every(keyedElsewhere)) return null;
+  const items = new Set(parsed.questions.filter((q) => q.sectionKey === last).map((q) => q.itemKey));
+  return blockKeys.every((x) => items.has(x.printedNumber)) ? last : null;
+}
+
 /** Decide the section of a parsed key, never guessing between sections (AC-12). */
 export function keySection(k: ParsedKey, parsed: ParseResult): { sectionKey: string | null; binding: KeyBinding } {
   if (k.inlineFor) return { sectionKey: k.inlineFor.sectionKey, binding: 'bound' };
   const withQuestions = parsed.sections.map((s) => s.key);
-  if (k.sectionLabel !== null) {
-    // sections printed with the same label («Part A» of two papers → keys 'A' and 'A-3'): the label alone does
-    // not say which one the key belongs to → never guessed
-    const byBase = withQuestions.filter((s) => s.replace(/-\d+$/, '') === k.sectionLabel);
-    if (byBase.length > 1) return { sectionKey: null, binding: 'ambiguous_section' };
-    if (byBase.length === 1) return { sectionKey: byBase[0]!, binding: 'bound' };
-    if (withQuestions.includes(k.sectionLabel)) return { sectionKey: k.sectionLabel, binding: 'bound' };
-    return { sectionKey: k.sectionLabel, binding: 'no_matching_question' };
-  }
+  if (k.sectionLabel !== null) return labelledSection(k.sectionLabel, parsed);
   if (withQuestions.length === 1) return { sectionKey: withQuestions[0]!, binding: 'bound' };
   const block = parsed.keyBlocks.find((b) => b.ordinal === k.keyBlock);
   // a key printed between two sections (after section S's questions, before the next section) belongs to S
   if (block && block.followedBySection && k.afterSectionKey !== null && withQuestions.includes(k.afterSectionKey)) {
     return { sectionKey: k.afterSectionKey, binding: 'bound' };
   }
+  const trailing = trailingBlockSection(k, parsed);
+  if (trailing !== null) return { sectionKey: trailing, binding: 'bound' };
   return { sectionKey: null, binding: 'ambiguous_section' };
 }
 
@@ -240,7 +312,7 @@ export function resolveAnswer(ctx: AppContext, questionId: string, current: Vers
   const unmapped: string[] = [];
   const marks: AnswerResolution['unofficialMarks'] = [];
   const where = (e: BoundEntry) => {
-    const page = e.page_index !== null ? pageLabel({ id: e.page_id ?? '', page_index: e.page_index, printed_label: e.printed_label, kind: e.page_kind ?? 'page' }) : '';
+    const page = e.page_index !== null && e.page_id ? pageLabelAr(ctx.db, { page_id: e.page_id, page_index: e.page_index, printed_label: e.printed_label, kind: e.page_kind ?? 'page' }, { withFileIndex: false }) : '';
     const what = e.mark_kind === 'key_table' ? `جدول المفتاح ${e.key_block}` : `المفتاح ${e.key_block}`;
     return `${what} في «${e.source_title}»${page ? ` (${page})` : ''}`;
   };

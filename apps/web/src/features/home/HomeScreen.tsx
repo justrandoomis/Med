@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { BookOpen, CalendarDays, FileQuestion, Flag, Layers, Library, Target } from 'lucide-react';
 import { liveQuery } from 'dexie';
-import { pageDisplayLabel, stemPreview, type HomeDetail, type PlanTaskView, type QuestionDetailResponse, type SourcePagesResponse, type StudyLocation, type StudyPlanView } from '@medlevo/shared';
+import { pageDisplayLabel, stemPreview, withNumberedVersion, type HomeDetail, type PlanTaskView, type QuestionDetailResponse, type SourcePagesResponse, type StudyLocation, type StudyPlanView } from '@medlevo/shared';
 import { Checkbox, ErrorState, Skeleton, buttonClass, useToast } from '../../design';
 import { errorMessage } from '../../lib/api';
 import { useCapabilities } from '../../lib/capabilities';
@@ -49,7 +49,8 @@ export async function localSessionPageLabel(row: Pick<StudySessionRow, 'sourceId
   if (!hasIndex && !loc.page_id) return null;
   if (row.sourceId && row.versionId) {
     const pages = await readOfflineAnswer<SourcePagesResponse>(`/api/sources/${encodeURIComponent(row.sourceId)}/versions/${encodeURIComponent(row.versionId)}/pages`);
-    const page = pages?.value.pages?.find((p) => (loc.page_id ? p.id === loc.page_id : p.page_index === loc.page_index));
+    // AC-04: an answer cached before the server sent `numbered_version` gets it from the whole list
+    const page = withNumberedVersion(pages?.value.pages ?? []).find((p) => (loc.page_id ? p.id === loc.page_id : p.page_index === loc.page_index));
     if (page) return pageDisplayLabel(page);
   }
   return hasIndex ? filePositionLabel(loc.page_index!) : null;

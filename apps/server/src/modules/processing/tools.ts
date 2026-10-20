@@ -6,6 +6,7 @@ import { accessSync, constants, statSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { delimiter, isAbsolute, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { looksLikeZip, sanitizeOoxmlForConversion } from './office-safety';
 
 export interface ToolPaths {
   /** absolute path of pdftoppm, or null when unavailable */
@@ -39,7 +40,7 @@ export function detectTools(overrides: Partial<ToolPaths> = {}): ToolPaths {
 
 export class ToolError extends Error {
   constructor(
-    readonly code: 'TOOL_TIMEOUT' | 'TOOL_FAILED' | 'TOOL_ABORTED' | 'TOOL_NO_OUTPUT',
+    readonly code: 'TOOL_TIMEOUT' | 'TOOL_FAILED' | 'TOOL_ABORTED' | 'TOOL_NO_OUTPUT' | 'TOOL_INPUT_REJECTED',
     message: string,
   ) {
     super(message);
@@ -241,7 +242,19 @@ export async function convertToPdf(o: ConvertOptions): Promise<Buffer> {
     await mkdir(join(profile, 'user'), { recursive: true, mode: 0o700 });
     await writeFile(join(profile, 'user', 'registrymodifications.xcu'), NO_NETWORK_XCU, { mode: 0o600 });
     const inputPath = join(inDir, `source.${o.inputExt}`);
-    await writeFile(inputPath, o.input, { mode: 0o600 });
+    // H2 item 8: an OOXML package (whatever its extension says) is handed over WITHOUT relationships that leave the
+    // package (file: / http(s): / UNC targets, TargetMode="External") — a second layer under the no-network profile.
+    // A package that cannot be read is refused rather than passed on unchecked. (Legacy OLE2 .doc / .ppt are binary
+    // formats: they rely on the profile alone.)
+    let input: Uint8Array = o.input;
+    if (looksLikeZip(input)) {
+      try {
+        input = (await sanitizeOoxmlForConversion(input)).data;
+      } catch {
+        throw new ToolError('TOOL_INPUT_REJECTED', 'the OOXML package could not be checked before conversion');
+      }
+    }
+    await writeFile(inputPath, input, { mode: 0o600 });
     await runCommand(
       o.soffice,
       [

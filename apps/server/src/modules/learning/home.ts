@@ -1,6 +1,6 @@
 // Home (§45): the book the owner left open first (Continue Studying), then today's plan, due cards, the exam
 // countdown, the top weakness and important questions — each with its reason (never a probability).
-import { pageDisplayLabel, type HomeDetail, type HomeView } from '@medlevo/shared';
+import { type HomeDetail, type HomeView } from '@medlevo/shared';
 import type { AppContext } from '../../context';
 import { AnnotationsService } from '../annotations/service';
 import { repeatedQuestions } from './dna';
@@ -19,7 +19,8 @@ export function homeView(ctx: AppContext): HomeDetail {
     source_id: it.source.id,
     title: it.source.title,
     version_id: it.version?.id ?? null,
-    page_label_ar: it.page ? pageDisplayLabel({ page_index: it.page.page_index, printed_label: it.page.printed_label, kind: it.page.kind as never }) : null,
+    // the one page label (AC-04), already computed by the annotations service
+    page_label_ar: it.page?.label_ar ?? null,
     mode: it.session.mode,
     updated_at: it.session.updated_at,
   }));

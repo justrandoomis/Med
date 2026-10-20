@@ -22,6 +22,7 @@ import { fromJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
 import { newId } from '../../lib/ids';
 import type { ProviderImage, UntrustedBlock } from '../ai/types';
+import { pageLabelAr } from '../sources/pagelabel';
 import { cacheKey, resolveScope, VERIFIER_VERSION, type ScopeReport } from '../evidence/services';
 import { abstainView, artifactView, findReusable, nextVersionNo, requireArtifact, type ArtifactRow } from './artifacts';
 import {
@@ -42,7 +43,7 @@ import { buildExplanationPrompt, GENERATOR_VERSION, resolveRules, type RulesPatc
 import { figureOutputSchema, type CompareBody, type ExplainBody, type FigureOutput } from './schema';
 import { termsForTexts } from './terms';
 import { labelParagraph, paragraphOf, richText, shorten } from './text';
-import { normalizeForSearch, pageDisplayLabel } from '@medlevo/shared';
+import { normalizeForSearch } from '@medlevo/shared';
 
 // ───────── real-patient requests (§12) ─────────
 const REAL_PATIENT_PATTERNS: RegExp[] = [
@@ -118,11 +119,11 @@ function selectionText(anchor: SelectionAnchor, regions: RegionLite[]): string {
 /** «ص 12» for a whole-page request (no selected text). */
 function anchorPageLabel(ctx: AppContext, anchor: SelectionAnchor): string | null {
   if (!anchor.page_id) return null;
-  const p = ctx.db.get<{ page_index: number; printed_label: string | null; kind: 'page' | 'slide' | 'image' | 'docx_section' | 'audio_segment' }>(
-    'SELECT page_index, printed_label, kind FROM source_page WHERE id = ?',
+  const p = ctx.db.get<{ version_id: string; page_index: number; printed_label: string | null; kind: 'page' | 'slide' | 'image' | 'docx_section' | 'audio_segment' }>(
+    'SELECT version_id, page_index, printed_label, kind FROM source_page WHERE id = ?',
     [anchor.page_id],
   );
-  return p ? pageDisplayLabel(p) : null;
+  return p ? pageLabelAr(ctx.db, p) : null;
 }
 
 function normalizedAnchor(a: SelectionAnchor): Record<string, unknown> {

@@ -21,6 +21,7 @@ import {
   type BandLine,
 } from './layout/page';
 import { serializeTable } from './layout/tables';
+import { detectVectorFigures } from './layout/vector';
 import type { Box, DiagramLabel, FigureCandidate, LayoutRegion, PageGeom, Rule, TextItem } from './layout/types';
 import { boxOf, median } from './layout/types';
 import { missedTextSegments, type MissedText } from './coverage';
@@ -889,12 +890,24 @@ class VersionRun {
       return !noDigitalText && a < 0.9 * pageArea && bodyCharsInside(b) <= 0.3 * bodyChars;
     };
     const figureBoxes = mergeBoxes(images.filter(isFigure));
+    // H2 item 1: figures drawn with path operators (digital pages only; a scan's drawing is its picture)
+    const vectorFigures = needsOcr
+      ? []
+      : detectVectorFigures(
+          content.drawings.map((d) => ({ ...d, ...space.pv.toView(d) })),
+          space.items,
+          geom,
+          figureBoxes,
+        );
 
     const regions = analyzePage({
       geom,
       items,
       rules: space.rules,
-      figures: figureBoxes.map((b): FigureCandidate => ({ ...b, source: 'pdf_image' })),
+      figures: [
+        ...figureBoxes.map((b): FigureCandidate => ({ ...b, source: 'pdf_image' })),
+        ...vectorFigures.map((v): FigureCandidate => ({ x0: v.x0, top: v.top, x1: v.x1, bottom: v.bottom, source: 'pdf_vector', ...(v.uncertain ? { uncertain: true } : {}) })),
+      ],
       origin: needsOcr ? 'ocr' : 'digital',
       bodySize: needsOcr ? 0 : (insp.bodySize ?? 0),
       headerFooter: { repeated: new Set(insp.repeated) },
@@ -940,7 +953,7 @@ class VersionRun {
 
     const quality = ocrData?.quality ?? null;
     const lowQuality = Boolean(quality?.lowQuality);
-    const reviews = finalizeRegions(withDiagrams, lowQuality, { reversedLigatures: insp.reversedLamAlef === true });
+    const reviews = finalizeRegions(withDiagrams, lowQuality, { reversedLigatures: insp.reversedLamAlef === true, verifiedWords: new Set(content.verifiedWords) });
     regionsToPageSpace(withDiagrams, space.pv);
     const ocrTextRegions = withDiagrams.filter((r) => r.textOrigin === 'ocr' && r.text && r.kind !== 'diagram' && r.kind !== 'header' && r.kind !== 'footer');
     const digitalTextRegions = withDiagrams.filter((r) => r.textOrigin === 'digital' && r.text && r.kind !== 'header' && r.kind !== 'footer');
@@ -990,7 +1003,7 @@ class VersionRun {
       regions: res.regions,
       review_items: res.reviewItems,
       ocr: Boolean(ocrData),
-      ligature_fixes: withDiagrams.reduce((n, r) => n + (r.ligatureFixes ?? 0), 0),
+      ligature_fixes: content.ligatureRepairs + withDiagrams.reduce((n, r) => n + (r.ligatureFixes ?? 0), 0),
       error_code: pageIssue?.code ?? null,
     };
   }
@@ -1235,7 +1248,7 @@ export function finalizeRegions(regions: LayoutRegion[], lowQuality: boolean, te
   for (const r of regions) {
     if (r.text && !r.table) {
       // only a PDF text layer has the font-level defect (OCR and office text are logical Unicode)
-      const p = prepareRegionText(r.text, { reversedLigatures: reversedLigatures && r.textOrigin === 'digital' });
+      const p = prepareRegionText(r.text, { reversedLigatures: reversedLigatures && r.textOrigin === 'digital', ...(textCtx.verifiedWords ? { verifiedWords: textCtx.verifiedWords } : {}) });
       r.text = p.text;
       r.suspicions = p.suspicions;
       r.ligatureFixes = p.ligatureFixes;
@@ -1281,6 +1294,8 @@ export function finalizeRegions(regions: LayoutRegion[], lowQuality: boolean, te
     else if (lowQuality && r.textOrigin === 'ocr') r.status = 'needs_review';
     // H2 item 2: rows and columns inferred from the positions of OCR words — readable, never presented as certain
     else if (r.table?.method === 'ocr_aligned') r.status = 'uncertain';
+    // H2 item 1: a drawing that is a figure but not clearly a diagram
+    else if (r.figure?.uncertain) r.status = 'uncertain';
     else r.status = 'extracted';
   }
   // a table with a flagged cell needs review as a whole

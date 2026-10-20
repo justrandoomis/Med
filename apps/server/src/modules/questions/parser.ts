@@ -218,6 +218,25 @@ function parseOptionStart(text: string): OptStart | null {
   }
 }
 
+/** OCR misreadings of a Latin option label inside a hand-drawn circle («(8» for a circled B, «€» / «©» for a circled C). */
+const OCR_LABEL_CONFUSIONS: Record<string, string> = { '8': 'B', '0': 'D', '6': 'G', '4': 'A', '3': 'E', '€': 'C', '¢': 'C', '©': 'C' };
+
+/**
+ * H2 item 10e: an OCR line where the circle around an option was read together with its label — «(8 Ditrasound» for a
+ * circled «B» right after option A. Recognised ONLY when the misread label is exactly the NEXT expected label after the
+ * previous option (so «(8 mg daily)» after option C is not an option), and only on OCR text. The circle is recorded as
+ * an unofficial `circled_option` mark (never a key, AC-13).
+ */
+function ocrCircledOption(text: string, prevLabel: string): OptStart | null {
+  const prev = labelInfo(prevLabel);
+  if (!prev || prev.script !== 'latin') return null;
+  const expected = labelAt('latin', prev.index + 1);
+  const t = text.replace(/^\s+/, '');
+  const m = /^\(\s*(\S)\s*[.)]?\s+(\S.*)$/u.exec(t) ?? /^([©¢€])\s*(\S.*)$/u.exec(t);
+  if (!m || OCR_LABEL_CONFUSIONS[m[1]!] !== expected) return null;
+  return { label: expected, script: 'latin', index: prev.index + 1, rest: m[2]!, mark: 'circled_option', markReason: 'ocr_label_confusion' };
+}
+
 /** A raw line without its leading question number / option label, by the parser's own rules (for AC-11 checks). */
 export function stripStructurePrefix(line: string): string {
   const t = stripBidiControls(line);
@@ -795,6 +814,17 @@ export function parseQuestions(input: ParserLine[]): ParseResult {
             const o = parseOptionStart(optText);
             if (o) appendOption(dd, o, line);
           }
+          continue;
+        }
+      }
+
+      // 6b) OCR read a circle together with the next option's label («(8 Ditrasound» = a circled «B»)
+      if (draft && line.textOrigin === 'ocr') {
+        const d = draft as Draft;
+        const prevOpt = d.options[d.options.length - 1];
+        const circled = prevOpt && !d.numericOptions ? ocrCircledOption(text, prevOpt.label) : null;
+        if (circled) {
+          appendOption(d, circled, line);
           continue;
         }
       }

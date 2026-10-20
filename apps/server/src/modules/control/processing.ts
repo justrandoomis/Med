@@ -151,7 +151,7 @@ function attention(ctx: AppContext): VersionAttentionView[] {
       pages: pages.map((p) => ({
         page_id: p.id,
         page_index: p.page_index,
-        label_ar: pageLabelAr(p),
+        label_ar: pageLabelAr(ctx.db, p),
         error_code: p.error_code ?? (p.processing_status === 'failed' ? 'PAGE_FAILED' : 'NEEDS_REVIEW'),
         reason_ar: p.error_detail ?? 'تعذرت معالجة هذه الصفحة.',
         owner_corrected: owned.has(p.id),

@@ -11,12 +11,13 @@ import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { pageDisplayLabel, type RecordingResponse, type RecordingView } from '@medlevo/shared';
+import { type RecordingResponse, type RecordingView } from '@medlevo/shared';
 import type { AppContext } from '../../context';
 import { fromJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
 import { randomToken } from '../../lib/hash';
 import { parseWith } from '../../lib/http';
+import { pageLabelAr } from '../sources/pagelabel';
 import { SourcesService } from '../sources/service';
 import { cleanFileName, sniff, UNSUPPORTED_REASONS_AR } from '../sources/sniff';
 import { registerUpload, type IncomingFile } from '../sources/upload';
@@ -97,7 +98,7 @@ export function recordingView(ctx: AppContext, r: RecordingRow): RecordingView {
         source_id: anchor.type === 'page' ? (anchor.source_id ?? null) : null,
         page_id: anchor.type === 'page' ? (anchor.page_id ?? null) : null,
         page_index: page?.page_index ?? null,
-        page_label_ar: page ? pageDisplayLabel(page) : null,
+        page_label_ar: page && anchor.page_id ? pageLabelAr(ctx.db, { ...page, id: anchor.page_id }) : null,
         offset_ms: Math.max(0, Math.round(link.offset_ms ?? 0)),
         origin: link.origin === 'manual' ? 'manual' : 'auto',
       };

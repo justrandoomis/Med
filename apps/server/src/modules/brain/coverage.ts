@@ -5,7 +5,8 @@ import type { ConceptStatus, CoverageConceptRow, CoverageCount, CoverageLecture,
 import type { AppContext } from '../../context';
 import { lectureQuestions, conceptNamesNorm, type LectureQuestion } from './lecture-questions';
 import { resolveConceptId } from './resolve';
-import { courseSources, displayName, nodeTitle, pageLabelAr, pagesOf, studySource, type PageRow, type StudySource } from './store';
+import { pageLabelKnown } from '../sources/pagelabel';
+import { courseSources, displayName, nodeTitle, pagesOf, studySource, type PageRow, type StudySource } from './store';
 
 export interface CoverageConceptInput {
   id: string;
@@ -48,6 +49,8 @@ export function computeCoverage(
   concepts: CoverageConceptInput[],
   questions: Array<Pick<LectureQuestion, 'id' | 'side' | 'page_ids' | 'concepts' | 'attempts'>>,
 ): Pick<CoverageLecture, 'pages' | 'concepts' | 'totals'> {
+  // AC-04: `pages` is the version's whole page list → whether the version is numbered is read from it
+  const numbered = pages.some((p) => p.kind === 'page' && !!p.printed_label);
   const pageRows: CoveragePageRow[] = pages.map((p) => {
     const qs = questions.filter((q) => q.page_ids.includes(p.id));
     const src = qs.filter((q) => q.side === 'source').map((q) => q.id);
@@ -55,7 +58,7 @@ export function computeCoverage(
     return {
       page_id: p.id,
       page_index: p.page_index,
-      label_ar: pageLabelAr(p),
+      label_ar: pageLabelKnown({ ...p, numbered_version: numbered }),
       source_question_ids: src,
       generated_question_ids: gen,
       attempted_question_ids: qs.filter((q) => q.attempts > 0).map((q) => q.id),

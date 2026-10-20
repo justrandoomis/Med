@@ -16,7 +16,7 @@ import { parseQuestions, PARSER_VERSION, type ParsedQuestion, type ParseResult, 
 import { loadParserLines } from './regions';
 import { syncReviewItems, type DesiredItem } from './review';
 import { insertVersion, deriveVersion, getVersionRow, optionRows, setCurrentVersion, type NewOption, type OccurrenceParse, type OccurrenceRow } from './store';
-import { fingerprint, normPhrase, refersToImage } from './text';
+import { fingerprint, normPhrase, refersToImage, structuredText } from './text';
 import { richTextToPlain, type RichText } from '@medlevo/shared';
 
 interface VersionInfo {
@@ -88,15 +88,16 @@ function buildBlock(q: ParsedQuestion): Block {
   }
   const isTf = q.options.length === 2 && q.options.every((o) => /^(true|false|صح|خطأ|صحيح|خاطئ)$/i.test(o.text.trim()));
   const qtype: QuestionType = q.options.length === 0 ? 'short_answer' : isTf ? 'true_false' : 'sba';
+  // the structured version is cleaned of extraction artefacts that change no meaning (H2 item 10c); raw stays verbatim
   const options = q.options.map((o) => ({
     label: o.label,
-    text: o.text,
+    text: structuredText(o.text),
     raw: o.lines.map((l) => l.text).join('\n'),
     regionId: o.lines[0]?.regionId ?? null,
   }));
   const rawText = rawLines.join('\n');
   return {
-    stem: q.stem,
+    stem: structuredText(q.stem),
     stemRaw: q.stemRaw,
     options,
     rawText,
@@ -104,7 +105,8 @@ function buildBlock(q: ParsedQuestion): Block {
     regionIds,
     boxes,
     qtype,
-    contentHash: sha256(JSON.stringify({ s: q.stem, o: options.map((o) => [o.label, o.text]), r: rawText, t: q.sectionTitle, f: q.figures.map((f) => f.regionId) })),
+    // identity of the printed block: the text as extracted (a cleaner structured form is not a change of the source)
+    contentHash: sha256(JSON.stringify({ s: q.stem, o: q.options.map((o) => [o.label, o.text.trim()]), r: rawText, t: q.sectionTitle, f: q.figures.map((f) => f.regionId) })),
     fingerprint: fingerprint(q.stem, q.options.map((o) => o.text)),
     parse: { issues: q.issues, figure_region_ids: q.figures.map((f) => f.regionId).filter((x): x is string => !!x), uncertain },
   };
@@ -372,6 +374,27 @@ export function persistExtraction(ctx: AppContext, info: VersionInfo, parsed: Pa
       refreshQuestion(ctx, qid, { jobId });
     }
 
+    // H2 item 10d: a job resumed after a power loss between its commit and its checkpoint finds its own questions
+    // already in the vault (created = [], attached = 0) — the summary counts what THIS job created / attached, by job id
+    let newQuestions = created.length;
+    let attachedCount = attached;
+    if (jobId) {
+      const mine = new Set(created);
+      for (const r of ctx.db.all<{ question_id: string }>(
+        `SELECT DISTINCT v.question_id FROM question_version v
+          WHERE v.job_id = ? AND v.version_no = 1 AND v.created_by = 'extraction'
+            AND EXISTS (SELECT 1 FROM question_occurrence o WHERE o.question_id = v.question_id AND o.source_version_id = ?)`,
+        [jobId, info.id],
+      ))
+        mine.add(r.question_id);
+      newQuestions = mine.size;
+      const job = ctx.db.get<{ created_at: number }>('SELECT created_at FROM processing_job WHERE id = ?', [jobId]);
+      if (job) {
+        const since = ctx.db.all<{ question_id: string }>('SELECT question_id FROM question_occurrence WHERE source_version_id = ? AND created_at >= ?', [info.id, job.created_at]);
+        attachedCount = since.filter((o) => !mine.has(o.question_id)).length;
+      }
+    }
+
     // summary
     const sections = parsed.sections.map((s) => ({ key: s.key, title: s.title, questions: parsed.questions.filter((q) => q.sectionKey === s.key).length }));
     const needsReview = ctx.db.get<{ n: number }>(
@@ -386,7 +409,7 @@ export function persistExtraction(ctx: AppContext, info: VersionInfo, parsed: Pa
       total === 0
         ? 'لم يُعثر على أسئلة مرقمة أو خيارات في هذا المصدر. إن كان فيه أسئلة، فقد تكون الصفحات غير مقروءة أو بصيغة غير معروفة؛ أضفها بالإضافة السريعة.'
         : `استُخرج ${total === 1 ? 'سؤال واحد' : `${total} أسئلة`}${sections.length > 1 ? ` في ${sections.length} أقسام` : ''}` +
-          `${attached ? `، منها ${attached} موجودة مسبقًا في خزنتك (أضيف لها موضع ظهور جديد)` : ''}` +
+          `${attachedCount ? `، منها ${attachedCount} موجودة مسبقًا في خزنتك (أضيف لها موضع ظهور جديد)` : ''}` +
           `؛ مفاتيح مربوطة: ${bind.bound}${bind.unbound.length ? `، غير مربوطة: ${bind.unbound.length}` : ''}${bind.marks ? `، علامات غير رسمية: ${bind.marks}` : ''}` +
           `${unreadKeys.length ? `؛ ${unreadKeys.length === 1 ? 'سطر مفتاح لم تُقرأ صيغته' : `${unreadKeys.length} أسطر مفتاح لم تُقرأ صيغتها`}` : ''}` +
           `${needsReview ? `؛ ${needsReview} تحتاج مراجعتك` : ''}.`;
@@ -395,8 +418,8 @@ export function persistExtraction(ctx: AppContext, info: VersionInfo, parsed: Pa
       source_id: info.source_id,
       status,
       questions: total,
-      new_questions: created.length,
-      exact_duplicates_attached: attached,
+      new_questions: newQuestions,
+      exact_duplicates_attached: attachedCount,
       sections,
       key_blocks: parsed.keyBlocks.length,
       keys_bound: bind.bound,
@@ -418,7 +441,7 @@ export function persistExtraction(ctx: AppContext, info: VersionInfo, parsed: Pa
       entityId: info.id,
       action: 'extract_questions',
       summary: message,
-      after: { questions: total, new_questions: created.length, attached, keys_bound: bind.bound, keys_unbound: bind.unbound.length },
+      after: { questions: total, new_questions: newQuestions, attached: attachedCount, keys_bound: bind.bound, keys_unbound: bind.unbound.length },
       actor: jobId ? 'job' : 'owner',
       jobId: jobId ?? undefined,
     });

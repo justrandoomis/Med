@@ -234,6 +234,8 @@ export interface FigureStructure {
   caption_region_id?: string | null;
   image_asset_id?: string | null;
   referenced_by_region_ids?: string[];
+  /** H2: 'vector' = drawn with PDF path operators (boxes, arrows, bars), not a picture; absent = a picture */
+  origin?: 'vector';
 }
 export type RegionStructure = TableStructure | DiagramStructure | FigureStructure;
 
@@ -316,6 +318,18 @@ export function pageDisplayLabel(
   }
   if (!page.printed_label && page.numbered_version) return `الصفحة ${fileNo} في الملف`;
   return `ص ${page.printed_label ?? fileNo}`;
+}
+
+/**
+ * (H1) A version's page list with `numbered_version` filled on every page that lacks it (an answer cached before the
+ * server sent the flag, or a list built on the client) — the same rule as the server: some page of kind «page»
+ * carries a printed number. Pass the WHOLE page list of one version (a filtered list could miss the numbered pages).
+ */
+export function withNumberedVersion<P extends Pick<SourcePageView, 'kind' | 'printed_label'> & { numbered_version?: boolean }>(
+  pages: readonly P[],
+): Array<P & { numbered_version: boolean }> {
+  const numbered = pages.some((p) => p.kind === 'page' && !!p.printed_label);
+  return pages.map((p) => ({ ...p, numbered_version: typeof p.numbered_version === 'boolean' ? p.numbered_version : numbered }));
 }
 
 /** Job kind contract between sources (enqueues) and processing (handles). */

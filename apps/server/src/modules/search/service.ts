@@ -17,7 +17,6 @@ import {
   findExactPhrase,
   findHighlights,
   makeSnippet,
-  pageDisplayLabel,
   richTextToPlain,
   SEARCH_RESULT_TYPES,
   type RichText,
@@ -33,6 +32,7 @@ import {
 import type { AppContext } from '../../context';
 import { fromJson } from '../../db/db';
 import { locatorLabelAr, type PageForLabel } from '../evidence/evidence';
+import { pageLabelAr } from '../sources/pagelabel';
 import { buildQuery, type BuiltQuery } from '../evidence/terms';
 
 export interface SearchParams {
@@ -173,7 +173,7 @@ function chunkLocation(ctx: AppContext, r: ChunkHitRow, hl: Highlighter): { loca
       version_id: r.version_id,
       page_id: page?.id ?? null,
       page_index: page?.page_index ?? null,
-      page_label_ar: page || chosen ? locatorLabelAr(page ?? null, fromJson<Record<string, unknown>>(chosen?.locator_json ?? null)) : null,
+      page_label_ar: page || chosen ? locatorLabelAr(ctx.db, page ?? null, fromJson<Record<string, unknown>>(chosen?.locator_json ?? null)) : null,
       region_id: chosen?.id ?? null,
     },
   };
@@ -247,7 +247,7 @@ function searchQuestions(ctx: AppContext, p: SearchParams, match: string, fetch:
               version_id: occ.source_version_id,
               page_id: page?.id ?? null,
               page_index: page?.page_index ?? null,
-              page_label_ar: page ? pageDisplayLabel(page) : null,
+              page_label_ar: page ? pageLabelAr(ctx.db, page) : null,
               region_id: (fromJson<string[]>(occ.region_ids_json, []) ?? [])[0] ?? null,
             }
           : null,
@@ -350,7 +350,7 @@ function searchNotes(ctx: AppContext, p: SearchParams, match: string, fetch: num
         version_id: anchor?.version_id ?? null,
         page_id: page?.id ?? null,
         page_index: page?.page_index ?? null,
-        page_label_ar: page ? pageDisplayLabel(page) : null,
+        page_label_ar: page ? pageLabelAr(ctx.db, page) : null,
         region_id: null,
       };
     }
@@ -465,7 +465,7 @@ function searchTranscripts(ctx: AppContext, p: SearchParams, match: string, fetc
         id: h.entity_id,
         title: s ? clean(s.title) : 'تفريغ صوتي',
         snippet: makeSnippet(text, hs),
-        location: { source_id: seg.source_id, version_id: null, page_id: null, page_index: null, page_label_ar: locatorLabelAr(null, { start_ms: seg.start_ms }), region_id: null },
+        location: { source_id: seg.source_id, version_id: null, page_id: null, page_index: null, page_label_ar: locatorLabelAr(ctx.db, null, { start_ms: seg.start_ms }), region_id: null },
         origin: transcriptOrigin(seg),
         source_type: s?.source_type ?? null,
         source_title: s ? clean(s.title) : null,
@@ -521,7 +521,7 @@ function searchHandwriting(ctx: AppContext, p: SearchParams, match: string, fetc
         title: s ? `خط يدي على «${clean(s.title)}»` : 'خط يدي في صفحة ملاحظات',
         snippet: makeSnippet(text, hs),
         location: r.source_id
-          ? { source_id: r.source_id, version_id: r.version_id, page_id: page?.id ?? null, page_index: page?.page_index ?? null, page_label_ar: page ? pageDisplayLabel(page) : null, region_id: null }
+          ? { source_id: r.source_id, version_id: r.version_id, page_id: page?.id ?? null, page_index: page?.page_index ?? null, page_label_ar: page ? pageLabelAr(ctx.db, page) : null, region_id: null }
           : null,
         origin,
         source_type: s?.source_type ?? null,

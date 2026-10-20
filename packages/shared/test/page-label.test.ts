@@ -24,3 +24,18 @@ describe('pageDisplayLabel (AC-04)', () => {
     expect(pageDisplayLabel({ page_index: 2, printed_label: '3', kind: 'slide', numbered_version: true })).toBe('شريحة 3');
   });
 });
+
+describe('withNumberedVersion (H1, AC-04)', () => {
+  it('fills the flag from the whole list, keeps a flag the server sent, and an unnumbered page is then named by its file position', async () => {
+    const { withNumberedVersion, pageDisplayLabel } = await import('../src/sources');
+    const pages = withNumberedVersion([
+      { page_index: 0, printed_label: null, kind: 'page' as const },
+      { page_index: 1, printed_label: '12', kind: 'page' as const },
+    ]);
+    expect(pages.map((p) => p.numbered_version)).toEqual([true, true]);
+    expect(pageDisplayLabel(pages[0]!)).toBe('الصفحة 1 في الملف');
+    expect(withNumberedVersion([{ page_index: 0, printed_label: null, kind: 'page' as const, numbered_version: false }])[0]!.numbered_version).toBe(false);
+    expect(withNumberedVersion([{ page_index: 0, printed_label: null, kind: 'page' as const }])[0]!.numbered_version).toBe(false);
+    expect(pageDisplayLabel(withNumberedVersion([{ page_index: 0, printed_label: null, kind: 'page' as const }])[0]!)).toBe('ص 1');
+  });
+});

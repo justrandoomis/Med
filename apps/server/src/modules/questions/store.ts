@@ -6,7 +6,6 @@ import {
   ANSWER_STATUS_LABELS_AR,
   SCORABLE_ANSWER_STATUSES,
   normalizeForSearch,
-  pageDisplayLabel,
   parseRichText,
   richTextFromPlain,
   richTextToPlain,
@@ -28,6 +27,7 @@ import { AppError } from '../../lib/errors';
 import { newId } from '../../lib/ids';
 import { fingerprint, itemTypeOf, negationTerms, richTextWithNegation } from './text';
 import { blockingIssues } from './validate';
+import { pageLabelKnown, versionNumberedSql } from '../sources/pagelabel';
 
 // ───────── rows ─────────
 export interface QuestionRow {
@@ -386,16 +386,22 @@ interface PageLite {
   page_index: number;
   printed_label: string | null;
   kind: string;
+  /** AC-04: some page of this page's version carries a printed number (see sources/pagelabel.ts) */
+  numbered_version: boolean;
 }
 
 function pagesById(ctx: AppContext, ids: string[]): Map<string, PageLite> {
   if (ids.length === 0) return new Map();
-  const rows = ctx.db.all<PageLite>(`SELECT id, page_index, printed_label, kind FROM source_page WHERE id IN (${ids.map(() => '?').join(',')})`, ids);
-  return new Map(rows.map((r) => [r.id, r]));
+  const rows = ctx.db.all<Omit<PageLite, 'numbered_version'> & { numbered: number | null }>(
+    `SELECT p.id, p.page_index, p.printed_label, p.kind, ${versionNumberedSql('p')} AS numbered FROM source_page p WHERE p.id IN (${ids.map(() => '?').join(',')})`,
+    ids,
+  );
+  return new Map(rows.map(({ numbered, ...r }) => [r.id, { ...r, numbered_version: numbered === 1 }]));
 }
 
-export function pageLabel(p: PageLite): string {
-  return pageDisplayLabel({ page_index: p.page_index, printed_label: p.printed_label, kind: p.kind as never }, { withFileIndex: false });
+/** Compact page label through the one server page label (AC-04): `numbered_version` is required by the type. */
+export function pageLabel(p: Omit<PageLite, 'id'>): string {
+  return pageLabelKnown(p, { withFileIndex: false });
 }
 
 /** «ص 1» / «ص 1–2» / «صورة 1» for the origin label. */

@@ -20,7 +20,6 @@ import {
   richTextToPlain,
   samePassage,
   SUMMARY_TYPE_LABELS_AR,
-  pageDisplayLabel,
   type ExplanationRules,
   type JobView,
   type ReanchorItem,
@@ -34,12 +33,14 @@ import {
 } from '@medlevo/shared';
 import type { z } from 'zod';
 import type { AppContext } from '../../context';
+import type { Db } from '../../db/db';
 import { fromJson, toJson } from '../../db/db';
 import { AppError, isAppError, JobError } from '../../lib/errors';
 import { sha256 } from '../../lib/hash';
 import { newId } from '../../lib/ids';
 import type { JobRun } from '../jobs/queue';
 import type { UntrustedBlock } from '../ai/types';
+import { pageLabelAr, type LabelPage } from '../sources/pagelabel';
 import {
   buildEvidencePack,
   cacheKey,
@@ -153,7 +154,7 @@ export function planStudyBookSections(ctx: AppContext, versionId: string): Secti
     .map((d, ord) => ({
       section_key: sectionKeyOf(versionId, d.regions[0]!.id),
       ord,
-      title: d.title ?? `${pageDisplayLabel({ page_index: d.regions[0]!.page_index, printed_label: d.regions[0]!.printed_label, kind: d.regions[0]!.page_kind })}`,
+      title: d.title ?? pageLabelAr(ctx.db, { page_id: d.regions[0]!.page_id, page_index: d.regions[0]!.page_index, printed_label: d.regions[0]!.printed_label, kind: d.regions[0]!.page_kind }),
       region_ids: d.regions.map((r) => r.id),
       page_ids: [...new Set(d.regions.map((r) => r.page_id))],
     }));
@@ -172,8 +173,9 @@ function versionPages(ctx: AppContext, versionId: string): PageStat[] {
   return ctx.db.all<PageStat>('SELECT id, page_index, printed_label, kind, processing_status, text_status FROM source_page WHERE version_id = ? ORDER BY page_index', [versionId]);
 }
 
-function pageLabel(p: Pick<PageStat, 'page_index' | 'printed_label' | 'kind'>): string {
-  return pageDisplayLabel({ page_index: p.page_index, printed_label: p.printed_label, kind: p.kind });
+/** AC-04: through the one server page label (an unnumbered page among numbered ones is named by its file position). */
+function pageLabel(db: Db, p: LabelPage): string {
+  return pageLabelAr(db, p);
 }
 
 function unreadable(p: PageStat): boolean {
@@ -224,7 +226,7 @@ function sectionView(ctx: AppContext, s: SectionRow): StudyBookSectionView {
     status_label_ar: SECTION_STATUS_AR[s.status],
     block_count: s.block_count,
     page_indexes: pages.map((p) => p.page_index),
-    page_labels_ar: pages.map((p) => pageLabel(p)),
+    page_labels_ar: pages.map((p) => pageLabel(ctx.db, p)),
     detail_ar: detail?.reason_ar ?? null,
   };
 }
@@ -467,7 +469,8 @@ function summaryPlans(ctx: AppContext, versionId: string, pageIndexes: number[] 
     if (!cur.length) return;
     const first = cur[0]!;
     const last = cur[cur.length - 1]!;
-    const label = first.page_index === last.page_index ? pageLabel({ page_index: first.page_index, printed_label: first.printed_label, kind: first.page_kind }) : `${pageLabel({ page_index: first.page_index, printed_label: first.printed_label, kind: first.page_kind })} – ${pageLabel({ page_index: last.page_index, printed_label: last.printed_label, kind: last.page_kind })}`;
+    const firstLabel = pageLabel(ctx.db, { page_id: first.page_id, page_index: first.page_index, printed_label: first.printed_label, kind: first.page_kind });
+    const label = first.page_index === last.page_index ? firstLabel : `${firstLabel} – ${pageLabel(ctx.db, { page_id: last.page_id, page_index: last.page_index, printed_label: last.printed_label, kind: last.page_kind })}`;
     plans.push({ section_key: sectionKeyOf(versionId, `sum|${first.id}`), ord: plans.length, title: label, region_ids: cur.map((r) => r.id), page_ids: [...new Set(cur.map((r) => r.page_id))] });
     cur = [];
     chars = 0;
@@ -497,9 +500,9 @@ export function summaryPreview(ctx: AppContext, body: z.infer<typeof summaryBody
   const ready = selected.filter((p) => !unreadable(p) && !unprocessed(p) && withText.has(p.page_index));
   const empty = selected.filter((p) => !unreadable(p) && !unprocessed(p) && !withText.has(p.page_index));
   const notes: string[] = [];
-  if (unread.length) notes.push(`صفحات غير مقروءة لن يغطيها الملخص: ${unread.map(pageLabel).join('، ')}.`);
-  if (unproc.length) notes.push(`صفحات لم تكتمل معالجتها بعد: ${unproc.map(pageLabel).join('، ')}.`);
-  if (empty.length) notes.push(`صفحات بلا نص قابل للتلخيص: ${empty.map(pageLabel).join('، ')}.`);
+  if (unread.length) notes.push(`صفحات غير مقروءة لن يغطيها الملخص: ${unread.map((p) => pageLabel(ctx.db, p)).join('، ')}.`);
+  if (unproc.length) notes.push(`صفحات لم تكتمل معالجتها بعد: ${unproc.map((p) => pageLabel(ctx.db, p)).join('، ')}.`);
+  if (empty.length) notes.push(`صفحات بلا نص قابل للتلخيص: ${empty.map((p) => pageLabel(ctx.db, p)).join('، ')}.`);
   if (missingIndexes.length) notes.push(`صفحات مطلوبة غير موجودة في هذه النسخة: ${missingIndexes.map((i) => i + 1).join('، ')}.`);
   const isSelection = SELECTION_SUMMARY_TYPES.includes(body.type);
   if (isSelection) notes.push('هذا النوع انتقاء للموضوعات الأهم وليس بديلًا يغطي كل التفاصيل.');
@@ -548,7 +551,7 @@ export function createSummary(ctx: AppContext, body: z.infer<typeof summaryBodyS
 
   const pages = versionPages(ctx, src.versionId);
   const selected = pageIndexes ? pages.filter((p) => pageIndexes.includes(p.page_index)) : pages;
-  const range = selected.length ? (selected.length === 1 ? pageLabel(selected[0]!) : `${pageLabel(selected[0]!)} – ${pageLabel(selected[selected.length - 1]!)}`) : '';
+  const range = selected.length ? (selected.length === 1 ? pageLabel(ctx.db, selected[0]!) : `${pageLabel(ctx.db, selected[0]!)} – ${pageLabel(ctx.db, selected[selected.length - 1]!)}`) : '';
   const params: SectionedParams = {
     mode: 'summary',
     source_id: body.source_id,
@@ -773,7 +776,7 @@ async function generateSection(
     regionAliases[ra] = r.id;
     const ev = regionEvidence.get(r.id);
     const ea = ev ? aliasOfEvidence.get(ev) : undefined;
-    const loc = pageLabel({ page_index: r.page_index, printed_label: r.printed_label, kind: r.page_kind });
+    const loc = pageLabel(ctx.db, { ...(r.page_id ? { page_id: r.page_id } : { numbered_version: false }), page_index: r.page_index, printed_label: r.printed_label, kind: r.page_kind });
     if (ea) {
       const view = pack.forModel.find((f) => f.alias === ea)!;
       blocks.push({ label: `evidence ${ea} = region ${ra} (${r.kind}, ${loc})`, text: `[${ea}] [${ra}]\n${view.quote}` });
@@ -892,7 +895,7 @@ export function finalizeSectioned(ctx: AppContext, artifactId: string, o: { jobS
     const pages = versionPages(ctx, params.version_id);
     const planned = new Set(sections.flatMap((s) => fromJson<string[]>(s.page_ids_json, []) ?? []));
     const uncovered = pages.filter((p) => !planned.has(p.id));
-    if (uncovered.length) prevMissing.push(`صفحات بلا نص معالَج لم يشملها الكتاب: ${uncovered.map(pageLabel).join('، ')}`);
+    if (uncovered.length) prevMissing.push(`صفحات بلا نص معالَج لم يشملها الكتاب: ${uncovered.map((p) => pageLabel(ctx.db, p)).join('، ')}`);
   }
   const allMissing = [...new Set([...prevMissing, ...missing])];
   if (allMissing.length) coverage.missing_ar = allMissing;

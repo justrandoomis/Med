@@ -24,7 +24,6 @@ import {
   GENERATION_DIFFICULTY_LABELS_AR,
   GENERATION_RUN_STATUS_LABELS_AR,
   GENERATED_ITEM_TYPE_LABELS_AR,
-  pageDisplayLabel,
   sourceScopeSchema,
   type EvidenceForModel,
   type EvidenceView,
@@ -60,6 +59,7 @@ import {
 } from './schema';
 import { paragraph, richText, shorten } from './text';
 import { deterministicIssues, emphasizeNegation, type Issue } from './validate';
+import { pageLabelAr } from '../../sources/pagelabel';
 
 export const GENERATE_JOB = 'exams.generate_questions';
 /** generation + at most 2 repairs (§38: bounded repair attempts) */
@@ -538,11 +538,11 @@ const ITEM_TYPES = new Set<string>(GENERATED_ITEM_TYPES);
 function pageLabels(ctx: AppContext, pageIds: string[]): string[] {
   if (pageIds.length === 0) return [];
   return ctx.db
-    .all<{ page_index: number; printed_label: string | null; kind: string }>(
-      `SELECT page_index, printed_label, kind FROM source_page WHERE id IN (${pageIds.map(() => '?').join(',')}) ORDER BY page_index`,
+    .all<{ page_index: number; printed_label: string | null; kind: string; version_id: string }>(
+      `SELECT page_index, printed_label, kind, version_id FROM source_page WHERE id IN (${pageIds.map(() => '?').join(',')}) ORDER BY page_index`,
       pageIds,
     )
-    .map((p) => pageDisplayLabel({ page_index: p.page_index, printed_label: p.printed_label, kind: p.kind as never }, { withFileIndex: false }));
+    .map((p) => pageLabelAr(ctx.db, p, { withFileIndex: false }));
 }
 
 function publish(

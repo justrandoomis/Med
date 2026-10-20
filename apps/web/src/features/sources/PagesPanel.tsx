@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { RotateCcw } from 'lucide-react';
 import {
   pageDisplayLabel,
+  withNumberedVersion,
   type FeatureKey,
   type PageTextStatus,
   type SourceFormat,
@@ -97,7 +98,8 @@ export function PagesPanel({ sourceId, versions, activeVersionId, readOnly }: { 
     }
   };
 
-  const pages = q.data?.pages ?? [];
+  // AC-04: a cached answer from before the server sent `numbered_version` gets it from the whole list
+  const pages = withNumberedVersion(q.data?.pages ?? []);
   const failed = pages.filter((p) => p.processing_status === 'failed');
   return (
     <div className="ml-stack">

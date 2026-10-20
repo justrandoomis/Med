@@ -219,7 +219,7 @@ export class AnnotationsService {
         session,
         source: { id: r.source_id!, title: r.s_title, source_type: r.s_type, archived: r.s_archived !== null },
         version: version ? { id: version.id, version_no: version.version_no, is_active: version.id === r.s_active } : null,
-        page: page ? { id: page.id, page_index: page.page_index, printed_label: page.printed_label, kind: page.kind, label_ar: pageLabelAr(page) } : null,
+        page: page ? { id: page.id, page_index: page.page_index, printed_label: page.printed_label, kind: page.kind, label_ar: pageLabelAr(this.db, page) } : null,
         reading: this.progress(r.source_id!),
       };
     });

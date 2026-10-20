@@ -2,12 +2,13 @@
 // owner made it) or AUTO (made by an automatic matcher). No automatic matcher exists in this version, so no auto link
 // is ever created here — but the contract, the labels and the owner's controls over auto links (confirm / remove)
 // are in place and tested. Removing a link is a tombstone (audited).
-import { mediaLinkCreateSchema, pageDisplayLabel, type MediaLinkView } from '@medlevo/shared';
+import { mediaLinkCreateSchema, type MediaLinkView } from '@medlevo/shared';
 import type { AppContext } from '../../context';
 import { AppError } from '../../lib/errors';
 import { parseWith } from '../../lib/http';
 import { newId } from '../../lib/ids';
 import { clip } from '../cases/text';
+import { pageLabelAr } from '../sources/pagelabel';
 
 interface LinkRow {
   id: string;
@@ -40,7 +41,7 @@ function view(ctx: AppContext, l: LinkRow): MediaLinkView {
     version_id: l.to_version_id ?? page?.version_id ?? null,
     page_id: l.to_page_id,
     page_index: page?.page_index ?? null,
-    page_label_ar: page ? pageDisplayLabel({ page_index: page.page_index, printed_label: page.printed_label, kind: page.kind as never }) : null,
+    page_label_ar: page ? pageLabelAr(ctx.db, page) : null,
     region_id: l.to_region_id,
     region_preview: region?.text ? clip(region.text, 140) : null,
     origin: l.origin,

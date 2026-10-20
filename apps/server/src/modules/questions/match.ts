@@ -39,6 +39,8 @@ interface PageLite {
   page_index: number;
   printed_label: string | null;
   kind: string;
+  /** AC-04: some page of the lecture version carries a printed number */
+  numbered_version: boolean;
 }
 
 export interface LectureTarget {
@@ -248,9 +250,10 @@ function lectureTarget(ctx: AppContext, sourceId: string): LectureTarget | null 
   const v = ctx.db.get<{ processing_status: string }>('SELECT processing_status FROM source_version WHERE id = ?', [versionId]);
   if (!v || !PROCESSED.includes(v.processing_status)) return null;
   if (!ctx.db.get(`SELECT 1 AS x FROM concept_mention WHERE version_id = ? AND role LIKE 'candidate%' LIMIT 1`, [versionId])) extractConceptCandidates(ctx, versionId);
-  const pages = new Map(
-    ctx.db.all<PageLite>('SELECT id, page_index, printed_label, kind FROM source_page WHERE version_id = ?', [versionId]).map((p) => [p.id, p]),
-  );
+  const rows = ctx.db.all<Omit<PageLite, 'numbered_version'>>('SELECT id, page_index, printed_label, kind FROM source_page WHERE version_id = ?', [versionId]);
+  // the version's whole page list: whether it is numbered is read from it (same rule as the sources pages endpoint)
+  const numbered = rows.some((p) => p.kind === 'page' && !!p.printed_label);
+  const pages = new Map(rows.map((p) => [p.id, { ...p, numbered_version: numbered }]));
   return { sourceId: s.id, title: s.title, versionId, concepts: lectureConcepts(ctx, versionId), pages };
 }
 

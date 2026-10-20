@@ -8,7 +8,7 @@ import { render, waitFor } from '@testing-library/react';
 import type { PageRegionsResponse, SourcePageView, SourceRegionView } from '@medlevo/shared';
 import { setFetchImpl } from '../../../lib/api';
 import { clearRegionCache } from '../data/api';
-import { ocrRunSegments, regionPageText } from '../model/regionText';
+import { ocrRunSegments, regionPageText, regionTextRuns } from '../model/regionText';
 import type { PageGeom } from './geometry';
 import { PageView } from './PageView';
 import type { PdfHandle } from './pdfDoc';
@@ -127,6 +127,12 @@ describe('OCR text layer from word boxes (H2 item 6)', () => {
     expect(repaired.map((s) => s.text).join('')).toBe('The urea breath-test confirms infection.');
     // too few words found → one block as before
     expect(ocrRunSegments({ ...withWords, text: 'something else entirely' })).toBeNull();
+  });
+
+  it('a table found on a scan is read from its cells at their places, not from its serialized summary (H2 item 2)', () => {
+    const table: SourceRegionView = { ...plain, id: 'T', kind: 'table', reading_order: 3, text: 'Drug: Amoxicillin | Dose: 500 mg' };
+    const cell: SourceRegionView = { ...plain, id: 'C', kind: 'table_cell', reading_order: 4, text: 'Amoxicillin' };
+    expect(regionTextRuns([table, cell, withWords]).map((r) => r.id)).toEqual(['R1', 'C']);
   });
 
   it('places each OCR word over its glyphs (position and size from its box); the layer text is the page search text', async () => {

@@ -5,7 +5,7 @@
 // without a usable rendering says so.
 import { useEffect, useMemo, useState } from 'react';
 import type { NormBox, SourcePageView, SourceRegionView, SourceSummary, SourceVersionView } from '@medlevo/shared';
-import { pageDisplayLabel } from '@medlevo/shared';
+import { pageDisplayLabel, withNumberedVersion } from '@medlevo/shared';
 import { ErrorState, LoadingState, Select } from '../../../design';
 import { errorMessage } from '../../../lib/api';
 import { openPdf } from '../../../lib/pdf';
@@ -97,7 +97,7 @@ export function FigurePicker({ onPick, initialSourceId }: { onPick: (f: PickedFi
         const r = await fetchPages(sourceId, v.id);
         if (cancelled) return;
         setVersion(r.version);
-        setPages(r.pages);
+        setPages(withNumberedVersion(r.pages));
       } catch (e) {
         if (!cancelled) setError(errorMessage(e, 'تعذّر تحميل صفحات المصدر.'));
       } finally {

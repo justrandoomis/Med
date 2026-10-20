@@ -24,7 +24,6 @@ import {
   RECOGNIZED_LABEL_AR,
   annotationTargetKey,
   normalizeForSearch,
-  pageDisplayLabel,
   type AnnotationAnchor,
   type AskContextResponse,
   type InkRecognitionView,
@@ -40,6 +39,7 @@ import { fromJson, toJson } from '../../db/db';
 import { AppError, isAppError, JobError } from '../../lib/errors';
 import { parseWith } from '../../lib/http';
 import type { JobRun } from '../jobs/queue';
+import { pageLabelAr } from '../sources/pagelabel';
 
 export const INK_RECOGNIZE_JOB = 'ink.recognize';
 export const RECOGNIZER_VERSION = 'inkrec-v1';
@@ -223,7 +223,7 @@ export function recognitionView(ctx: AppContext, r: RecognitionRow): InkRecognit
           version_id: r.version_id,
           page_id: r.page_id,
           page_index: page?.page_index ?? null,
-          page_label_ar: page ? pageDisplayLabel(page) : null,
+          page_label_ar: page && r.page_id ? pageLabelAr(ctx.db, { ...page, id: r.page_id }) : null,
           note_page_id: r.note_page_id,
         }
       : null,

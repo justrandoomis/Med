@@ -17,8 +17,9 @@
 // verbatim and is excluded (status 'rejected'), and the corrected text becomes a NEW region in the same place (same
 // page, box, order, parent; locator `supersedes_region_id`). Old citations keep showing exactly what they quoted,
 // marked excluded; new evidence can only be made from the corrected text. Uncited regions are corrected in place.
-import { PROCESS_JOB_KIND, pageDisplayLabel, stripBidiControls, type TableStructure } from '@medlevo/shared';
+import { PROCESS_JOB_KIND, stripBidiControls, type TableStructure } from '@medlevo/shared';
 import type { AppContext } from '../../context';
+import type { Db } from '../../db/db';
 import { fromJson, toJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
 import { newId } from '../../lib/ids';
@@ -27,6 +28,7 @@ import { buildChunks, writeChunks } from '../processing/chunks';
 import { serializeTable } from '../processing/layout/tables';
 import type { TableCellOut } from '../processing/layout/types';
 import { writeSummary } from '../processing/summary';
+import { pageLabelAr as pageLabelFor, type LabelPage } from '../sources/pagelabel';
 import { REGION_KIND_LABELS_AR, oneLine } from './labels';
 
 export const MAX_OWNER_TEXT = 20_000;
@@ -128,8 +130,9 @@ export function cleanOwnerText(raw: string | undefined | null): string {
   return t;
 }
 
-export function pageLabelAr(p: Pick<PageRow, 'page_index' | 'printed_label' | 'kind'>): string {
-  return pageDisplayLabel(p);
+/** AC-04: the one server page label (an unnumbered page among numbered ones is named by its file position). */
+export function pageLabelAr(db: Db, p: LabelPage): string {
+  return pageLabelFor(db, p);
 }
 
 function processingRunning(ctx: AppContext, versionId: string): boolean {
@@ -449,7 +452,7 @@ export function correctRegion(ctx: AppContext, input: RegionDecisionInput & { te
     const closed = closeSiblingItems(ctx, currentId, input.itemId, 'corrected', 'أُغلق لأنك صحّحت نص المنطقة نفسها.');
     const idx = reindex(ctx, o);
     const pageReady = refreshPageState(ctx, region.page_id);
-    const where = page ? pageLabelAr(page) : 'هذه المنطقة';
+    const where = page ? pageLabelAr(ctx.db, page) : 'هذه المنطقة';
     const alert = alertFor(
       ctx,
       o,
@@ -526,7 +529,7 @@ export function acceptRegion(ctx: AppContext, input: RegionDecisionInput): Corre
       entityType: 'source_region',
       entityId: region.id,
       action: 'accept',
-      summary: `أكّدتَ نص ${REGION_KIND_LABELS_AR[region.kind] ?? 'منطقة'} في «${o.sourceTitle}»${page ? ` — ${pageLabelAr(page)}` : ''}`,
+      summary: `أكّدتَ نص ${REGION_KIND_LABELS_AR[region.kind] ?? 'منطقة'} في «${o.sourceTitle}»${page ? ` — ${pageLabelAr(ctx.db, page)}` : ''}`,
       before: { status: region.status },
       after: { status: 'owner_reviewed', correction_id: correctionId },
     });
@@ -561,7 +564,7 @@ export function rejectRegion(ctx: AppContext, input: RegionDecisionInput): Corre
     const closed = closeSiblingItems(ctx, region.id, input.itemId, 'rejected', 'أُغلق لأنك استبعدت نص المنطقة نفسها.');
     reindex(ctx, o);
     const pageReady = refreshPageState(ctx, region.page_id);
-    const where = page ? pageLabelAr(page) : 'هذه المنطقة';
+    const where = page ? pageLabelAr(ctx.db, page) : 'هذه المنطقة';
     const alert = alertFor(ctx, o, page, region.text_origin === 'ocr' ? 'ocr_corrected' : 'source_updated', `استبعدتَ نص ${REGION_KIND_LABELS_AR[region.kind] ?? 'منطقة'} في ${where} لأنه غير صالح؛ النص محفوظ في سجل التصحيحات.`);
     ctx.db.run('UPDATE control_region_correction SET alert_id = ? WHERE id = ?', [alert.id, correctionId]);
     ctx.audit.record({
@@ -639,18 +642,18 @@ export function transcribePage(ctx: AppContext, input: { pageId: string; itemId:
       );
     }
     const idx = reindex(ctx, o);
-    const alert = alertFor(ctx, o, page, 'source_updated', `كتبتَ بنفسك نص ${pageLabelAr(page)} لأن النص لم يُقرأ آليًا.`);
+    const alert = alertFor(ctx, o, page, 'source_updated', `كتبتَ بنفسك نص ${pageLabelAr(ctx.db, page)} لأن النص لم يُقرأ آليًا.`);
     ctx.db.run('UPDATE control_region_correction SET alert_id = ? WHERE id = ?', [alert.id, correctionId]);
     ctx.audit.record({
       entityType: 'source_page',
       entityId: page.id,
       action: existing ? 'correct' : 'owner_text',
-      summary: `${existing ? 'عدّلتَ' : 'كتبتَ'} نص ${pageLabelAr(page)} في «${o.sourceTitle}» بنفسك`,
+      summary: `${existing ? 'عدّلتَ' : 'كتبتَ'} نص ${pageLabelAr(ctx.db, page)} في «${o.sourceTitle}» بنفسك`,
       before: existing ? { text: auditSnippet(existing.text) } : { text_status: page.text_status },
       after: { text: auditSnippet(text), region_id: regionId, correction_id: correctionId },
     });
     const effects = [
-      `حُفظ النص الذي كتبته لـ${pageLabelAr(page)} كنص مصدره أنت (لا يُدّعى أنه قُرئ آليًا، ولا يُحدَّد له موضع على الصفحة).`,
+      `حُفظ النص الذي كتبته لـ${pageLabelAr(ctx.db, page)} كنص مصدره أنت (لا يُدّعى أنه قُرئ آليًا، ولا يُحدَّد له موضع على الصفحة).`,
       idx.inserted || idx.deleted ? 'صار نص الصفحة قابلًا للبحث والاستشهاد به.' : 'فهرس البحث لم يحتج تغييرًا.',
     ];
     if (existing) effects.push('النص السابق الذي كتبته محفوظ في سجل التصحيحات.');

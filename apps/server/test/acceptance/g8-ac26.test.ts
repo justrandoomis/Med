@@ -183,6 +183,9 @@ describe('G8 AC-26 — correcting a FACT', () => {
     const alert = all.find((a) => a.items.some((i) => i.type === 'question_version' && i.id === v0) && a.items.some((i) => i.id === 'g8a26-q2-wrong'));
     expect(alert, 'an alert for the corrected question').toBeTruthy();
     expect(alert!.severity).toBe('fact_change');
+    // H1: its own kind — never «تحديث في المصدر» (the source did not change; the question's text was corrected)
+    expect(alert!.kind).toBe('question_corrected');
+    expect(alert!.kind_label_ar).toBe('تصحيح نص سؤال');
     expect(alert!.items.map((i) => i.id)).toEqual(expect.arrayContaining([v0, 'g8a26-q2-wrong', card.id]));
     expectIdentifiable(alert!);
     const cv = ((await api(t).get(`/api/learning/cards/${card.id}`)).json() as { card: FlashcardView }).card;

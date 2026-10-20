@@ -10,7 +10,6 @@ import {
   IMAGE_KINDS,
   IMAGE_ORIGIN_BADGE_LABELS_AR,
   imageMetaPatchSchema,
-  pageDisplayLabel,
   type AgeGroup,
   type ImageDetailView,
   type ImageKind,
@@ -22,6 +21,7 @@ import { z } from 'zod';
 import type { AppContext } from '../../context';
 import { AppError } from '../../lib/errors';
 import { parseWith } from '../../lib/http';
+import { pageLabelAr } from '../sources/pagelabel';
 import { overlaysOf, quizEligibility } from './overlays';
 
 export interface ImageRow {
@@ -102,7 +102,7 @@ export function summary(ctx: AppContext, r: ImageRow): ImageSummaryView {
     source: r.source_id ? { id: r.source_id, title: r.s_title ?? '', source_type: r.s_type ?? '', deleted: r.s_deleted !== null } : null,
     page:
       r.page_id && r.p_index !== null
-        ? { id: r.page_id, page_index: r.p_index, label_ar: pageDisplayLabel({ page_index: r.p_index, printed_label: r.p_label, kind: (r.p_kind ?? 'page') as never }) }
+        ? { id: r.page_id, page_index: r.p_index, label_ar: pageLabelAr(ctx.db, { id: r.page_id, page_index: r.p_index, printed_label: r.p_label, kind: r.p_kind ?? 'page' }) }
         : null,
     version_id: r.version_id,
     region_id: r.region_id,

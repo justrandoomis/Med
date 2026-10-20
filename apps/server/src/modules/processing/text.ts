@@ -153,6 +153,11 @@ function excerpt(text: string, index: number, len: number): string {
 }
 
 export interface SuspicionContext {
+  /**
+   * H2 item 9: Arabic words whose spelling the PDF's own glyphs settled (drawn letter by letter, or rebuilt from a
+   * lam-alef ligature glyph) — never «ambiguous», whatever the document-level ligature signal says.
+   */
+  verifiedWords?: ReadonlySet<string>;
   /** the document's text layer is known to reverse lam-alef ligatures (a word-start repair happened) */
   reversedLigatures?: boolean;
 }
@@ -160,7 +165,10 @@ export interface SuspicionContext {
 export function detectSuspicious(text: string, ctx: SuspicionContext = {}): Suspicion[] {
   const out: Suspicion[] = [];
   if (ctx.reversedLigatures) {
-    for (const w of new Set(ambiguousLamAlefWords(text))) out.push({ kind: 'ambiguous_lam_alef', token: w, context: w });
+    for (const w of new Set(ambiguousLamAlefWords(text))) {
+      if (ctx.verifiedWords?.has(w)) continue; // the PDF's glyphs settled this spelling (H2 item 9)
+      out.push({ kind: 'ambiguous_lam_alef', token: w, context: w });
+    }
   }
   for (const m of text.matchAll(LONE_LATIN)) {
     out.push({ kind: 'lone_latin_in_arabic', token: m[0], context: excerpt(text, m.index ?? 0, m[0].length) });

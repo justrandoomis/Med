@@ -242,6 +242,15 @@ export function fingerprint(stem: string, options: string[]): string {
   return sha256(`${norm(stem)}\u0001${opts.join('\u0002')}`);
 }
 
+/**
+ * H2 item 10c: the STRUCTURED form of an extracted stem / option — a PDF line split that separated the degree sign from
+ * its unit («38.4 ° C», LibreOffice) is joined back («38.4 °C»). Meaning never changes (a following letter keeps it apart:
+ * «30 ° Cobb»); the raw extraction keeps the text exactly as printed.
+ */
+export function structuredText(text: string): string {
+  return text.replace(/°[ \t]+([CF])(?![\p{L}\p{N}])/gu, '°$1');
+}
+
 // ───────── rich text with emphasized negation ─────────
 /** RichText from plain text; negation terms become their own runs marked 'em' + 'b' (kept verbatim). */
 export function richTextWithNegation(text: string): RichText {

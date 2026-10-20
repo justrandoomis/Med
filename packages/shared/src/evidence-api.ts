@@ -98,7 +98,7 @@ export interface SearchedReport {
 }
 
 // ───────── content change alerts (§18) ─────────
-export const CONTENT_ALERT_KINDS = ['source_updated', 'ocr_corrected', 'key_corrected', 'source_deleted', 'source_replaced', 'conflict_found', 'layout_changed'] as const;
+export const CONTENT_ALERT_KINDS = ['source_updated', 'ocr_corrected', 'key_corrected', 'source_deleted', 'source_replaced', 'conflict_found', 'layout_changed', 'question_corrected'] as const;
 export type ContentAlertKind = (typeof CONTENT_ALERT_KINDS)[number];
 
 export const CONTENT_ALERT_KIND_LABELS_AR: Record<ContentAlertKind, string> = {
@@ -109,6 +109,8 @@ export const CONTENT_ALERT_KIND_LABELS_AR: Record<ContentAlertKind, string> = {
   source_replaced: 'نسخة جديدة من المصدر',
   conflict_found: 'تعارض مكتشف',
   layout_changed: 'تغيّر في الترتيب البصري فقط',
+  /** (H1) the owner corrected the question's own text (stem / options / explanation) — migration 0310 */
+  question_corrected: 'تصحيح نص سؤال',
 };
 
 export const ALERT_SEVERITY_LABELS_AR: Record<'info' | 'fact_change' | 'answer_change', string> = {

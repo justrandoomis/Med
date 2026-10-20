@@ -81,7 +81,7 @@ export function studentKnowledge(ctx: AppContext, opts: { courseNodeId?: string 
     for (const c of concepts) {
       const a = acc.get(c.id) ?? { id: c.id, lectures: new Map(), pagesTotal: new Set(), pagesViewed: new Set(), questions: new Set() };
       const sortedPages = c.page_ids.map((pid) => pages.get(pid)).filter((p): p is NonNullable<typeof p> => !!p).sort((x, y) => x.page_index - y.page_index);
-      a.lectures.set(s.id, { title: s.title, page_ids: new Set(sortedPages.map((p) => p.id)), first: sortedPages[0] ? { page_index: sortedPages[0].page_index, label: pageLabelAr(sortedPages[0]) } : null });
+      a.lectures.set(s.id, { title: s.title, page_ids: new Set(sortedPages.map((p) => p.id)), first: sortedPages[0] ? { page_index: sortedPages[0].page_index, label: pageLabelAr(ctx.db, sortedPages[0]) } : null });
       for (const p of sortedPages) {
         a.pagesTotal.add(p.id);
         if (viewedIdx.has(p.page_index)) a.pagesViewed.add(p.id);

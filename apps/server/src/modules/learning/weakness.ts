@@ -14,7 +14,6 @@ import {
   MASTERY_WEIGHTS,
   MISTAKE_TYPE_LABELS_AR,
   masterySignal,
-  pageDisplayLabel,
   stemPreview,
   type ConfidenceLevel,
   type MasterySignal,
@@ -39,6 +38,7 @@ import { signalResets, type SignalResets } from './profile';
 import { foldReviews, State } from './srs';
 import { resolveConceptIdDb } from '../brain/resolve';
 import { caseSignals } from '../cases/signals';
+import { pageLabelAr } from '../sources/pagelabel';
 import { clip, pushTo, srsContext } from './store';
 
 // ───────── signals ─────────
@@ -404,13 +404,14 @@ function countAr(n: number, one: string, two: string, few: string, many: string)
   return `${n} ${many}`;
 }
 
-function pagesLabel(db: Db, pageIds: string[]): string[] {
+/** Compact labels of lecture pages named in a weakness (exported for the AC-04 label tests). */
+export function pagesLabel(db: Db, pageIds: string[]): string[] {
   if (pageIds.length === 0) return [];
   const rows = db.all<{ id: string; page_index: number; printed_label: string | null; kind: string }>(
     `SELECT id, page_index, printed_label, kind FROM source_page WHERE id IN (${pageIds.map(() => '?').join(',')}) ORDER BY page_index`,
     pageIds,
   );
-  return rows.map((p) => pageDisplayLabel({ page_index: p.page_index, printed_label: p.printed_label, kind: p.kind as never }, { withFileIndex: false }));
+  return rows.map((p) => pageLabelAr(db, p, { withFileIndex: false }));
 }
 
 // ───────── compute + persist ─────────

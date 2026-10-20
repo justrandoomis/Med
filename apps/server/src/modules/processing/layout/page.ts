@@ -371,7 +371,13 @@ export function analyzePage(input: PageAnalysisInput): LayoutRegion[] {
       box: { x0: f.x0, top: f.top, x1: f.x1, bottom: f.bottom },
       text: null,
       textOrigin: null,
-      figure: { captionKey: null, labels, labelsOrigin: labels.length ? segOrigin(inside) : null },
+      figure: {
+        captionKey: null,
+        labels,
+        labelsOrigin: labels.length ? segOrigin(inside) : null,
+        ...(f.source === 'pdf_vector' ? { vector: true } : {}),
+        ...(f.uncertain ? { uncertain: true } : {}),
+      },
     };
     const el = { box: region.box!, region };
     figureEls.push(el);

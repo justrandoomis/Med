@@ -394,7 +394,7 @@ export function questionCorrectionAlert(ctx: AppContext, questionId: string, old
   ];
   ctx.db.run(
     `INSERT INTO content_alert (id, kind, severity, source_id, source_version_id, summary, affected_json, status, created_at, details_json)
-     VALUES (?, 'source_updated', 'fact_change', ?, ?, ?, ?, 'open', ?, ?)`,
+     VALUES (?, 'question_corrected', 'fact_change', ?, ?, ?, ?, 'open', ?, ?)`,
     [alertId, occ?.source_id ?? null, occ?.source_version_id ?? null, summary, toJson(affected), now, toJson({ question_id: questionId, corrected: changedAr, by: 'owner' })],
   );
   ctx.db.run(

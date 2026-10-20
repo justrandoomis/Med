@@ -9,8 +9,8 @@ import { fromJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
 import { newId } from '../../lib/ids';
 import { findConceptByName } from '../brain/resolve';
-import { pageLabel } from './store';
 import { contentTokens } from './text';
+import { pageLabelAr } from '../sources/pagelabel';
 
 export interface Candidate {
   name: string;
@@ -236,7 +236,7 @@ export function conceptViews(ctx: AppContext, versionIds: string[]): ConceptCand
     v.mentions.push({
       region_id: r.region_id,
       page_id: r.page_id,
-      page_label_ar: r.page_index !== null ? pageLabel({ id: r.page_id ?? '', page_index: r.page_index, printed_label: r.printed_label, kind: r.page_kind ?? 'page' }) : null,
+      page_label_ar: r.page_index !== null && r.page_id ? pageLabelAr(ctx.db, { page_id: r.page_id, page_index: r.page_index, printed_label: r.printed_label, kind: r.page_kind ?? 'page' }, { withFileIndex: false }) : null,
       role: r.role ?? '',
     });
     map.set(r.id, v);

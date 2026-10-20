@@ -40,8 +40,8 @@ export function knowledgeMap(ctx: AppContext, courseNodeId: string, opts: { sour
       order: i,
     });
     if (!l.version_id) return;
-    for (const p of ctx.db.all<{ id: string; page_index: number; printed_label: string | null; kind: string }>('SELECT id, page_index, printed_label, kind FROM source_page WHERE version_id = ?', [l.version_id]))
-      pageLabels.set(p.id, { label: pageLabelAr(p), source_id: l.id, version_id: l.version_id, page_index: p.page_index });
+    for (const p of ctx.db.all<{ id: string; version_id: string; page_index: number; printed_label: string | null; kind: string }>('SELECT id, version_id, page_index, printed_label, kind FROM source_page WHERE version_id = ?', [l.version_id]))
+      pageLabels.set(p.id, { label: pageLabelAr(ctx.db, p), source_id: l.id, version_id: l.version_id, page_index: p.page_index });
     const concepts = versionConcepts(ctx, l.version_id);
     const stated = new Map<string, { n: number; def: boolean }>();
     for (const m of ctx.db.all<{ concept_id: string; role: string }>(`SELECT concept_id, role FROM concept_mention WHERE version_id = ?`, [l.version_id])) {

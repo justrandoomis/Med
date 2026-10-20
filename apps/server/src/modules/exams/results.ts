@@ -4,7 +4,6 @@ import {
   MASTERY_SIGNAL_LABELS_AR,
   isAssessedMode,
   masterySignal,
-  pageDisplayLabel,
   stemPreview,
   type ExamAttemptListItem,
   type ExamAttemptListResponse,
@@ -16,6 +15,7 @@ import {
 import type { AppContext } from '../../context';
 import { fromJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
+import { pageLabelAr as pageLabelFor } from '../sources/pagelabel';
 import {
   PURGED_ITEM_REASON_AR,
   attemptDTO,
@@ -69,10 +69,11 @@ function generatedMeta(ctx: AppContext, questionId: string): { concepts: string[
   return { concepts: fromJson<string[]>(c.concepts_json, []) ?? [], page_ids: fromJson<{ lecture_page_ids?: string[] }>(c.evidence_json, {})?.lecture_page_ids ?? [] };
 }
 
-function pageLabelAr(ctx: AppContext, pageId: string): string | null {
-  const p = ctx.db.get<{ page_index: number; printed_label: string | null; kind: string }>('SELECT page_index, printed_label, kind FROM source_page WHERE id = ?', [pageId]);
+/** Compact label of a lecture page in a result breakdown (exported for the AC-04 label tests). */
+export function resultPageLabelAr(ctx: AppContext, pageId: string): string | null {
+  const p = ctx.db.get<{ page_index: number; printed_label: string | null; kind: string; version_id: string }>('SELECT page_index, printed_label, kind, version_id FROM source_page WHERE id = ?', [pageId]);
   if (!p) return null;
-  return pageDisplayLabel({ page_index: p.page_index, printed_label: p.printed_label, kind: p.kind as never }, { withFileIndex: false });
+  return pageLabelFor(ctx.db, p, { withFileIndex: false });
 }
 
 const pct = (c: number, t: number) => (t > 0 ? `${c} من ${t}` : '—');
@@ -163,7 +164,7 @@ export function computeResult(ctx: AppContext, exam: ExamRow, attempt: ExamAttem
         const key = `${links[0]?.lecture_source_id ?? ''}:${pid}`;
         if (seenPages.has(key) || !links[0]) continue;
         seenPages.add(key);
-        const label = pageLabelAr(ctx, pid);
+        const label = resultPageLabelAr(ctx, pid);
         if (!label) continue;
         suggestions.push({
           kind: 'lecture_pages',

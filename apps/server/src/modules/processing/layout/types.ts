@@ -52,8 +52,20 @@ export interface Rule {
 }
 
 export interface FigureCandidate extends Box {
-  /** where it came from (pdf image XObject, docx/pptx picture, whole image page) */
-  source: 'pdf_image' | 'image_page' | 'office_picture';
+  /** where it came from (pdf image XObject, a drawing made of PDF paths, docx/pptx picture, whole image page) */
+  source: 'pdf_image' | 'pdf_vector' | 'image_page' | 'office_picture';
+  /** H2 item 1: a drawing that is not clearly a diagram (no arrows / connectors) — the figure is `uncertain` */
+  uncertain?: boolean;
+}
+
+/** One painted subpath of a PDF page (H2 item 1), top-left page units. */
+export interface Drawing extends Box {
+  curved: boolean;
+  closed: boolean;
+  /** made only of horizontal / vertical segments */
+  axisAligned: boolean;
+  stroked: boolean;
+  filled: boolean;
 }
 
 export interface DiagramLabel {
@@ -110,7 +122,15 @@ export interface LayoutRegion {
   /** caption region linked to this table (same page) */
   tableCaptionKey?: string | null;
   /** figure: caption link + labels; filled by caption linking */
-  figure?: { captionKey: string | null; labels: DiagramLabel[]; labelsOrigin: 'digital' | 'ocr' | null; imageAssetFile?: { fileId: string } | null };
+  figure?: {
+    captionKey: string | null;
+    labels: DiagramLabel[];
+    labelsOrigin: 'digital' | 'ocr' | null;
+    imageAssetFile?: { fileId: string } | null;
+    /** H2 item 1: drawn with PDF paths (not a picture); uncertain when not clearly a diagram */
+    vector?: boolean;
+    uncertain?: boolean;
+  };
   captionFor?: 'figure' | 'table' | null;
   /** caption number ("1" in "Figure 1") for cross-page linking */
   captionNumber?: string | null;

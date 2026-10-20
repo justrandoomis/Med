@@ -29,7 +29,6 @@ import {
   QUESTION_TYPES,
   SCORABLE_ANSWER_STATUSES,
   normalizeForSearch,
-  pageDisplayLabel,
   richTextToPlain,
   stemPreview,
   toFtsQuery,
@@ -64,6 +63,7 @@ import { extractionSummary } from './extract';
 import { courseHasQuestionSources } from './match';
 import { quickAddImage, quickAddText } from './quickadd';
 import { QUESTION_REVIEW_KINDS, reviewItemsForQuestion, reviewItemView, type ReviewItemRow } from './review';
+import { pageLabelAr } from '../sources/pagelabel';
 import {
   attemptsByVersion,
   getQuestionRow,
@@ -71,7 +71,6 @@ import {
   occurrenceView,
   optionRows,
   originLabel,
-  pageLabel,
   questionView,
   scorability,
   type OccurrenceBox,
@@ -552,7 +551,7 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
         raw_text: k.raw_text,
         source_id: k.source_id,
         source_title: k.source_title,
-        page_label_ar: k.page_index !== null ? pageLabel({ id: k.page_id ?? '', page_index: k.page_index, printed_label: k.printed_label, kind: k.page_kind ?? 'page' }) : null,
+        page_label_ar: k.page_index !== null && k.page_id ? pageLabelAr(ctx.db, { page_id: k.page_id, page_index: k.page_index, printed_label: k.printed_label, kind: k.page_kind ?? 'page' }, { withFileIndex: false }) : null,
         option_key: optionKey,
       };
     });
@@ -615,7 +614,7 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
       .map((pg) => ({
         page_id: pg.id,
         page_index: pg.page_index,
-        label_ar: pageDisplayLabel({ page_index: pg.page_index, printed_label: pg.printed_label, kind: pg.kind as never }),
+        label_ar: pageLabelAr(ctx.db, { id: pg.id, page_index: pg.page_index, printed_label: pg.printed_label, kind: pg.kind }),
         width: pg.width,
         height: pg.height,
         kind: pg.kind,

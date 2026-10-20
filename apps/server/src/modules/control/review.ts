@@ -165,7 +165,7 @@ function locationLabels(ctx: AppContext, rows: Array<{ r: ItemRow; d: Details }>
     else out.set(r.id, null);
   }
   const unique = [...new Set(pageIds.values())];
-  const pages = new Map<string, Pick<PageRow, 'page_index' | 'printed_label' | 'kind'>>();
+  const pages = new Map<string, Pick<PageRow, 'id' | 'page_index' | 'printed_label' | 'kind'>>();
   for (let i = 0; i < unique.length; i += 400) {
     const chunk = unique.slice(i, i + 400);
     for (const p of ctx.db.all<{ id: string; page_index: number; printed_label: string | null; kind: PageRow['kind'] }>(
@@ -176,7 +176,7 @@ function locationLabels(ctx: AppContext, rows: Array<{ r: ItemRow; d: Details }>
   }
   for (const [itemId, pid] of pageIds) {
     const p = pages.get(pid);
-    out.set(itemId, p ? pageLabelAr(p) : null);
+    out.set(itemId, p ? pageLabelAr(ctx.db, p) : null);
   }
   return out;
 }
@@ -318,7 +318,7 @@ function original(ctx: AppContext, opts: { pageId: string | null; versionId: str
     is_active_version: (s.frozen_version_id ?? s.current_version_id) === v.id,
     page_id: page?.id ?? null,
     page_index: page?.page_index ?? null,
-    page_label_ar: page ? pageLabelAr(page) : null,
+    page_label_ar: page ? pageLabelAr(ctx.db, page) : null,
     page_kind: page?.kind ?? null,
     bbox: opts.bbox,
     render,

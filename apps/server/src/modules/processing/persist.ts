@@ -153,6 +153,7 @@ export function persistPage(
         image_asset_id: assetIds.get(r.key) ?? null,
         referenced_by_region_ids: [],
       };
+      if (r.figure?.vector) s.origin = 'vector';
       return s;
     }
     if (r.kind === 'diagram' && r.diagram) {

@@ -5,11 +5,12 @@
 //    topic. Suggestions go through `suggestTopicLink`, which never overrides a link the owner decided (accepted,
 //    rejected or made by hand) — a rejected suggestion is never made again;
 //  * the topic detail with every link resolved to something readable (title, page, stem) and a reason.
-import { pageDisplayLabel, stemPreview, TOPIC_ENTITY_TYPES, type RichText, type TopicDetailResponse, type TopicLinkDetail } from '@medlevo/shared';
+import { stemPreview, TOPIC_ENTITY_TYPES, type RichText, type TopicDetailResponse, type TopicLinkDetail } from '@medlevo/shared';
 import type { AppContext } from '../../context';
 import { fromJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
 import { suggestTopicLink } from '../library/tags';
+import { pageLabelAr } from '../sources/pagelabel';
 import { ConceptIndex, nameNorm, resolveConceptId } from './resolve';
 import { inList } from './store';
 
@@ -105,7 +106,7 @@ function resolveLink(ctx: AppContext, l: { entity_type: string; entity_id: strin
         [l.entity_id],
       );
       if (!r) return { label: null, sublabel: null, href: null, reason_ar: reason };
-      const page = r.page_index !== null ? pageDisplayLabel({ page_index: r.page_index, printed_label: r.printed_label, kind: (r.kind ?? 'page') as never }) : null;
+      const page = r.page_index !== null ? pageLabelAr(ctx.db, { version_id: r.version_id, page_index: r.page_index, printed_label: r.printed_label, kind: r.kind ?? 'page' }) : null;
       const q = new URLSearchParams({ v: r.version_id, ...(r.page_id ? { page_id: r.page_id } : {}), region: l.entity_id });
       return { label: (r.text ?? '').replace(/\s+/g, ' ').slice(0, 140) || '(موضع بلا نص)', sublabel: `${r.title}${page ? ` — ${page}` : ''}`, href: `/study/${e(r.source_id)}?${q.toString()}`, reason_ar: reason };
     }

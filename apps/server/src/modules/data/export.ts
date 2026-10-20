@@ -9,7 +9,6 @@ import { createHash } from 'node:crypto';
 import {
   ANSWER_STATUS_LABELS_AR,
   EXPORT_FORMAT_FORMAT,
-  pageDisplayLabel,
   type ClaimView,
   type ContentBlockView,
   type EvidenceView,
@@ -29,6 +28,7 @@ import type { AppContext } from '../../context';
 import { fromJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
 import { describeAnchorAr } from '../annotations/repo';
+import { pageLabelAr } from '../sources/pagelabel';
 import { SECRET_SETTING_KEY, SECRET_VALUE } from './backup';
 import { DOCX_MIME, DocxCitations, buildDocx, bullet, heading, para, richTextBlocks, tableBlock, textSegs, type DocBlock } from './docx';
 import type { Forward } from './offline';
@@ -446,7 +446,7 @@ export async function exportSource(ctx: AppContext, forward: Forward, sourceId: 
     const out: DocBlock[] = [heading(title, 1), para(meta.join(' · '), 'meta'), para('النص المستخرج من الملف الأصلي، صفحة صفحة، مع ما كتبته عليه.', 'label')];
     if (inkCount) out.push(para(`لا تُصدَّر الكتابة بالقلم (${inkCount} عنصر) في ملف Word؛ هي محفوظة في تصدير JSON وفي النسخة الاحتياطية.`, 'label'));
     for (const r of regions) {
-      out.push(heading(pageDisplayLabel(r.page), 2));
+      out.push(heading(pageLabelAr(ctx.db, r.page), 2));
       const note = ocrNote(r.page.text_status);
       if (note) out.push(para(note, 'meta'));
       for (const reg of pageText(r)) {
@@ -467,7 +467,7 @@ export async function exportSource(ctx: AppContext, forward: Forward, sourceId: 
     const out: string[] = [`# ${mdEscape(title)}`, '', `> النص المستخرج من الملف الأصلي، صفحة صفحة، مع ما كتبته عليه. ${meta.map(mdEscape).join(' · ')}`, ''];
     if (inkCount) out.push(`> لا تُصدَّر الكتابة بالقلم (${inkCount} عنصر) في Markdown؛ هي محفوظة في تصدير JSON وفي النسخة الاحتياطية.`, '');
     for (const r of regions) {
-      out.push(`## ${mdEscape(pageDisplayLabel(r.page))}`, '');
+      out.push(`## ${mdEscape(pageLabelAr(ctx.db, r.page))}`, '');
       const note = ocrNote(r.page.text_status);
       if (note) out.push(`*${note}*`, '');
       for (const reg of pageText(r)) {
@@ -486,7 +486,7 @@ export async function exportSource(ctx: AppContext, forward: Forward, sourceId: 
   const body: string[] = [textToHtml(title, 'h2').replace(/^<h2/, '<h1').replace(/h2>$/, 'h1>'), `<p class="meta">${meta.map((m) => inlineHtml(m)).join(' · ')}</p>`, '<p class="label">النص المستخرج من الملف الأصلي، صفحة صفحة، مع ما كتبته عليه.</p>'];
   if (inkCount) body.push(`<p class="label">${escapeHtml(`لا تُطبع الكتابة بالقلم (${inkCount} عنصر) في هذا التصدير؛ هي محفوظة في تصدير JSON وفي النسخة الاحتياطية.`)}</p>`);
   for (const r of regions) {
-    body.push(`<section class="page"><p class="page-label" dir="rtl" lang="ar">${inlineHtml(pageDisplayLabel(r.page))}</p>`);
+    body.push(`<section class="page"><p class="page-label" dir="rtl" lang="ar">${inlineHtml(pageLabelAr(ctx.db, r.page))}</p>`);
     const note = ocrNote(r.page.text_status);
     if (note) body.push(`<p class="meta">${escapeHtml(note)}</p>`);
     for (const reg of pageText(r)) body.push(textToHtml(reg.text!, reg.kind === 'heading' ? 'h3' : 'p', reg.kind === 'caption' ? 'caption' : undefined));

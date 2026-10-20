@@ -3,7 +3,6 @@
 import {
   annotationTargetKey,
   normalizeForSearch,
-  pageDisplayLabel,
   richTextToPlain,
   type AnnotationAnchor,
   type AnnotationDTO,
@@ -15,6 +14,7 @@ import {
 } from '@medlevo/shared';
 import type { Db } from '../../db/db';
 import { fromJson, toJson } from '../../db/db';
+import { pageLabelAr as pageLabelFor } from '../sources/pagelabel';
 
 // ───────── rows ─────────
 export interface AnnotationRow {
@@ -225,8 +225,9 @@ export interface PageInfoRow {
   kind: 'page' | 'slide' | 'image' | 'docx_section' | 'audio_segment';
 }
 
-export function pageLabelAr(p: Pick<PageInfoRow, 'page_index' | 'printed_label' | 'kind'>): string {
-  return pageDisplayLabel(p);
+/** AC-04: through the one server page label (an unnumbered page among numbered ones is named by its file position). */
+export function pageLabelAr(db: Db, p: Pick<PageInfoRow, 'id' | 'version_id' | 'page_index' | 'printed_label' | 'kind'>): string {
+  return pageLabelFor(db, p);
 }
 
 /** Arabic description of an anchor's location (for «تحتاج إعادة ربط»). */
@@ -236,7 +237,7 @@ export function describeAnchorAr(db: Db, anchor: AnnotationAnchor | null): { tex
     const src = db.get<{ title: string }>('SELECT title FROM source WHERE id = ?', [anchor.source_id]);
     const page = db.get<PageInfoRow>('SELECT id, version_id, page_index, printed_label, kind FROM source_page WHERE id = ?', [anchor.page_id]);
     const ver = db.get<{ version_no: number }>('SELECT version_no FROM source_version WHERE id = ?', [anchor.version_id]);
-    const where = page ? pageLabelAr(page) : `الصفحة ${anchor.page_index + 1} في الملف`;
+    const where = page ? pageLabelAr(db, page) : `الصفحة ${anchor.page_index + 1} في الملف`;
     const text = ver ? `${where} — الإصدار ${ver.version_no}` : where;
     return { text, sourceId: anchor.source_id, sourceTitle: src?.title ?? null };
   }

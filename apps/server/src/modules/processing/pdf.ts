@@ -5,8 +5,9 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { normalizeRotation, normToView, viewToNorm, type QuarterTurn } from '@medlevo/shared';
-import type { Box, Rule, TextItem } from './layout/types';
+import type { Box, Drawing, Rule, TextItem } from './layout/types';
 import { contentRotationFromText, emptyDirections, quarter, type DirectionCounts } from './orientation';
+import { cleanRun } from './text';
 
 const require = createRequire(import.meta.url);
 const PDFJS_DIR = dirname(require.resolve('pdfjs-dist/package.json'));
@@ -159,6 +160,12 @@ export interface PdfPageContent {
   images: Box[];
   /** painted vector paths that are not ruling lines (drawings, shapes) */
   vectorPaths: number;
+  /** H2 item 1: every painted subpath (top-left page units) — the material of drawn figures */
+  drawings: Drawing[];
+  /** H2 item 9: words repaired from lam-alef ligature glyphs on this page */
+  ligatureRepairs: number;
+  /** H2 item 9: Arabic words whose spelling the page's glyphs settled (see ligatureWordMap) */
+  verifiedWords: string[];
   /** non-whitespace characters of digital text */
   chars: number;
   /** characters per text direction (baseline angle in the unrotated top-left page space) */
@@ -186,6 +193,8 @@ export async function extractPage(doc: PDFDocumentProxy, pageNumber: number): Pr
     const ol = await page.getOperatorList();
     const images: Box[] = [];
     const rules: Rule[] = [];
+    const drawings: Drawing[] = [];
+    const glyphRuns: GlyphRun[] = [];
     let vectorPaths = 0;
     let ctm: Matrix = IDENTITY;
     const stack: Matrix[] = [];
@@ -199,6 +208,7 @@ export async function extractPage(doc: PDFDocumentProxy, pageNumber: number): Pr
       OPS.stroke, OPS.closeStroke, OPS.fill, OPS.eoFill, OPS.fillStroke, OPS.eoFillStroke, OPS.closeFillStroke, OPS.closeEOFillStroke,
     ]);
     const strokeOps = new Set<number>([OPS.stroke, OPS.closeStroke, OPS.fillStroke, OPS.eoFillStroke, OPS.closeFillStroke, OPS.closeEOFillStroke]);
+    const fillOps = new Set<number>([OPS.fill, OPS.eoFill, OPS.fillStroke, OPS.eoFillStroke, OPS.closeFillStroke, OPS.closeEOFillStroke]);
     for (let i = 0; i < ol.fnArray.length; i++) {
       const fn = ol.fnArray[i]!;
       const args = ol.argsArray[i] as unknown[] | null;
@@ -226,6 +236,15 @@ export async function extractPage(doc: PDFDocumentProxy, pageNumber: number): Pr
         case OPS.paintImageMaskXObject:
           pushBoxFromUnitSquare();
           break;
+        case OPS.showText:
+        case OPS.showSpacedText:
+        case OPS.nextLineShowText:
+        case OPS.nextLineSetSpacingShowText: {
+          // the glyphs as drawn (visual order), each with the text its font maps it to (H2 item 9)
+          const glyphs = [...(args ?? [])].reverse().find((a) => Array.isArray(a)) as GlyphRun | undefined;
+          if (glyphs && glyphRuns.length < 20_000) glyphRuns.push(glyphs);
+          break;
+        }
         case OPS.constructPath: {
           const op = args?.[0] as number;
           if (!paintOps.has(op)) break;
@@ -235,6 +254,7 @@ export async function extractPage(doc: PDFDocumentProxy, pageNumber: number): Pr
           const found = pathRules(data, ctm, toTop, strokeOps.has(op));
           if (found.length) rules.push(...found);
           else vectorPaths++;
+          if (drawings.length < 5000) drawings.push(...pathShapes(data, ctm, toTop, { stroked: strokeOps.has(op), filled: fillOps.has(op) }));
           break;
         }
         default:
@@ -264,20 +284,148 @@ export async function extractPage(doc: PDFDocumentProxy, pageNumber: number): Pr
     const items: TextItem[] = [];
     let chars = 0;
     const directions = emptyDirections();
+    // H2 item 9: pdf.js reverses an RTL run character by character, which turns a lam-alef ligature glyph («لا») into
+    // «ال» («العلامة» → «العالمة»); words drawn with such a glyph are rebuilt from the glyphs
+    const { map: ligatureWords, verified } = ligatureWordMap(glyphRuns);
+    let ligatureRepairs = 0;
     for (const raw of tc.items) {
       if (!('str' in raw)) continue;
-      const str = raw.str;
+      let str = raw.str;
       if (!str || !str.trim()) continue;
+      if (ligatureWords.size) {
+        str = str.replace(/[\p{L}\p{M}]+/gu, (w) => {
+          const fixed = ligatureWords.get(cleanRun(w));
+          if (!fixed) return w;
+          ligatureRepairs++;
+          return fixed;
+        });
+      }
       const { dir, ...box } = textItemBox(raw, styles, toTop);
       items.push({ text: str, ...box, bold: fontBold(raw.fontName) });
       const n = str.replace(/\s+/g, '').length;
       chars += n;
       if (dir !== null) directions[dir] += n;
     }
-    return { info, items, rules, images, vectorPaths, chars, directions, textRotation: contentRotationFromText(directions, info.rotation) };
+    return {
+      info,
+      items,
+      rules,
+      images,
+      vectorPaths,
+      drawings,
+      ligatureRepairs,
+      verifiedWords: [...verified],
+      chars,
+      directions,
+      textRotation: contentRotationFromText(directions, info.rotation),
+    };
   } finally {
     page.cleanup();
   }
+}
+
+/** One showText run as pdf.js keeps it: glyphs in drawing (visual) order with their mapped text, and spacing numbers. */
+export type GlyphRun = Array<number | { unicode?: string; isSpace?: boolean } | null>;
+
+const ARABIC_RE = /\p{Script=Arabic}/u;
+const LATIN_RE = /[A-Za-z]/;
+
+/**
+ * Words drawn with multi-letter glyphs in RTL runs (H2 item 9). pdf.js builds the text of an RTL run by reversing it
+ * character by character, so a glyph mapped to TWO letters — the lam-alef ligature «لا» / «لأ» … — comes out reversed
+ * («العلامة» → «العالمة»). Rebuilding the word glyph by glyph gives the real spelling. Returns:
+ *  * `map`: reversed form → real word, for words that contain such a glyph — except when the reversed form is ALSO a
+ *    real word drawn elsewhere in the same document page (ambiguous, left alone);
+ *  * `verified`: every Arabic word whose spelling the glyphs settled (drawn letter by letter or rebuilt).
+ */
+export function ligatureWordMap(runs: GlyphRun[]): { map: Map<string, string>; verified: Set<string> } {
+  const map = new Map<string, string>();
+  const verified = new Set<string>();
+  for (const run of runs) {
+    const chunks: string[][] = [];
+    let cur: string[] = [];
+    const cut = () => {
+      if (cur.length) chunks.push(cur);
+      cur = [];
+    };
+    for (const g of run) {
+      if (g === null) continue;
+      if (typeof g === 'number') {
+        if (g <= -100) cut(); // a word gap (thousandths of an em); kerning is much smaller
+        continue;
+      }
+      const u = cleanRun(g.unicode ?? '');
+      if (!u || g.isSpace || /^\s+$/.test(u)) {
+        cut();
+        continue;
+      }
+      cur.push(u);
+    }
+    cut();
+    for (const ch of chunks) {
+      if (!ch.some((u) => ARABIC_RE.test(u)) || ch.some((u) => LATIN_RE.test(u))) continue;
+      const real = [...ch].reverse().join('');
+      const reversed = [...ch.join('')].reverse().join('');
+      for (const m of real.matchAll(/[\p{L}\p{M}]+/gu)) {
+        const word = m[0];
+        const shown = reversed.slice(m.index ?? 0, (m.index ?? 0) + word.length);
+        verified.add(word);
+        if (shown !== word) map.set(shown, word);
+      }
+    }
+  }
+  for (const shown of [...map.keys()]) if (verified.has(shown)) map.delete(shown); // a real word too: ambiguous
+  return { map, verified };
+}
+
+/**
+ * The subpaths of one painted path as drawing elements (H2 item 1): box, whether it is curved, closed, made only of
+ * axis-aligned segments, filled / stroked. Curves count by their control points (a safe over-estimate of the box).
+ */
+function pathShapes(data: ArrayLike<number>, ctm: Matrix, toTop: (x: number, y: number) => [number, number], paint: { stroked: boolean; filled: boolean }): Drawing[] {
+  const out: Drawing[] = [];
+  let pts: Array<[number, number]> = [];
+  let curved = false;
+  let closed = false;
+  const flush = () => {
+    if (pts.length >= 2) {
+      const xs = pts.map((p) => p[0]);
+      const ys = pts.map((p) => p[1]);
+      const axisAligned = !curved && pts.every((p, k) => k === 0 || Math.abs(p[0] - pts[k - 1]![0]) < 0.5 || Math.abs(p[1] - pts[k - 1]![1]) < 0.5);
+      out.push({ x0: Math.min(...xs), top: Math.min(...ys), x1: Math.max(...xs), bottom: Math.max(...ys), curved, closed: closed || paint.filled, axisAligned, stroked: paint.stroked, filled: paint.filled });
+    }
+    pts = [];
+    curved = false;
+    closed = false;
+  };
+  const at = (x: number, y: number) => toTop(...apply(ctm, x, y));
+  for (let i = 0; i < data.length; ) {
+    const op = data[i]!;
+    if (op === 0) {
+      flush();
+      pts.push(at(data[i + 1]!, data[i + 2]!));
+      i += 3;
+    } else if (op === 1) {
+      pts.push(at(data[i + 1]!, data[i + 2]!));
+      i += 3;
+    } else if (op === 2) {
+      curved = true;
+      pts.push(at(data[i + 1]!, data[i + 2]!), at(data[i + 3]!, data[i + 4]!), at(data[i + 5]!, data[i + 6]!));
+      i += 7;
+    } else if (op === 3) {
+      curved = true;
+      pts.push(at(data[i + 1]!, data[i + 2]!), at(data[i + 3]!, data[i + 4]!));
+      i += 5;
+    } else if (op === 4) {
+      closed = true;
+      if (pts.length) pts.push(pts[0]!);
+      i += 1;
+    } else {
+      return out; // unknown encoding — do not guess
+    }
+  }
+  flush();
+  return out;
 }
 
 /** Ruling-line candidates from one painted path (axis-aligned strokes, thin filled rectangles). */

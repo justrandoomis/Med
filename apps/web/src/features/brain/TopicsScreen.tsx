@@ -8,6 +8,7 @@ import { Check, Filter, Plus, RotateCcw, Sparkles, Tag, Trash2, X } from 'lucide
 import {
   TOPIC_ENTITY_LABELS_AR,
   pageDisplayLabel,
+  withNumberedVersion,
   type LibraryTreeResponse,
   type PageRegionsResponse,
   type RegionKind,
@@ -403,7 +404,8 @@ function LinkRegionDialog({ topicId, onClose }: { topicId: string; onClose: () =
   const [sid, setSid] = useState('');
   const source = sources.find((s) => s.id === sid) ?? sources[0];
   const pages = useQuery<SourcePagesResponse>(source ? `/sources/${encodeURIComponent(source.id)}/versions/${encodeURIComponent(source.active_version_id!)}/pages` : null);
-  const pageList = (pages.data?.pages ?? []).filter((p) => p.processing_status === 'ready' || p.processing_status === 'needs_review');
+  // AC-04: numbered from the WHOLE list before filtering (a cached answer may lack the server's flag)
+  const pageList = withNumberedVersion(pages.data?.pages ?? []).filter((p) => p.processing_status === 'ready' || p.processing_status === 'needs_review');
   const [pid, setPid] = useState('');
   const page = pageList.find((p) => p.id === pid) ?? pageList[0];
   const regions = useQuery<PageRegionsResponse>(page ? `/sources/pages/${encodeURIComponent(page.id)}/regions` : null);

@@ -1,7 +1,7 @@
 // Progressive hints (§39, practice only): hint 1 points to the lecture section WITHOUT revealing the answer,
 // hint 2 emphasises the clue words / negation in the stem; then the solution. Every hint served is recorded
 // (exam_item_event), so the attempt's hints_used can never be lower than what was actually seen (AC-27).
-import { normalizeForSearch, pageDisplayLabel, richTextToPlain, segmentRuns, detectDir, type HintView, type Paragraph, type RichText, type Run } from '@medlevo/shared';
+import { normalizeForSearch, richTextToPlain, segmentRuns, detectDir, type HintView, type Paragraph, type RichText, type Run } from '@medlevo/shared';
 import type { AppContext } from '../../context';
 import { fromJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
@@ -9,6 +9,7 @@ import { newId } from '../../lib/ids';
 import { getQuestion } from '../questions/service';
 import { findClues } from './mistakes';
 import { examItems, examPolicy, type ExamAttemptRow, type ExamRow } from './store';
+import { pageLabelAr } from '../sources/pagelabel';
 
 export const ITEM_TYPE_LABELS_AR: Record<string, string> = {
   investigation: 'الفحوصات المناسبة',
@@ -115,7 +116,7 @@ export function serveHint(ctx: AppContext, exam: ExamRow, attempt: ExamAttemptRo
             `SELECT id, page_index, printed_label, kind FROM source_page WHERE id IN (${ids.map(() => '?').join(',')}) ORDER BY page_index LIMIT 3`,
             ids,
           )
-          .map((p) => ({ page_id: p.id, page_index: p.page_index, label_ar: pageDisplayLabel({ page_index: p.page_index, printed_label: p.printed_label, kind: p.kind as never }, { withFileIndex: false }) }));
+          .map((p) => ({ page_id: p.id, page_index: p.page_index, label_ar: pageLabelAr(ctx.db, p, { withFileIndex: false }) }));
       }
     }
     for (const p of lp) pages.push({ source_id: l.lecture_source_id, lecture_title: l.lecture_title, page_id: p.page_id, label_ar: p.label_ar });

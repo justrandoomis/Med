@@ -14,6 +14,8 @@ import {
   type GenerationDifficulty,
   type GenerationRunView,
   type SourcePageView,
+  pageDisplayLabel,
+  withNumberedVersion,
 } from '@medlevo/shared';
 import { Button, Checkbox, Select, StatusPill, Switch, TextField, buttonClass } from '../../design';
 import { errorMessage } from '../../lib/api';
@@ -28,9 +30,9 @@ import './exams.css';
 const QUESTION_SOURCE_TYPES = new Set(['question_source', 'previous_exam']);
 const TERMINAL = new Set(['completed', 'partial', 'needs_review', 'abstained', 'failed']);
 
+/** AC-04: the shared page label (an unnumbered page among numbered ones is named by its file position, never «ص N»). */
 function pageLabel(p: SourcePageView): string {
-  const file = p.page_index + 1;
-  return p.printed_label && p.printed_label !== String(file) ? `ص ${p.printed_label} (الصفحة ${file} في الملف)` : `ص ${file}`;
+  return pageDisplayLabel(p);
 }
 
 export function GenerateScreen() {
@@ -63,7 +65,7 @@ export function GenerateScreen() {
     let cancel = false;
     examsApi
       .pages(lecture.id, lecture.active_version_id)
-      .then((r) => !cancel && setPages(r.pages))
+      .then((r) => !cancel && setPages(withNumberedVersion(r.pages)))
       .catch(() => !cancel && setPages([]));
     examsApi
       .runs(lecture.id)
