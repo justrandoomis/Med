@@ -16,9 +16,15 @@
    web canvas can reach and plan a native, low-latency ink surface (with stroke prediction) inside a native shell that reuses the
    existing web app and the same stroke data model and sync — not a rewrite of the whole product.
 3. Until the store apps exist, the owner uses the hosted web app (PWA installed from the browser).
-4. **Primary writing device: iPad + Apple Pencil.** The first native ink surface targets iPadOS (Swift; PencilKit or a custom
-   Metal renderer, with Apple Pencil prediction, pressure/tilt/hover, double-tap/squeeze where the hardware has them), delivered
-   through TestFlight then the App Store; Android follows on the same data model.
+4. **Writing devices (owner, 2026-10-20): iPad + Apple Pencil, Samsung tablets with S Pen, and BOOX e-ink tablets.**
+   - iPad first: native ink surface for iPadOS (Swift; PencilKit or a custom Metal renderer, with Apple Pencil prediction,
+     pressure/tilt/hover, double-tap/squeeze where the hardware has them), via TestFlight then the App Store.
+   - Then ONE Android app covering both Samsung and BOOX, on the same stroke data model and sync: low-latency front-buffered
+     rendering with motion prediction (Android graphics/ink libraries) for Samsung S Pen (pressure, tilt, side button), and on BOOX
+     the vendor's public pen SDK for fast e-ink stroke drawing when present, falling back to the generic path.
+   - **E-ink mode** (BOOX, and any user who wants it): no animations or transitions, high contrast, black/grey ink palette,
+     paging instead of smooth scrolling, minimal screen refresh; it applies to the web app now and to the native apps later.
+   - Capabilities are detected per device and shown honestly (what the current device reports), never assumed.
 5. **Hosting choice delegated to the engineer ("the best place for the data, e.g. Cloudflare or another").** Decision (2026-10-20):
    the current server needs a long-running process with a persistent disk (node:sqlite, poppler/LibreOffice, background jobs),
    which Cloudflare Workers/Containers do not provide as-is, so the server runs on a phone-manageable host with a persistent disk
