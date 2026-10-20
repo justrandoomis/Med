@@ -8,7 +8,7 @@
 //  * a request cannot claim to come from a simulation.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { QuestionDerivationView, QuestionDetailResponse, SimulationRunView, StudyDiagramView } from '@medlevo/shared';
-import type { ProviderRequest } from '../../src/modules/ai/types';
+import { ProviderError, type ProviderRequest } from '../../src/modules/ai/types';
 import { labelIssues } from '../../src/modules/studybook/diagrams';
 import { aliasWith, allSupported, api, createExamApp, evidenceIn, pageId, questionAt, ScriptedAi, type ExamApp } from '../exams/helpers';
 
@@ -52,6 +52,38 @@ describe('F3 review — derived versions keep the ORIGINAL key and never define 
     // a generated text never matches a source question at extraction (fingerprints of ANY version are compared there)
     expect(t.ctx.db.get<{ f: string | null }>('SELECT fingerprint AS f FROM question_version WHERE id = ?', [d0.derived!.version_id])!.f).toBeNull();
     expect(t.ctx.db.get<{ f: string | null }>('SELECT fingerprint AS f FROM question_version WHERE id = ?', [orig.id])!.f).not.toBeNull();
+  });
+});
+
+describe('H1 hardening — «سجل النسخ» shows the ORIGINAL\'s current key on a derived version row', () => {
+  it('after the original\'s key changes in place, GET /api/questions/:id marks the same answer on the derived row', async () => {
+    const qid = questionAt(t, t.qs.sourceId, 'A', '3');
+    ai.on('generate_questions', (req: ProviderRequest) => ({
+      abstain: null,
+      stem: 'امرأة عمرها 30 عامًا في سن الإنجاب تشكو ألمًا في الحفرة الحرقفية اليمنى. أي فحص يُجرى أولًا لاستبعاد تشخيص تفريقي مهم؟',
+      options: optionLines(req.prompt).map((o) => ({ option_key: o.key, text: `ترجمة: ${o.text}` })),
+    })).on('validate_question', () => EQUIVALENT);
+    const res = await api(t).post(`/api/questions/${qid}/derived`, { kind: 'translation', lang: 'ar' });
+    expect(res.statusCode).toBe(200);
+    await t.ctx.jobs.drain();
+    const dv = ((await api(t).get(`/api/questions/derivations/${res.json().derivation.id}`)).json() as { derivation: QuestionDerivationView }).derivation;
+    expect(dv.status, JSON.stringify(dv.issues)).toBe('published');
+    const detail = async () => (await api(t).get(`/api/questions/${qid}`)).json() as QuestionDetailResponse;
+    const d0 = await detail();
+    const orig = d0.question.current;
+    const derivedRow = d0.versions.find((v) => v.kind === 'translation')!;
+    expect(derivedRow).toBeTruthy();
+    const keysOf = (v: (typeof d0.versions)[number]) => (v.correct_option_ids ?? []).map((id) => v.options.find((o) => o.id === id)!.option_key);
+    expect(keysOf(derivedRow)).toEqual(keysOf(d0.versions.find((v) => v.id === orig.id)!));
+    // the original's key changes in place (lifecycle refresh of an unattempted version)
+    const other = orig.options.find((o) => !(orig.correct_option_ids ?? []).includes(o.id))!;
+    t.ctx.db.run(`UPDATE question_version SET answer_status = 'owner_key', correct_option_ids_json = ? WHERE id = ?`, [JSON.stringify([other.id]), orig.id]);
+    const d1 = await detail();
+    const row = d1.versions.find((v) => v.id === derivedRow.id)!;
+    expect(keysOf(row)).toEqual([other.option_key]);
+    expect(row.answer_status).toBe('owner_key');
+    // the derived row's own stored copy is never the source of truth (the original is not changed either)
+    expect(d1.question.current.id).toBe(orig.id);
   });
 });
 
@@ -158,4 +190,103 @@ describe('F3 review — generated simulation parts and origins', () => {
     const res = await api(t).post('/api/exams/generate', { lecture_source_id: t.lecture.sourceId, topic: 'appendicitis', count: 1, difficulty: 'hard', origin: 'simulation' });
     expect(res.statusCode).toBe(400);
   });
+});
+
+describe('H1 hardening — a retryable provider error during a simulation part regenerates exactly the missing items', () => {
+  const generator = (req: ProviderRequest) => {
+    const n = Number(/Write (\d+) single-best-answer/.exec(req.prompt)?.[1] ?? 1);
+    const ev = [...evidenceIn(req.prompt).entries()].filter(([, q]) => q.trim().length >= 30).slice(0, 4);
+    const s = (k: number) => ({ text: ev[k]![1].trim(), claim: { support_type: 'directly_stated', evidence: [ev[k]![0]] } });
+    const seed = 100 + ai.callsFor('generate_questions').length * 10;
+    return {
+      abstain: null,
+      questions: Array.from({ length: n }, (_, i) => ({
+        item_type: 'recall',
+        learning_objective: `Retry item ${seed + i}`,
+        concepts: ['acute appendicitis'],
+        difficulty_est: 'hard',
+        stem: `A ${18 + seed + i}-year-old woman of reproductive age presents with periumbilical pain that has moved to the right iliac fossa. Which investigation should be performed first?`,
+        options: [
+          { key: 'A', text: 'Serum amylase level' },
+          { key: 'B', text: 'Pregnancy test (β-hCG)' },
+          { key: 'C', text: 'Barium enema study' },
+          { key: 'D', text: 'Upper GI endoscopy' },
+        ],
+        best_answer: 'B',
+        explanation: [s(0)],
+        distractors: [
+          { option: 'A', explanation: [s(1)] },
+          { option: 'C', explanation: [s(2)] },
+          { option: 'D', explanation: [s(3)] },
+        ],
+      })),
+    };
+  };
+  const runSimulation = async (count: number) => {
+    const res = await api(t).post('/api/exams/simulations', { count, difficulty: 'hard' });
+    expect(res.statusCode).toBe(200);
+    await t.ctx.jobs.drain();
+    return ((await api(t).get(`/api/exams/simulations/${res.json().simulation.id}`)).json() as { simulation: SimulationRunView }).simulation;
+  };
+  const runsOf = (sim: SimulationRunView) =>
+    (JSON.parse(t.ctx.db.get<{ parts_json: string }>('SELECT parts_json FROM simulation_run WHERE id = ?', [sim.id])!.parts_json) as Array<{ run_id: string }>).map((p) => ({
+      id: p.run_id,
+      status: t.ctx.db.get<{ status: string }>('SELECT status FROM question_generation_run WHERE id = ?', [p.run_id])!.status,
+    }));
+  const noDuplicates = (sim: SimulationRunView) => {
+    const runIds = runsOf(sim).map((r) => r.id);
+    for (const runId of runIds) {
+      const rows = t.ctx.db.all<{ ord: number; n: number }>('SELECT ord, COUNT(*) AS n FROM generated_question_candidate WHERE run_id = ? GROUP BY ord', [runId]);
+      expect(rows.every((r) => r.n === 1)).toBe(true);
+    }
+    const qids = runIds.flatMap((r) => t.ctx.db.all<{ question_id: string }>(`SELECT question_id FROM generated_question_candidate WHERE run_id = ? AND status = 'published'`, [r]).map((x) => x.question_id));
+    expect(new Set(qids).size).toBe(qids.length);
+    return qids.length;
+  };
+
+  it('error while validating a candidate: the retry resumes that run from its stored generation (no new generation, no duplicate)', async () => {
+    let thrown = 0;
+    const startVal = ai.callsFor('validate_question').length;
+    ai.on('generate_questions', generator)
+      .on('validate_question', () => {
+        // the 2nd validation of this simulation fails once with a retryable provider error
+        if (ai.callsFor('validate_question').length - startVal === 2 && thrown === 0) {
+          thrown++;
+          throw new ProviderError('overloaded', { retryable: true });
+        }
+        return VALID;
+      })
+      .on('verify_support', allSupported);
+    const before = ai.callsFor('generate_questions').length;
+    const sim = await runSimulation(3);
+    expect(thrown).toBe(1);
+    expect(sim.status, sim.summary_ar).toBe('completed');
+    const runs = runsOf(sim);
+    expect(runs.every((r) => r.status === 'completed')).toBe(true);
+    // every part was generated exactly once: the failed validation was retried on the stored generation
+    expect(ai.callsFor('generate_questions').length - before).toBe(runs.length);
+    expect(noDuplicates(sim)).toBe(3);
+    expect(sim.exam!.items).toBe(3);
+  }, 120_000);
+
+  it('error while generating a part: only that part is generated again; parts already done are not', async () => {
+    let thrown = 0;
+    const startGen = ai.callsFor('generate_questions').length;
+    ai.on('generate_questions', (req) => {
+      if (ai.callsFor('generate_questions').length - startGen === 2 && thrown === 0) {
+        thrown++;
+        throw new ProviderError('overloaded', { retryable: true });
+      }
+      return generator(req);
+    })
+      .on('validate_question', () => VALID)
+      .on('verify_support', allSupported);
+    const sim = await runSimulation(13);
+    expect(thrown).toBe(1);
+    expect(sim.status, sim.summary_ar).toBe('completed');
+    const runs = runsOf(sim);
+    expect(runs.every((r) => r.status === 'completed')).toBe(true);
+    expect(ai.callsFor('generate_questions').length - startGen).toBe(runs.length + 1);
+    expect(noDuplicates(sim)).toBe(13);
+  }, 180_000);
 });

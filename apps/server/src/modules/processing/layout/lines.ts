@@ -210,8 +210,27 @@ export function buildSegments(items: TextItem[], vRules: Rule[] = []): Segment[]
  * Runs are joined with a space only when there is a visible gap between them.
  */
 export function logicalLineText(itemsVisual: TextItem[], dir: 'rtl' | 'ltr'): string {
+  const ordered = logicalLineItems(itemsVisual, dir);
+  let out = '';
+  let prev: TextItem | null = null;
+  for (const it of ordered) {
+    const t = cleanRun(it.text);
+    if (prev) {
+      const gap = Math.max(it.x0 - prev.x1, prev.x0 - it.x1);
+      const size = Math.min(prev.size, it.size) || 10;
+      const needsSpace = gap > 0.18 * size && !/\s$/.test(out) && !/^\s/.test(t);
+      if (needsSpace) out += ' ';
+    }
+    out += t;
+    prev = it;
+  }
+  return out.replace(/\s+/g, ' ').trim();
+}
+
+/** The runs of one visual line in LOGICAL (reading) order — the order `logicalLineText` writes them in. */
+export function logicalLineItems(itemsVisual: TextItem[], dir: 'rtl' | 'ltr'): TextItem[] {
   const items = itemsVisual.filter((i) => i.text.trim().length > 0);
-  if (items.length === 0) return '';
+  if (items.length === 0) return [];
   const cls = items.map((i) => itemClass(i.text));
   const islandClass = dir === 'rtl' ? 'L' : 'R';
   const opposite = dir === 'rtl' ? 'R' : 'L';
@@ -236,21 +255,7 @@ export function logicalLineText(itemsVisual: TextItem[], dir: 'rtl' | 'ltr'): st
     }
   }
   units.sort((a, b) => (dir === 'rtl' ? b.key - a.key : a.key - b.key));
-  const ordered = units.flatMap((u) => u.items);
-  let out = '';
-  let prev: TextItem | null = null;
-  for (const it of ordered) {
-    const t = cleanRun(it.text);
-    if (prev) {
-      const gap = Math.max(it.x0 - prev.x1, prev.x0 - it.x1);
-      const size = Math.min(prev.size, it.size) || 10;
-      const needsSpace = gap > 0.18 * size && !/\s$/.test(out) && !/^\s/.test(t);
-      if (needsSpace) out += ' ';
-    }
-    out += t;
-    prev = it;
-  }
-  return out.replace(/\s+/g, ' ').trim();
+  return units.flatMap((u) => u.items);
 }
 
 /**

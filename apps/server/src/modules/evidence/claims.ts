@@ -141,8 +141,11 @@ const MSG = {
   contradictedNoVerifier: 'وسم المولّد هذه الجملة بأن المصدر يعارضها، ولم يُجرَ تحقق مستقل من ذلك؛ تحتاج مراجعة.',
   verdictAmbiguous: 'أعاد المحقق المستقل حكمين متعارضين لهذه الجملة؛ تحتاج مراجعة.',
   basedOnNone: 'لم يحدد المحقق المستقل أي مقتطف من المقتطفات المستشهد بها يستند إليه حكمه؛ تحتاج مراجعة.',
+  basedOnMissing: 'لم يذكر المحقق المستقل أيّ المقتطفات المستشهد بها يستند إليه حكمه (استُشهد بأكثر من مقتطف)، فلا يُعرض أيٌّ منها دعمًا؛ تحتاج مراجعة.',
   basedOnCritical: 'المقتطف الذي يستند إليه المحقق لا يحمل كل القيم أو الحدود أو النفي في الجملة؛ تحتاج مراجعة.',
   uncertainOnly: 'الجملة تستند فقط إلى قراءة آلية غير مؤكدة (تسميات رسم قُرئت دون فهم)؛ تحتاج مراجعة مقابل الصفحة الأصلية قبل اعتبارها مرتبطة بدليل.',
+  lowConfidenceOcrOnly: 'الجملة تستند فقط إلى نص قُرئ آليًا (OCR) بثقة منخفضة ولم يُراجَع بعد؛ قارنه بالصفحة الأصلية (أو صحّح المنطقة) قبل اعتبار الجملة مرتبطة بدليل.',
+  unreviewedExtractionOnly: 'الجملة تستند فقط إلى نص استخراجه مشكوك فيه ويحتاج مراجعة؛ قارنه بالصفحة الأصلية قبل اعتبار الجملة مرتبطة بدليل.',
 };
 
 function hasOwn(o: object, k: string): boolean {
@@ -159,6 +162,9 @@ interface EvidenceRowLite {
   region_unusable: number;
   /** G3 / AC-08: the region's text is an uncertain reading (diagram labels read by OCR without understanding) */
   region_uncertain: number;
+  /** H1: the region's extraction needs the owner's review (low-confidence OCR, suspicious text layer) */
+  region_needs_review: number;
+  region_origin: string | null;
 }
 
 function langOf(text: string): string {
@@ -193,7 +199,8 @@ export async function validateClaims(ctx: AppContext, input: ValidateClaimsInput
     for (const r of ctx.db.all<EvidenceRowLite>(
       `SELECT e.id, e.version_id, e.source_id, e.quote, CASE WHEN s.id IS NULL OR s.deleted_at IS NOT NULL THEN 1 ELSE 0 END AS source_deleted,
               CASE WHEN r.status = 'rejected' OR r.text_origin = 'vision' THEN 1 ELSE 0 END AS region_unusable,
-              CASE WHEN r.status = 'uncertain' THEN 1 ELSE 0 END AS region_uncertain
+              CASE WHEN r.status = 'uncertain' THEN 1 ELSE 0 END AS region_uncertain,
+              CASE WHEN r.status = 'needs_review' THEN 1 ELSE 0 END AS region_needs_review, r.text_origin AS region_origin
          FROM evidence e LEFT JOIN source s ON s.id = e.source_id LEFT JOIN source_region r ON r.id = e.region_id
         WHERE e.id IN (${part.map(() => '?').join(',')})`,
       part,
@@ -292,7 +299,12 @@ export async function validateClaims(ctx: AppContext, input: ValidateClaimsInput
         base.checks.push(
           cont.passed
             ? { check: 'quote_containment', passed: true, details: { method: cont.method, coverage: cont.coverage } }
-            : { check: 'quote_containment', passed: false, reason_ar: cont.reason_ar ?? '', details: { method: cont.method, coverage: cont.coverage } },
+            : {
+                check: 'quote_containment',
+                passed: false,
+                reason_ar: cont.reason_ar ?? '',
+                details: { method: cont.method, coverage: cont.coverage, missing_key_terms: cont.missing_key_terms ?? [], swapped: cont.swapped ?? null },
+              },
         );
       }
     }
@@ -338,14 +350,22 @@ export async function validateClaims(ctx: AppContext, input: ValidateClaimsInput
     }
     const details: Record<string, unknown> = { verdict: v.verdict, model: entail.model, declared_contradiction: p.declaredContradiction };
     // G2 / AC-07: an excerpt the verdict does not rest on (same topic, similar words) is never cited as support for
-    // this claim. Verifiers that do not name excerpts (older contract) keep every cited excerpt.
+    // this claim. H1: a verdict that does not name its excerpts (`based_on` omitted) is not trusted for several
+    // cited excerpts — which one supports the claim is unknown → needs_review, every excerpt cited as context only.
+    // With ONE cited excerpt the verdict can only rest on that excerpt (the verifier saw nothing else).
+    if (v.verdict !== 'not_supported' && !Array.isArray(v.based_on) && p.quotes.length > 1) {
+      r.status = 'needs_review';
+      r.reason_ar = MSG.basedOnMissing;
+      r.checks.push({ check: 'entailment', passed: false, reason_ar: r.reason_ar, details: { ...details, based_on: null, excerpts_unconfirmed: true } });
+      continue;
+    }
     if (v.verdict !== 'not_supported' && Array.isArray(v.based_on) && p.quotes.length > 0) {
       const named = new Set(v.based_on.map((x) => String(x).trim()));
       const kept = p.quotes.filter((q) => named.has(q.alias));
       if (kept.length === 0) {
         r.status = 'needs_review';
         r.reason_ar = MSG.basedOnNone;
-        r.checks.push({ check: 'entailment', passed: false, reason_ar: r.reason_ar, details: { ...details, based_on: [...named] } });
+        r.checks.push({ check: 'entailment', passed: false, reason_ar: r.reason_ar, details: { ...details, based_on: [...named], excerpts_unconfirmed: true } });
         continue;
       }
       if (kept.length < p.quotes.length) {
@@ -385,14 +405,31 @@ export async function validateClaims(ctx: AppContext, input: ValidateClaimsInput
   }
 
   // G3 / AC-08: a sentence whose ONLY support is an uncertain reading (a diagram's labels read by OCR without
-  // understanding — thresholds and symbols are often misread) is shown as needing review, never as «linked»
+  // understanding — thresholds and symbols are often misread) is shown as needing review, never as «linked».
+  // H1: the same for an extraction that still needs the owner's review — low-confidence OCR (region
+  // `needs_review`, `text_origin = 'ocr'`) or a suspicious text layer. The reason is recorded as a failed
+  // check (shown with the claim and in the Evidence Peek) even when the claim already needs review for
+  // another reason (no verifier); a confirmed conflict keeps its status (its citation says «contradicts»).
   for (const p of pending) {
     const r = p.result;
-    if (r.status !== 'linked' || r.evidence_ids.length === 0) continue;
-    if (!r.evidence_ids.every((id) => evRows.get(id)?.region_uncertain === 1)) continue;
-    r.status = 'needs_review';
-    r.reason_ar = MSG.uncertainOnly;
-    r.checks.push({ check: 'evidence_exists', passed: false, reason_ar: MSG.uncertainOnly, details: { uncertain_evidence: [...r.evidence_ids] } });
+    if ((r.status !== 'linked' && r.status !== 'needs_review') || r.evidence_ids.length === 0) continue;
+    const rows = r.evidence_ids.map((id) => evRows.get(id));
+    if (!rows.every((x) => x && (x.region_uncertain === 1 || x.region_needs_review === 1))) continue;
+    const msg = rows.every((x) => x!.region_uncertain === 1)
+      ? MSG.uncertainOnly
+      : rows.some((x) => x!.region_needs_review === 1 && x!.region_origin === 'ocr')
+        ? MSG.lowConfidenceOcrOnly
+        : MSG.unreviewedExtractionOnly;
+    if (r.status === 'linked') {
+      r.status = 'needs_review';
+      r.reason_ar = msg;
+    } else if (!(r.reason_ar ?? '').includes(msg)) r.reason_ar = [r.reason_ar, msg].filter(Boolean).join(' ');
+    r.checks.push({
+      check: 'evidence_exists',
+      passed: false,
+      reason_ar: msg,
+      details: { uncertain_evidence: [...r.evidence_ids], unreviewed_extraction: rows.map((x) => ({ status: x!.region_uncertain ? 'uncertain' : 'needs_review', origin: x!.region_origin })) },
+    });
   }
 
   for (const r of results) r.issues = r.checks.filter((c) => !c.passed && c.reason_ar).map((c) => ({ check: c.check, reason_ar: c.reason_ar! }));
@@ -514,7 +551,9 @@ function persistResults(ctx: AppContext, input: ValidateClaimsInput, results: Se
         const partial = ent?.details?.verdict === 'partial';
         // a contradiction the verifier did not confirm is cited as context only (never «supports»/«contradicts»)
         const unconfirmedContradiction = r.support_type === 'contradicted' && r.status !== 'conflict';
-        const relation = r.status === 'conflict' ? 'contradicts' : unconfirmedContradiction ? 'context' : partial ? 'partially_supports' : 'supports';
+        // H1: excerpts the verifier did not name as the basis of its verdict are context, never «supports»
+        const excerptsUnconfirmed = ent?.details?.excerpts_unconfirmed === true;
+        const relation = r.status === 'conflict' ? 'contradicts' : unconfirmedContradiction || excerptsUnconfirmed ? 'context' : partial ? 'partially_supports' : 'supports';
         for (const evId of r.evidence_ids) {
           ctx.db.run(`INSERT INTO citation (id, claim_id, evidence_id, relation, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(claim_id, evidence_id) DO NOTHING`, [
             newId(now),

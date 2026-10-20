@@ -8,12 +8,36 @@
  * notes are stripped of the reference). Figure / table numbers («Figure 1») are document structure, not citations.
  */
 const DIGITS = '[0-9٠-٩۰-۹]';
+// H1: unusual phrasings — ordinals, relative positions, number words, roman numerals («see the third page»,
+// «on the next slide», «page three», «page xii», «slide #4», «انظر الصفحة الثالثة», «في الشريحة التالية»,
+// «الصفحة رقم سبعة», «بالصفحة 4»). Only page / slide nouns take ordinals and relative words: «the next step»,
+// «الخطوة التالية» or «الفقرة التالية» (the explanation's own next paragraph) are not references to a source.
+const EN_ORDINAL = 'first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|next|previous|preceding|following|last|final|facing|opposite|same';
+const EN_NUMBER_WORD = 'one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty';
+const AR_PREFIX = '(?:[وفبلك]?ال|لل|[وفبلك])?';
+const AR_PAGE_NOUN = '(?:صفح[ةه]|شريح[ةه])';
+const AR_ORDINAL =
+  '(?:[أاإ]ول[ىي]|ثاني[ةه]|ثالث[ةه]|رابع[ةه]|خامس[ةه]|سادس[ةه]|سابع[ةه]|ثامن[ةه]|تاسع[ةه]|عاشر[ةه]|حادي[ةه])(?:\\s+عشر[ةه]?)?';
+const AR_RELATIVE = '(?:تالي[ةه]|سابق[ةه]|[أاإ]خير[ةه]|ماضي[ةه]|قادم[ةه]|مقبل[ةه]|[آا]تي[ةه]|مقابل[ةه]|نفسها|ذاتها)';
+const AR_NUMBER_WORD =
+  '(?:واحد[ةه]?|[أاإ]ثن(?:ان|ين|تان|تين)|ثلاث[ةه]?|[أاإ]ربع[ةه]?|خمس[ةه]?|ست[ةه]?|سبع[ةه]?|ثماني[ةه]?|ثمان|تسع[ةه]?|عشر[ةه]?|عشرين|عشرون)';
 const PSEUDO_CITATION_PATTERNS: RegExp[] = [
   /[[(（]\s*[ER]\s*\d+(?:\s*[,،;؛-]\s*[ER]?\s*\d+)*\s*[\])）]/giu, // [E5] (E1, E2) [R2]
   new RegExp(`(?<![\\p{L}\\p{N}])ص\\s*\\.?\\s*${DIGITS}+`, 'gu'), // ص 99 · ص.99 · (ص99)
-  new RegExp(`(?<![\\p{L}])(?:ال)?(?:صفحة|صفحات|صفحتي|شريحة|شرائح|فقرة)\\s*(?:رقم\\s*)?${DIGITS}+`, 'gu'), // الصفحة 99 · صفحة ٩٩ · الشريحة 4
+  // الصفحة 99 · صفحة ٩٩ · الشريحة 4 · بالصفحة 4 · وفي الشريحة 3
+  new RegExp(`(?<![\\p{L}])${AR_PREFIX}(?:صفح[ةه]|صفحات|صفحتي|شريح[ةه]|شرائح|فقر[ةه])\\s*(?:رقم\\s*)?${DIGITS}+`, 'gu'),
+  // الصفحة الثالثة · الشريحة التالية · الصفحة الحادية عشرة · الصفحة نفسها
+  new RegExp(`(?<![\\p{L}])${AR_PREFIX}${AR_PAGE_NOUN}\\s+(?:رقم\\s+)?(?:ال)?(?:${AR_ORDINAL}|${AR_RELATIVE})(?![\\p{L}])`, 'gu'),
+  // نفس الصفحة
+  new RegExp(`(?<![\\p{L}])نفس\\s+(?:ال)?${AR_PAGE_NOUN}(?![\\p{L}])`, 'gu'),
+  // الصفحة رقم سبعة (number words only after «رقم»: «صفحة واحدة» is a quantity)
+  new RegExp(`(?<![\\p{L}])${AR_PREFIX}${AR_PAGE_NOUN}\\s+رقم\\s+${AR_NUMBER_WORD}(?![\\p{L}])`, 'gu'),
   /\b(?:pp?|pg)\.\s*\d+/giu, // p. 31 · pp. 3-4 · pg. 2
   /\b(?:pages?|slides?)\s+\d+/giu, // page 12 · slides 3
+  /\b(?:pages?|slides?)\s*(?:#|no\.?|number|num\.?)\s*\d+/giu, // slide #4 · page no. 12 · page number 7
+  new RegExp(`\\b(?:${EN_ORDINAL})\\s+(?:pages?|slides?)\\b`, 'giu'), // the third page · the next slide
+  new RegExp(`\\b(?:pages?|slides?)\\s+(?:${EN_NUMBER_WORD})\\b`, 'giu'), // page three · slide two
+  /\b(?:pages?|p\.)\s+(?=[ivxlc]+\b)(?:x{0,3})(?:ix|iv|v?i{0,3})(?![a-z])/giu, // page xii · p. iv
 ];
 
 /** The page / slide / alias references written in a text (the matched substrings). */

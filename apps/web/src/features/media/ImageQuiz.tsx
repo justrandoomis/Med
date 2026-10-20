@@ -82,7 +82,7 @@ export function ImageQuiz() {
       <p className="ml-visually-hidden" aria-live="polite">
         {announce}
       </p>
-      {quiz.masks_rendered === 'client' && <p className="md-muted">الأقنعة في هذه الصورة مرسومة في المتصفح فوق الصورة (ليست بصيغة PNG)؛ الصورة الأصلية لم تتغير.</p>}
+      {quiz.masks_rendered === 'client' && <p className="md-muted">الأقنعة في هذه الصورة مرسومة في المتصفح فوق الصورة (تعذّر على الخادم قراءة الصورة لإخفاء التسميات فيها: صيغة غير مدعومة أو صورة تالفة أو كبيرة جدًا)؛ الصورة الأصلية لم تتغير.</p>}
       {quiz.excluded.length > 0 && (
         <p className="md-muted">
           استُبعد {quiz.excluded.length === 1 ? 'قناع واحد' : `${quiz.excluded.length} أقنعة`}: {[...new Set(quiz.excluded.map((x) => x.reason_ar))].join(' ')}

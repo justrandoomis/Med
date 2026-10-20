@@ -113,6 +113,8 @@ export interface LayoutRegion {
   diagram?: { labels: DiagramLabel[]; understanding: 'labels_ocr_only' | 'not_analyzed' };
   /** OCR words below the review threshold (shown in the review reason) */
   lowConfWords?: string[];
+  /** H2 item 6: the OCR words of the region in reading order with their boxes (the reader's text layer geometry) */
+  words?: Array<{ text: string; box: Box }>;
   /** filled by text preparation */
   suspicions?: Suspicion[];
   ligatureFixes?: number;

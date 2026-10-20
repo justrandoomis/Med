@@ -12,7 +12,7 @@ import {
   type DecisionAppropriateness,
 } from '@medlevo/shared';
 import { StatusPill, type StatusTone } from '../../design';
-import { BidiText, CitationChip } from '../evidence';
+import { BidiText, CitationChip, claimReasonAr } from '../evidence';
 
 const SENTENCE_TONE: Record<CaseSentence['status'], StatusTone> = {
   linked: 'success',
@@ -34,7 +34,7 @@ export function CaseSentences({ sentences, claims, className }: { sentences: Cas
           <p key={i} className={`cs-sentence cs-sentence--${s.status}`}>
             <BidiText as="span" text={s.text} />{' '}
             {claim?.citations.map((c) => (
-              <CitationChip key={`${c.evidence.id}-${c.relation}`} evidence={c.evidence} context={{ support_type: claim.support_type, verification_status: claim.verification_status, relation: c.relation }} />
+              <CitationChip key={`${c.evidence.id}-${c.relation}`} evidence={c.evidence} context={{ support_type: claim.support_type, verification_status: claim.verification_status, relation: c.relation, reason_ar: claimReasonAr(claim) }} />
             ))}
             {s.status !== 'linked' && s.status !== 'not_medical' && (
               <StatusPill tone={SENTENCE_TONE[s.status]} icon={<CircleAlert size={14} />} title={s.reason_ar ?? undefined}>

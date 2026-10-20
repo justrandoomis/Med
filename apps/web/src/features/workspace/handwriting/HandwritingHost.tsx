@@ -32,6 +32,7 @@ export function HandwritingHost({
   children,
   recorder: recorderProp,
   dialogDeps,
+  askHiddenReason = null,
 }: {
   sourceId: string;
   nodeId: string | null;
@@ -39,6 +40,11 @@ export function HandwritingHost({
   children: ReactNode;
   recorder?: RecorderController;
   dialogDeps?: RecognitionDialogDeps;
+  /**
+   * H1: why «اسأل عن المحدد» is unavailable in the current study mode (in «امتحن نفسك» the rail's explanations are
+   * hidden — the same reason the selection toolbar shows for its explain actions); null = allowed.
+   */
+  askHiddenReason?: string | null;
 }) {
   const caps = useCapabilities();
   const recognition = caps.feature('workspace.handwriting_recognition');
@@ -50,10 +56,14 @@ export function HandwritingHost({
   const [linkEdit, setLinkEdit] = useState<{ item: InkItem; targetKey: string } | null>(null);
   const support = useMemo(() => recordingSupport(), []);
 
-  const open = useCallback((mode: 'convert' | 'ask', sel: InkSelectionInfo) => {
-    if (!sel.anchor) return;
-    setTarget({ mode, targetKey: sel.targetKey, anchor: sel.anchor as AnnotationAnchor, items: sel.items, bbox: sel.bbox, ar: sel.ar });
-  }, []);
+  const open = useCallback(
+    (mode: 'convert' | 'ask', sel: InkSelectionInfo) => {
+      if (!sel.anchor) return;
+      if (mode === 'ask' && askHiddenReason) return announce(askHiddenReason);
+      setTarget({ mode, targetKey: sel.targetKey, anchor: sel.anchor as AnnotationAnchor, items: sel.items, bbox: sel.bbox, ar: sel.ar });
+    },
+    [askHiddenReason, announce],
+  );
 
   const actions = useMemo<InkSelectionActions>(
     () => ({
@@ -62,26 +72,31 @@ export function HandwritingHost({
         run: (sel) => open('convert', sel),
       },
       ask: {
-        reason: !online ? 'السؤال يحتاج اتصالًا بالخادم.' : null,
+        reason: askHiddenReason ?? (!online ? 'السؤال يحتاج اتصالًا بالخادم.' : null),
         // on a note page the dialog says why (no paragraph to ask about) instead of doing nothing
         run: (sel) => open('ask', sel),
       },
       playAudio: (link) => setPlay((p) => ({ link, nonce: (p?.nonce ?? 0) + 1 })),
       editAudioLink: (item, targetKey) => setLinkEdit({ item, targetKey }),
     }),
-    [recognition.available, recognition.reason, online, open],
+    [recognition.available, recognition.reason, online, open, askHiddenReason],
   );
 
-  const onAsk = useCallback((h: AskHandoff) => {
-    aiRequestStore.request({
-      action: 'ask',
-      anchor: { source_id: h.anchor.source_id, version_id: h.anchor.version_id, page_id: h.anchor.page_id, region_ids: h.anchor.region_ids, quote: h.anchor.quote },
-      text: h.text,
-      pageIndex: h.pageIndex,
-      rects: [],
-      prefill: h.question,
-    });
-  }, []);
+  const onAsk = useCallback(
+    (h: AskHandoff) => {
+      // the mode may have changed to «امتحن نفسك» while the dialog was open: nothing is handed to the hidden rail
+      if (askHiddenReason) return announce(askHiddenReason);
+      aiRequestStore.request({
+        action: 'ask',
+        anchor: { source_id: h.anchor.source_id, version_id: h.anchor.version_id, page_id: h.anchor.page_id, region_ids: h.anchor.region_ids, quote: h.anchor.quote },
+        text: h.text,
+        pageIndex: h.pageIndex,
+        rects: [],
+        prefill: h.question,
+      });
+    },
+    [askHiddenReason, announce],
+  );
 
   const saveLink = (offsetMs: number | null) => {
     if (!linkEdit) return;

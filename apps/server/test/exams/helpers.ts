@@ -7,6 +7,7 @@ import type { AiProvider, ProviderRequest, ProviderResponse } from '../../src/mo
 import { MODULES } from '../../src/modules';
 import { createProcessingModule } from '../../src/modules/processing';
 import { createTestApp } from '../helpers/app';
+import { excerptsForClaim } from '../helpers/verifier';
 import { createNode, golden, questionAt, uploadAndProcess, type QApp } from '../questions/helpers';
 
 export { questionAt };
@@ -68,10 +69,10 @@ export function aliasWith(prompt: string, needle: string): string {
   throw new Error(`no evidence alias containing «${needle}» in the prompt: ${[...evidenceIn(prompt).values()].map((q) => q.slice(0, 60)).join(' | ')}`);
 }
 
-/** verify_support: every claim index in the prompt «supported». */
+/** verify_support: every claim index in the prompt «supported», resting on the excerpts shown for it. */
 export function allSupported(req: ProviderRequest): unknown {
   const idx = [...req.prompt.matchAll(/CLAIM \[(\d+)\]/g)].map((m) => Number(m[1]));
-  return { results: [...new Set(idx)].map((index) => ({ index, verdict: 'supported', reason: 'مدعومة' })) };
+  return { results: [...new Set(idx)].map((index) => ({ index, verdict: 'supported', reason: 'مدعومة', based_on: excerptsForClaim(req.prompt, index) })) };
 }
 
 // ───────── app ─────────

@@ -131,10 +131,14 @@ export function buildQuery(db: Db | null, input: string, opts: { dropStopwords?:
   };
 }
 
-/** Fraction of query groups present (as whole words / phrases) in `text` (normalized like the index). */
+/**
+ * Fraction of query groups present (as whole words / phrases) in `text` (normalized like the index). The WHOLE
+ * passage is read: the 32-token cap of a query must not apply here (H1: «A pregnancy test … women of
+ * reproductive age» at the end of a long chunk read as 3/7 and the lecture-only chat abstained).
+ */
 export function groupCoverage(built: Pick<BuiltQuery, 'groups'>, text: string): number {
   if (built.groups.length === 0) return 0;
-  const words = searchTokens(text);
+  const words = searchTokens(text, Infinity);
   const joined = ' ' + words.join(' ') + ' ';
   let hit = 0;
   for (const g of built.groups) if (g.some((alt) => joined.includes(' ' + alt.join(' ') + ' '))) hit++;

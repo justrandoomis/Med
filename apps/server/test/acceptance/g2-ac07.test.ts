@@ -42,10 +42,12 @@ const removedWith = (a: StudyArtifactView, needle: string) => a.removed.find((r)
 const KIDS = 'Ultrasound is the first-line imaging test in children';
 
 describe('G2 AC-07 — similar words are not support', () => {
-  it('a «directly stated» copy with the key noun swapped: the 80 % containment pre-check lets it through, the independent verifier rejects it (EN)', async () => {
-    // documented limit: «Ultrasound is the first-line investigation for suspected appendicitis» shares 5 of 6 content
-    // words with the gallstones sentence, so the deterministic containment check alone does not catch the swap
+  it('a «directly stated» copy with the key noun swapped is refused by the deterministic pre-check, before any verifier (EN)', async () => {
+    // «Ultrasound is the first-line investigation for suspected appendicitis» shares 5 of 6 content words with the
+    // gallstones sentence. Until H1 the 80 % containment let it through and only the verifier caught it; now the
+    // key term «appendicitis» (absent from the excerpt, which says «gallstones») fails containment and the verifier is never asked.
     ai.verdict = (t) => (/appendicitis/.test(t) ? 'not_supported' : 'supported');
+    const before = ai.callsFor('verify_support').length;
     const a = await explain((req) =>
       content([
         { kind: 'paragraph', sentences: [S.c(`${KIDS} and in pregnant women.`, [aliasFor(req, KIDS)], 'directly_stated')] },
@@ -54,7 +56,9 @@ describe('G2 AC-07 — similar words are not support', () => {
     );
     expect(claimWith(a, 'pregnant women')?.verification_status).toBe('linked');
     expect(claimWith(a, 'suspected appendicitis')).toBeUndefined();
-    expect(removedWith(a, 'suspected appendicitis')!.reason_ar).toMatch(/التشابه في الموضوع ليس دعمًا/);
+    expect(removedWith(a, 'suspected appendicitis')!.reason_ar).toMatch(/مذكور نصًا[\s\S]*«appendicitis»/);
+    const asked = ai.callsFor('verify_support').slice(before).map((c) => c.prompt).join('\n');
+    expect(asked).not.toContain('suspected appendicitis');
   });
 
   it('a «directly stated» sentence that shares only some words with the excerpt fails containment before any verifier', async () => {

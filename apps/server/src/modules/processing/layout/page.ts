@@ -2,8 +2,8 @@
 // caption), reading order with column detection, caption linking. Works on digital text (pdfjs) and OCR
 // words alike — both arrive as positioned TextItems in page units.
 import { normalizeForSearch } from '@medlevo/shared';
-import { signatureKey } from '../text';
-import { buildSegments, decideDir, joinLines, logicalLineText, segmentBox } from './lines';
+import { cleanRun, signatureKey } from '../text';
+import { buildSegments, decideDir, joinLines, logicalLineItems, logicalLineText, segmentBox } from './lines';
 import { detectAlignedTables, detectRuledTables, serializeTable } from './tables';
 import type { Box, DiagramLabel, FigureCandidate, LayoutRegion, PageGeom, Rule, Segment, TableOut, TextItem } from './types';
 import { boxOf, cx, cy, height, median, overlap1d, width } from './types';
@@ -348,6 +348,7 @@ export function analyzePage(input: PageAnalysisInput): LayoutRegion[] {
       if (s.conf !== undefined) {
         region.confidence = s.conf / 100;
         region.minWordConf = s.minConf ?? null;
+        region.words = ocrWordsOf([s.items], lineDir(s));
       }
       (top ? headerRegions : footerRegions).push(region);
     }
@@ -441,6 +442,10 @@ export function analyzePage(input: PageAnalysisInput): LayoutRegion[] {
       if (refs.length) region.figureRefs = refs;
     }
     if (blockOrigin === 'ocr') {
+      region.words = ocrWordsOf(
+        [...rowsMap.values()].sort((p, q) => p[0]!.top - q[0]!.top).map((row) => row.flatMap((s) => s.items).sort((p, q) => p.x0 - q.x0)),
+        dir,
+      );
       const weak = lowConf(b.segs);
       if (weak.length) region.lowConfWords = weak;
       const confs = b.segs.map((s) => s.conf).filter((c): c is number => typeof c === 'number');
@@ -466,6 +471,18 @@ export function analyzePage(input: PageAnalysisInput): LayoutRegion[] {
     if (el.children) out.push(...el.children);
   }
   out.push(...footerRegions.sort((a, b) => a.box!.top - b.box!.top));
+  return out;
+}
+
+/** OCR words of a region's lines (each line's items in visual order) in reading order, with their boxes. */
+function ocrWordsOf(lines: TextItem[][], dir: 'rtl' | 'ltr'): Array<{ text: string; box: Box }> {
+  const out: Array<{ text: string; box: Box }> = [];
+  for (const line of lines) {
+    for (const it of logicalLineItems(line, dir)) {
+      const text = cleanRun(it.text).trim();
+      if (text) out.push({ text, box: { x0: it.x0, top: it.top, x1: it.x1, bottom: it.bottom } });
+    }
+  }
   return out;
 }
 

@@ -18,7 +18,7 @@ import {
 } from '@medlevo/shared';
 import { Button, StatusPill, type StatusTone } from '../../design';
 import { BidiText } from './BidiText';
-import { CitationChip } from './CitationChip';
+import { CitationChip, claimReasonAr } from './CitationChip';
 import { EvidenceRibbon } from './EvidenceRibbon';
 import { CLAIM_MARK_LABELS_AR, claimMark, ribbonFromClaims, segmentByClaim, type ClaimMark } from './model';
 import { ScopeBadge } from './Scope';
@@ -98,7 +98,7 @@ function ClaimTrail({ claim, ctx, claimId }: { claim: ClaimView | undefined; ctx
           <CitationChip
             key={`${c.evidence.id}-${c.relation}`}
             evidence={ev}
-            context={{ support_type: claim.support_type, verification_status: claim.verification_status, relation: c.relation }}
+            context={{ support_type: claim.support_type, verification_status: claim.verification_status, relation: c.relation, reason_ar: claimReasonAr(claim) }}
             onInspect={(e) => ctx.onInspect(e, claim)}
           />
         );
@@ -340,7 +340,7 @@ export function ArtifactContent({ artifact: a, onWidenScope, showRibbon = true, 
       <SourceInspector
         open={!!inspect}
         evidence={inspect?.e ?? null}
-        context={inspect ? { support_type: inspect.claim.support_type, verification_status: inspect.claim.verification_status } : undefined}
+        context={inspect ? { support_type: inspect.claim.support_type, verification_status: inspect.claim.verification_status, reason_ar: claimReasonAr(inspect.claim) } : undefined}
         onClose={() => setInspect(null)}
       />
     </article>

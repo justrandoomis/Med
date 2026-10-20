@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { normalizeRotation, normToView, viewToNorm, type QuarterTurn } from '@medlevo/shared';
 import type { Box, Rule, TextItem } from './layout/types';
+import { contentRotationFromText, emptyDirections, quarter, type DirectionCounts } from './orientation';
 
 const require = createRequire(import.meta.url);
 const PDFJS_DIR = dirname(require.resolve('pdfjs-dist/package.json'));
@@ -160,6 +161,14 @@ export interface PdfPageContent {
   vectorPaths: number;
   /** non-whitespace characters of digital text */
   chars: number;
+  /** characters per text direction (baseline angle in the unrotated top-left page space) */
+  directions: DirectionCounts;
+  /**
+   * H2 item 5: the clockwise turn of the DISPLAY space that makes the dominant text run left → right (0 for ordinary
+   * pages; 270 for a /Rotate 90 page whose content is drawn upright, i.e. shown sideways). Layout runs in the space
+   * rotated by `info.rotation + textRotation`.
+   */
+  textRotation: number;
 }
 
 const BOLD_RE = /bold|black|heavy|semibold|demibold|demi\b|-bd\b/i;
@@ -254,14 +263,18 @@ export async function extractPage(doc: PDFDocumentProxy, pageNumber: number): Pr
     };
     const items: TextItem[] = [];
     let chars = 0;
+    const directions = emptyDirections();
     for (const raw of tc.items) {
       if (!('str' in raw)) continue;
       const str = raw.str;
       if (!str || !str.trim()) continue;
-      items.push({ text: str, ...textItemBox(raw, styles, toTop), bold: fontBold(raw.fontName) });
-      chars += str.replace(/\s+/g, '').length;
+      const { dir, ...box } = textItemBox(raw, styles, toTop);
+      items.push({ text: str, ...box, bold: fontBold(raw.fontName) });
+      const n = str.replace(/\s+/g, '').length;
+      chars += n;
+      if (dir !== null) directions[dir] += n;
     }
-    return { info, items, rules, images, vectorPaths, chars };
+    return { info, items, rules, images, vectorPaths, chars, directions, textRotation: contentRotationFromText(directions, info.rotation) };
   } finally {
     page.cleanup();
   }
@@ -333,12 +346,15 @@ interface RawTextItem {
   fontName: string;
 }
 
-/** Box of one pdfjs text item from its text matrix (any direction), in top-left unrotated page units. */
+/**
+ * Box of one pdfjs text item from its text matrix (any direction), in top-left unrotated page units, with the
+ * baseline direction as a clockwise quarter turn (null when the text is not axis-aligned).
+ */
 function textItemBox(
   raw: RawTextItem,
   styles: Record<string, { ascent?: number; descent?: number }>,
   toTop: (x: number, y: number) => [number, number],
-): Box & { size: number } {
+): Box & { size: number; dir: 0 | 90 | 180 | 270 | null } {
   const t = raw.transform as number[];
   const [a, b, c, d, e, f] = [t[0]!, t[1]!, t[2]!, t[3]!, t[4]!, t[5]!];
   const size = Math.hypot(c, d) || Math.hypot(a, b) || raw.height || 10;
@@ -361,7 +377,11 @@ function textItemBox(
   const pts = corners.map(([x, y]) => toTop(x, y));
   const xs = pts.map((p) => p[0]);
   const ys = pts.map((p) => p[1]);
-  return { x0: Math.min(...xs), x1: Math.max(...xs), top: Math.min(...ys), bottom: Math.max(...ys), size };
+  // baseline direction in the top-left space (y down): (ux, -uy); clockwise angle from +x
+  const angle = (Math.atan2(-uy, ux) * 180) / Math.PI;
+  const q = quarter(angle);
+  const off = Math.abs((((angle - q) % 360) + 540) % 360 - 180);
+  return { x0: Math.min(...xs), x1: Math.max(...xs), top: Math.min(...ys), bottom: Math.max(...ys), size, dir: off <= 20 ? q : null };
 }
 
 /**
@@ -372,17 +392,21 @@ export async function pageTextItems(doc: PDFDocumentProxy, pageNumber: number): 
   const page = await doc.getPage(pageNumber);
   try {
     const info = pageInfo(page);
-    const view = pageView(info);
     const [vx0, , , vy1] = info.view;
     const toTop = (x: number, y: number): [number, number] => [x - vx0, vy1 - y];
     const tc = await page.getTextContent({ includeMarkedContent: false });
     const styles = tc.styles as Record<string, { ascent?: number; descent?: number }>;
-    const items: TextItem[] = [];
+    const boxes: Array<{ text: string; box: ReturnType<typeof textItemBox> }> = [];
+    const directions = emptyDirections();
     for (const raw of tc.items) {
       if (!('str' in raw) || !raw.str.trim()) continue;
       const box = textItemBox(raw, styles, toTop);
-      items.push({ text: raw.str, ...view.toView(box), size: box.size, bold: false });
+      boxes.push({ text: raw.str, box });
+      if (box.dir !== null) directions[box.dir] += raw.str.replace(/\s+/g, '').length;
     }
+    // the layout space of the page (H2 item 5): display space, turned further when the text runs sideways in it
+    const view = pageView({ ...info, rotation: info.rotation + contentRotationFromText(directions, info.rotation) });
+    const items: TextItem[] = boxes.map(({ text, box }) => ({ text, ...view.toView(box), size: box.size, bold: false }));
     return { info, view, items };
   } finally {
     page.cleanup();

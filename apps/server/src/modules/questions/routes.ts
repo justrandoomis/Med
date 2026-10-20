@@ -58,6 +58,7 @@ import { parseBody, parseParams, parseQuery, RATE_LIMITS } from '../../lib/http'
 import { answerCheckClaims, checkAnswer } from './answercheck';
 import { conceptViews, decideConcept } from './concepts';
 import { correctKey, correctQuestion, decideLink, ownerLink, reviewQuestion } from './corrections';
+import { derivedKeyOverride } from './derived';
 import { decideDuplicate } from './duplicates';
 import { extractionSummary } from './extract';
 import { courseHasQuestionSources } from './match';
@@ -563,7 +564,8 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
     }
     return {
       question: view,
-      versions: versions.map((v) => ({ ...versionView(ctx, v), attempts: attempts[v.id] ?? 0, note: v.note })),
+      // a derived version row shows the original's CURRENT key (H1), never its stored copy
+      versions: versions.map((v) => ({ ...versionView(ctx, v), ...(derivedKeyOverride(ctx, v) ?? {}), attempts: attempts[v.id] ?? 0, note: v.note })),
       key_entries,
       review_items: reviewItemsForQuestion(ctx, p.id),
       attempts_by_version: attempts,

@@ -180,6 +180,15 @@ export interface SourcePageView {
   render_file_id: string | null;
   section_key: string | null;
   /**
+   * H2: the clockwise quarter turn of the page AS DISPLAYED that its text needed to be read upright (a sideways scan or
+   * photo read in rotated trials, or a /Rotate that shows upright text sideways); null = not determined. For picture
+   * pages `rotation` (the display rotation) equals it, so the reader shows the picture upright.
+   */
+  content_rotation?: number | null;
+  content_rotation_origin?: 'text_direction' | 'ocr_trials' | null;
+  /** EXIF orientation (1–8) of a JPEG page, applied before OCR; null = none */
+  image_orientation?: number | null;
+  /**
    * Some page of this version carries a printed number (AC-04). A page WITHOUT one is then named by its file
    * position only («الصفحة 1 في الملف») — never «ص 1», which may be the printed number of another page.
    */
@@ -238,6 +247,27 @@ export interface SourceRegionView {
   confidence: number | null;
   structure: RegionStructure | null;
   status: 'extracted' | 'checks_passed' | 'needs_review' | 'uncertain' | 'owner_reviewed' | 'rejected';
+}
+
+/**
+ * H2 item 6: one OCR word of a region — its text as it appears in the region text and its box normalized to the
+ * unrotated page box ([text, x, y, w, h]). Stored in `locator.words` of OCR regions, in reading order, so the reader can
+ * place each word over the scanned glyphs (selection and search-hit rectangles on the right words).
+ */
+export type RegionWord = [text: string, x: number, y: number, w: number, h: number];
+
+/** The OCR word boxes of a region (`locator.words`), validated; null when the region has none. */
+export function regionWords(r: Pick<SourceRegionView, 'locator'>): RegionWord[] | null {
+  const raw = r.locator?.words;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const out: RegionWord[] = [];
+  for (const w of raw) {
+    if (!Array.isArray(w) || w.length !== 5 || typeof w[0] !== 'string' || !w[0]) return null;
+    const [t, x, y, ww, h] = w as unknown[];
+    if (![x, y, ww, h].every((v) => typeof v === 'number' && Number.isFinite(v))) return null;
+    out.push([t as string, x as number, y as number, ww as number, h as number]);
+  }
+  return out;
 }
 
 export interface PageRegionsResponse {

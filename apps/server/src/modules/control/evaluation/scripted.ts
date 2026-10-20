@@ -56,7 +56,16 @@ export class EvalScriptedProvider implements AiProvider {
     const base = { model: 'eval-scripted-1', usage: this.usage, requestRef: `eval-${this.calls.length}` };
     const queued = this.queues.get(req.task);
     if (req.task === 'verify_support' && !queued?.length) {
-      return { ...base, json: { results: claimsInPrompt(req.prompt).map((c) => ({ index: c.index, verdict: this.verdict(c.text), reason: 'حكم مكتوب مسبقًا لحالة التقييم' })) } };
+      return {
+        ...base,
+        json: {
+          results: claimsInPrompt(req.prompt).map((c) => {
+            const verdict = this.verdict(c.text);
+            // the verifier contract: name the excerpts the verdict rests on (all shown excerpts for a scripted verdict)
+            return { index: c.index, verdict, reason: 'حكم مكتوب مسبقًا لحالة التقييم', based_on: verdict === 'not_supported' ? [] : excerptsForClaim(req.prompt, c.index) };
+          }),
+        },
+      };
     }
     const h = queued?.shift();
     if (!h) {
@@ -107,4 +116,13 @@ export function answerOf(sentences: Array<{ text: string; evidence: string[]; su
     blocks: [{ kind: 'paragraph', sentences: sentences.map((s) => ({ text: s.text, claim: { support_type: s.support ?? 'directly_stated', evidence: s.evidence } })) }],
     abstain: null,
   };
+}
+
+/** Aliases («E3») of the excerpts shown for claim `index` in a verify_support prompt. */
+export function excerptsForClaim(prompt: string, index: number): string[] {
+  const start = prompt.indexOf(`CLAIM [${index}]:`);
+  if (start < 0) return [];
+  const next = prompt.indexOf('CLAIM [', start + 1);
+  const block = prompt.slice(start, next < 0 ? undefined : next);
+  return [...new Set([...block.matchAll(/^EVIDENCE (E\d+) \(/gm)].map((m) => m[1]!))];
 }

@@ -21,14 +21,16 @@ import {
   type BandLine,
 } from './layout/page';
 import { serializeTable } from './layout/tables';
-import type { Box, DiagramLabel, FigureCandidate, LayoutRegion, PageGeom, TextItem } from './layout/types';
+import type { Box, DiagramLabel, FigureCandidate, LayoutRegion, PageGeom, Rule, TextItem } from './layout/types';
 import { boxOf, median } from './layout/types';
 import { missedTextSegments, type MissedText } from './coverage';
 import type { OcrEngine, OcrResult, OcrWord } from './ocr';
 import { extractDocx, extractPptx, type OfficeDocument } from './office';
-import { closePdf, extractPage, openPdf, pageLabels, PdfOpenError, pageTextItems, pageView, type PageView } from './pdf';
+import { closePdf, extractPage, openPdf, pageLabels, PdfOpenError, pageTextItems, pageView, type PageView, type PdfPageContent } from './pdf';
 import { markPageFailed, persistPage, RegionsInUseError, type FigureAsset, type PageRef, type PageUpdate, type ReviewItemInput } from './persist';
-import { decodePng, imageSize, isPng, measureImageQuality, type ImageQuality, type RgbaImage } from './png';
+import { decodeDisplayed, displayedImageSize, exifWordToDisplayed, ImageDecodeError, isJpeg, jpegOrientation, rawImageSize, rotateImage, stripJpegExif } from './image';
+import { chooseOrientation, orientationTrials, quarter, readingScore, type QuarterTurn } from './orientation';
+import { decodePng, encodePng, isPng, measureImageQuality, type ImageQuality, type RgbaImage } from './png';
 import { applyLectureKind, linkFiguresAcrossPages } from './structure';
 import { writeSummary } from './summary';
 import { hasReversedLamAlef, prepareRegionText, suspicionReasonAr, type SuspicionContext } from './text';
@@ -135,6 +137,20 @@ interface OcrCheckpoint {
   quality: Pick<ImageQuality, 'lowQuality' | 'reasons' | 'contrast' | 'edgeSharpness' | 'blank'> | null;
   /** G3 / AC-08: places with writing that no OCR word covers (absent in older checkpoints) */
   missed?: MissedText[];
+  /** H2 item 3: clockwise turn of the picture (as displayed) the words were read in; null = not checked (absent = 0) */
+  rotation?: number | null;
+  /** the words are in the stored (raw) orientation of a JPEG whose EXIF could not be applied (no raster) */
+  rawSpace?: boolean;
+}
+
+/** A PDF page in its layout space (see VersionRun.layoutSpace). */
+interface LayoutSpace {
+  turn: QuarterTurn;
+  pv: PageView;
+  geom: PageGeom;
+  items: TextItem[];
+  rules: Rule[];
+  images: Box[];
 }
 
 /** A page-level failure with a specific Arabic reason (the page is marked failed; other pages continue). */
@@ -172,6 +188,8 @@ const MSG = {
     'هذه الصفحة صورة، لكن التعرف الضوئي (OCR) لم يجد فيها نصًا مقروءًا. قد تكون رسمًا فقط أو مسحًا رديئًا؛ راجعها أو أضف نسخة أوضح.',
   renderFailed: 'تعذر تحويل هذه الصفحة إلى صورة لإجراء OCR (pdftoppm). بقية الصفحات لم تتأثر.',
   ocrFailed: 'فشل محرك التعرف الضوئي (OCR) في قراءة هذه الصفحة. بقية الصفحات لم تتأثر؛ أعد معالجة الصفحة لاحقًا.',
+  imageDamaged:
+    'الصورة نفسها تالفة — إعادة المعالجة لن تفيد: تعذّر فك بيانات هذه الصورة (الملف مقطوع أو معطوب)، فلم يُقرأ منها نص. أضف نسخة سليمة من الصورة. بقية الصفحات لم تتأثر.',
   regionsInUse:
     'لا يمكن استبدال مناطق هذه الصفحة لأن أدلة أو علامات مرتبطة بها بالفعل؛ أُبقي على النسخة السابقة من الصفحة. أنشئ نسخة مصححة من المصدر بدل إعادة معالجتها.',
   interrupted:
@@ -544,7 +562,7 @@ class VersionRun {
         if (!fileId) throw new JobError('FILE_MISSING', MSG.fileMissing, { retryable: false });
         const existing = this.pageRow(0);
         if (!existing) {
-          const size = imageSize(await ctx.files.read(fileId));
+          const size = displayedImageSize(await ctx.files.read(fileId));
           const now = ctx.clock.now();
           ctx.db.run(
             `INSERT INTO source_page (id, version_id, page_index, kind, width, height, unit, render_file_id, section_key, created_at, updated_at)
@@ -669,16 +687,15 @@ class VersionRun {
   /**
    * OCR with a coverage check (G3 / AC-08): when the automatic segmentation left text-like ink unread, the page is
    * read again as one uniform block (PSM 6) and the reading that leaves less unread is kept; what is still unread is
-   * returned so the page is marked for review. Without a decoded image (non-PNG) only the first reading is made.
+   * returned so the page is marked for review. Without a decoded image only the first reading is used.
    */
-  private async recognizeCovered(image: Buffer, decoded: RgbaImage | null): Promise<{ res: OcrResult; missed: MissedText[] }> {
-    const first = await this.recognize(image);
+  private async coverage(image: Buffer, decoded: RgbaImage | null, first: OcrResult, damaged: boolean): Promise<{ res: OcrResult; missed: MissedText[] }> {
     if (!decoded) return { res: first, missed: [] };
     const missed = missedTextSegments(decoded, first.words);
     if (missed.length === 0) return { res: first, missed };
     // keep the first reading (its line order and numbering are better on mixed layouts) and take from the second one
     // only the words that fall where the first one read nothing
-    const second = await this.recognize(image, 'block');
+    const second = await this.recognize(image, 'block', damaged);
     const inMissed = (w: OcrWord) => missed.some((m) => w.x1 >= m.x0 && w.x0 <= m.x1 && Math.min(w.y1, m.y1) - Math.max(w.y0, m.y0) >= 0.3 * (m.y1 - m.y0));
     const lineOffset = first.words.reduce((n, w) => Math.max(n, w.line), 0) + 1;
     const extra = second.words.filter(inMissed).map((w) => ({ ...w, line: w.line + lineOffset }));
@@ -689,12 +706,45 @@ class VersionRun {
     return missed2.length < missed.length ? { res: merged, missed: missed2 } : { res: first, missed };
   }
 
-  private async recognize(image: Buffer, mode: 'auto' | 'sparse' | 'block' = 'auto') {
+  /**
+   * Read a picture in the orientation where its text reads (H2 item 3). The picture is read as given; when that reading
+   * runs vertically (sideways picture) or reads poorly (possibly upside down) and the picture is decoded, it is read
+   * again turned by the candidate quarter turns and the best reading is kept with a clear margin (`chooseOrientation`).
+   * Returns the words in the space of the picture turned by `rotation` (null = orientation not checked: no raster).
+   */
+  private async readOriented(
+    image: Buffer,
+    decoded: RgbaImage | null,
+    opts: { coverage: boolean; damaged: boolean },
+  ): Promise<{ res: OcrResult; missed: MissedText[]; rotation: QuarterTurn | null }> {
+    const first = await this.recognize(image, 'auto', opts.damaged);
+    if (!decoded) return { res: first, missed: [], rotation: null };
+    let chosen: { res: OcrResult; image: Buffer; raster: RgbaImage; rotation: QuarterTurn } = { res: first, image, raster: decoded, rotation: 0 };
+    const candidates = orientationTrials(first.words);
+    if (candidates.length > 0) {
+      const trials: Array<{ rotation: QuarterTurn; res: OcrResult; image: Buffer; raster: RgbaImage; score: number }> = [];
+      for (const rotation of candidates) {
+        this.checkAbort();
+        const raster = rotateImage(decoded, rotation);
+        const png = encodePng(raster);
+        const res = await this.recognize(png, 'auto', opts.damaged);
+        trials.push({ rotation, res, image: png, raster, score: readingScore(res.words) });
+      }
+      const pick = chooseOrientation(first.words, trials);
+      const t = trials.find((x) => x.rotation === pick);
+      if (t) chosen = t;
+    }
+    const covered = await this.coverage(chosen.image, opts.coverage ? chosen.raster : null, chosen.res, opts.damaged);
+    return { ...covered, rotation: chosen.rotation };
+  }
+
+  private async recognize(image: Buffer, mode: 'auto' | 'sparse' | 'block' = 'auto', damaged = false) {
     try {
       return await this.deps.ocr!.recognize({ image, mode });
     } catch (e) {
       this.run.log.warn({ err: errorText(e) }, 'ocr failed');
-      throw new PageFailure('OCR_FAILED', MSG.ocrFailed);
+      // H2 item 7: a picture whose data cannot be decoded will fail the same way next time — say so instead of «retry»
+      throw new PageFailure('OCR_FAILED', damaged ? MSG.imageDamaged : MSG.ocrFailed);
     }
   }
 
@@ -716,41 +766,37 @@ class VersionRun {
     }
   }
 
+  /** The page in a layout space: display space (intrinsic /Rotate) turned by `turn` so its text reads left → right. */
+  private layoutSpace(content: PdfPageContent, turn: QuarterTurn): LayoutSpace {
+    const pv = pageView({ ...content.info, rotation: content.info.rotation + turn });
+    const geom: PageGeom = { width: pv.width, height: pv.height };
+    return {
+      turn,
+      pv,
+      geom,
+      items: content.items.map((it) => ({ ...it, ...pv.toView(it) })),
+      rules: content.rules.map((r) => pv.rule(r)),
+      images: content.images.map((b) => clip(pv.toView(b), geom)).filter((b) => area(b) > 0),
+    };
+  }
+
   private async processPdfPage(page: PageRow, insp: InspectResult): Promise<PageOutcome> {
     const { ctx, run } = this;
     const fileId = insp.fileId!;
     const doc = await this.openPdf(fileId);
     const content = await extractPage(doc, page.page_index + 1);
-    // Layout runs in DISPLAY space (intrinsic /Rotate applied): rows, columns, bands and tables are what the
-    // reader sees. Boxes go back to the UNROTATED page box (pageGeom) right before they are stored.
-    const pv = pageView(content.info);
+    // Layout runs in the page's LAYOUT space: the DISPLAY space (intrinsic /Rotate applied: what the reader sees),
+    // turned further when the text runs sideways in it — from the digital text direction (H2 item 5: a /Rotate that
+    // shows upright text sideways) or from the OCR trials of a scan (H2 item 3). Rows, columns, bands and tables are
+    // read where the text is horizontal; boxes go back to the UNROTATED page box (pageGeom) right before they are stored.
+    const displayPv = pageView(content.info);
     const pageGeom: PageGeom = { width: content.info.width, height: content.info.height };
-    const geom: PageGeom = { width: pv.width, height: pv.height };
-    const pageArea = geom.width * geom.height;
-    const dItems: TextItem[] = content.items.map((it) => ({ ...it, ...pv.toView(it) }));
-    const dRules = content.rules.map((r) => pv.rule(r));
-    const dpi = renderDpi(geom.width, geom.height);
-
-    const bodyChars = dItems
-      .filter((it) => !inTopBand(it, geom) && !inBottomBand(it, geom))
-      .reduce((n, it) => n + it.text.replace(/\s+/g, '').length, 0);
-    const images = content.images.map((b) => clip(pv.toView(b), geom)).filter((b) => area(b) > 0);
-    const noDigitalText = bodyChars < MIN_BODY_CHARS;
-    const bodyCharsInside = (b: Box) =>
-      dItems
-        .filter((it) => !inTopBand(it, geom) && !inBottomBand(it, geom))
-        .filter((it) => (it.x0 + it.x1) / 2 >= b.x0 && (it.x0 + it.x1) / 2 <= b.x1 && (it.top + it.bottom) / 2 >= b.top && (it.top + it.bottom) / 2 <= b.bottom)
-        .reduce((n, it) => n + it.text.replace(/\s+/g, '').length, 0);
-    const isFigure = (b: Box): boolean => {
-      const a = area(b);
-      if (a < 0.01 * pageArea || b.x1 - b.x0 < 20 || b.bottom - b.top < 20) return false;
-      if (a < 0.5 * pageArea) return true;
-      // A LARGE picture on a page with real digital text is still a figure (a big diagram with its caption),
-      // unless the page text sits on top of it (a background/template) or it fills the page (a scan).
-      return !noDigitalText && a < 0.9 * pageArea && bodyCharsInside(b) <= 0.3 * bodyChars;
-    };
-    const figureBoxes = mergeBoxes(images.filter(isFigure));
-    let needsOcr = noDigitalText && (images.length > 0 || content.vectorPaths > 10);
+    let space = this.layoutSpace(content, quarter(content.textRotation));
+    const dpi = renderDpi(displayPv.width, displayPv.height);
+    const bodyCharsOf = (sp: LayoutSpace) =>
+      sp.items.filter((it) => !inTopBand(it, sp.geom) && !inBottomBand(it, sp.geom)).reduce((n, it) => n + it.text.replace(/\s+/g, '').length, 0);
+    const noDigitalText = bodyCharsOf(space) < MIN_BODY_CHARS;
+    let needsOcr = noDigitalText && (content.images.length > 0 || content.vectorPaths > 10);
     let pageIssue: { code: string; reason: string; kind: 'unreadable_page' | 'ocr_error' } | null = null;
     if (noDigitalText && !needsOcr) {
       // nothing drawn that we can see in the operator list: verify visually before calling it blank
@@ -775,17 +821,18 @@ class VersionRun {
         // blank only because its content could not be decoded (broken stream, missing image object): a damaged page
         // is a stumble to show (AC-03), never a «ready» empty page (AC-02)
         else if (popplerReportsDamage(diagnostics)) pageIssue = { code: 'PAGE_CONTENT_DAMAGED', reason: MSG.contentDamaged, kind: 'unreadable_page' };
-      } else if (bodyChars === 0) {
+      } else if (bodyCharsOf(space) === 0) {
         pageIssue = { code: 'BLANK_UNVERIFIED', reason: MSG.blankUnverified, kind: 'unreadable_page' };
       }
     }
 
-    let items: TextItem[] = dItems;
+    let items: TextItem[] = space.items;
     let ocrData: OcrCheckpoint | null = null;
     let ocrUnavailable: { code: string; reason: string } | null = null;
     if (needsOcr) {
       ocrUnavailable = this.ocrUnavailable('pdf');
       if (!ocrUnavailable) {
+        const coverage = space.items.length === 0; // coverage is judged on pure scans only (digital text is not in the OCR reading)
         ocrData = await run.checkpoint<OcrCheckpoint>(`page:${page.page_index}:ocr`, async () => {
           const png = await this.render(fileId, page.page_index + 1, dpi);
           const stored = await ctx.files.put(png, { mime: 'image/png', originalName: `page-${page.page_index + 1}.png` });
@@ -801,27 +848,65 @@ class VersionRun {
           } catch {
             quality = null;
           }
-          // coverage is judged on pure scans only (digital text on the page is not in the OCR reading)
-          const { res, missed } = await this.recognizeCovered(png, dItems.length === 0 ? decoded : null);
-          return { renderFileId: stored.id, dpi, pxWidth: size?.width ?? null, pxHeight: size?.height ?? null, words: res.words, confidence: res.confidence, quality, missed };
+          // the render is the page as displayed; a scan stored sideways / upside down is read in rotated trials
+          const read = await this.readOriented(png, decoded, { coverage, damaged: false });
+          return {
+            renderFileId: stored.id,
+            dpi,
+            pxWidth: size?.width ?? null,
+            pxHeight: size?.height ?? null,
+            words: read.res.words,
+            confidence: read.res.confidence,
+            quality,
+            missed: read.missed,
+            rotation: read.rotation,
+          };
         });
+        // the OCR words are in the render turned by the detected rotation: that turn of the display space is the layout space
+        if (typeof ocrData.rotation === 'number' && ocrData.rotation !== space.turn) space = this.layoutSpace(content, quarter(ocrData.rotation));
         // the render IS the display box (crop box, /Rotate applied): render px / scale = display units
         const ocrScale = (ocrData.dpi ?? RENDER_DPI) / 72;
         const ocrItems = wordsToItems(ocrData.words, (x, y) => [x / ocrScale, y / ocrScale]);
         // digital text wins where both exist (e.g. a digital page number over a scan)
-        items = [...dItems, ...ocrItems.filter((o) => !dItems.some((d) => overlapArea(d, o) > 0.5 * area(o)))];
+        items = [...space.items, ...ocrItems.filter((o) => !space.items.some((d) => overlapArea(d, o) > 0.5 * area(o)))];
       }
     }
+
+    const { geom, images } = space;
+    const pageArea = geom.width * geom.height;
+    const bodyChars = bodyCharsOf(space);
+    const bodyCharsInside = (b: Box) =>
+      space.items
+        .filter((it) => !inTopBand(it, geom) && !inBottomBand(it, geom))
+        .filter((it) => (it.x0 + it.x1) / 2 >= b.x0 && (it.x0 + it.x1) / 2 <= b.x1 && (it.top + it.bottom) / 2 >= b.top && (it.top + it.bottom) / 2 <= b.bottom)
+        .reduce((n, it) => n + it.text.replace(/\s+/g, '').length, 0);
+    const isFigure = (b: Box): boolean => {
+      const a = area(b);
+      if (a < 0.01 * pageArea || b.x1 - b.x0 < 20 || b.bottom - b.top < 20) return false;
+      if (a < 0.5 * pageArea) return true;
+      // A LARGE picture on a page with real digital text is still a figure (a big diagram with its caption),
+      // unless the page text sits on top of it (a background/template) or it fills the page (a scan).
+      return !noDigitalText && a < 0.9 * pageArea && bodyCharsInside(b) <= 0.3 * bodyChars;
+    };
+    const figureBoxes = mergeBoxes(images.filter(isFigure));
 
     const regions = analyzePage({
       geom,
       items,
-      rules: dRules,
+      rules: space.rules,
       figures: figureBoxes.map((b): FigureCandidate => ({ ...b, source: 'pdf_image' })),
       origin: needsOcr ? 'ocr' : 'digital',
       bodySize: needsOcr ? 0 : (insp.bodySize ?? 0),
       headerFooter: { repeated: new Set(insp.repeated) },
     });
+
+    // layout space ↔ display space (the renders and crops of pdftoppm are in display space)
+    const toDisplay = (b: Box): Box => (space.turn === 0 ? b : displayPv.toView(space.pv.toPage(b)));
+    const fromDisplay = (x: number, y: number): [number, number] => {
+      if (space.turn === 0) return [x, y];
+      const b = space.pv.toView(displayPv.toPage({ x0: x, top: y, x1: x, bottom: y }));
+      return [b.x0, b.top];
+    };
 
     // figures: cropped raster for the image asset; labels read by OCR stay UNCERTAIN (no vision model)
     const assets = new Map<string, FigureAsset>();
@@ -829,7 +914,7 @@ class VersionRun {
     for (const fig of regions.filter((r) => r.kind === 'figure' && r.box)) {
       let assetFile: string | null = null;
       if (this.deps.tools.pdftoppm) {
-        const b = fig.box!;
+        const b = toDisplay(fig.box!);
         const crop = { x: b.x0 * scale, y: b.top * scale, w: (b.x1 - b.x0) * scale, h: (b.bottom - b.top) * scale };
         try {
           const png = await this.render(fileId, page.page_index + 1, dpi, crop);
@@ -837,7 +922,7 @@ class VersionRun {
           const bigEnough = area(fig.box!) >= 0.03 * pageArea;
           if (!needsOcr && bigEnough && this.deps.ocr && (fig.figure?.labels.length ?? 0) === 0) {
             const res = await this.recognize(png, 'sparse');
-            const labelItems = wordsToItems(res.words, (x, y) => [(x + Math.floor(crop.x)) / scale, (y + Math.floor(crop.y)) / scale]);
+            const labelItems = wordsToItems(res.words, (x, y) => fromDisplay((x + Math.floor(crop.x)) / scale, (y + Math.floor(crop.y)) / scale));
             const labels = labelsFromItems(labelItems);
             if (labels.length && fig.figure) {
               fig.figure.labels = labels;
@@ -856,7 +941,7 @@ class VersionRun {
     const quality = ocrData?.quality ?? null;
     const lowQuality = Boolean(quality?.lowQuality);
     const reviews = finalizeRegions(withDiagrams, lowQuality, { reversedLigatures: insp.reversedLamAlef === true });
-    regionsToPageSpace(withDiagrams, pv);
+    regionsToPageSpace(withDiagrams, space.pv);
     const ocrTextRegions = withDiagrams.filter((r) => r.textOrigin === 'ocr' && r.text && r.kind !== 'diagram' && r.kind !== 'header' && r.kind !== 'footer');
     const digitalTextRegions = withDiagrams.filter((r) => r.textOrigin === 'digital' && r.text && r.kind !== 'header' && r.kind !== 'footer');
 
@@ -873,7 +958,14 @@ class VersionRun {
     } else {
       textStatus = digitalTextRegions.length ? 'digital' : 'no_text_found';
     }
-    if (pageIssue) reviews.push({ kind: pageIssue.kind, regionKey: null, reasonAr: pageIssue.reason, details: { code: pageIssue.code, quality, ...(ocrData?.missed?.length ? { not_read: ocrData.missed } : {}) } });
+    if (pageIssue) {
+      reviews.push({
+        kind: pageIssue.kind,
+        regionKey: null,
+        reasonAr: pageIssue.reason,
+        details: { code: pageIssue.code, quality, ...(ocrData?.missed?.length ? { not_read: ocrData.missed, not_read_rotation: space.turn } : {}) },
+      });
+    }
     const needsReview = pageIssue !== null || withDiagrams.some((r) => r.status === 'needs_review');
     const ref: PageRef = this.pageRef(page, pageGeom);
     const res = persistPage(ctx, ref, withDiagrams, assets, reviews, {
@@ -884,6 +976,12 @@ class VersionRun {
       render_file_id: ocrData?.renderFileId ?? null,
       error_code: pageIssue?.code ?? null,
       error_detail: pageIssue?.reason ?? null,
+      // how the page was read: OCR trials of the render, or the direction of its digital text (H2 items 3, 5)
+      orientation: ocrData
+        ? { content_rotation: typeof ocrData.rotation === 'number' ? quarter(ocrData.rotation) : ocrData.rotation === undefined ? 0 : null, origin: 'ocr_trials' }
+        : content.chars >= MIN_BODY_CHARS
+          ? { content_rotation: space.turn, origin: 'text_direction' }
+          : { content_rotation: null, origin: null },
     });
     return {
       page_index: page.page_index,
@@ -939,22 +1037,28 @@ class VersionRun {
     const meta = ctx.files.stat(fileId);
     const fileName = page.section_key ?? meta?.original_name ?? null;
     const buf = await ctx.files.read(fileId);
-    const size = imageSize(buf) ?? (page.width && page.height ? { width: page.width, height: page.height } : null);
-    const geom: PageGeom | null = size ? { width: size.width, height: size.height } : null;
-    const pixels = size ? size.width * size.height : 0;
+    // the page is the picture AS DISPLAYED: a JPEG's EXIF orientation applied (browsers show it that way)
+    const exif = jpegOrientation(buf);
+    const raw = rawImageSize(buf);
+    const shown = raw ? (exif >= 5 ? { width: raw.height, height: raw.width } : raw) : page.width && page.height ? { width: page.width, height: page.height } : null;
+    const pixels = raw ? raw.width * raw.height : shown ? shown.width * shown.height : 0;
     const overOcrBudget = pixels > MAX_OCR_PIXELS;
     let quality: OcrCheckpoint['quality'] = null;
     let decoded: RgbaImage | null = null;
+    let damaged = false;
     // Quality metrics only qualify OCR text. An image above the OCR pixel budget is never OCR'd, so it is not decoded
     // either: a full RGBA decode of a 48 MP photo cost ≈ 0.57 GB of memory and 2.6 s for nothing (docs/PERFORMANCE.md).
-    if (isPng(buf) && !overOcrBudget) {
+    // PNG and JPEG are decoded (bounded by MAX_DECODE_PIXELS); a picture that cannot be decoded because its data is
+    // damaged is remembered, so an OCR failure on it says the picture itself is broken (H2 item 7).
+    if (!overOcrBudget && (isPng(buf) || isJpeg(buf))) {
       try {
-        decoded = decodePng(buf);
+        decoded = decodeDisplayed(buf).image;
         const q = measureImageQuality(decoded);
         quality = { lowQuality: q.lowQuality, reasons: q.reasons, contrast: q.contrast, edgeSharpness: q.edgeSharpness, blank: q.blank };
-      } catch {
+      } catch (e) {
         quality = null;
         decoded = null;
+        damaged = e instanceof ImageDecodeError && e.code === 'CORRUPT';
       }
     }
     const unavailable =
@@ -962,15 +1066,36 @@ class VersionRun {
       (overOcrBudget ? { code: 'IMAGE_TOO_LARGE', reason: MSG.imageTooLarge(Math.round(pixels / 1e6)) } : null);
     let ocrData: OcrCheckpoint | null = null;
     let regions: LayoutRegion[] = [];
+    let turn: QuarterTurn = 0;
     if (!unavailable) {
       ocrData = await run.checkpoint<OcrCheckpoint>(`page:${page.page_index}:ocr`, async () => {
-        const { res, missed } = await this.recognizeCovered(buf, decoded);
-        return { renderFileId: null, pxWidth: size?.width ?? null, pxHeight: size?.height ?? null, words: res.words, confidence: res.confidence, quality, missed };
+        // OCR reads the picture as displayed (EXIF applied — tesseract alone honours only big-endian EXIF); a picture
+        // that is stored sideways / upside down is then read in rotated trials (H2 item 3)
+        const input = decoded && exif !== 1 ? encodePng(decoded) : exif !== 1 ? stripJpegExif(buf) : buf;
+        const read = await this.readOriented(input, decoded, { coverage: true, damaged });
+        return {
+          renderFileId: null,
+          pxWidth: shown?.width ?? null,
+          pxHeight: shown?.height ?? null,
+          words: read.res.words,
+          confidence: read.res.confidence,
+          quality,
+          missed: read.missed,
+          rotation: read.rotation,
+          ...(decoded || exif === 1 ? {} : { rawSpace: true }),
+        };
       });
-      const items = wordsToItems(ocrData.words, (x, y) => [x, y]);
-      const g = geom ?? { width: Math.max(1, ...items.map((i) => i.x1)), height: Math.max(1, ...items.map((i) => i.bottom)) };
+      turn = quarter(ocrData.rotation ?? 0);
+      // words of a JPEG that could not be decoded were read in its stored (raw) orientation: mapped to the displayed one
+      const words = ocrData.rawSpace && raw ? ocrData.words.map((w) => exifWordToDisplayed(w, raw, exif)) : ocrData.words;
+      const items = wordsToItems(words, (x, y) => [x, y]);
+      const pv = shown ? pageView({ width: shown.width, height: shown.height, rotation: turn }) : null;
+      const g = pv ? { width: pv.width, height: pv.height } : { width: Math.max(1, ...items.map((i) => i.x1)), height: Math.max(1, ...items.map((i) => i.bottom)) };
       regions = analyzePage({ geom: g, items, rules: [], figures: [], origin: 'ocr', bodySize: 0, headerFooter: { repeated: new Set() }, detectBands: false });
+      // the reading ran on the picture turned upright: boxes go back to the picture as displayed (the stored page space)
+      if (pv) regionsToPageSpace(regions, pv);
     }
+    const geom: PageGeom | null = shown ? { width: shown.width, height: shown.height } : null;
     const assets = new Map<string, FigureAsset>();
     const hasText = regions.some((r) => r.text);
     if (!hasText) {
@@ -995,9 +1120,18 @@ class VersionRun {
     if (unavailable) pageIssue = { code: unavailable.code, reason: unavailable.reason, kind: 'unreadable_page' };
     else if (lowQuality) pageIssue = { code: 'LOW_QUALITY_SCAN', reason: MSG.lowQuality((quality?.reasons ?? []).map((r) => QUALITY_REASON_AR[r])), kind: 'ocr_error' };
     else if (hasText && ocrData?.missed?.length) pageIssue = { code: 'TEXT_NOT_READ', reason: MSG.textNotRead(ocrData.missed.length), kind: 'ocr_error' };
-    if (pageIssue) reviews.push({ kind: pageIssue.kind, regionKey: null, reasonAr: pageIssue.reason, details: { code: pageIssue.code, quality, file_name: fileName, ...(ocrData?.missed?.length ? { not_read: ocrData.missed } : {}) } });
+    if (pageIssue) {
+      reviews.push({
+        kind: pageIssue.kind,
+        regionKey: null,
+        reasonAr: pageIssue.reason,
+        details: { code: pageIssue.code, quality, file_name: fileName, ...(ocrData?.missed?.length ? { not_read: ocrData.missed, not_read_rotation: turn } : {}) },
+      });
+    }
     const needsReview = pageIssue !== null || regions.some((r) => r.status === 'needs_review');
     const textStatus: PageUpdate['text_status'] = unavailable ? 'needs_ocr' : hasText ? 'ocr' : 'no_text_found';
+    // orientation known only when the reading could be checked in rotated trials (a decoded picture)
+    const contentRotation = ocrData && typeof ocrData.rotation === 'number' ? quarter(ocrData.rotation) : null;
     const res = persistPage(ctx, this.pageRef(page, geom), regions, assets, reviews, {
       text_status: textStatus,
       processing_status: needsReview ? 'needs_review' : 'ready',
@@ -1006,6 +1140,9 @@ class VersionRun {
       render_file_id: fileId,
       error_code: pageIssue?.code ?? null,
       error_detail: pageIssue?.reason ?? null,
+      // the reader shows the picture upright: the display rotation of a picture page is the rotation its text needed
+      ...(geom ? { geometry: { width: geom.width, height: geom.height, unit: 'px' as const, ...(contentRotation !== null ? { rotation: contentRotation } : {}) } } : {}),
+      orientation: { content_rotation: contentRotation, origin: 'ocr_trials', image_orientation: exif !== 1 ? exif : null },
     });
     return {
       page_index: page.page_index,
@@ -1044,6 +1181,7 @@ export function regionsToPageSpace(regions: LayoutRegion[], pv: PageView): void 
   };
   for (const r of regions) {
     if (r.box) r.box = pv.toPage(r.box);
+    for (const w of r.words ?? []) w.box = pv.toPage(w.box);
     if (r.table && !seen.has(r.table)) {
       seen.add(r.table);
       r.table.box = pv.toPage(r.table.box);

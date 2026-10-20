@@ -117,6 +117,10 @@ export interface PageRow {
   section_key: string | null;
   created_at: number;
   updated_at: number;
+  /** processing (migration 0220) */
+  content_rotation?: number | null;
+  content_rotation_origin?: 'text_direction' | 'ocr_trials' | null;
+  image_orientation?: number | null;
 }
 
 export interface RegionRow {
@@ -255,6 +259,9 @@ export function toPageView(p: PageRow): SourcePageView {
     thumbnail_file_id: p.thumbnail_file_id,
     render_file_id: p.render_file_id,
     section_key: p.section_key,
+    content_rotation: p.content_rotation ?? null,
+    content_rotation_origin: p.content_rotation_origin ?? null,
+    image_orientation: p.image_orientation ?? null,
   };
 }
 

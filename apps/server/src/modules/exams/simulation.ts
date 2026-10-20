@@ -418,6 +418,12 @@ function childRun(job: JobRun<{ simulation_id: string }>, runId: string, label: 
 }
 
 const FATAL = new Set(['AI_NOT_CONFIGURED', 'AI_BUDGET_EXCEEDED']);
+const SIMULATION_MAX_ATTEMPTS = 2;
+
+/** The simulation job retries a retryable provider error once (attempts 1 → 2). */
+function willRetry(e: unknown, attempt: number): boolean {
+  return isAppError(e) && e.code === 'AI_PROVIDER_ERROR' && (e.details as { retryable?: boolean } | undefined)?.retryable === true && attempt < SIMULATION_MAX_ATTEMPTS;
+}
 
 async function execute(ctx: AppContext, job: JobRun<{ simulation_id: string }>): Promise<{ status: SimulationStatus }> {
   const sim = getSimulation(ctx, job.input.simulation_id);
@@ -457,6 +463,14 @@ async function execute(ctx: AppContext, job: JobRun<{ simulation_id: string }>):
       } catch (e) {
         const code = isAppError(e) ? e.code : 'INTERNAL';
         const messageAr = isAppError(e) ? e.messageAr : 'حدث خطأ غير متوقع أثناء توليد جزء من المحاكاة.';
+        // H1: the simulation job will retry this error (same rule as its handler): leave the run OPEN, like the
+        // generation job does, so the retry resumes it from its checkpoints — the stored generation, the candidates
+        // already decided — and produces exactly the missing items. Closing it here made the retry skip the part
+        // («failed») instead of regenerating it.
+        if (willRetry(e, job.attempt)) {
+          ctx.db.run('UPDATE question_generation_run SET error_json = ?, updated_at = ? WHERE id = ?', [toJson({ code, message_ar: messageAr }), ctx.clock.now(), created.run_id]);
+          throw e;
+        }
         // the inline run is closed like the generation job would close it: interrupted candidates are never published
         ctx.db.run(
           `UPDATE generated_question_candidate SET status = 'rejected', updated_at = ?
@@ -511,7 +525,7 @@ async function execute(ctx: AppContext, job: JobRun<{ simulation_id: string }>):
 export function registerSimulationJob(ctx: AppContext): void {
   ctx.jobs.register<{ simulation_id: string }, { status: SimulationStatus }>(SIMULATION_JOB, {
     version: SIMULATION_VERSION,
-    maxAttempts: 2,
+    maxAttempts: SIMULATION_MAX_ATTEMPTS,
     timeoutMs: 60 * 60 * 1000,
     concurrency: 1,
     inputSchema: z.object({ simulation_id: id }).strict(),
@@ -519,7 +533,7 @@ export function registerSimulationJob(ctx: AppContext): void {
       try {
         return await execute(ctx, job);
       } catch (e) {
-        const retryable = isAppError(e) && e.code === 'AI_PROVIDER_ERROR' && (e.details as { retryable?: boolean } | undefined)?.retryable === true && job.attempt < 2;
+        const retryable = willRetry(e, job.attempt);
         const code = isAppError(e) ? e.code : 'INTERNAL';
         const messageAr = isAppError(e) ? e.messageAr : 'حدث خطأ غير متوقع أثناء توليد المحاكاة.';
         setSimulation(ctx, job.input.simulation_id, retryable ? { error_json: toJson({ code, message_ar: messageAr }) } : { status: 'failed', error_json: toJson({ code, message_ar: messageAr }) });

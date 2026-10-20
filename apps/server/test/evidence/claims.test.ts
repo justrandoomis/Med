@@ -338,3 +338,100 @@ describe('AC-29: instructions inside a document cannot widen the scope', () => {
     expect(scope).toEqual(before); // nothing mutated the resolved scope
   });
 });
+
+describe('H1 hardening — claims resting ONLY on a low-confidence OCR reading (AC-08 spirit)', () => {
+  const withRegion = async <T>(evidenceId: string, patch: { status: string; text_origin: string; confidence: number | null }, fn: () => Promise<T>): Promise<T> => {
+    const rid = g.t.ctx.db.get<{ region_id: string }>('SELECT region_id FROM evidence WHERE id = ?', [evidenceId])!.region_id;
+    const before = g.t.ctx.db.get<{ status: string; text_origin: string | null; confidence: number | null }>('SELECT status, text_origin, confidence FROM source_region WHERE id = ?', [rid])!;
+    g.t.ctx.db.run('UPDATE source_region SET status = ?, text_origin = ?, confidence = ? WHERE id = ?', [patch.status, patch.text_origin, patch.confidence, rid]);
+    try {
+      return await fn();
+    } finally {
+      g.t.ctx.db.run('UPDATE source_region SET status = ?, text_origin = ?, confidence = ? WHERE id = ?', [before.status, before.text_origin, before.confidence, rid]);
+    }
+  };
+  const CT = 'CT abdomen is preferred in adults when the diagnosis remains uncertain after clinical assessment.';
+
+  it('needs_review OCR region as the only evidence → needs_review (never linked) with the reason, also through the API', async () => {
+    await withRegion(ev.ct, { status: 'needs_review', text_origin: 'ocr', confidence: 0.41 }, async () => {
+      fake.push(verdicts([0, 'supported']));
+      const o = owner();
+      const r = await validateClaims(g.t.ctx, { ...o, scope, aliasMap: pack.aliasMap, sentences: [claim(CT, [alias(ev.ct)], 'directly_stated')] });
+      const s = r.sentences[0]!;
+      expect(s.status).toBe('needs_review');
+      expect(s.keep).toBe(true);
+      expect(s.reason_ar).toMatch(/OCR/);
+      expect(s.issues.some((i) => /OCR/.test(i.reason_ar))).toBe(true);
+      const cv = (await g.t.app.inject({ method: 'GET', url: `/api/evidence/claims/${s.claim_id}`, headers: g.h })).json().claim;
+      expect(cv.verification_status).toBe('needs_review');
+      expect(cv.issues.map((i: { reason_ar: string }) => i.reason_ar).join(' ')).toMatch(/OCR/);
+      expect(cv.citations[0].evidence.extraction_status).toBe('needs_review');
+      // never counted as supported coverage
+      const rib = await g.t.app.inject({ method: 'GET', url: `/api/evidence/ribbon?owner_type=content_block&owner_id=${o.ownerId}`, headers: g.h });
+      expect(rib.json().items).toEqual([]);
+    });
+  });
+
+  it('also when the verifier is unavailable: the OCR reason is added to the review reasons', async () => {
+    await withRegion(ev.ct, { status: 'needs_review', text_origin: 'ocr', confidence: 0.41 }, async () => {
+      const r = await validateClaims(g.t.ctx, { ...owner(), scope, aliasMap: pack.aliasMap, entailment: 'off', sentences: [claim(CT, [alias(ev.ct)], 'directly_stated')] });
+      expect(r.sentences[0]!.status).toBe('needs_review');
+      expect(r.sentences[0]!.issues.some((i) => /OCR/.test(i.reason_ar))).toBe(true);
+    });
+  });
+
+  it('a confirmed excerpt next to the OCR one, or an OCR region the owner reviewed, is linked as before', async () => {
+    await withRegion(ev.ct, { status: 'needs_review', text_origin: 'ocr', confidence: 0.41 }, async () => {
+      fake.push({ json: { results: [{ index: 0, verdict: 'supported', reason: 'ok', based_on: [alias(ev.ct), alias(ev.us)] }] } });
+      const r = await validateClaims(g.t.ctx, {
+        ...owner(),
+        scope,
+        aliasMap: pack.aliasMap,
+        sentences: [claim('CT abdomen is preferred in adults, ultrasound in children.', [alias(ev.ct), alias(ev.us)])],
+      });
+      expect(r.sentences[0]!.status).toBe('linked');
+    });
+    await withRegion(ev.ct, { status: 'owner_reviewed', text_origin: 'ocr', confidence: 0.41 }, async () => {
+      fake.push(verdicts([0, 'supported']));
+      const r = await validateClaims(g.t.ctx, { ...owner(), scope, aliasMap: pack.aliasMap, sentences: [claim(CT, [alias(ev.ct)], 'directly_stated')] });
+      expect(r.sentences[0]!.status).toBe('linked');
+    });
+  });
+});
+
+describe('H1 hardening — a verifier answer without «based_on» is treated conservatively (AC-07)', () => {
+  it('several cited excerpts + no based_on → needs_review, no excerpt is shown as support', async () => {
+    fake.push(verdicts([0, 'supported'])); // no based_on field at all
+    const r = await validateClaims(g.t.ctx, {
+      ...owner(),
+      scope,
+      aliasMap: pack.aliasMap,
+      sentences: [claim('Ultrasound is the first-line imaging test in children.', [alias(ev.us), alias(ev.diff)])],
+    });
+    const s = r.sentences[0]!;
+    expect(s.status).toBe('needs_review');
+    expect(s.reason_ar).toContain('يستند');
+    expect(s.issues.some((i) => i.check === 'entailment')).toBe(true);
+    // never cited as «supports» for an excerpt the verifier did not confirm
+    expect(citations(s.claim_id).filter((c) => c.relation === 'supports')).toEqual([]);
+  });
+
+  it('one cited excerpt + no based_on → the verdict can only rest on it: linked as before', async () => {
+    fake.push(verdicts([0, 'supported']));
+    const r = await validateClaims(g.t.ctx, { ...owner(), scope, aliasMap: pack.aliasMap, sentences: [claim('Ultrasound is the first-line imaging test in children.', [alias(ev.us)])] });
+    expect(r.sentences[0]!.status).toBe('linked');
+    expect(citations(r.sentences[0]!.claim_id)).toEqual([{ evidence_id: ev.us, relation: 'supports' }]);
+  });
+
+  it('several excerpts + based_on naming one → only that one is cited (unchanged)', async () => {
+    fake.push({ json: { results: [{ index: 0, verdict: 'supported', reason: 'ok', based_on: [alias(ev.us)] }] } });
+    const r = await validateClaims(g.t.ctx, {
+      ...owner(),
+      scope,
+      aliasMap: pack.aliasMap,
+      sentences: [claim('Ultrasound is the first-line imaging test in children.', [alias(ev.us), alias(ev.diff)])],
+    });
+    expect(r.sentences[0]!.status).toBe('linked');
+    expect(citations(r.sentences[0]!.claim_id)).toEqual([{ evidence_id: ev.us, relation: 'supports' }]);
+  });
+});

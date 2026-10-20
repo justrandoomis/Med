@@ -608,12 +608,193 @@ export interface ContainmentResult {
   /** 'exact' for original quotes; 'coverage' for directly-stated paraphrase checks; 'skipped' cross-language */
   method: 'exact' | 'coverage' | 'skipped_cross_language';
   coverage?: number;
+  /** H1: key terms of the claim (eponyms, abbreviations, medical terms, laterality, Latin terms in Arabic) absent from the quote */
+  missing_key_terms?: string[];
+  /** H1: a word of the claim that took the place of another word of the quote («biliary» for «ureteric») */
+  swapped?: { claim: string; quote: string } | null;
+}
+
+// ───────── key terms & in-place swaps («directly stated», H1) ─────────
+// A near-verbatim copy with ONE key noun swapped («Murphy's point» for «McBurney's point», «left» for «right»,
+// «biliary colic» for «ureteric colic») keeps ≥ 80 % of the words, so coverage alone let it pass as «stated».
+const MEDICAL_SUFFIX = /(?:itis|itides|osis|oses|iasis|ectomy|ectomies|otomy|ostomy|plasty|scopy|graphy|pathy|algia|a?emia|aemias|emias|omas?|cytes?|penia|philia|uria|lysis|megaly|trophy|plasia|rrhoea|rrhea|rrhage|dynia|genic|lytic|ectasis|stenosis|sclerosis|thorax)$/;
+const MEDICAL_PREFIX = /^(?:hyper|hypo|tachy|brady|oligo)[a-z]{3,}/;
+const LATERALITY_EN = new Set(['left', 'right', 'bilateral', 'unilateral', 'contralateral', 'ipsilateral']);
+const LATERALITY_AR = new Set(['يمين', 'يمني', 'ايمن', 'يسار', 'يسري', 'ايسر'].map((w) => arabicNormalize(w)));
+const HEDGE_EN = new Set(['often', 'usually', 'typically', 'generally', 'commonly', 'also', 'only', 'sometimes', 'frequently', 'rarely', 'mostly', 'mainly', 'especially', 'particularly', 'later', 'then', 'first']);
+const LY_NOT_HEDGE = new Set(['early', 'daily', 'weekly', 'monthly', 'yearly', 'hourly', 'nightly', 'family', 'anomaly', 'supply', 'belly', 'assembly']);
+const HEDGE_AR = new Set(['عاده', 'غالبا', 'احيانا', 'دايما', 'عموما', 'كثيرا', 'نادرا', 'ايضا', 'فقط', 'تقريبا', 'خصوصا', 'خاصه', 'اساسا', 'جدا', 'لاحقا', 'ثم'].map((w) => arabicNormalize(w)));
+
+interface SeqWord {
+  /** normalized, light-stemmed */
+  stem: string;
+  /** normalized surface form (for messages) */
+  raw: string;
+  key: boolean;
+}
+
+function isLatinWord(w: string): boolean {
+  return /[a-z]/.test(w);
+}
+
+function isHedge(w: string): boolean {
+  if (isLatinWord(w)) return HEDGE_EN.has(w) || (w.length > 5 && w.endsWith('ly') && !LY_NOT_HEDGE.has(w));
+  return HEDGE_AR.has(w) || (/^[وف]/.test(w) && HEDGE_AR.has(w.slice(1)));
+}
+
+function isMedicalTerm(lower: string): boolean {
+  return lower.length >= 6 && (MEDICAL_SUFFIX.test(lower) || MEDICAL_PREFIX.test(lower));
+}
+
+function isLaterality(w: string): boolean {
+  return isLatinWord(w) ? LATERALITY_EN.has(w) : LATERALITY_AR.has(lightStemAr(w)) || LATERALITY_AR.has(w);
+}
+
+/**
+ * The claim's key terms a «directly stated» quote must contain (H1): abbreviations and mixed-case terms (CT, hCG,
+ * McBurney), Greek letters (β), capitalised words that do not start a sentence (eponyms: Murphy, Alvarado),
+ * medical terms by their form (-itis, -osis, -ectomy, -graphy, hyper-/hypo- …), laterality (left / right / اليمنى …)
+ * and — in an Arabic claim — every Latin term.
+ */
+export function directlyStatedKeyTerms(claim: string): Array<{ raw: string; stem: string }> {
+  const text = stripBidiControls(claim).normalize('NFC');
+  const arabicClaim = isArabicDominant(text);
+  const out = new Map<string, string>();
+  const re = /[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu;
+  for (const m of text.matchAll(re)) {
+    const before = text.slice(0, m.index!).trimEnd();
+    const sentenceStart = before.length === 0 || /[.!?؟:•\n]$/.test(before);
+    for (const partRaw of m[0].split('-')) {
+      const part = partRaw.replace(/['’]s?$/u, '').replace(/['’]/g, '');
+      if (!part || /^\p{N}+$/u.test(part)) continue;
+      const lower = matchNormalize(part);
+      if (/[A-Za-z]/.test(part)) {
+        if (EN_STOP.has(lower) || EN_NEGATIONS.has(lower)) continue;
+        const capitals = (part.match(/[A-Z]/g) ?? []).length;
+        const key =
+          capitals >= 2 ||
+          /[a-z][A-Z]/.test(part) ||
+          (/^[A-Z][a-z]/.test(part) && !sentenceStart) ||
+          isMedicalTerm(lower) ||
+          LATERALITY_EN.has(lower) ||
+          (arabicClaim && lower.length >= 2);
+        if (key) out.set(lightStemEn(lower), part);
+      } else if (/[Ͱ-Ͽ]/.test(part)) {
+        out.set(lower, part);
+      } else if (/[؀-ۿ]/.test(part)) {
+        const w = normalizeForSearch(baseNormalize(part));
+        if (isLaterality(w)) out.set(lightStemAr(w), part);
+      }
+    }
+  }
+  return [...out].map(([stem, raw]) => ({ stem, raw }));
+}
+
+/** Content words in reading order (stop words, negations, numbers left out; 2-letter Latin terms kept: «CT»). */
+function contentSeq(text: string, keyStems: Set<string>): SeqWord[] {
+  const norm = normalizeForSearch(baseNormalize(text));
+  const out: SeqWord[] = [];
+  for (const raw0 of norm.split(/[^\p{L}\p{N}]+/u)) {
+    const raw = raw0.replace(/^['’]+|['’]+$/g, '');
+    if (!raw || /^\d+$/.test(raw)) continue;
+    if (isLatinWord(raw)) {
+      if (raw.length < 2 || EN_STOP.has(raw) || EN_NEGATIONS.has(raw) || EN_NEG_CONTRACTION.test(raw)) continue;
+      const stem = lightStemEn(raw);
+      out.push({ stem, raw, key: keyStems.has(stem) || isMedicalTerm(raw) || LATERALITY_EN.has(raw) || /\d/.test(raw) });
+    } else {
+      if (raw.length < 2 || AR_STOP.has(raw) || AR_NEGATIONS.has(raw) || isPrefixedArFunctionWord(raw)) continue;
+      const stem = lightStemAr(raw);
+      out.push({ stem, raw, key: keyStems.has(stem) || isLaterality(raw) });
+    }
+  }
+  return out;
+}
+
+function quoteStems(text: string): Set<string> {
+  return new Set(contentSeq(text, new Set()).map((w) => w.stem));
+}
+
+/** Levenshtein distance ≤ 2 or a shared 4-letter prefix: «began» / «begins», «وينتقل» / «ينتقل» (not a swap). */
+function isInflection(a: string, b: string): boolean {
+  if (a === b) return true;
+  const p = Math.min(4, a.length, b.length);
+  if (p >= 4 && a.slice(0, 4) === b.slice(0, 4)) return true;
+  if (Math.abs(a.length - b.length) > 2) return false;
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j]! + 1, cur[j - 1]! + 1, prev[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length]! <= 2;
+}
+
+/** Longest common subsequence of stems → matched index pairs in order. */
+function lcsPairs(a: SeqWord[], b: SeqWord[]): Array<[number, number]> {
+  const n = a.length;
+  const m = b.length;
+  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) dp[i]![j] = a[i]!.stem === b[j]!.stem ? dp[i + 1]![j + 1]! + 1 : Math.max(dp[i + 1]![j]!, dp[i]![j + 1]!);
+  const pairs: Array<[number, number]> = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (a[i]!.stem === b[j]!.stem) {
+      pairs.push([i, j]);
+      i++;
+      j++;
+    } else if (dp[i + 1]![j]! >= dp[i]![j + 1]!) i++;
+    else j++;
+  }
+  return pairs;
+}
+
+/**
+ * A word of the claim that took the place of a different word of the quote, in a near-verbatim copy: aligned
+ * on both sides (or at the sentence edge on both sides), small gaps (≤ 3 words each), the claim's word absent
+ * from the whole quote and the quote's word absent from the claim. Hedges («usually» / «typically», «عادةً»)
+ * and inflections («began» / «begins») are not swaps — unless a key term is involved (hyperkalaemia ≠ hypokalaemia).
+ */
+function findSwap(claim: string, quote: string, keyStems: Set<string>): { claim: string; quote: string } | null {
+  const c = contentSeq(claim, keyStems);
+  if (c.length === 0) return null;
+  const claimStems = new Set(c.map((w) => w.stem));
+  const allQuote = quoteStems(quote);
+  const sentences = stripBidiControls(quote)
+    .split(/(?<=[.!?؟])\s+|[;؛]+/u)
+    .map((s) => contentSeq(s, keyStems))
+    .filter((s) => s.length > 0);
+  let best: { s: SeqWord[]; pairs: Array<[number, number]> } | null = null;
+  for (const s of sentences) {
+    const pairs = lcsPairs(c, s);
+    if (!best || pairs.length > best.pairs.length) best = { s, pairs };
+  }
+  if (!best || best.pairs.length === 0) return null;
+  const { s, pairs } = best;
+  const bounds: Array<[number, number]> = [[-1, -1], ...pairs, [c.length, s.length]];
+  for (let k = 0; k + 1 < bounds.length; k++) {
+    const [ci, qi] = bounds[k]!;
+    const [cj, qj] = bounds[k + 1]!;
+    const cg = c.slice(ci + 1, cj);
+    const qg = s.slice(qi + 1, qj);
+    if (cg.length === 0 || qg.length === 0 || cg.length > 3 || qg.length > 3) continue;
+    for (const a of cg) {
+      if (allQuote.has(a.stem) || isHedge(a.raw)) continue;
+      const others = qg.filter((b) => !claimStems.has(b.stem) && !isHedge(b.raw));
+      if (others.length === 0) continue;
+      const keyInvolved = a.key || others.some((b) => b.key);
+      if (!keyInvolved && others.some((b) => isInflection(a.stem, b.stem))) continue;
+      return { claim: a.raw, quote: others[0]!.raw };
+    }
+  }
+  return null;
 }
 
 /**
  * original_quote → the sentence must be a verbatim excerpt of ONE cited quote (whitespace/quotes aside).
- * directly_stated → ≥ 80 % of its content words must be inside one cited quote (same language); a
- * cross-language directly-stated claim (translation) cannot be checked verbatim → left to the verifier.
+ * directly_stated → in ONE cited quote (same language): ≥ 80 % of its content words, every key term
+ * (`directlyStatedKeyTerms`), and no word swapped in place of the quote's word (H1). A cross-language
+ * directly-stated claim (translation) cannot be checked verbatim → left to the verifier.
  */
 export function checkContainment(claim: string, quotes: string[], mode: 'original_quote' | 'directly_stated'): ContainmentResult {
   if (mode === 'original_quote') {
@@ -627,22 +808,45 @@ export function checkContainment(claim: string, quotes: string[], mode: 'origina
   const sameLang = quotes.filter((q) => isArabicDominant(q) === claimArabic);
   if (sameLang.length === 0) return { passed: true, reason_ar: null, method: 'skipped_cross_language' };
   const words = contentWords(claim);
-  if (words.size === 0) return { passed: true, reason_ar: null, method: 'coverage', coverage: 1 };
+  const keys = directlyStatedKeyTerms(claim);
+  const keyStems = new Set(keys.map((k) => k.stem));
+  if (words.size === 0 && keys.length === 0) return { passed: true, reason_ar: null, method: 'coverage', coverage: 1 };
   let best = 0;
+  // the closest failing quote explains the refusal (most words covered first)
+  let closest: { coverage: number; missing: string[]; swapped: { claim: string; quote: string } | null } | null = null;
   for (const q of sameLang) {
     const qw = contentWords(q);
     let n = 0;
     for (const w of words) if (qw.has(w)) n++;
-    best = Math.max(best, n / words.size);
+    const coverage = words.size === 0 ? 1 : n / words.size;
+    best = Math.max(best, coverage);
+    if (coverage < 0.8) continue;
+    const present = quoteStems(q);
+    const qNorm = ` ${normalizeForSearch(baseNormalize(q)).split(/[^\p{L}\p{N}]+/u).join(' ')} `;
+    const missing = keys.filter((k) => !present.has(k.stem) && !qNorm.includes(` ${matchNormalize(k.raw).replace(/['’]/g, '')} `)).map((k) => k.raw);
+    const swapped = missing.length === 0 ? findSwap(claim, q, keyStems) : null;
+    if (missing.length === 0 && !swapped) return { passed: true, reason_ar: null, method: 'coverage', coverage, missing_key_terms: [], swapped: null };
+    if (!closest || coverage > closest.coverage) closest = { coverage, missing, swapped };
   }
-  return best >= 0.8
-    ? { passed: true, reason_ar: null, method: 'coverage', coverage: best }
-    : {
-        passed: false,
-        reason_ar: 'الجملة موسومة «مذكور نصًا» لكن معظم كلماتها غير موجودة في المقتطف المستشهد به؛ هذا استنتاج وليس نقلًا مباشرًا.',
-        method: 'coverage',
-        coverage: best,
-      };
+  if (closest) {
+    const why = closest.missing.length
+      ? `المصطلح ${closest.missing.map((m) => `«${m}»`).join('، ')} غير موجود في المقتطف المستشهد به`
+      : `الكلمة «${closest.swapped!.claim}» حلّت محل «${closest.swapped!.quote}» الموجودة في المقتطف`;
+    return {
+      passed: false,
+      reason_ar: `الجملة موسومة «مذكور نصًا» لكن ${why}؛ تبديل مصطلح أو كلمة يغيّر المعنى، فهذا ليس نقلًا مباشرًا.`,
+      method: 'coverage',
+      coverage: closest.coverage,
+      missing_key_terms: closest.missing,
+      swapped: closest.swapped,
+    };
+  }
+  return {
+    passed: false,
+    reason_ar: 'الجملة موسومة «مذكور نصًا» لكن معظم كلماتها غير موجودة في المقتطف المستشهد به؛ هذا استنتاج وليس نقلًا مباشرًا.',
+    method: 'coverage',
+    coverage: best,
+  };
 }
 
 /** True when a sentence looks medical even without a claim: a value with a unit, a dose or a threshold. */

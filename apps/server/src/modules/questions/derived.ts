@@ -243,6 +243,24 @@ function optionText(o: OptionRow): string {
   return richTextToPlain(fromJson<RichText | null>(o.text_json, null));
 }
 
+/**
+ * H1: the key a derived (translation / paraphrase) version row shows in the version history is the ORIGINAL's
+ * current key — read from the version it was derived from and mapped by option key onto the derived row's options —
+ * never the copy stored when it was derived (an unattempted original can have its key changed in place later).
+ * Returns null for a row that is not a derived version.
+ */
+export function derivedKeyOverride(ctx: AppContext, v: VersionRow): { correct_option_ids: string[] | null; answer_status: VersionRow['answer_status'] } | null {
+  if (!v.derived_from_version_id || !(DERIVED_VERSION_KINDS as readonly string[]).includes(v.kind)) return null;
+  const source = ctx.db.get<VersionRow>('SELECT * FROM question_version WHERE id = ?', [v.derived_from_version_id]);
+  if (!source) return null;
+  const keys = correctOptionKeys(ctx, source);
+  const byKey = new Map(optionRows(ctx, v.id).map((o) => [o.option_key, o.id]));
+  return {
+    correct_option_ids: keys === null ? null : keys.map((k) => byKey.get(k)).filter((id): id is string => !!id),
+    answer_status: source.answer_status,
+  };
+}
+
 export function derivedVersionView(ctx: AppContext, v: VersionRow, currentVersionId: string | null): DerivedVersionView {
   const source = getVersionRow(ctx, v.derived_from_version_id!);
   const srcOpts = optionRows(ctx, source.id);

@@ -1046,7 +1046,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
 
   return (
     <InkHost links={linkHost} currentPage={currentInkPage} notify={(m) => toast.show({ title: m, tone: 'warning' })}>
-    <HandwritingHost sourceId={sourceId} nodeId={detail.node_id ?? null} online={online}>
+    <HandwritingHost sourceId={sourceId} nodeId={detail.node_id ?? null} online={online} askHiddenReason={studyMode === 'exam' ? EXAM_MODE_HIDDEN_AR : null}>
     <SourceNavigationContext.Provider value={nav}>
       <ReaderPageContext.Provider value={pageCtx}>
         <div

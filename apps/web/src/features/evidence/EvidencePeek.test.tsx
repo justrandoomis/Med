@@ -105,4 +105,24 @@ describe('CitationChip + EvidencePeek', () => {
     expect(open.disabled).toBe(true);
     expect(screen.getByRole('dialog').textContent).toContain('حُذف هذا المصدر');
   });
+
+  it('H1: an unconfirmed machine reading is said so, and the claim\'s review reason is shown in the peek', () => {
+    const reason = 'الجملة تستند فقط إلى نص قُرئ آليًا (OCR) بثقة منخفضة ولم يُراجَع بعد؛ قارنه بالصفحة الأصلية.';
+    render(
+      <MemoryRouter>
+        <CitationChip evidence={ev({ extraction_status: 'needs_review' })} context={{ support_type: 'directly_stated', verification_status: 'needs_review', relation: 'supports', reason_ar: reason }} />
+      </MemoryRouter>,
+    );
+    fireEvent.click(chipButton());
+    const dialog = screen.getByRole('dialog');
+    const notes = Array.from(dialog.querySelectorAll('[role="note"]')).map((n) => n.textContent ?? '');
+    expect(notes.some((t) => t.includes('قراءة آلية') && t.includes('الصفحة الأصلية'))).toBe(true);
+    expect(notes.some((t) => t.includes('لماذا تحتاج مراجعة') && t.includes('OCR'))).toBe(true);
+  });
+
+  it('H1: a confirmed extraction with a linked claim shows no review note', () => {
+    renderChip();
+    fireEvent.click(chipButton());
+    expect(screen.getByRole('dialog').querySelectorAll('[role="note"]').length).toBe(0);
+  });
 });

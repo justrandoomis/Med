@@ -519,6 +519,17 @@
   cursor: text;
   user-select: text;
 }
+/* H2: an OCR word placed over its glyphs (font size from the word height, stretched to its width by the reader) */
+.wk-ocrlayer__word {
+  position: absolute;
+  white-space: pre;
+  line-height: 1;
+  transform-origin: 0 0;
+}
+/* the text between OCR words: kept for copy and search offsets, takes no room and draws no rectangle */
+.wk-ocrlayer__gap {
+  font-size: 0;
+}
 
 .wk-ink-slot {
   position: absolute;

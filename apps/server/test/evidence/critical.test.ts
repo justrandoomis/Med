@@ -176,3 +176,66 @@ describe('checkContainment', () => {
     expect(checkContainment('الموجات فوق الصوتية هي الفحص الأول عند الأطفال.', [Q], 'directly_stated').method).toBe('skipped_cross_language');
   });
 });
+
+describe('H1 hardening — «directly stated» catches a swapped key noun / term (§12, AC-07)', () => {
+  const RIF = "Pain usually begins in the periumbilical region and later migrates to the right iliac fossa (McBurney's point).";
+  const US = 'Ultrasound is the first-line imaging test in children and in pregnant women.';
+  const DDX = 'The differential diagnosis includes mesenteric adenitis, ectopic pregnancy and right ureteric colic.';
+  const AR_ECTOPIC = 'يجب استبعاد الحمل خارج الرحم عند النساء في سن الإنجاب.';
+  const AR_RIF = 'يبدأ الألم عادةً حول السرة ثم ينتقل إلى الحفرة الحرقفية اليمنى عند نقطة McBurney.';
+  const ds = (claim: string, quotes: string[]) => checkContainment(claim, quotes, 'directly_stated');
+
+  it('English: one swapped eponym / laterality / technical term fails although ≥ 80 % of the words match', () => {
+    const cases: Array<[string, string]> = [
+      [RIF.replace("McBurney's", "Murphy's"), RIF], // capitalised term not in the quote
+      [RIF.replace('right iliac', 'left iliac'), RIF], // laterality swapped
+      [US.replace('Ultrasound', 'Radiography'), US], // sentence-initial key noun swapped
+      [DDX.replace('ureteric', 'biliary'), DDX], // lowercase noun swapped in place
+      [DDX.replace('adenitis', 'lymphoma'), DDX], // medical term swapped
+    ];
+    for (const [claim, quote] of cases) {
+      // the existing deterministic checks did not see these swaps
+      expect(checkCriticalTokens(claim, [quote]).passed, claim).toBe(true);
+      const r = ds(claim, [quote]);
+      expect(r.passed, claim).toBe(false);
+      expect(r.coverage ?? 0, claim).toBeGreaterThanOrEqual(0.8);
+      expect(r.reason_ar, claim).toContain('مذكور نصًا');
+    }
+    expect(ds(RIF.replace("McBurney's", "Murphy's"), [RIF]).reason_ar).toContain('Murphy');
+    expect(ds(DDX.replace('ureteric', 'biliary'), [DDX]).reason_ar).toMatch(/biliary[\s\S]*ureteric/);
+  });
+
+  it('Arabic: a swapped Latin term or Arabic noun fails; laterality too', () => {
+    const cases: Array<[string, string]> = [
+      [AR_RIF.replace('McBurney', 'Murphy'), AR_RIF], // Latin term inside an Arabic claim, Arabic quote
+      [AR_ECTOPIC.replace('الرحم', 'الكلية'), AR_ECTOPIC], // Arabic noun swapped in place
+      [AR_RIF.replace('اليمنى', 'اليسرى'), AR_RIF], // laterality
+    ];
+    for (const [claim, quote] of cases) {
+      expect(checkCriticalTokens(claim, [quote]).passed, claim).toBe(true);
+      const r = ds(claim, [quote]);
+      expect(r.passed, claim).toBe(false);
+      expect(r.reason_ar, claim).toContain('مذكور نصًا');
+    }
+  });
+
+  it('valid «directly stated» claims still pass: verbatim, subset, reordered, inflected, hedge words, β-hCG, Arabic', () => {
+    const ok: Array<[string, string]> = [
+      [RIF, RIF],
+      ['Pain begins in the periumbilical region and later migrates to the right iliac fossa.', RIF],
+      ['Pain typically begins in the periumbilical region and later migrates to the right iliac fossa.', RIF],
+      ['Pain began in the periumbilical region and later migrated to the right iliac fossa.', RIF],
+      ["Pain later migrates to the right iliac fossa (McBurney's point).", RIF],
+      ['Ultrasound is the first-line imaging test in children.', US],
+      ['In children, ultrasound is the first-line imaging test.', US],
+      ['A pregnancy test (β-hCG) is required in women of reproductive age.', 'CT abdomen is preferred in adults. A pregnancy test (β-hCG) is required in women of reproductive age.'],
+      [AR_ECTOPIC, AR_ECTOPIC],
+      ['يجب استبعاد الحمل خارج الرحم عند النساء.', AR_ECTOPIC],
+      ['ينتقل الألم إلى الحفرة الحرقفية اليمنى عند نقطة McBurney.', AR_RIF],
+      ['ويبدأ الألم حول السرة ثم ينتقل إلى الحفرة الحرقفية اليمنى عند نقطة McBurney.', AR_RIF],
+    ];
+    for (const [claim, quote] of ok) expect(ds(claim, [quote]).passed, claim).toBe(true);
+    // the right quote among several cited ones is enough
+    expect(ds(DDX, [US, DDX]).passed).toBe(true);
+  });
+});

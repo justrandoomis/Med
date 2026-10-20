@@ -6,7 +6,7 @@ import { Fragment, type ReactNode } from 'react';
 import { CircleAlert } from 'lucide-react';
 import type { ClaimView, Paragraph, RichText, Run } from '@medlevo/shared';
 import { StatusPill } from '../../design';
-import { CLAIM_MARK_LABELS_AR, CitationChip, claimMark, segmentByClaim } from '../evidence';
+import { CLAIM_MARK_LABELS_AR, CitationChip, claimMark, claimReasonAr, segmentByClaim } from '../evidence';
 
 const SAFE_MARKS = new Set(['b', 'i', 'u', 'sup', 'sub', 'em']);
 
@@ -34,7 +34,7 @@ export function ClaimChips({ claim }: { claim: ClaimView | undefined }) {
   return (
     <span className="ex-claim__trail">
       {claim?.citations.map((c) => (
-        <CitationChip key={`${c.evidence.id}-${c.relation}`} evidence={c.evidence} context={{ support_type: claim.support_type, verification_status: claim.verification_status, relation: c.relation }} />
+        <CitationChip key={`${c.evidence.id}-${c.relation}`} evidence={c.evidence} context={{ support_type: claim.support_type, verification_status: claim.verification_status, relation: c.relation, reason_ar: claimReasonAr(claim) }} />
       ))}
       {mark !== 'linked' && (
         <StatusPill tone={mark === 'conflict' || mark === 'rejected' ? 'danger' : 'warning'} icon={<CircleAlert size={14} />} title={claim?.issues.map((x) => x.reason_ar).join(' ') || undefined}>

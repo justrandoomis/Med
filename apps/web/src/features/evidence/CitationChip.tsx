@@ -17,7 +17,21 @@ export interface CitationContext {
   support_type?: ClaimView['support_type'];
   verification_status?: ClaimView['verification_status'];
   relation?: ClaimView['citations'][number]['relation'];
+  /** why the claim is not «linked» (its failed checks, Arabic) — shown in the peek (H1) */
+  reason_ar?: string | null;
 }
+
+/** The claim's review reasons as one Arabic text (for `CitationContext.reason_ar`). */
+export function claimReasonAr(claim: Pick<ClaimView, 'issues'>): string | null {
+  const t = [...new Set(claim.issues.map((i) => i.reason_ar).filter(Boolean))].join(' ');
+  return t || null;
+}
+
+/** H1: an extraction that is not confirmed yet (low-confidence OCR, a diagram's labels) is said so in the peek. */
+const EXTRACTION_NOTE_AR: Partial<Record<EvidenceView['extraction_status'], string>> = {
+  needs_review: 'نص هذا الموضع قراءة آلية لم تُراجَع بعد (قد تكون ثقة القراءة منخفضة)؛ قارنه بالصفحة الأصلية قبل الاعتماد عليه.',
+  uncertain: 'نص هذا الموضع قراءة آلية غير مؤكدة (تسميات رسم قُرئت دون فهم)؛ قارنه بالصفحة الأصلية قبل الاعتماد عليه.',
+};
 
 const EXTRACTION_TONE: Record<EvidenceView['extraction_status'], StatusTone> = {
   extracted: 'neutral',
@@ -115,6 +129,21 @@ export function EvidencePeek({ evidence: e, context, onInspect, onOpened, headin
           </div>
         )}
       </dl>
+      {EXTRACTION_NOTE_AR[e.extraction_status] && (
+        <p className="ev-note ev-note--warning" role="note">
+          <CircleAlert size={16} aria-hidden="true" />
+          <span>{EXTRACTION_NOTE_AR[e.extraction_status]}</span>
+        </p>
+      )}
+      {context?.reason_ar && context.verification_status && context.verification_status !== 'linked' && context.verification_status !== 'owner_reviewed' && (
+        <p className="ev-note ev-note--warning" role="note">
+          <CircleAlert size={16} aria-hidden="true" />
+          <span>
+            <strong>{context.verification_status === 'conflict' ? 'سبب التعارض: ' : 'لماذا تحتاج مراجعة؟ '}</strong>
+            <BidiText as="span" dir="rtl" text={context.reason_ar} />
+          </span>
+        </p>
+      )}
       {reason && (
         <p className="ev-note ev-note--warning" role="note">
           <CircleAlert size={16} aria-hidden="true" />

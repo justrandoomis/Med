@@ -1,7 +1,7 @@
 // Evidence UI for other tracks (Study Book, Questions, Exams, workspace rail). See docs/modules/evidence-search.md.
 import './evidence.css';
 
-export { CitationChip, EvidencePeek, type CitationChipProps, type EvidencePeekProps, type CitationContext } from './CitationChip';
+export { CitationChip, EvidencePeek, claimReasonAr, type CitationChipProps, type EvidencePeekProps, type CitationContext } from './CitationChip';
 export { SourceInspector, InspectButton, type SourceInspectorProps } from './SourceInspector';
 export { EvidenceRibbon, RIBBON_NOTE_AR, type EvidenceRibbonProps } from './EvidenceRibbon';
 export { ArtifactContent, type ArtifactContentProps } from './ArtifactContent';

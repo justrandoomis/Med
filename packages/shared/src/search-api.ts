@@ -107,11 +107,13 @@ export function normalizeWithMap(text: string): { norm: string; map: number[] } 
   return { norm, map };
 }
 
-/** Normalized search tokens (same splitting as toFtsQuery). */
-export function searchTokens(input: string): string[] {
-  return Array.from(normalizeWithMap(input).norm.split(/[^\p{L}\p{N}]+/u))
-    .filter((t) => t.length > 0)
-    .slice(0, 32);
+/**
+ * Normalized search tokens (same splitting as toFtsQuery). `limit` (default 32) caps a QUERY; pass `Infinity`
+ * to tokenize a whole passage (H1: a passage cut at 32 words hid the answer sentence of a long chunk).
+ */
+export function searchTokens(input: string, limit = 32): string[] {
+  const all = Array.from(normalizeWithMap(input).norm.split(/[^\p{L}\p{N}]+/u)).filter((t) => t.length > 0);
+  return Number.isFinite(limit) ? all.slice(0, Math.max(0, limit)) : all;
 }
 
 const WORD_CHAR = /[\p{L}\p{N}]/u;

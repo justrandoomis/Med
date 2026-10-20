@@ -1,7 +1,7 @@
 // One page of the Book Canvas: the paper sheet (pdf.js canvas / page image), an accessible selectable text
 // layer, overlays (text highlights, search hits, cited region) and the ink layer — all in the page's own
 // coordinate system — plus the folio that names the page (printed label + file position, AC-04).
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { RenderTask } from 'pdfjs-dist';
 import { annotationTargetKey, detectDir, richTextFromPlain, type NormBox, type PageViewTransform, type SourcePageView, type SourceRegionView } from '@medlevo/shared';
 import { RichTextView, Skeleton, cx } from '../../../design';
@@ -10,7 +10,7 @@ import { InkLayer } from '../ink';
 import { useFileSrc } from '../../../lib/offline';
 import { fetchRegions } from '../data/api';
 import { folio, fullPageLabel } from '../model/pages';
-import { pdfPageUsesRegionText, regionTextRuns } from '../model/regionText';
+import { ocrRunSegments, pdfPageUsesRegionText, regionTextRuns } from '../model/regionText';
 import { clientRectsToNorm, rangeFromOffsets } from '../model/textQuote';
 import type { PageGeom } from './geometry';
 import { BoxesLayer, RegionHighlight, TextHighlightsLayer } from './overlays';
@@ -267,7 +267,7 @@ function PdfSheet({
       <div className="wk-layers" data-rot={geom.rotation} style={{ width: unrotated.w * geom.scale, height: unrotated.h * geom.scale }}>
         {children}
         <div ref={textRef} className={cx('wk-textlayer', !textInteractive && 'wk-textlayer--inert')} lang={textLang ?? undefined} />
-        {regionText && <OcrTextLayer layerRef={ocrRef} runs={runs} interactive={textInteractive} />}
+        {regionText && <OcrTextLayer layerRef={ocrRef} runs={runs} interactive={textInteractive} heightPx={unrotated.h * geom.scale} />}
         <PdfLinkLayer pageIndex={pageIndex} />
       </div>
     </>
@@ -328,20 +328,73 @@ function ImageSheet({
       )}
       {children}
       {/* OCR text placed over the image: selectable and readable by screen readers */}
-      <OcrTextLayer layerRef={textRef} runs={textRegions} interactive={textInteractive} />
+      <OcrTextLayer layerRef={textRef} runs={textRegions} interactive={textInteractive} heightPx={unrotated.h * geom.scale} />
     </div>
   );
 }
 
-/** Region text placed over a page picture (page image or scanned PDF page): selectable, read by screen readers. */
-function OcrTextLayer({ layerRef, runs, interactive }: { layerRef: React.Ref<HTMLDivElement>; runs: SourceRegionView[]; interactive: boolean }) {
+/**
+ * Region text placed over a page picture (page image or scanned PDF page): selectable, read by screen readers.
+ * H2 item 6: a run with OCR word boxes places every WORD over its glyphs (font size from the word's height, then
+ * stretched to the word's width) so selection and search-hit rectangles fall on the scanned words; the text between
+ * words stays in the DOM (copy, search offsets) with no size of its own. Runs without word boxes are one block as before.
+ */
+function OcrTextLayer({ layerRef, runs, interactive, heightPx }: { layerRef: React.Ref<HTMLDivElement>; runs: SourceRegionView[]; interactive: boolean; heightPx: number }) {
+  const localRef = useRef<HTMLDivElement | null>(null);
+  const setRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      localRef.current = el;
+      if (typeof layerRef === 'function') layerRef(el);
+      else if (layerRef) (layerRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
+    },
+    [layerRef],
+  );
+  // stretch each word to its box width (like pdf.js does for its text layer): measured once laid out
+  useLayoutEffect(() => {
+    const layer = localRef.current;
+    if (!layer) return;
+    const layerW = layer.clientWidth;
+    for (const el of Array.from(layer.querySelectorAll<HTMLElement>('.wk-ocrlayer__word'))) {
+      el.style.transform = '';
+      const natural = el.scrollWidth;
+      const target = Number(el.dataset.w) * layerW;
+      if (natural > 0 && target > 0) el.style.transform = `scaleX(${(target / natural).toFixed(4)})`;
+    }
+  }, [runs, heightPx]);
   return (
-    <div ref={layerRef} className={cx('wk-ocrlayer', !interactive && 'wk-textlayer--inert')} lang={runs[0]?.lang ?? undefined}>
-      {runs.map((r) => (
-        <span key={r.id} className="wk-ocrlayer__run" style={{ left: `${r.bbox!.x * 100}%`, top: `${r.bbox!.y * 100}%`, width: `${r.bbox!.w * 100}%`, height: `${r.bbox!.h * 100}%` }} dir={detectDir(r.text ?? '')}>
-          {r.text}
-        </span>
-      ))}
+    <div ref={setRef} className={cx('wk-ocrlayer', !interactive && 'wk-textlayer--inert')} lang={runs[0]?.lang ?? undefined}>
+      {runs.map((r) => {
+        const b = r.bbox!;
+        const segments = ocrRunSegments(r);
+        return (
+          <span key={r.id} className="wk-ocrlayer__run" style={{ left: `${b.x * 100}%`, top: `${b.y * 100}%`, width: `${b.w * 100}%`, height: `${b.h * 100}%` }} dir={detectDir(r.text ?? '')}>
+            {segments
+              ? segments.map((sg, i) =>
+                  sg.kind === 'gap' ? (
+                    <span key={i} className="wk-ocrlayer__gap">
+                      {sg.text}
+                    </span>
+                  ) : (
+                    <span
+                      key={i}
+                      className="wk-ocrlayer__word"
+                      data-w={sg.box.w}
+                      dir={detectDir(sg.text)}
+                      style={{
+                        left: `${b.w > 0 ? ((sg.box.x - b.x) / b.w) * 100 : 0}%`,
+                        top: `${b.h > 0 ? ((sg.box.y - b.y) / b.h) * 100 : 0}%`,
+                        height: `${b.h > 0 ? (sg.box.h / b.h) * 100 : 100}%`,
+                        fontSize: `${Math.max(1, sg.box.h * heightPx * 0.85).toFixed(2)}px`,
+                      }}
+                    >
+                      {sg.text}
+                    </span>
+                  ),
+                )
+              : r.text}
+          </span>
+        );
+      })}
     </div>
   );
 }

@@ -3,9 +3,12 @@
 //  * The quiz payload never reveals an answer: neutral keys (m1, m2…), mask geometry only — no image id, file id,
 //    file name, caption, title, source, page or label. The image is served from a NEUTRAL URL bound to the quiz
 //    (owner session) with no file name and no ETag.
-//  * PNG images are served with the masks BURNED into a derived copy (the stored original is untouched), so removing
-//    an overlay in the browser cannot reveal a label; other formats are served as-is with masks drawn by the client
-//    (`masks_rendered: 'client'`, said in the UI).
+//  * PNG and JPEG images are served with the masks BURNED into a derived copy (the stored original is untouched), so
+//    removing an overlay in the browser cannot reveal a label. A JPEG is decoded with its EXIF orientation applied —
+//    the masks are normalized to the picture as DISPLAYED — and re-encoded without EXIF. Decoding is bounded by a pixel
+//    budget; the rendered copy is cached in memory (bounded LRU, keyed by the file and the mask shapes). A picture that
+//    cannot be decoded (other format, damaged, above the budget) is served as-is with masks drawn by the client
+//    (`masks_rendered: 'client'`, said in the UI) — never presented as masked.
 //  * Only masks with a label whose certainty is NOT 'uncertain' are asked (AC-08); excluded masks are counted with
 //    the reason — never with their label.
 //  * Answers are append-only. A non-matching answer can be self-marked correct by the owner; it is recorded as such,
@@ -25,7 +28,9 @@ import { fromJson, toJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
 import { parseWith } from '../../lib/http';
 import { newId } from '../../lib/ids';
-import { decodePng, encodePng, isPng, type RgbaImage } from '../processing/png';
+import { createHash } from 'node:crypto';
+import { decodeDisplayed, encodeJpeg, isJpeg, rawImageSize } from '../processing/image';
+import { encodePng, isPng, type RgbaImage } from '../processing/png';
 import { getImageRow, summary } from './images';
 import { overlaysOf, quizEligibility } from './overlays';
 
@@ -51,8 +56,60 @@ interface AnswerRow {
   created_at: number;
 }
 
-const MAX_SERVER_PIXELS = 40_000_000;
+/** decode budgets: a PNG decodes into RGBA only; jpeg-js also holds its component planes (≈ 7 bytes per pixel) */
+const MAX_PNG_PIXELS = 40_000_000;
+const MAX_JPEG_PIXELS = 24_000_000;
 const MASK_RGB: [number, number, number] = [96, 104, 120];
+
+// ───────── rendered-copy cache (bounded LRU) ─────────
+const CACHE_MAX_BYTES = 48 * 1024 * 1024;
+const CACHE_MAX_ENTRIES = 32;
+const cache = new Map<string, { body: Buffer; type: string }>();
+let cacheBytes = 0;
+const stats = { renders: 0, hits: 0 };
+
+/** Cache counters (tests and diagnostics). */
+export function quizImageCacheStats(): { renders: number; hits: number; bytes: number; entries: number; maxBytes: number } {
+  return { ...stats, bytes: cacheBytes, entries: cache.size, maxBytes: CACHE_MAX_BYTES };
+}
+
+function cacheGet(key: string): { body: Buffer; type: string } | null {
+  const hit = cache.get(key);
+  if (!hit) return null;
+  cache.delete(key); // move to the most-recent end
+  cache.set(key, hit);
+  stats.hits++;
+  return hit;
+}
+
+function cachePut(key: string, value: { body: Buffer; type: string }): void {
+  if (value.body.length > CACHE_MAX_BYTES / 4) return; // one huge copy must not evict everything
+  cache.set(key, value);
+  cacheBytes += value.body.length;
+  for (const [k, v] of cache) {
+    if (cacheBytes <= CACHE_MAX_BYTES && cache.size <= CACHE_MAX_ENTRIES) break;
+    cache.delete(k);
+    cacheBytes -= v.body.length;
+  }
+}
+
+/** Whether the server can decode this picture within its budget (PNG / JPEG). */
+function decodableKind(buf: Buffer): 'png' | 'jpeg' | null {
+  const size = rawImageSize(buf);
+  if (!size) return null;
+  if (isPng(buf)) return size.width * size.height <= MAX_PNG_PIXELS ? 'png' : null;
+  if (isJpeg(buf)) return size.width * size.height <= MAX_JPEG_PIXELS ? 'jpeg' : null;
+  return null;
+}
+
+/** The picture as displayed with the masks burned in: PNG stays PNG, JPEG is re-encoded as JPEG (no EXIF). */
+function renderMasked(buf: Buffer, kind: 'png' | 'jpeg', shapes: Array<{ x: number; y: number; w: number; h: number }>): { body: Buffer; type: string } {
+  // a freshly decoded raster (never the stored file): the masks are painted into it directly
+  const copy: RgbaImage = decodeDisplayed(buf, kind === 'png' ? MAX_PNG_PIXELS : MAX_JPEG_PIXELS).image;
+  for (const s of shapes) fillRect(copy, s);
+  stats.renders++;
+  return kind === 'png' ? { body: encodePng(copy), type: 'image/png' } : { body: encodeJpeg(copy, 90), type: 'image/jpeg' };
+}
 
 function getQuiz(ctx: AppContext, id: string): QuizRow {
   const q = ctx.db.get<QuizRow>('SELECT * FROM image_quiz WHERE id = ?', [id]);
@@ -111,11 +168,12 @@ async function canBurn(ctx: AppContext, fileId: string): Promise<boolean> {
   if (!f) return false;
   try {
     const buf = await ctx.files.read(fileId);
-    if (!isPng(buf)) return false;
-    const img = decodePng(buf);
-    return img.width * img.height <= MAX_SERVER_PIXELS;
+    const kind = decodableKind(buf);
+    if (!kind) return false;
+    decodeDisplayed(buf, kind === 'png' ? MAX_PNG_PIXELS : MAX_JPEG_PIXELS); // a damaged picture must not be called «masked»
+    return true;
   } catch {
-    return false; // interlaced / unusual PNG → masks drawn by the client (said in the payload)
+    return false; // interlaced PNG, progressive / damaged JPEG → masks drawn by the client (said in the payload)
   }
 }
 
@@ -182,14 +240,25 @@ export async function sendQuizImage(ctx: AppContext, id: string, reply: FastifyR
   if (q.masks_rendered === 'server') {
     const items = fromJson<QuizItem[]>(q.items_json, []) ?? [];
     const overlays = new Map(overlaysOf(ctx, q.image_id, { includeDeleted: true }).map((o) => [o.id, o]));
-    const decoded = decodePng(buf);
-    const copy: RgbaImage = { width: decoded.width, height: decoded.height, data: new Uint8Array(decoded.data) };
-    for (const i of items) {
+    const shapes = items.flatMap((i) => {
       const o = overlays.get(i.overlay_id);
-      if (o && o.shape.type === 'rect') fillRect(copy, o.shape);
+      return o && o.shape.type === 'rect' ? [{ x: o.shape.x, y: o.shape.y, w: o.shape.w, h: o.shape.h }] : [];
+    });
+    const kind = decodableKind(buf);
+    // a quiz created as «server» never falls back to the unmasked original: the picture changed under it → refuse
+    if (!kind) throw new AppError('CONFLICT', 'تعذّر تجهيز صورة الاختبار مع الأقنعة؛ لم تُعرض الصورة كي لا تنكشف التسميات.', 409);
+    const key = createHash('sha256').update(JSON.stringify([q.id, img.file_id, file.sha256 ?? '', shapes])).digest('hex');
+    let rendered = cacheGet(key);
+    if (!rendered) {
+      try {
+        rendered = renderMasked(buf, kind, shapes);
+      } catch {
+        throw new AppError('CONFLICT', 'تعذّر تجهيز صورة الاختبار مع الأقنعة؛ لم تُعرض الصورة كي لا تنكشف التسميات.', 409);
+      }
+      cachePut(key, rendered);
     }
-    body = encodePng(copy);
-    type = 'image/png';
+    body = rendered.body;
+    type = rendered.type;
   }
   if (!/^image\/(png|jpeg|webp|gif)$/.test(type)) type = 'application/octet-stream';
   reply.header('content-type', type);

@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { cacheKey, canReuse } from '../../src/modules/evidence/cache';
 import { recordDependencies } from '../../src/modules/evidence/dependencies';
 import { abstainFor, retrieve } from '../../src/modules/evidence/retrieval';
+import { buildQuery, groupCoverage } from '../../src/modules/evidence/terms';
 import { resolveScope } from '../../src/modules/evidence/scope';
 import { newId } from '../../src/lib/ids';
 import { cloneVersion, goldenLibrary, insertArtifact, linkReference, regionWith, type GoldenLibrary } from './helpers';
@@ -300,5 +301,31 @@ describe('review regressions (C1 adversarial review)', () => {
     const r = retrieve(g.t.ctx, { scope: resolveScope(g.t.ctx, { mode: 'lecture_only', lecture_source_id: g.lecture.sourceId }), query: '', anchor: { page_id: page.id }, purpose: 'general' });
     expect(r.candidates).toEqual([]);
     expect(r.dropped_anchor_page_id).toBe(page.id);
+  });
+});
+
+describe('H1 hardening — over-abstention (eval case overabstain.pregnancy_test)', () => {
+  const lectureOnly = () => resolveScope(g.t.ctx, { mode: 'lecture_only', lecture_source_id: g.lecture.sourceId });
+  const Q = 'Which test is required in women of reproductive age with suspected appendicitis?';
+
+  it('a lecture sentence AFTER the 32nd word of its chunk is still found by an OR query (coverage reads the whole chunk)', () => {
+    // «suspected» is not in the Investigations chunk → the AND query misses; the OR hit covers 5/7 query terms,
+    // but only beyond the chunk's first 32 words (long heading path + two earlier sentences)
+    const r = retrieve(g.t.ctx, { scope: lectureOnly(), query: Q, k: 8, purpose: 'lecture_explanation' });
+    expect(r.candidates.some((c) => c.text.includes('A pregnancy test (β-hCG) is required'))).toBe(true);
+    expect(abstainFor(g.t.ctx, r, lectureOnly())).toBeNull();
+  });
+
+  it('groupCoverage counts words anywhere in a long passage (no 32-token cut)', () => {
+    const built = buildQuery(null, 'reproductive age pregnancy test');
+    const filler = Array.from({ length: 60 }, (_, i) => `word${i}`).join(' ');
+    expect(groupCoverage(built, `${filler} A pregnancy test is required in women of reproductive age.`)).toBe(1);
+  });
+
+  it('AC-05 unchanged: a question answered only in the out-of-scope reference still abstains under Lecture Only', () => {
+    const r = retrieve(g.t.ctx, { scope: lectureOnly(), query: "What is Murphy's sign in acute cholecystitis?", k: 8, purpose: 'lecture_explanation' });
+    expect(r.candidates.filter((c) => /murphy/i.test(c.text))).toEqual([]);
+    expect(r.candidates.every((c) => c.version_id === g.lecture.versionId)).toBe(true);
+    expect(abstainFor(g.t.ctx, r, lectureOnly())?.reason).toBe('not_found_in_scope');
   });
 });

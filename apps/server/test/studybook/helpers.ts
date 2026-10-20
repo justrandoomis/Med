@@ -8,6 +8,7 @@ import { MODULES } from '../../src/modules';
 import { createProcessingModule } from '../../src/modules/processing';
 import { createStudybookModule, type StudybookModuleOptions } from '../../src/modules/studybook';
 import { createTestApp, type TestApp } from '../helpers/app';
+import { excerptsForClaim } from '../helpers/verifier';
 import { addSource, processVersion, type AddedSource } from '../processing/helpers';
 
 export type Verdict = 'supported' | 'partial' | 'not_supported' | 'contradicted';
@@ -61,7 +62,16 @@ export class ScriptedAi implements AiProvider {
     this.calls.push(req);
     const base = { model: this.model, usage: this.usage, requestRef: `fake-${this.calls.length}` };
     if (req.task === 'verify_support' && !this.queues.get('verify_support')?.length && !this.permanent.has('verify_support')) {
-      return { ...base, json: { results: claimsInPrompt(req.prompt).map((c) => ({ index: c.index, verdict: this.verdict(c.text), reason: 'سبب الاختبار' })) } };
+      return {
+        ...base,
+        json: {
+          results: claimsInPrompt(req.prompt).map((c) => {
+            const verdict = this.verdict(c.text);
+            // a correct verifier names the excerpts its verdict rests on (H1: required for several excerpts)
+            return { index: c.index, verdict, reason: 'سبب الاختبار', based_on: verdict === 'not_supported' ? [] : excerptsForClaim(req.prompt, c.index) };
+          }),
+        },
+      };
     }
     const h = this.queues.get(req.task)?.shift() ?? this.permanent.get(req.task);
     if (!h) {

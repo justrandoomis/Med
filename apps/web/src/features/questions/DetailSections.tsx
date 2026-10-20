@@ -364,6 +364,11 @@ export function VersionsSection({ d }: { d: Detail }) {
             </div>
             <p className="qv-muted">{formatDateTime(v.created_at)}</p>
             {v.note && <p className="qv-muted">{v.note}</p>}
+            {(v.kind === 'translation' || v.kind === 'paraphrase') && v.derived_from_version_id && (
+              <p className="qv-muted" data-derived-key-note="">
+                {`المفتاح المعروض هنا هو مفتاح النسخة ${d.versions.find((x) => x.id === v.derived_from_version_id)?.version_no ?? 'الأصلية'} الحالي — النسخة المشتقة لا تغيّر المفتاح.`}
+              </p>
+            )}
             <details className="qv-details">
               <summary>نص هذه النسخة</summary>
               <RichTextView value={v.stem} />

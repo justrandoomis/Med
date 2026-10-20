@@ -2,7 +2,7 @@
 // image assets and open processing review items in one transaction (AC-25: a retry after a crash never
 // duplicates rows). Regions that other modules already reference (evidence, overlays) are never
 // silently dropped: the replace fails and the page is reported with a specific reason.
-import type { DiagramStructure, FigureStructure, NormBox, ReviewQueueKind, TableStructure } from '@medlevo/shared';
+import type { DiagramStructure, FigureStructure, NormBox, RegionWord, ReviewQueueKind, TableStructure } from '@medlevo/shared';
 import { clampBox } from '@medlevo/shared';
 import type { AppContext } from '../../context';
 import { toJson } from '../../db/db';
@@ -42,6 +42,10 @@ export interface PageUpdate {
   error_code: string | null;
   error_detail: string | null;
   section_key?: string | null;
+  /** picture pages: the size as DISPLAYED (EXIF applied, px) and the display rotation that shows the text upright */
+  geometry?: { width: number; height: number; unit: 'pt' | 'px'; rotation?: number };
+  /** how the page was read (migration 0220); undefined = leave the stored values unchanged */
+  orientation?: { content_rotation: number | null; origin: 'text_direction' | 'ocr_trials' | null; image_orientation?: number | null };
 }
 
 export interface PersistResult {
@@ -68,6 +72,8 @@ export function normBox(b: Box | null, geom: PageGeom | null): NormBox | null {
   const c = clampBox({ x: b.x0 / geom.width, y: b.top / geom.height, w: (b.x1 - b.x0) / geom.width, h: (b.bottom - b.top) / geom.height });
   return { x: r(c.x), y: r(c.y), w: r(c.w), h: r(c.h) };
 }
+
+const round5 = (n: number) => Math.round(n * 1e5) / 1e5;
 
 const IMAGE_KIND_FROM_CAPTION = /\b(?:flow ?chart|algorithm|pathway|diagram|schematic)\b|مخطط|خوارزمية|رسم توضيحي/i;
 
@@ -177,6 +183,15 @@ export function persistPage(
       clearPage(ctx, ref.versionId, ref.pageId);
       regions.forEach((r, order) => {
         const locator: Record<string, unknown> = { ...(r.locator ?? {}) };
+        // H2 item 6: the OCR words with their boxes (reading order) — the reader's text layer and search-hit geometry
+        if (r.textOrigin === 'ocr' && r.words?.length && ref.geom) {
+          const words: RegionWord[] = [];
+          for (const w of r.words) {
+            const b = normBox(w.box, ref.geom);
+            if (b) words.push([w.text, round5(b.x), round5(b.y), round5(b.w), round5(b.h)]);
+          }
+          if (words.length) locator.words = words;
+        }
         if (r.kind === 'heading') {
           if (r.headingLevel) locator.heading_level = r.headingLevel;
           else if (r.fontSize) locator.font_size = r.fontSize;
@@ -251,6 +266,23 @@ export function persistPage(
           ref.pageId,
         ],
       );
+      if (page.geometry) {
+        ctx.db.run('UPDATE source_page SET width = ?, height = ?, unit = ?, rotation = COALESCE(?, rotation) WHERE id = ?', [
+          page.geometry.width,
+          page.geometry.height,
+          page.geometry.unit,
+          page.geometry.rotation ?? null,
+          ref.pageId,
+        ]);
+      }
+      if (page.orientation) {
+        ctx.db.run('UPDATE source_page SET content_rotation = ?, content_rotation_origin = ?, image_orientation = ? WHERE id = ?', [
+          page.orientation.content_rotation,
+          page.orientation.content_rotation === null ? null : page.orientation.origin,
+          page.orientation.image_orientation ?? null,
+          ref.pageId,
+        ]);
+      }
     });
   } catch (e) {
     if (isForeignKeyError(e)) throw new RegionsInUseError();
