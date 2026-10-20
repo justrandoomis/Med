@@ -22,6 +22,26 @@ import { conceptNamesNorm, lectureQuestions } from './lecture-questions';
 import { resolveConceptId } from './resolve';
 import { courseSources, inList, nodeTitle, pageLabelAr, sourcesOfCourseKey, type StudySource } from './store';
 
+/** (Round 7 final) «لماذا هذه الحالة؟» reading line, with Arabic number agreement («من صفحتين يُذكر فيهما», «من 12 صفحة»). */
+export function knowledgeReadingAr(viewed: number, total: number): string {
+  if (!total) return 'لا صفحة معروفة له في نسخ الدراسة.';
+  const r = total % 100;
+  const pages = total === 1 ? 'صفحة واحدة يُذكر فيها' : total === 2 ? 'صفحتين يُذكر فيهما' : r >= 3 && r <= 10 ? `${total} صفحات يُذكر فيها` : `${total} صفحة يُذكر فيها`;
+  return `قرأت ${viewed} من ${pages}.`;
+}
+
+/** (Round 7 final) the practice line: «سؤالان مرتبطان به؛ أجبت مرتين (1 محسوبة)». */
+export function knowledgePracticeAr(questions: number, attempts: number, scored: number): string {
+  if (!questions) return 'لا أسئلة مرتبطة به بعد.';
+  const r = questions % 100;
+  const q =
+    questions === 1 ? 'سؤال واحد مرتبط' : questions === 2 ? 'سؤالان مرتبطان' : r >= 3 && r <= 10 ? `${questions} أسئلة مرتبطة` : `${questions} سؤالًا مرتبطًا`;
+  if (!attempts) return `${q} به؛ لم تجب عنه بعد.`;
+  const ar = attempts % 100;
+  const times = attempts === 1 ? 'مرة واحدة' : attempts === 2 ? 'مرتين' : ar >= 3 && ar <= 10 ? `${attempts} مرات` : `${attempts} مرة`;
+  return `${q} به؛ أجبت ${times} (${scored} محسوبة).`;
+}
+
 export interface KnowledgeInput {
   pagesTotal: number;
   pagesViewed: number;
@@ -144,12 +164,8 @@ export function studentKnowledge(ctx: AppContext, opts: { courseNodeId?: string 
       weaknessStatus: w?.status ?? null,
     });
     const reasons: string[] = [];
-    reasons.push(a.pagesTotal.size ? `قرأت ${a.pagesViewed.size} من ${a.pagesTotal.size} ${a.pagesTotal.size === 1 ? 'صفحة يُذكر فيها' : 'صفحات يُذكر فيها'}.` : 'لا صفحة معروفة له في نسخ الدراسة.');
-    reasons.push(
-      qids.length
-        ? `${qids.length} ${qids.length === 1 ? 'سؤال مرتبط' : 'أسئلة مرتبطة'} به؛ أجبت ${attempts.length} ${attempts.length === 1 ? 'مرة' : 'مرات'} (${scored.length} محسوبة).`
-        : 'لا أسئلة مرتبطة به بعد.',
-    );
+    reasons.push(knowledgeReadingAr(a.pagesViewed.size, a.pagesTotal.size));
+    reasons.push(knowledgePracticeAr(qids.length, attempts.length, scored.length));
     if (cd.cards) reasons.push(`${cd.cards} ${cd.cards === 1 ? 'بطاقة' : 'بطاقات'} له، راجعتها ${cd.reviews} ${cd.reviews === 1 ? 'مرة' : 'مرات'}.`);
     if (w && (w.status === 'active' || w.status === 'improving')) reasons.push(w.status === 'active' ? 'له نقطة ضعف نشطة في مركز الضعف.' : 'نقطة ضعفه تتحسن في مركز الضعف.');
     const firstLecture = [...a.lectures.entries()].find(([, l]) => l.first) ?? null;

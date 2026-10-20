@@ -40,7 +40,7 @@ import { AppError, isAppError, JobError } from '../../lib/errors';
 import { parseBody, parseParams, parseQuery, parseWith, RATE_LIMITS } from '../../lib/http';
 import type { JobRun } from '../jobs/queue';
 import { resolveConceptId } from '../brain/resolve';
-import { examDna } from '../learning/dna';
+import { examDna, partOfUniqueQuestionsAr } from '../learning/dna';
 import { createExam } from './builder';
 import { createGenerationRun, executeGenerationRun } from './generation/pipeline';
 import { questionsAr } from './store';
@@ -139,7 +139,7 @@ export function allocateSimulation(input: PlanInput): SimulationBucket[] {
         share,
         item_types: [type],
         topic: l.topic,
-        reason_ar: `حصة المحاضرة في عينتك ${l.unique} من ${l.denominator} سؤالًا فريدًا؛ والنوع «${type}» ${c} من أسئلة العينة المصنفة.`,
+        reason_ar: `حصة المحاضرة في عينتك ${partOfUniqueQuestionsAr(l.unique, l.denominator)}؛ والنوع «${type}» ${c} من أسئلة العينة المصنفة.`,
       });
     });
   });
@@ -229,7 +229,7 @@ export function planSimulation(ctx: AppContext, body: unknown): SimulationPlanVi
   const buckets = allocateSimulation({ count: req.count, lectures, itemTypes: dna.by_item_type });
   const warnings = [...dna.warnings_ar];
   if (dna.unclassified.lecture > 0) {
-    warnings.push(`${dna.unclassified.lecture} من ${dna.sample.unique_questions} سؤالًا فريدًا في عينتك غير مرتبط بمحاضرة، فلا يدخل في توزيع المحاضرات.`);
+    warnings.push(`${partOfUniqueQuestionsAr(dna.unclassified.lecture, dna.sample.unique_questions)} في عينتك غير مرتبطة بمحاضرة، فلا تدخل في توزيع المحاضرات.`);
   }
   const zero = lectures.filter((l) => !buckets.some((b) => b.lecture_source_id === l.id));
   if (zero.length > 0) warnings.push(`بهذا العدد لم تحصل ${zero.length === 1 ? 'محاضرة واحدة' : `${zero.length} محاضرات`} ذات حصة صغيرة على أي سؤال: ${zero.map((z) => `«${z.title}»`).join('، ')}.`);

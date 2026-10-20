@@ -1,7 +1,7 @@
 // Ink engine provider: one per open document (contract in ./types.ts).
 // Holds the document's ink store (memory + IndexedDB write-through + undo history), the tool
 // state with per-tool presets, keyboard shortcuts and the sync applier registration.
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type MutableRefObject } from 'react';
+import { createContext, useCallback, useContext, useEffect, useInsertionEffect, useMemo, useRef, useState, useSyncExternalStore, type MutableRefObject } from 'react';
 import { ConfirmDialog } from '../../../design';
 import { getSyncEngine } from '../../../lib/sync';
 import { registerAnnotationApplier } from './persistence';
@@ -110,7 +110,11 @@ export function InkProvider({ documentKey, children }: InkProviderProps) {
     [tool, preset, prefs.presets.pen, prefs.penOnly, prefs.shapeRecognition],
   );
   const toolRef = useRef(toolState);
-  toolRef.current = toolState;
+  // the latest tool for the pointer handlers of every layer, written at commit (before any layout effect) rather than
+  // during render
+  useInsertionEffect(() => {
+    toolRef.current = toolState;
+  });
 
   const announce = useCallback((msg: string) => {
     setAnnouncement('');
@@ -167,7 +171,9 @@ export function InkProvider({ documentKey, children }: InkProviderProps) {
 
   // keyboard shortcuts (layout independent: KeyboardEvent.code, so they work on an Arabic layout)
   const latest = useRef({ controller, prefs, tool });
-  latest.current = { controller, prefs, tool };
+  useInsertionEffect(() => {
+    latest.current = { controller, prefs, tool };
+  });
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || isTypingTarget(e.target) || modalOpen()) return;

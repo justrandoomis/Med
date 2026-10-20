@@ -33,10 +33,15 @@ export function DownloadDialog({ sourceId, title, open, onClose }: { sourceId: s
   const [estimate, setEstimate] = useState<{ usage: number; quota: number } | null>(null);
   const ctrl = useRef<AbortController | null>(null);
 
+  // (re)opening or another choice prepares a fresh manifest: «loading» while rendering, the requests run below
+  const [requested, setRequested] = useState({ open, sourceId, includeSolutions });
+  if (requested.open !== open || requested.sourceId !== sourceId || requested.includeSolutions !== includeSolutions) {
+    setRequested({ open, sourceId, includeSolutions });
+    if (open) setState({ kind: 'loading' });
+  }
   useEffect(() => {
     if (!open) return;
     let alive = true;
-    setState({ kind: 'loading' });
     void storageInfo().then((s) => alive && setEstimate(s));
     fetchOfflineManifest(sourceId, { includeSolutions })
       .then((manifest) => alive && setState({ kind: 'ready', manifest }))

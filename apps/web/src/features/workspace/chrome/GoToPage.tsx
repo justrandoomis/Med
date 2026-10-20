@@ -15,6 +15,11 @@ export function GoToPage({ pages, pageIndex, onGo, compact }: { pages: readonly 
   const hintId = useId();
   const f = page ? folio(page) : null;
   const total = pages.length;
+  // (Round 7 final) a page with no printed number in a numbered book is named by its file position («الصفحة 1 في
+  // الملف»); on the narrow phone bar the «1/14» after it only repeated that number and pushed the indicator under the
+  // controls next to it. The total stays in the accessible name and in the go-to popover.
+  const positionOnly = !!page && page.kind === 'page' && !page.printed_label && !!page.numbered_version;
+  const showCount = !(compact && positionOnly);
 
   const submit = (close: () => void) => {
     const r = resolveGoTo(value, pages);
@@ -49,9 +54,11 @@ export function GoToPage({ pages, pageIndex, onGo, compact }: { pages: readonly 
         <button type="button" className={cx('wk-pageind', compact && 'wk-pageind--compact')} aria-label={page ? `${fullPageLabel(page)}، ${pageIndex + 1} من ${total}. الانتقال إلى صفحة` : 'الانتقال إلى صفحة'}>
           <span className="wk-pageind__primary">{f?.primary ?? '—'}</span>
           {!compact && f?.secondary && <span className="wk-pageind__secondary">{f.secondary}</span>}
-          <span className="wk-pageind__count" aria-hidden="true">
-            {pageIndex + 1}/{total}
-          </span>
+          {showCount && (
+            <span className="wk-pageind__count" aria-hidden="true">
+              {pageIndex + 1}/{total}
+            </span>
+          )}
         </button>
       }
     >

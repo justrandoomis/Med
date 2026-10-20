@@ -4,7 +4,7 @@
 // Views (§23, §24, §26): the original lecture · the MedLevo Study Book (Lecture Twin: switching jumps to the
 // nearest related block / page) · the lecture next to another source · the lecture next to its Study Book
 // (optional synchronized scrolling). Explanation actions from the selection toolbar open the «الشرح والسؤال» tab.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useInsertionEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowRight, FilePlus2, Focus, Link2, X } from 'lucide-react';
 import { EXAM_MODE_HIDDEN_AR, STUDY_MODE_LABELS_AR, normalizeRotation, type StudyMode, type AnnotationAnchor, type LinkTarget, type SourceDetail, type TextQuote } from '@medlevo/shared';
@@ -314,9 +314,12 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
     announce: setAnnouncement,
   });
   const sheetsRef = useRef(notes.sheets);
-  sheetsRef.current = notes.sheets;
   const seqRef = useRef(notes.index);
-  seqRef.current = notes.index;
+  // latest values for the navigation callbacks, written at commit (before any layout effect) rather than during render
+  useInsertionEffect(() => {
+    sheetsRef.current = notes.sheets;
+    seqRef.current = notes.index;
+  });
   const notePageInk = caps.feature('workspace.ink').available;
   const hasNotePages = notes.sheets.some((sh) => sh.kind === 'note');
   const seqCurrent = notePageId != null && notes.index.ofNote(notePageId) >= 0 ? notes.index.ofNote(notePageId) : notes.index.ofSource(pageIndex);
@@ -359,7 +362,10 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
 
   // ── autosave the place (debounced in the session hook) ──
   const stateRef = useRef({ zoom, fit, effectiveZoom, viewRotation, layoutPref, railOpen, railWidth: rail.width, railTab, leftOpen, leftTab, split, splitBook, splitSide });
-  stateRef.current = { zoom, fit, effectiveZoom, viewRotation, layoutPref, railOpen, railWidth: rail.width, railTab, leftOpen, leftTab, split, splitBook, splitSide };
+  // the place to save, written at commit (before any effect that saves it) rather than during render
+  useInsertionEffect(() => {
+    stateRef.current = { zoom, fit, effectiveZoom, viewRotation, layoutPref, railOpen, railWidth: rail.width, railTab, leftOpen, leftTab, split, splitBook, splitSide };
+  });
   const buildLocation = useCallback((): ReaderLocation => {
     const s = stateRef.current;
     const l = locRef.current;
@@ -450,7 +456,9 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
     },
     [save],
   );
-  goToNoteRef.current = goToNote;
+  useInsertionEffect(() => {
+    goToNoteRef.current = goToNote;
+  });
   const goToSeq = useCallback(
     (seq: number, frac = 0) => {
       const sh = sheetsRef.current[seq];
@@ -507,7 +515,9 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
   /** back entries pushed while the Study Book view was showing (going back restores that view) */
   const bookBackMarks = useRef(new Set<number>());
   const bookOnlyRef = useRef(bookOnly);
-  bookOnlyRef.current = bookOnly;
+  useInsertionEffect(() => {
+    bookOnlyRef.current = bookOnly;
+  });
   const pushHere = useCallback(() => {
     const p = position();
     const page = pages[p.pageIndex];
@@ -530,7 +540,8 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
       locRef.current = { pageIndex: i, frac };
       return true;
     },
-    [pages.length, sourceId],
+    // (state setters are stable; listed so the React Compiler's inferred dependencies match)
+    [pages.length, sourceId, setBookView, setCanvasStart],
   );
 
   const anchorFor = useCallback(
@@ -607,7 +618,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
       backLabel: top?.label ?? null,
       clearHighlight: () => setHighlight(null),
     };
-  }, [backStack, sourceId, versionId, detail.versions, pages, navigate, pushHere, goToPage, goToNote, panels.phone, showOriginalAt]);
+  }, [backStack, sourceId, versionId, detail.versions, pages, navigate, pushHere, goToPage, goToNote, panels.phone, showOriginalAt, setSplit, setSplitBook, setSplitSide, setBookView, setBookJump]);
 
   // ── selection ──
   const canvasEl = useCallback(() => canvasRef.current?.element() ?? null, []);
@@ -649,12 +660,14 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
     setLeftOpen((o) => !o);
     setLastPanel('left');
   }, []);
-  // a panel that no longer fits is closed (so it does not reappear unexpectedly later)
-  useEffect(() => {
-    if (focusMode) return;
-    if (panels.closed === 'left') setLeftOpen(false);
-    if (panels.closed === 'rail') setRailOpen(false);
-  }, [panels.closed, focusMode]);
+  // a panel that no longer fits is closed (so it does not reappear unexpectedly later): adjusted while rendering when
+  // the fit changes (`null` = not seen yet, so it applies on the first render too)
+  const [fitSeen, setFitSeen] = useState<{ closed: typeof panels.closed; focusMode: boolean } | null>(null);
+  if (!fitSeen || fitSeen.closed !== panels.closed || fitSeen.focusMode !== focusMode) {
+    setFitSeen({ closed: panels.closed, focusMode });
+    if (!focusMode && panels.closed === 'left') setLeftOpen(false);
+    if (!focusMode && panels.closed === 'rail') setRailOpen(false);
+  }
 
   // ── keyboard (§55) ──
   useEffect(() => {
@@ -765,24 +778,29 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
   );
 
   // ── (track F3) «أنشئ سؤال اختيار من متعدد» from the selection toolbar → the «الأسئلة» section shows the panel ──
+  // (adjusted while rendering when a new request arrives; `null` = none seen yet)
   const pendingMcq = useMcqRequest();
-  useEffect(() => {
-    if (!pendingMcq) return;
-    setRailTab('questions');
-    setRailOpen(true);
-    setLastPanel('rail');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingMcq?.id]);
+  const [mcqSeen, setMcqSeen] = useState<string | null>(null);
+  if ((pendingMcq?.id ?? null) !== mcqSeen) {
+    setMcqSeen(pendingMcq?.id ?? null);
+    if (pendingMcq) {
+      setRailTab('questions');
+      setRailOpen(true);
+      setLastPanel('rail');
+    }
+  }
 
   // ── explanation actions from the selection toolbar → the «الشرح والسؤال» tab (it consumes the request) ──
   const pendingAi = usePendingAiRequest();
-  useEffect(() => {
-    if (!pendingAi) return;
-    setRailTab('explain');
-    setRailOpen(true);
-    setLastPanel('rail');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingAi?.id]);
+  const [aiSeen, setAiSeen] = useState<string | null>(null);
+  if ((pendingAi?.id ?? null) !== aiSeen) {
+    setAiSeen(pendingAi?.id ?? null);
+    if (pendingAi) {
+      setRailTab('explain');
+      setRailOpen(true);
+      setLastPanel('rail');
+    }
+  }
 
   // ── views ──
   const changeView = useCallback(
@@ -836,18 +854,18 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
       setBookView(false);
       writePref(VIEW_PREF_KEY(sourceId), null);
     },
-    [sourceId, split, showOriginalAt, pages],
+    [sourceId, split, showOriginalAt, pages, setSplit, setSplitBook, setSplitSide, setBookView, setBookJump, setSplitPicker],
   );
 
   // (F3 review) «امتحن نفسك» hides explanations — the Study Book view too, not only the rail's «الشرح والسؤال»: entering
   // the mode (or reopening in it) returns to the original, and the view menu names the mode as the reason
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- changeView also writes the view preference and the reading position (side effects that cannot run while rendering); the mode arrives asynchronously from the session
     if (studyMode === 'exam' && (bookOnly || splitBookActive)) changeView('original');
   }, [studyMode, bookOnly, splitBookActive, changeView]);
   // (H3 item 3) the explanations beside the lecture are hidden in «امتحن نفسك» too: the pane switches to the questions
-  useEffect(() => {
-    if (studyMode === 'exam' && splitSide === 'explain') setSplitSide('questions');
-  }, [studyMode, splitSide]);
+  // (adjusted while rendering instead of in an effect)
+  if (studyMode === 'exam' && splitSide === 'explain') setSplitSide('questions');
 
   /** «افتح في المحاضرة» from the full Study Book: the original lecture at that page */
   const changeViewToPage = useCallback(
@@ -858,6 +876,10 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
     [showOriginalAt, goToPage, pages],
   );
 
+  const bookSyncRef = useRef(bookSync);
+  useInsertionEffect(() => {
+    bookSyncRef.current = bookSync;
+  });
   /** the Study Book reports the lecture page of its top block (Lecture Twin; optional sync in the split) */
   const onBookPage = useCallback(
     (i: number) => {
@@ -875,8 +897,6 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
     },
     [goToPage],
   );
-  const bookSyncRef = useRef(bookSync);
-  bookSyncRef.current = bookSync;
   // lecture scrolled in the split → the Study Book follows (unless the move came from the book itself)
   useEffect(() => {
     if (!splitBookActive || !bookSync) return;
@@ -938,7 +958,9 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
 
   // ── page links (ink kind 'link') and PDF links (track F1): following one records Back (§11) ──
   const navRef = useRef(nav);
-  navRef.current = nav;
+  useInsertionEffect(() => {
+    navRef.current = nav;
+  });
   const [linkPick, setLinkPick] = useState<{ resolve: (c: LinkChoice | null) => void } | null>(null);
   const followLink = useCallback(
     async (target: LinkTarget) => {
@@ -1330,7 +1352,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
           {selection && !focusMode && !bookOnly && (
             <SelectionToolbar
               selection={selection}
-              canvas={canvasRef.current?.element() ?? null}
+              canvas={canvasEl}
               textRoot={(i) => textRoots.current.get(i) ?? null}
               anchorFor={anchorFor}
               fixedPages={doc.mode === 'pdf' || doc.mode === 'image'}
@@ -1366,7 +1388,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
             <SessionConflictDialog
               open
               theirs={{ location: conflict.server.location, versionId: conflict.server.version_id, updatedAt: conflict.server.updated_at }}
-              mine={{ location: buildLocation() }}
+              mine={{ location: { page_index: pageIndex } }}
               pages={pages}
               versions={detail.versions}
               currentVersionId={versionId}

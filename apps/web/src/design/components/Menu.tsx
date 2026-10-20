@@ -127,6 +127,7 @@ export function Menu({ trigger, label, align = 'start', children, className }: M
   };
 
   if (!isValidElement(trigger)) throw new Error('Menu trigger must be a React element');
+  // eslint-disable-next-line react-hooks/refs -- false positive: cloneElement only attaches the ref and the handlers; no ref is read during render
   const triggerEl = cloneElement(trigger, {
     ref: triggerRef as Ref<HTMLElement>,
     'aria-haspopup': 'menu',
@@ -272,6 +273,7 @@ export function Popover({ trigger, label, children, align = 'start', className, 
   }, [open, pos.ready]);
 
   if (!isValidElement(trigger)) throw new Error('Popover trigger must be a React element');
+  // eslint-disable-next-line react-hooks/refs -- false positive: cloneElement only attaches the ref and the handlers; no ref is read during render
   const triggerEl = cloneElement(trigger, {
     ref: triggerRef as Ref<HTMLElement>,
     'aria-haspopup': 'dialog',
@@ -331,6 +333,7 @@ export function Popover({ trigger, label, children, align = 'start', className, 
               if (next && !popRef.current?.contains(next) && !triggerRef.current?.contains(next)) close(false);
             }}
           >
+            {/* eslint-disable-next-line react-hooks/refs -- false positive: the render prop gets a close callback that reads the trigger ref only when invoked from an event */}
             {typeof children === 'function' ? children(() => close(true)) : children}
           </div>
         </Portal>

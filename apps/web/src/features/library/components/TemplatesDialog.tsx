@@ -1,5 +1,5 @@
 // Optional study templates (§05): pick one, get a suggested skeleton you can change freely.
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { FromTemplateResponse, LibraryNodeView, TemplatesResponse } from '@medlevo/shared';
 import { Bidi, Button, Dialog, ErrorState, LoadingState, TextField } from '../../../design';
 import { api, errorMessage } from '../../../lib/api';
@@ -13,13 +13,16 @@ export function TemplatesDialog({ open, parentId, onClose, onCreated }: { open: 
   const [title, setTitle] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
+  // opening starts over (reset while rendering instead of in an effect)
+  const [wasOpen, setWasOpen] = useState(false);
+  if (wasOpen !== open) {
+    setWasOpen(open);
     if (open) {
       setPicked(null);
       setTitle('');
       setError(null);
     }
-  }, [open]);
+  }
   const tpl = q.data?.templates.find((t) => t.key === picked) ?? null;
   const create = async () => {
     if (!tpl) return;

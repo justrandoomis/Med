@@ -77,17 +77,44 @@ export function FigurePicker({ onPick, initialSourceId }: { onPick: (f: PickedFi
     [lib.data],
   );
 
-  useEffect(() => {
+  // Each choice clears what depends on it while rendering (React's «adjust state when a prop changes»); the requests and
+  // the parent notification (`onPick(null)`) stay in the effects below. `null` = not seen yet, so the first render runs
+  // them too, as the effects did on mount.
+  const [sourceFor, setSourceFor] = useState<string | null>(null);
+  if (sourceFor !== sourceId) {
+    setSourceFor(sourceId);
     setVersion(null);
     setPages(null);
     setPageId('');
     setFigures(null);
     setFigureId('');
+    if (sourceId) {
+      setLoading('جارٍ تحميل صفحات المصدر…');
+      setError(null);
+    }
+  }
+  const [pageFor, setPageFor] = useState<string | null>(null);
+  if (pageFor !== pageId) {
+    setPageFor(pageId);
+    setFigures(null);
+    setFigureId('');
+    if (pageId) setLoading('جارٍ البحث عن الصور في الصفحة…');
+  }
+  const [figureFor, setFigureFor] = useState<string | null>(null);
+  if (figureFor !== figureId) {
+    setFigureFor(figureId);
+    const fig = figures?.find((f) => f.id === figureId);
+    const page = pages?.find((p) => p.id === pageId);
+    if (fig && page && version && fig.structure?.type === 'figure' && fig.structure.image_asset_id) {
+      setLoading('جارٍ تجهيز الصورة…');
+      setError(null);
+    }
+  }
+
+  useEffect(() => {
     onPick(null);
     if (!sourceId) return;
     let cancelled = false;
-    setLoading('جارٍ تحميل صفحات المصدر…');
-    setError(null);
     void (async () => {
       try {
         const detail = await fetchSource(sourceId);
@@ -111,12 +138,9 @@ export function FigurePicker({ onPick, initialSourceId }: { onPick: (f: PickedFi
   }, [sourceId]);
 
   useEffect(() => {
-    setFigures(null);
-    setFigureId('');
     onPick(null);
     if (!pageId) return;
     let cancelled = false;
-    setLoading('جارٍ البحث عن الصور في الصفحة…');
     void fetchRegions(pageId)
       .then((r) => {
         if (cancelled) return;
@@ -138,8 +162,6 @@ export function FigurePicker({ onPick, initialSourceId }: { onPick: (f: PickedFi
     const assetId = fig.structure.image_asset_id;
     let cancelled = false;
     let url: string | null = null;
-    setLoading('جارٍ تجهيز الصورة…');
-    setError(null);
     void figureImageUrl(version, page, fig)
       .then((u) => {
         url = u;

@@ -159,7 +159,12 @@ function TodayPlan({ home, onChanged }: { home: HomeDetail; onChanged: () => voi
   const caps = useCapabilities();
   const toast = useToast();
   const [tasks, setTasks] = useState<PlanTaskView[]>(home.today);
-  useEffect(() => setTasks(home.today), [home.today]);
+  // a fresh plan from the server replaces the local list (adjusted while rendering instead of in an effect)
+  const [today, setToday] = useState(home.today);
+  if (today !== home.today) {
+    setToday(home.today);
+    setTasks(home.today);
+  }
   if (!home.plan_id) {
     return (
       <section className="lw-sheet" aria-labelledby="home-plan">

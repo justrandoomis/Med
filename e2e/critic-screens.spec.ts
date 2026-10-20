@@ -5,6 +5,9 @@
 //   * no honesty red flags in the visible text (fake accuracy %, «AI Verified», «100%», raw `undefined`/`NaN`),
 //   * a contrast probe (text colour vs the first opaque background behind it) — reported, and asserted for
 //     ratios under 3:1 (clearly unreadable),
+//   * (Round 7 final) no list item whose leading icon sits on a line of its own, no raw markdown code (`…`) in the
+//     visible text; the sweep also opens the screens added in Rounds 6–7 (topics, concepts, knowledge map, simulation,
+//     Control Center visual sources / health / evaluation),
 //   * a full-page screenshot per scheme in e2e/.artifacts/critic/<project>/ (git-ignored) for a human look.
 // The real data comes from the Golden Set fixtures (TEST FIXTURE documents, never shown as medical content).
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -21,6 +24,9 @@ interface Probe {
   lowContrast: Array<{ text: string; ratio: number; fg: string; bg: string; size: number }>;
   smallTargets: string[];
   overflowers: string[];
+  /** (Round 7 final) a list item / line that starts with an icon whose text begins on the NEXT line (the global
+   *  `svg { display: block }` reset pushes an inline icon onto a line of its own) */
+  iconAlone: string[];
 }
 
 /** Runs in the page: structural a11y probes + contrast + red-flag text. */
@@ -81,6 +87,8 @@ async function probe(page: Page): Promise<Probe> {
       [/دقة\s*\d+|accuracy\s*\d+/i, 'accuracy number'],
       [/\bundefined\b|\bNaN\b|\[object Object\]|\bnull\b/, 'raw value'],
       [/lorem ipsum|TODO|FIXME|placeholder/i, 'placeholder text'],
+      // (Round 7 final) raw markdown in the interface: «`npm run eval`» was printed with its backticks
+      [/`[^`\n]{1,80}`/, 'raw markdown code'],
     ];
     for (const [re, label] of patterns) {
       const m = text.match(re);
@@ -180,7 +188,24 @@ async function probe(page: Page): Promise<Probe> {
       .slice(0, 8)
       .map(desc);
 
-    return { unnamed, imgNoAlt, h1, redFlags, lowContrast: lowContrast.slice(0, 12), smallTargets: smallTargets.slice(0, 15), overflowers };
+    // (Round 7 final) an <li> whose first child is an icon followed by text: the text's first line must sit beside
+    // the icon, not below it
+    const iconAlone = Array.from(document.querySelectorAll('li'))
+      .filter((li) => visible(li) && li.firstElementChild?.tagName.toLowerCase() === 'svg')
+      .filter((li) => {
+        const icon = li.firstElementChild!.getBoundingClientRect();
+        const walker = document.createTreeWalker(li, NodeFilter.SHOW_TEXT, { acceptNode: (n) => ((n.textContent ?? '').trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT) });
+        const first = walker.nextNode();
+        if (!first) return false;
+        const range = document.createRange();
+        range.selectNodeContents(first);
+        const line = Array.from(range.getClientRects()).find((r) => r.width > 0);
+        return !!line && line.top >= icon.bottom - 1;
+      })
+      .slice(0, 8)
+      .map(desc);
+
+    return { unnamed, imgNoAlt, h1, redFlags, lowContrast: lowContrast.slice(0, 12), smallTargets: smallTargets.slice(0, 15), overflowers, iconAlone };
   });
 }
 
@@ -249,6 +274,8 @@ test('screen sweep: every top-level screen, light and dark', async ({ page, api 
   const list = await api.get<QuestionListResponse>(`/api/questions?source_id=${qs.source_id}&limit=50`);
   const qid = list.items[0]!.id;
   const exam = await api.post<ExamCreateResponse>('/api/exams', { title: '', mode: 'exam', count: 3, source_ids: [qs.source_id] });
+  // (Round 7 final) a topic, so its page (links, «محاولاتي السابقة», H4) is swept too
+  const topic = await api.post<{ topic: { id: string } }>('/api/library/topics', { title: `Critic topic ${Date.now().toString(36)}` });
 
   const screens: Array<[string, string]> = [
     ['home', '/'],
@@ -297,6 +324,15 @@ test('screen sweep: every top-level screen, light and dark', async ({ page, api 
     ['control-storage', '/control/storage'],
     ['control-capabilities', '/control/capabilities'],
     ['control-history', '/control/history'],
+    // (Round 7 final) top-level screens added in Rounds 6–7 that the sweep did not open yet
+    ['library-topics', '/library/topics'],
+    ['library-topic', `/library/topics/${topic.topic.id}`],
+    ['concepts', '/concepts'],
+    ['knowledge', '/knowledge'],
+    ['exams-simulate', '/exams/simulate'],
+    ['control-visual-sources', '/control/visual-sources'],
+    ['control-health', '/control/health'],
+    ['control-evaluation', '/control/evaluation'],
     ['not-found', '/no-such-screen'],
   ];
 
@@ -318,6 +354,7 @@ test('screen sweep: every top-level screen, light and dark', async ({ page, api 
       expect.soft(light.imgNoAlt, `${name}: <img> without alt`).toEqual([]);
       expect.soft(light.redFlags, `${name}: honesty red flags in visible text`).toEqual([]);
       expect.soft(light.h1, `${name}: exactly one visible <h1>`).toBe(1);
+      expect.soft(light.iconAlone, `${name}: list items whose icon sits on a line of its own`).toEqual([]);
       for (const [scheme, p] of [['light', light], ['dark', dark]] as const) {
         expect.soft(p.lowContrast.filter((c) => c.ratio < 3), `${name} (${scheme}): text under 3:1 contrast`).toEqual([]);
       }

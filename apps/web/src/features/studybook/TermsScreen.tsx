@@ -26,17 +26,19 @@ export function TermsScreen() {
   const [deleting, setDeleting] = useState<MedicalTermView | null>(null);
   const addButton = useRef<HTMLButtonElement>(null);
 
-  const reload = async () => {
+  // the request: state is set only when it settles (no synchronous setState on the effect path)
+  const fetchTerms = () =>
+    studybookApi
+      .terms()
+      .then((r) => setLoad({ status: 'ready', terms: r.terms }))
+      .catch((e: unknown) => setLoad({ status: 'error', message: errorMessage(e, 'تعذّر تحميل قاموس المصطلحات.') }));
+  // a retry shows loading again (the list, once loaded, stays on screen); the first load starts in that state
+  const reload = () => {
     setLoad((l) => (l.status === 'ready' ? l : { status: 'loading' }));
-    try {
-      const r = await studybookApi.terms();
-      setLoad({ status: 'ready', terms: r.terms });
-    } catch (e) {
-      setLoad({ status: 'error', message: errorMessage(e, 'تعذّر تحميل قاموس المصطلحات.') });
-    }
+    return fetchTerms();
   };
   useEffect(() => {
-    void reload();
+    void fetchTerms();
   }, []);
 
   const terms = useMemo(() => (load.status === 'ready' ? load.terms : []), [load]);

@@ -40,22 +40,24 @@ export function ReviewScreen() {
   const [ack, setAck] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
-      const det = await questionsApi.detail(questionId);
-      setD(det);
-      setStem(plainOf(det.question.current.stem));
-      setOptions(det.question.current.options.map((o) => ({ option_key: o.option_key, source_label: o.source_label, text: plainOf(o.text) })));
-      setError(null);
-      try {
-        setOrig(await questionsApi.original(questionId));
-      } catch (e) {
-        setOrigError(errorMessage(e));
-      }
-    } catch (e) {
-      setError(errorMessage(e));
-    }
-  }, [questionId]);
+  // state is set only when the requests settle (no synchronous setState on the effect path)
+  const load = useCallback(
+    () =>
+      questionsApi
+        .detail(questionId)
+        .then((det) => {
+          setD(det);
+          setStem(plainOf(det.question.current.stem));
+          setOptions(det.question.current.options.map((o) => ({ option_key: o.option_key, source_label: o.source_label, text: plainOf(o.text) })));
+          setError(null);
+          return questionsApi
+            .original(questionId)
+            .then((o) => setOrig(o))
+            .catch((e: unknown) => setOrigError(errorMessage(e)));
+        })
+        .catch((e: unknown) => setError(errorMessage(e))),
+    [questionId],
+  );
 
   useEffect(() => {
     void load();

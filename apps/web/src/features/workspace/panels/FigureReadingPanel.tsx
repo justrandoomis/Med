@@ -37,16 +37,19 @@ export function FigureReadingPanel({ regionId, online }: { regionId: string; onl
   const [busy, setBusy] = useState(false);
   const timer = useRef<number | undefined>(undefined);
 
-  const load = useCallback(async () => {
-    try {
-      const r = await visionApi.readings(regionId);
-      setData(r);
-      setError(null);
-      window.clearTimeout(timer.current);
-      if (r.readings.some((x) => PENDING.has(x.status))) timer.current = window.setTimeout(() => void load(), 2000);
-    } catch (e) {
-      setError(errorMessage(e, 'تعذّر تحميل قراءات الشكل.'));
-    }
+  // state is set only when the request settles; a pending reading polls the same request again in 2 s
+  const load = useCallback(() => {
+    const poll = (): Promise<void> =>
+      visionApi
+        .readings(regionId)
+        .then((r) => {
+          setData(r);
+          setError(null);
+          window.clearTimeout(timer.current);
+          if (r.readings.some((x) => PENDING.has(x.status))) timer.current = window.setTimeout(() => void poll(), 2000);
+        })
+        .catch((e: unknown) => setError(errorMessage(e, 'تعذّر تحميل قراءات الشكل.')));
+    return poll();
   }, [regionId]);
 
   useEffect(() => {

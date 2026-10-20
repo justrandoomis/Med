@@ -126,14 +126,17 @@ export function BackupsPanel() {
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
-      setData(await dataApi.backups());
-      setError(null);
-    } catch (e) {
-      setError(errorMessage(e, 'تعذّر تحميل قائمة النسخ الاحتياطية.'));
-    }
-  }, []);
+  // state is set only when the request settles (no synchronous setState on the effect path)
+  const load = useCallback(
+    () =>
+      dataApi.backups()
+        .then((d) => {
+          setData(d);
+          setError(null);
+        })
+        .catch((e: unknown) => setError(errorMessage(e, 'تعذّر تحميل قائمة النسخ الاحتياطية.'))),
+    [],
+  );
   useEffect(() => {
     if (online) void load();
   }, [online, load]);

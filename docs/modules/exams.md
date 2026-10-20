@@ -449,3 +449,17 @@ Commands after the fixes (repo root, `NODE_OPTIONS='--disable-warning=Experiment
   go through `sources/pagelabel.ts`; the web page picker of «توليد أسئلة صعبة» used its own «ص N» label and now uses the
   shared `pageDisplayLabel` with `withNumberedVersion`. Tests: `srv:sources/page-labels.h1.test.ts` (exam results +
   weakness).
+
+## Round 7 — final verification (2026-10-20; critic sweep, §40, §22)
+
+The extended screen sweep (`e2e/critic-screens.spec.ts`, now including `/exams/simulate`) found two small defects on
+«محاكاة مولدة», both fixed with a test that failed first:
+* **Icon on a line of its own.** In «حدود العينة» every warning's icon sat on its own line above the text (the global
+  `svg { display: block }` reset). The list is now `ex-list ex-list--icons` (`role="list"`): the icon is the bullet, on
+  the text's first line (`exams.css`). Caught by a new generic probe of the sweep (an `<li>` whose leading icon's text
+  starts below it) — it failed on this screen only, on both projects, and passes now.
+* **Arabic number agreement** in the server's sample wording: «العينة صغيرة (7 سؤالًا فريدًا)», «5 من 7 سؤالًا فريدًا»,
+  «3 من 7 سؤالًا فريدًا في عينتك…» now read «7 أسئلة فريدة», «5 من 7 أسئلة فريدة» — `learning/dna.ts
+  uniqueQuestionsAr` / `partOfUniqueQuestionsAr` (3–10 plural, 11–99 singular accusative, round hundreds genitive), used
+  by the Exam DNA warnings / relevance reasons and the simulation's plan reasons and warnings (`exams/simulation.ts`).
+  Test: `srv:learning/golden.test.ts` «(Round 7 final) Exam DNA counts in Arabic agree with the number».

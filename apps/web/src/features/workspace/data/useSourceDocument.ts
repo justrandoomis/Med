@@ -66,10 +66,16 @@ export function useSourceDetail(sourceId: string): { state: DetailState; retry: 
   const [state, setState] = useState<DetailState>({ status: 'loading' });
   const [attempt, setAttempt] = useState(0);
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
+  // another source (or a retry) shows «loading» at once, while rendering; the request runs in the effect below
+  const request = `${attempt}|${sourceId}`;
+  const [requested, setRequested] = useState(request);
+  if (requested !== request) {
+    setRequested(request);
+    setState({ status: 'loading' });
+  }
   useEffect(() => {
     const ctrl = new AbortController();
     let cancelled = false;
-    setState({ status: 'loading' });
     fetchSource(sourceId, ctrl.signal)
       .then((detail) => !cancelled && setState({ status: 'ready', detail }))
       .catch((e: unknown) => {
@@ -90,12 +96,17 @@ export function useVersionDocument(detail: SourceDetail | null, versionId: strin
   const [attempt, setAttempt] = useState(0);
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
 
+  // another detail / version (or a retry) shows «loading» at once, while rendering; the load runs in the effect below
+  const [requested, setRequested] = useState({ detail, versionId, attempt });
+  if (requested.detail !== detail || requested.versionId !== versionId || requested.attempt !== attempt) {
+    setRequested({ detail, versionId, attempt });
+    if (detail && versionId) setState({ status: 'loading', stage: 'جارٍ تحميل الصفحات…' });
+  }
   useEffect(() => {
     if (!detail || !versionId) return;
     const ctrl = new AbortController();
     let pdf: PdfHandle | null = null;
     let cancelled = false;
-    setState({ status: 'loading', stage: 'جارٍ تحميل الصفحات…' });
     (async () => {
       try {
         const version = detail.versions.find((v) => v.id === versionId);

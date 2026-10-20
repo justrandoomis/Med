@@ -34,6 +34,11 @@ Round 5 (integration and acceptance) adds rows below once its agents report.
   Arabic sentence, which led to the LRI / PDI isolates (`docs/modules/data.md`); `dataviz` — the calm 14-day strips in
   «صحة النظام»: one hue, `aria-hidden` marks, every count stated in a sentence with its denominator, a table twin.
 
+* Round 7 final verification (2026-10-20): `design:accessibility-review` — the WCAG 2.1 AA checklist for the critic
+  pass at 390 / 1280 px in light and dark (contrast, touch targets, headings, names, RTL); it led to the sweep's two new
+  probes (a list icon alone on its line, raw markdown code in visible text) and the phone top-bar overlap check
+  (`docs/TEST_LOG.md` «Round 7 — final verification»). No other skill was loaded in this task.
+
 ## Considered but not used
 
 | Skill | Why it was not used |

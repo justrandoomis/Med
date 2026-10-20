@@ -2,7 +2,7 @@
 // source onto a folder (shelf cover, folder row or breadcrumb) to move it there. The handle is a
 // pointer-only affordance hidden from assistive tech: the keyboard path is «نقل…» in each item's menu
 // (MoveDialog), so nothing depends on dragging.
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useInsertionEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
 
 export interface DragItem {
@@ -25,7 +25,10 @@ export function useLibraryDnd(opts: { canDrop: (item: DragItem, targetNodeId: st
   const [drag, setDrag] = useState<DragState | null>(null);
   const pending = useRef<{ item: DragItem; x: number; y: number; id: number; el: HTMLElement } | null>(null);
   const optsRef = useRef(opts);
-  optsRef.current = opts;
+  // the latest callbacks, written at commit (before any layout effect) rather than during render
+  useInsertionEffect(() => {
+    optsRef.current = opts;
+  });
 
   const finish = useCallback((commit: boolean) => {
     setDrag((d) => {

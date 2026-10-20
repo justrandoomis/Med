@@ -25,22 +25,25 @@ export function SessionsGroup() {
   const [loading, setLoading] = useState(true);
   const [target, setTarget] = useState<SessionInfo | null>(null);
 
-  const load = useCallback(async () => {
+  // the request: state is set only when it settles (no synchronous setState on the effect path)
+  const fetchSessions = useCallback(
+    () =>
+      listSessions()
+        .then((res) => setSessions([...res.sessions].sort((a, b) => Number(b.current) - Number(a.current) || b.last_seen_at - a.last_seen_at)))
+        .catch((e: unknown) => setError(errorMessage(e)))
+        .finally(() => setLoading(false)),
+    [],
+  );
+  // a retry / refresh shows loading and clears the previous error at once (the first load starts in that state)
+  const load = () => {
     setLoading(true);
     setError(null);
-    try {
-      const res = await listSessions();
-      setSessions([...res.sessions].sort((a, b) => Number(b.current) - Number(a.current) || b.last_seen_at - a.last_seen_at));
-    } catch (e) {
-      setError(errorMessage(e));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    return fetchSessions();
+  };
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void fetchSessions();
+  }, [fetchSessions]);
 
   const revoke = async () => {
     if (!target) return;

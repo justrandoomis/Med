@@ -29,6 +29,30 @@ import { AppError } from '../../lib/errors';
 
 /** Data roles that hold the owner's own writing / reading (Round 7 H4: hashed apart from the source content). */
 const OWNER_DATA_ROLES = new Set<string>(['annotations', 'notes', 'needs_reanchor', 'latest_session', 'reading_progress', 'learning']);
+
+/**
+ * (review H4) Answers that are source content but also carry the owner's own activity: the source detail's
+ * last_opened_at / is_favorite (opening or starring the source), a question detail's attempt counts (answering it).
+ * Those fields are hashed with the owner's data — opening the lecture never reads as «تغيّر المحتوى». Returns the source
+ * part and the owner part, or null when the answer has no such field.
+ */
+function splitOwnerFields(role: OfflineDataRole, body: unknown): { source: unknown; owner: unknown } | null {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  if (role === 'source_detail') {
+    const { last_opened_at, is_favorite, updated_at, ...rest } = body as Record<string, unknown>;
+    return { source: rest, owner: { last_opened_at, is_favorite, updated_at } };
+  }
+  if (role === 'question_detail') {
+    const { attempts_by_version, question, versions, ...rest } = body as Record<string, unknown> & { question?: Record<string, unknown>; versions?: unknown };
+    const { attempts_summary, ...q } = question ?? {};
+    const vs = Array.isArray(versions) ? (versions as Array<Record<string, unknown>>) : [];
+    return {
+      source: { ...rest, question: question ? q : question, versions: vs.map(({ attempts: _n, ...v }) => v) },
+      owner: { attempts_by_version, attempts_summary, versions: vs.map((v) => [v.id, v.attempts]) },
+    };
+  }
+  return null;
+}
 export type Forward = (path: string) => Promise<{ status: number; body: string }>;
 
 interface SourceRow {
@@ -238,18 +262,20 @@ export async function buildOfflinePackage(
   const entries = [...files, ...data.map(({ body: _b, ...e }) => e)];
   const fileBytes = files.reduce((a, f) => a + f.size, 0);
   const dataBytes = data.reduce((a, d) => a + d.size, 0);
-  const hashOf = (list: typeof entries) =>
-    sha(
-      list
-        .map((e) => (e.kind === 'file' ? `file:${e.role}:${e.file_id}:${e.sha256}` : `data:${e.path}:${e.sha256}`))
-        .sort()
-        .join('\n'),
-    );
-  const contentHash = hashOf(entries);
+  // (review H4) the owner-activity fields of otherwise source answers, digested apart (path → digests)
+  const split = new Map<string, { source: string; owner: string }>();
+  for (const d of data) {
+    const parts = splitOwnerFields(d.role, d.body);
+    if (parts) split.set(d.path, { source: sha(JSON.stringify(parts.source)), owner: sha(JSON.stringify(parts.owner)) });
+  }
+  const line = (e: (typeof entries)[number], sourceOnly: boolean) =>
+    e.kind === 'file' ? `file:${e.role}:${e.file_id}:${e.sha256}` : `data:${e.path}:${(sourceOnly ? split.get(e.path)?.source : undefined) ?? e.sha256}`;
+  const hashOf = (lines: string[]) => sha([...lines].sort().join('\n'));
+  const contentHash = hashOf(entries.map((e) => line(e, false)));
   // Round 7 H4: the owner's own writing / reading apart from the source content («تغيّر المحتوى» = the source changed)
   const isOwner = (e: (typeof entries)[number]) => e.kind === 'data' && OWNER_DATA_ROLES.has(e.role);
-  const sourceHash = hashOf(entries.filter((e) => !isOwner(e)));
-  const ownerHash = hashOf(entries.filter(isOwner));
+  const sourceHash = hashOf(entries.filter((e) => !isOwner(e)).map((e) => line(e, true)));
+  const ownerHash = hashOf([...entries.filter(isOwner).map((e) => line(e, false)), ...[...split].map(([path, d]) => `owner:${path}:${d.owner}`)]);
 
   const not_included_ar = [
     'الشرح والأسئلة والملخصات الجديدة بالذكاء الاصطناعي تحتاج اتصالًا (لا تعمل دون اتصال ولا تُعرض أي «معالجة» وهمية).',

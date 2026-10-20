@@ -1,7 +1,7 @@
 // الذكاء الاصطناعي (§48 Intelligence, §51, §56): provider and model per role and task, the monthly budget, usage
 // per month / task / model — every cost labelled as an ESTIMATE — and the rule-affecting defaults, changed only
 // after an impact preview. Models are server settings: their change is previewed here and applied on the server.
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useMemo, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { AI_TASK_LABELS_AR, MODEL_ROLES, MODEL_ROLE_LABELS_AR, type ImpactChange, type IntelligenceResponse, type ModelRole, type OwnerSettings } from '@medlevo/shared';
 import { Bidi, Button, ErrorState, LoadingState, ProgressBar, Select, StatusPill, Switch, TextArea, TextField, type SelectOption } from '../../design';
@@ -173,7 +173,12 @@ function RulesDefaults({ d, onApplied }: { d: IntelligenceResponse; onApplied: (
   const [draft, setDraft] = useState(d.rules);
   const [change, setChange] = useState<ImpactChange | null>(null);
   const [done, setDone] = useState<string[] | null>(null);
-  useEffect(() => setDraft(d.rules), [d.rules]);
+  // new saved rules replace the draft (adjusted while rendering instead of in an effect)
+  const [savedRules, setSavedRules] = useState(d.rules);
+  if (savedRules !== d.rules) {
+    setSavedRules(d.rules);
+    setDraft(d.rules);
+  }
   const patch = useMemo(() => {
     const p: Record<string, unknown> = {};
     for (const k of Object.keys(draft) as Array<keyof typeof draft>) if (draft[k] !== d.rules[k]) p[k] = draft[k];

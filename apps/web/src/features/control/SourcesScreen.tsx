@@ -1,7 +1,7 @@
 // المصادر والأولويات (§09, §48): per task, the order in which source types are searched for evidence (where the
 // search STARTS — never who wins a conflict), changed only after an impact preview; and each source's own priority
 // number and the reason you chose it.
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowDown, ArrowUp, X } from 'lucide-react';
 import { SOURCE_TYPE_LABELS_AR, type ControlSourceRow, type ImpactChange, type OwnerSettings, type SourceType, type SourcesPrioritiesResponse } from '@medlevo/shared';
@@ -157,11 +157,15 @@ export function SourcesScreen() {
   const [change, setChange] = useState<ImpactChange | null>(null);
   const [done, setDone] = useState<string[] | null>(null);
   const [rows, setRows] = useState<ControlSourceRow[]>([]);
-  useEffect(() => {
-    if (!d) return;
-    setOrders(Object.fromEntries(d.purposes.map((p) => [p.purpose, p.order])));
-    setRows(d.sources);
-  }, [d]);
+  // freshly loaded data replaces the local orders and rows (adjusted while rendering instead of in an effect)
+  const [shown, setShown] = useState<typeof d>(null);
+  if (shown !== d) {
+    setShown(d);
+    if (d) {
+      setOrders(Object.fromEntries(d.purposes.map((p) => [p.purpose, p.order])));
+      setRows(d.sources);
+    }
+  }
   const dirty = !!d && d.purposes.some((p) => JSON.stringify(orders[p.purpose] ?? p.order) !== JSON.stringify(p.order));
   return (
     <div className="cc-section">

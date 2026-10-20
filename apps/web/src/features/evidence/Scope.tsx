@@ -76,42 +76,43 @@ export function ScopePicker({ value, onApply, lectureSourceId, references, onCan
   const external = caps.feature('external.evidence');
   const lecture = lectureSourceId ?? value.lecture_source_id;
   const [draft, setDraft] = useState<SourceScope>({ ...EMPTY, ...value, lecture_source_id: lecture });
-  const [candidates, setCandidates] = useState<ScopeCandidate[] | null>(references ?? null);
+  // the lecture's linked references, kept with the lecture they were fetched for
+  const [fetched, setFetched] = useState<{ lecture: string; list: ScopeCandidate[] } | null>(null);
+  const candidates: ScopeCandidate[] | null = references ?? (!lecture ? [] : fetched?.lecture === lecture ? fetched.list : null);
   const [preview, setPreview] = useState<ScopeResolveResponse | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const seq = useRef(0);
 
   useEffect(() => {
-    if (references) {
-      setCandidates(references);
-      return;
-    }
-    if (!lecture) {
-      setCandidates([]);
-      return;
-    }
+    if (references || !lecture) return;
     let alive = true;
     api
       .get<SourceDetail>(`/sources/${encodeURIComponent(lecture)}`, { timeoutMs: 20_000 })
       .then((d) => {
         if (!alive) return;
-        setCandidates(
-          d.links
+        setFetched({
+          lecture,
+          list: d.links
             .filter((l) => l.relation === 'reference_for' || l.relation === 'same_topic')
             .map((l) => ({ id: l.from_source_id === lecture ? l.to_source_id : l.from_source_id, title: l.other_title, source_type: l.other_type })),
-        );
+        });
       })
-      .catch(() => alive && setCandidates([]));
+      .catch(() => alive && setFetched({ lecture, list: [] }));
     return () => {
       alive = false;
     };
   }, [lecture, references]);
 
   const key = stableStringify(draft);
+  // a new draft scope shows «loading» at once (while rendering); the debounced preview request runs in the effect
+  const [previewFor, setPreviewFor] = useState<string | null>(null);
+  if (previewFor !== key) {
+    setPreviewFor(key);
+    setLoading(true);
+  }
   useEffect(() => {
     const mine = ++seq.current;
-    setLoading(true);
     const t = setTimeout(() => {
       resolveScopePreview(draft)
         .then((r) => {

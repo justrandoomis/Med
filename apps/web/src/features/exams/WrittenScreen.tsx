@@ -49,19 +49,30 @@ export function WrittenScreen() {
   // server), so one answer is never stored twice; a new id only after a successful save
   const pendingId = useRef(newId());
 
-  const load = useCallback(async () => {
+  // state is set only when the request settles (no synchronous setState on the effect path)
+  const fetchView = useCallback(
+    () =>
+      examsApi.written(questionId)
+        .then((v) => setView(v))
+        .catch((e: unknown) => setError(errorMessage(e, 'تعذّر تحميل السؤال.'))),
+    [questionId],
+  );
+  // a retry / refresh after an action clears the previous error at once
+  const load = () => {
     setError(null);
-    try {
-      setView(await examsApi.written(questionId));
-    } catch (e) {
-      setError(errorMessage(e, 'تعذّر تحميل السؤال.'));
-    }
-  }, [questionId]);
+    return fetchView();
+  };
+  // another question: its predecessor's error is cleared while rendering
+  const [loadedFor, setLoadedFor] = useState(questionId);
+  if (loadedFor !== questionId) {
+    setLoadedFor(questionId);
+    setError(null);
+  }
 
   useEffect(() => {
-    void load();
+    void fetchView();
     void loadWrittenDraft(getDb(), questionId).then((d) => d && setText(d));
-  }, [load, questionId]);
+  }, [fetchView, questionId]);
 
   const onType = (v: string) => {
     setText(v);

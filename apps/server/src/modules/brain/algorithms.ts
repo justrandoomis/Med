@@ -78,11 +78,20 @@ const ARROWS = /\s*(?:→|->|⟶|⇒|➔|➝|➜|=>)\s*/u;
 const ARROWS_AR = /\s*(?:→|->|⟶|⇒|➔|➝|➜|=>|←)\s*/u;
 
 const EN_IF = /^(?:if|in\s+cases?\s+of)\s+(.+?)(?:\s*,\s*(?:then\s+)?|\s+then\s+|\s*(?:→|->|⟶|⇒|=>)\s*)(\S.*?)[.]?$/iu;
-const EN_ELSE = /^(otherwise|if\s+not|else|if\s+negative|if\s+no)\b\s*[,:]?\s*(?:(?:→|->|⟶|⇒|=>)\s*)?(\S.*?)[.]?$/iu;
+// (review H4) a printed «then» / arrow is the split; a comma split is used only when it is the sentence's only comma
+// («If fever, tachycardia and leukocytosis are present, start antibiotics» is not «fever» → «tachycardia … antibiotics»)
+const EN_IF_EXPLICIT = /^(?:if|in\s+cases?\s+of)\s+(.+?)(?:\s*,?\s+then\s+|\s*,?\s*(?:→|->|⟶|⇒|=>)\s*)(\S.*?)[.]?$/iu;
+// (review H4) «otherwise» / «else» only as a branch word (followed by «,» «:» or an arrow — «Otherwise healthy children …»
+// is not one); «if not / if negative / if no» only before «,» or «:» («If no improvement, …» is a rule of its own)
+const EN_ELSE = /^(?:(otherwise|else)\s*(?:[,:]\s*|(?=→|->|⟶|⇒|=>))|(if\s+not|if\s+negative|if\s+no)\s*[,:]\s*)(?:(?:→|->|⟶|⇒|=>)\s*)?(\S.*?)[.]?$/iu;
 // Arabic (on harakat-free text): «إذا X، Y» / «إذا X فيجب …» (closed list of consequence words) / «إذا X → Y»
 const AR_IF =
   /^(?:و)?(?:اذا|في حال|في حاله|في حالة)\s+(.+?)(?:\s*[،,]\s*(?:ف(?=\S))?|\s+(?=(?:فان|فلا|فيجب|فيتم|فيعطي|فيعطى|فيجري|فيجرى|فيحال|فيعالج|فتجري|فتجرى|فينصح|فهو|فهي|فالعلاج|فالخطوه|عندها|حينها)(?:\s|$))|\s*(?:→|->|⟶|⇒|=>|←)\s*)(\S.*?)[.]?$/du;
-const AR_ELSE = /^(والا|وإلا|الا|إلا|خلاف ذلك|وخلاف ذلك|في غير ذلك)(?=\s|[،,:]|$)\s*[،,:]?\s*(?:(?:→|->|←)\s*)?(\S.*?)[.]?$/du;
+// (review H4) a bare «إلا» is a branch word only before «،» / «:» («إلا أن …» means «however»)
+const AR_ELSE = /^(والا|وإلا|خلاف ذلك|وخلاف ذلك|في غير ذلك|(?:الا|إلا)(?=\s*[،,:]))(?=\s|[،,:]|$)\s*[،,:]?\s*(?:(?:→|->|←)\s*)?(\S.*?)[.]?$/du;
+// (review H4) the printed consequence word / arrow is the split, before any comma split
+const AR_IF_EXPLICIT =
+  /^(?:و)?(?:اذا|في حال|في حاله|في حالة)\s+(.+?)(?:(?:\s*[،,]\s*|\s+)(?=(?:فان|فلا|فيجب|فيتم|فيعطي|فيعطى|فيجري|فيجرى|فيحال|فيعالج|فتجري|فتجرى|فينصح|فهو|فهي|فالعلاج|فالخطوه|عندها|حينها)(?:\s|$))|\s*[،,]?\s*(?:→|->|⟶|⇒|=>|←)\s*)(\S.*?)[.]?$/du;
 const YES_NO = /^(yes|no|positive|negative|نعم|لا|إيجابي|ايجابي|سلبي)\s*(?::|→|->|⟶|⇒|=>|←|-|–)\s*(\S.*?)[.]?$/iu;
 
 const toAsciiDigits = (s: string) => s.replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660));
@@ -100,6 +109,8 @@ interface SectionBuffer {
   chains: Array<{ parts: string[]; regionId: string; ocr: boolean }>;
   decisions: Array<{ question: string; regionId: string; ocr: boolean; branches: Array<{ label: string; text: string; regionId: string; ocr: boolean }> }>;
   pageId: string | null;
+  /** (review H4) the last thing read in this section was an «if» rule: only then can an «otherwise» line be its branch */
+  ruleOpen: boolean;
 }
 
 export function extractAlgorithms(regions: RegionWithOrigin[], reviewed: Map<string, ReviewedDiagram> = new Map()): ExtractedAlgorithm[] {
@@ -111,7 +122,7 @@ export function extractAlgorithms(regions: RegionWithOrigin[], reviewed: Map<str
   for (const r of regions) if (r.kind === 'caption' && r.text && !captionsByPage.has(r.page_id ?? '')) captionsByPage.set(r.page_id ?? '', stripBidiControls(r.text).trim());
 
   function newSection(title: string | null, conceptName: string | null, pageId: string | null): SectionBuffer {
-    return { title, cue: !!title && PROCEDURE_CUE.test(title), conceptName, numbered: [], numberedRuns: [], rules: [], chains: [], decisions: [], pageId };
+    return { title, cue: !!title && PROCEDURE_CUE.test(title), conceptName, numbered: [], numberedRuns: [], rules: [], chains: [], decisions: [], pageId, ruleOpen: false };
   }
 
   const flushNumbered = () => {
@@ -256,7 +267,10 @@ export function extractAlgorithms(regions: RegionWithOrigin[], reviewed: Map<str
 
     if (r.parent_region_id) continue;
     if (!['paragraph', 'list_item', 'text_block', 'note'].includes(r.kind) || !text) {
-      if (r.kind !== 'caption') flushNumbered();
+      if (r.kind !== 'caption') {
+        flushNumbered();
+        sec.ruleOpen = false;
+      }
       continue;
     }
     sec.pageId ??= r.page_id;
@@ -271,6 +285,7 @@ export function extractAlgorithms(regions: RegionWithOrigin[], reviewed: Map<str
       const nm = NUMBERED.exec(line);
       const am = nm ? null : AR_STEP.exec(arabicMatchable(line).s);
       if (nm || am) {
+        sec.ruleOpen = false;
         const n = nm ? Number(toAsciiDigits(nm[2]!)) : /^[0-9٠-٩]+$/.test(am![1]!) ? Number(toAsciiDigits(am![1]!)) : (AR_ORDINALS[am![1]!] ?? 0);
         const body = nm ? nodeText(nm[3]!) : nodeText(line.replace(/^\s*\S+\s+\S+\s*[:.\-–]?\s*/u, ''));
         const expected = (sec.numbered[sec.numbered.length - 1]?.n ?? 0) + 1;
@@ -290,11 +305,13 @@ export function extractAlgorithms(regions: RegionWithOrigin[], reviewed: Map<str
       const yn = YES_NO.exec(plain);
       const lastDecision = sec.decisions[sec.decisions.length - 1];
       if (yn && lastDecision) {
+        sec.ruleOpen = false;
         const target = nodeText(yn[2]!);
         if (plausibleNode(target, 20)) lastDecision.branches.push({ label: yn[1]!, text: target, regionId: r.id, ocr });
         continue;
       }
       if (/[?؟]$/.test(plain) && wordsCount(plain) <= 15 && sentencesOf(plain).length === 1) {
+        sec.ruleOpen = false;
         sec.decisions.push({ question: plain, regionId: r.id, ocr, branches: [] });
         continue;
       }
@@ -302,46 +319,70 @@ export function extractAlgorithms(regions: RegionWithOrigin[], reviewed: Map<str
       for (const sent of sentencesOf(plain)) {
         const s = nodeText(sent);
         if (!s) continue;
+        // (review H4) an «otherwise» belongs only to the rule read RIGHT before it, and only once
+        const open = sec.ruleOpen ? sec.rules[sec.rules.length - 1] : undefined;
+        sec.ruleOpen = false;
         // if … then
         if (/^[؀-ۿ]/.test(s)) {
           const { s: ns, map } = arabicMatchable(s);
-          const m = AR_IF.exec(ns);
+          const explicit = AR_IF_EXPLICIT.exec(ns);
+          const m = explicit ?? AR_IF.exec(ns);
           if (m) {
             const cond = nodeText(originalSlice(s, map, m.indices![1]![0], m.indices![1]![1]));
             let act = nodeText(originalSlice(s, map, m.indices![2]![0], m.indices![2]![1]));
             act = act.replace(/^ف(?=(?:إن|ان|لا|يجب|يتم|ي|ت|هو|هي|ال))/u, '');
-            if (plausibleNode(cond, 15) && plausibleNode(act, 25)) sec.rules.push({ cond, action: act, regionId: r.id, ocr, inList });
+            // (review H4) split at a comma, but the «action» goes on with «و + ال…» or holds another comma: the
+            // condition does not end there («إذا كان الطفل مستقرًا، والألم خفيفًا، يُراقب») — ambiguous, not read
+            const commaSplit = !explicit && /[،,]/.test(ns.slice(m.indices![1]![1], m.indices![2]![0]));
+            const ambiguous = commaSplit && (/^و(?=ال)/u.test(m[2]!) || /[،,]/.test(m[2]!));
+            if (!ambiguous && plausibleNode(cond, 15) && plausibleNode(act, 25)) {
+              sec.rules.push({ cond, action: act, regionId: r.id, ocr, inList });
+              sec.ruleOpen = true;
+            }
             continue;
           }
           const e = AR_ELSE.exec(ns);
-          const last = sec.rules[sec.rules.length - 1];
-          if (e && last && !last.else) {
-            const act = nodeText(originalSlice(s, map, e.indices![2]![0], e.indices![2]![1]));
-            const label = originalSlice(s, map, e.indices![1]![0], e.indices![1]![1]);
-            if (plausibleNode(act, 25)) last.else = { label, action: act, regionId: r.id, ocr };
+          if (e) {
+            if (open && !open.else) {
+              const act = nodeText(originalSlice(s, map, e.indices![2]![0], e.indices![2]![1]));
+              const label = originalSlice(s, map, e.indices![1]![0], e.indices![1]![1]);
+              if (plausibleNode(act, 25)) open.else = { label, action: act, regionId: r.id, ocr };
+            }
             continue;
           }
         } else {
-          const m = EN_IF.exec(s);
+          // «If not, …» / «Otherwise, …» first: the other branch of the rule right before, never a rule of its own
+          const e = EN_ELSE.exec(s);
+          if (e) {
+            if (open && !open.else) {
+              const act = nodeText(e[3]!);
+              if (plausibleNode(act, 25)) open.else = { label: (e[1] ?? e[2])!, action: act, regionId: r.id, ocr };
+            }
+            continue;
+          }
+          const explicit = EN_IF_EXPLICIT.exec(s);
+          const m = explicit ?? EN_IF.exec(s);
           if (m) {
             const cond = nodeText(m[1]!);
             const act = nodeText(m[2]!);
-            if (plausibleNode(cond, 15) && plausibleNode(act, 25)) sec.rules.push({ cond, action: act, regionId: r.id, ocr, inList });
-            continue;
-          }
-          const e = EN_ELSE.exec(s);
-          const last = sec.rules[sec.rules.length - 1];
-          if (e && last && !last.else) {
-            const act = nodeText(e[2]!);
-            if (plausibleNode(act, 25)) last.else = { label: e[1]!, action: act, regionId: r.id, ocr };
+            // (review H4) a comma split with another comma (or «;») after it is ambiguous: not read
+            const ambiguous = !explicit && /[,;]/.test(m[2]!);
+            if (!ambiguous && plausibleNode(cond, 15) && plausibleNode(act, 25)) {
+              sec.rules.push({ cond, action: act, regionId: r.id, ocr, inList });
+              sec.ruleOpen = true;
+            }
             continue;
           }
         }
       }
 
       // arrows: a whole line «A → B → C» (each part a short phrase)
-      const arrowRe = isArabicLine(plain) ? ARROWS_AR : ARROWS;
-      if (arrowRe.test(plain) && !/^(?:if\b|in\s+cases?\s+of\b|إذا(?:\s|$)|اذا(?:\s|$)|في حال)/iu.test(plain)) {
+      const arabicLine = isArabicLine(plain);
+      const arrowRe = arabicLine ? ARROWS_AR : ARROWS;
+      // (review H4) displayed right to left, an Arabic line's «→» points at the EARLIER item («الألم → الفحص» shows as
+      // «الفحص → الألم»): which way it was meant is not printed unambiguously — not read as a chain (only «←» is)
+      const rightwardInArabic = arabicLine && /→|->|⟶|⇒|➔|➝|➜|=>/u.test(plain);
+      if (!rightwardInArabic && arrowRe.test(plain) && !/^(?:if\b|in\s+cases?\s+of\b|إذا(?:\s|$)|اذا(?:\s|$)|في حال)/iu.test(plain)) {
         const parts = plain.split(new RegExp(arrowRe.source, 'gu')).map((p) => nodeText(p));
         if (parts.length >= 2 && parts.every((p) => plausibleNode(p, 12))) sec.chains.push({ parts, regionId: r.id, ocr });
       }

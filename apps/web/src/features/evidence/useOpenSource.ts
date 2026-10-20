@@ -40,25 +40,26 @@ export function useOpenSource(): (e: EvidenceView) => Promise<OpenResult> {
  */
 export function useEffectiveAvailability(e: EvidenceView | null): EvidenceView['availability'] | null {
   const online = useOnline();
-  const [offlineOk, setOfflineOk] = useState<boolean | null>(null);
+  // the answer is kept with the evidence it was checked for, and dropped when the check ends (online again / another
+  // evidence), so a stale answer is never used
+  const [checked, setChecked] = useState<{ e: EvidenceView; ok: boolean } | null>(null);
   useEffect(() => {
-    if (online || !e) {
-      setOfflineOk(null);
-      return;
-    }
+    if (online || !e) return;
     let alive = true;
     void (async () => {
       try {
         const row = await getDb().offlineSources.get(e.source_id);
-        if (alive) setOfflineOk(!!row && (row as { versionId?: string }).versionId === e.version_id);
+        if (alive) setChecked({ e, ok: !!row && (row as { versionId?: string }).versionId === e.version_id });
       } catch {
-        if (alive) setOfflineOk(false);
+        if (alive) setChecked({ e, ok: false });
       }
     })();
     return () => {
       alive = false;
+      setChecked(null);
     };
   }, [online, e]);
+  const offlineOk = !online && e && checked?.e === e ? checked.ok : null;
   if (!e) return null;
   if (e.availability !== 'available' && e.availability !== 'version_replaced') return e.availability;
   if (!online && offlineOk !== true) return 'not_downloaded_offline';

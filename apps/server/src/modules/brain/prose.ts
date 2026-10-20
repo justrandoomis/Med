@@ -74,12 +74,39 @@ function objectSpan(rest: string): string {
 
 const GENERIC_NAME = /^(?:patients?|the\s+patient|people|children|adults|women|men|it|this|these|those|they|symptoms?|signs?|disease|condition|treatment|therapy|management|surgery|problems?|cases?|المريض|المرضى|الطبيب|الاطفال|الأطفال|الطفل|المرض|العلاج|الحاله|الحالة)$/iu;
 
-/** A usable name: meaningful, 1–6 words, no clause punctuation, an EXACT substring of the sentence. */
+// (review H4) a sentence that reports a belief, a claim, a debate or a refutation does not STATE the relation
+// («Smoking is thought to cause cancer», «Vaccines were wrongly claimed to cause autism», «يُعتقد خطأً أن …»)
+const EN_HEDGE =
+  /\b(?:thought|believed?|claim(?:s|ed)?|alleged(?:ly)?|suggest(?:s|ed)?|propos(?:e|es|ed)|hypothes[ie]s|hypothesi[sz]ed|postulated?|controversial|controversy|unclear|uncertain|debated?|disputed|myths?|misconceptions?|falsely|wrongly|mistakenly|erroneously|whether|formerly|historically|disproven|refuted|speculative|speculated|rumou?red)\b/i;
+const AR_HEDGE =
+  /(?:^|[\s،,])(?:و?يعتقد|يعتقدون|اعتقد|و?يقال|قيل|يزعم|زعم|يزعمون|يظن|يرجح|يحتمل|المحتمل|محتمل|ربما|لعل|خطا|الخطا|جدل|الجدل|خرافه|اسطوره|سابقا|قديما)(?=$|[\s،,.])/u;
+// (review H4) a NAME is never a clause: verbs, modals, «that / whether / than», frequency adverbs or a leading preposition
+// mean the pattern cut the sentence in the wrong place («Smoking is thought to», «hypercapnia causes acidosis»,
+// «perforation less often than cholecystitis») — such a pair is not what the sentence states, and would become a concept
+// (a hyphen or apostrophe joins a word: «May-Thurner syndrome» is a name, not the modal «may»)
+const EN_CLAUSE_IN_NAME =
+  /(?<![\p{L}\p{N}'’-])(?:is|are|was|were|be|been|being|has|have|had|does|did|should|must|would|could|will|shall|may|might|can|that|whether|which|who|whom|whose|what|when|where|why|how|if|than|causes|caused|causing|treats|treated|remains?|know|knows|said|says|thought|believed|claimed|considered|reported|occasionally|sometimes|often|rarely|usually|frequently|typically|also|falsely|wrongly|less|more|some|many|several)(?![\p{L}\p{N}'’-])|\b(?:leads?\s+to|results?\s+(?:in|from)|gives?\s+rise\s+to)\b|^(?:of|to|for|with|by|in|on|at|from|and|or|but|as)\b/iu;
+const AR_CLAUSE_WORDS = new Set(
+  ['ان', 'انه', 'انها', 'التي', 'الذي', 'الذين', 'قد', 'كان', 'كانت', 'يكون', 'تكون', 'يعتقد', 'يقال', 'يزعم', 'خطا', 'الخطا', 'المحتمل', 'ربما', 'احيانا', 'غالبا', 'نادرا', 'هل', 'اذا', 'حول', 'لم', 'لن', 'ليس',
+    'يسبب', 'تسبب', 'يسببان', 'تسببان', 'يؤدي', 'تؤدي', 'ينتج', 'تنتج', 'يعالج', 'تعالج', 'ناتج', 'ناتجه', 'ناجم', 'ناجمه'],
+);
+const AR_LEADING_PREPOSITION = /^(?:من|في|على|عن|الي|الى|مع|حتي|حتى)$/u;
+
+function clauseInName(name: string): boolean {
+  if (/[؀-ۿ]/.test(name)) {
+    const words = arabicMatchable(name).s.split(/\s+/).filter(Boolean).map((w) => w.replace(/[^\p{L}]/gu, ''));
+    return words.some((w) => AR_CLAUSE_WORDS.has(w) || (w.startsWith('و') && AR_CLAUSE_WORDS.has(w.slice(1)))) || AR_LEADING_PREPOSITION.test(words[0] ?? '');
+  }
+  return EN_CLAUSE_IN_NAME.test(name);
+}
+
+/** A usable name: meaningful, 1–6 words, no clause punctuation or clause words, an EXACT substring of the sentence. */
 function nameIn(sentence: string, raw: string): string | null {
   const name = cleanName(raw.replace(/^(?:the|an?)\s+/i, ''));
   if (!name || /[,;:]/.test(name)) return null;
   if (!meaningfulName(name) || wordsCount(name) > 6) return null;
   if (GENERIC_NAME.test(name)) return null;
+  if (clauseInName(name)) return null;
   if (!sentence.includes(name)) return null;
   return name;
 }
@@ -93,7 +120,7 @@ function listItems(span: string, list: boolean): string[] {
 }
 
 function fromSentenceEn(sent: string, r: RegionIn, ocr: boolean, out: ProseStatement[]): void {
-  if (EN_NEG.test(sent) || /\?\s*$/.test(sent)) return;
+  if (EN_NEG.test(sent) || EN_HEDGE.test(sent) || /\?\s*$/.test(sent)) return;
   const push = (fromRaw: string, toRaw: string, relation: ProseRelation, pattern: string) => {
     const from = nameIn(sent, fromRaw);
     const to = nameIn(sent, toRaw);
@@ -150,7 +177,7 @@ function arListItems(span: string, list: boolean): string[] {
 
 function fromSentenceAr(sent: string, r: RegionIn, ocr: boolean, out: ProseStatement[]): void {
   const { s, map } = arabicMatchable(sent);
-  if (AR_NEG.test(s) || /[?؟]\s*$/.test(s)) return;
+  if (AR_NEG.test(s) || AR_HEDGE.test(s) || /[?؟]\s*$/.test(s)) return;
   // a group of the normalized text → the exact original slice
   const orig = (start: number, len: number) => originalSlice(sent, map, start, start + len);
   const push = (fromRaw: string, toRaw: string, relation: ProseRelation, pattern: string) => {

@@ -195,14 +195,25 @@ export function CaseRunner() {
   const stageHeading = useRef<HTMLHeadingElement>(null);
   usePageTitle(run?.case.title ?? 'حالة سريرية');
 
-  const load = useCallback(async () => {
+  // state is set only when the request settles (no synchronous setState on the effect path)
+  const load = useCallback(
+    () =>
+      casesApi.run(attemptId)
+        .then((r) => setRun(r))
+        .catch((e: unknown) => setLoadError(errorMessage(e, 'تعذّر فتح المحاولة.'))),
+    [attemptId],
+  );
+  // a retry clears the previous error at once
+  const reload = useCallback(() => {
     setLoadError(null);
-    try {
-      setRun(await casesApi.run(attemptId));
-    } catch (e) {
-      setLoadError(errorMessage(e, 'تعذّر فتح المحاولة.'));
-    }
-  }, [attemptId]);
+    return load();
+  }, [load]);
+  // another attempt: its predecessor's error is cleared while rendering
+  const [loadedFor, setLoadedFor] = useState(attemptId);
+  if (loadedFor !== attemptId) {
+    setLoadedFor(attemptId);
+    setLoadError(null);
+  }
   useEffect(() => {
     void load();
   }, [load]);
@@ -233,7 +244,7 @@ export function CaseRunner() {
     }
   };
 
-  if (loadError) return <ErrorState message={loadError} onRetry={() => void load()} />;
+  if (loadError) return <ErrorState message={loadError} onRetry={() => void reload()} />;
   if (!run) return <LoadingState stage="جارٍ فتح المحاولة…" />;
 
   const stage = run.stage;

@@ -73,7 +73,29 @@ function lecturesOf(ctx: AppContext, questionId: string): Array<{ id: string; ti
   );
 }
 
-const pct = (n: number, d: number) => (d > 0 ? `${n} من ${d}` : '—');
+/** (Round 7 final) the noun after a count of unique questions, in Arabic number agreement: 3–10 take the plural
+ *  («9 أسئلة فريدة»), 11–99 the singular accusative («12 سؤالًا فريدًا»), round hundreds the singular genitive. */
+function uniqueNounAr(n: number): string {
+  const r = n % 100;
+  if (r >= 3 && r <= 10) return 'أسئلة فريدة';
+  if (r >= 11) return 'سؤالًا فريدًا';
+  return 'سؤال فريد'; // 100, 101, 102, 200 …
+}
+
+/** «سؤال واحد فريد» / «سؤالان فريدان» / «9 أسئلة فريدة» / «12 سؤالًا فريدًا» (the web's Exam DNA screen uses the same rule). */
+export function uniqueQuestionsAr(n: number): string {
+  if (n === 0) return 'لا أسئلة فريدة';
+  if (n === 1) return 'سؤال واحد فريد';
+  if (n === 2) return 'سؤالان فريدان';
+  return `${n} ${uniqueNounAr(n)}`;
+}
+
+/** «5 من 7 أسئلة فريدة» — the noun agrees with the denominator. */
+export function partOfUniqueQuestionsAr(k: number, n: number): string {
+  if (n === 1) return `${k} من سؤال واحد فريد`;
+  if (n === 2) return `${k} من سؤالين فريدين`;
+  return `${k} من ${n} ${uniqueNounAr(n)}`;
+}
 
 export function examDna(ctx: AppContext, opts: { courseNodeId?: string | null; sourceIds?: string[] | null } = {}): ExamDnaDetail {
   const s = sample(ctx, opts);
@@ -112,14 +134,14 @@ export function examDna(ctx: AppContext, opts: { courseNodeId?: string | null; s
   const warnings: string[] = [];
   if (N === 0) warnings.push('لا توجد أسئلة مستخرجة من مصادر أسئلتك بعد؛ ارفع ملفات أسئلة أو امتحانات سابقة ليظهر التحليل.');
   else {
-    if (N < 30) warnings.push(`العينة صغيرة (${N} سؤالًا فريدًا)؛ التكرار فيها قد يكون مصادفة ولا يمثل الامتحان بالضرورة.`);
+    if (N < 30) warnings.push(`العينة صغيرة (${uniqueQuestionsAr(N)})؛ التكرار فيها قد يكون مصادفة ولا يمثل الامتحان بالضرورة.`);
     if (used.length < 2) warnings.push('الأسئلة من ملف واحد فقط؛ لا يكفي لاستنتاج نمط.');
     if (dates.length === 0) warnings.push('تاريخ الأسئلة غير معروف (لم يُحدَّد تاريخ نشر للملفات)؛ لا يُعرف إن كانت حديثة أم قديمة.');
     else if (dates.length < used.length) warnings.push(`تاريخ ${used.length - dates.length} من ${used.length} ملفات غير معروف.`);
     const newestYear = dates.length ? Number(/^(\d{4})/.exec(dates[dates.length - 1]!)?.[1] ?? NaN) : NaN;
     const thisYear = new Date(ctx.clock.now()).getUTCFullYear();
     if (Number.isFinite(newestYear) && thisYear - newestYear >= 5) warnings.push(`أحدث ملف معروف التاريخ من ${newestYear}؛ قد تكون العينة قديمة ولا تمثل المنهج الحالي.`);
-    if (noConcept > N / 2) warnings.push(`${pct(noConcept, N)} سؤالًا فريدًا غير مربوط بمفهوم؛ التوزيع حسب المفهوم ناقص.`);
+    if (noConcept > N / 2) warnings.push(`${partOfUniqueQuestionsAr(noConcept, N)} غير مربوطة بمفهوم؛ التوزيع حسب المفهوم ناقص.`);
     warnings.push('لا يُنسب أي نمط إلى مدرّس أو قسم: الملفات لا تحمل بيانات كافية لذلك.');
     warnings.push('المواضيع التي لم تظهر في العينة قد تأتي في الامتحان؛ لا تتركها بسبب هذا التحليل.');
   }
@@ -204,7 +226,7 @@ export function examRelevance(ctx: AppContext, target: { questionId?: string | n
   if (target.questionId) {
     reasons.push(qOcc > 0 ? `ظهر هذا السؤال ${qOcc === 1 ? 'مرة واحدة' : `${qOcc} مرات`} في ${qFiles === 1 ? 'ملف واحد' : `${qFiles} ملفات`} من مصادر أسئلتك.` : 'هذا السؤال غير موجود في مصادر أسئلتك المرفوعة (ربما مولّد أو أضفته بنفسك).');
   }
-  if (best.unique > 0) reasons.push(`المفهوم «${best.label}» ظهر في ${pct(best.unique, N)} سؤالًا فريدًا (${best.occurrences} مرة ظهور).`);
+  if (best.unique > 0) reasons.push(`المفهوم «${best.label}» ظهر في ${partOfUniqueQuestionsAr(best.unique, N)} (${best.occurrences} مرة ظهور).`);
   else if (concepts.length) reasons.push(`المفهوم «${concepts[0]!.label}» لا يظهر في أسئلة العينة.`);
   else reasons.push('السؤال غير مربوط بمفهوم، فلا يمكن حساب تكرار موضوعه.');
   reasons.push(mentions > 0 ? `المفهوم مذكور في موادك الدراسية (${mentions} ${mentions === 1 ? 'موضع' : 'مواضع'}).` : 'لم يُعثر على المفهوم في محاضراتك ومراجعك المعالجة.');
@@ -215,7 +237,7 @@ export function examRelevance(ctx: AppContext, target: { questionId?: string | n
   else level = 'low';
   if (N < 10 && level === 'high') {
     level = 'medium';
-    reasons.push(`العينة صغيرة (${N} سؤالًا فريدًا)، فلا يُعطى المؤشر درجة «عالية».`);
+    reasons.push(`العينة صغيرة (${uniqueQuestionsAr(N)})، فلا يُعطى المؤشر درجة «عالية».`);
   }
   return {
     question_id: target.questionId ?? null,

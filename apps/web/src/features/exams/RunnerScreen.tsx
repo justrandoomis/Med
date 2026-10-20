@@ -106,15 +106,14 @@ export function RunnerScreen() {
     [item, state, s, index],
   );
 
+  // state is set only when the request settles (it is started from an effect)
   const loadFeedback = useCallback(
-    async (i: number) => {
-      try {
-        const fb = await examsApi.feedback(attemptId, i);
-        setFeedback((f) => ({ ...f, [i]: fb }));
-      } catch (e) {
-        if (!(isApiError(e) && e.status === 409)) setNotice(isApiError(e) && e.offline ? 'التصحيح يحتاج اتصالًا؛ إجابتك محفوظة على هذا الجهاز.' : errorMessage(e));
-      }
-    },
+    (i: number) =>
+      examsApi.feedback(attemptId, i)
+        .then((fb) => setFeedback((f) => ({ ...f, [i]: fb })))
+        .catch((e: unknown) => {
+          if (!(isApiError(e) && e.status === 409)) setNotice(isApiError(e) && e.offline ? 'التصحيح يحتاج اتصالًا؛ إجابتك محفوظة على هذا الجهاز.' : errorMessage(e));
+        }),
     [attemptId],
   );
 
@@ -179,11 +178,12 @@ export function RunnerScreen() {
     [attemptId, index, s],
   );
 
+  const antiShortcut = policy?.anti_shortcut;
   const showSolution = useCallback(async () => {
     setBusy('solution');
     setNotice(null);
     try {
-      if (policy?.anti_shortcut) {
+      if (antiShortcut) {
         // Anti-shortcut is enforced on the server against its copy of the chosen answer: send this device's state
         // first (the outbox push is otherwise debounced), so a just-chosen answer is not refused
         await s.persistNow();
@@ -201,7 +201,7 @@ export function RunnerScreen() {
     } finally {
       setBusy(null);
     }
-  }, [attemptId, index, s, policy?.anti_shortcut]);
+  }, [attemptId, index, s, antiShortcut]);
 
   const changeMistake = useCallback(
     async (type: MistakeType | null) => {

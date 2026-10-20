@@ -372,3 +372,11 @@ Commands (repo root unless noted, `NODE_OPTIONS='--disable-warning=ExperimentalW
   option-only correction now does too. Alerts about a corrected question (key / text) are not turned into a second
   `source_changed` impact for the same card.
 * Tests: `apps/server/test/acceptance/g8-ac27.test.ts`, `g8-ac26.test.ts`; `e2e/g8-ac27-mastery.spec.ts`.
+
+## Round 7 — final verification: Exam DNA counts (2026-10-20; §22, §40)
+
+The critic sweep showed «العينة صغيرة (7 سؤالًا فريدًا)» on «محاكاة مولدة». `dna.ts` now words every unique-question
+count with Arabic number agreement: `uniqueQuestionsAr(n)` («سؤال واحد فريد», «سؤالان فريدان», «9 أسئلة فريدة»,
+«12 سؤالًا فريدًا») and `partOfUniqueQuestionsAr(k, n)` («5 من 7 أسئلة فريدة» — the noun follows the denominator), in
+the sample warnings, the relevance reasons and (through `exams/simulation.ts`) the simulation plan. The numbers and the
+rule are unchanged. Test: `srv:learning/golden.test.ts` «(Round 7 final) …» (failed on the old wording).

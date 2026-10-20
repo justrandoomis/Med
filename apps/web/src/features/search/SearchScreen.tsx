@@ -223,14 +223,19 @@ export function SearchScreen() {
   }, []);
 
   const key = sp.toString();
+  // a new search (query, connectivity, retry) shows its state at once, while rendering; the request runs in the effect.
+  // `null` = not searched yet, so the first render starts too (as the effect did on mount).
+  const request = `${attempt}|${online}|${key}`;
+  const [requested, setRequested] = useState<string | null>(null);
+  if (requested !== request) {
+    setRequested(request);
+    if (!readParams(sp).q.trim()) setState({ loading: false, error: null, data: null, local: null });
+    else setState((s) => ({ ...s, loading: true, error: null }));
+  }
   useEffect(() => {
     const p = readParams(sp);
     const mine = ++seq.current;
-    if (!p.q.trim()) {
-      setState({ loading: false, error: null, data: null, local: null });
-      return;
-    }
-    setState((s) => ({ ...s, loading: true, error: null }));
+    if (!p.q.trim()) return;
     const runLocal = async (why: string | null) => {
       try {
         const notes = await getDb().notes.toArray();

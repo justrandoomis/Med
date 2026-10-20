@@ -485,30 +485,29 @@ export async function readOfflineFile(fileId: string, db: MedLevoDB = getDb()): 
  * changes); otherwise the authenticated file route is used. `null` while the local lookup runs (a few ms).
  */
 export function useFileSrc(fileId: string | null | undefined, db?: MedLevoDB): string | null {
-  const [src, setSrc] = useState<string | null>(null);
+  // the src is kept with the file / database it was resolved for, so a stale one is never returned for another file
+  const [resolved, setResolved] = useState<{ fileId: string; db: MedLevoDB | undefined; src: string } | null>(null);
   useEffect(() => {
-    if (!fileId) {
-      setSrc(null);
-      return;
-    }
+    if (!fileId) return;
     let cancelled = false;
     let objectUrl: string | null = null;
-    setSrc(null);
     void readOfflineFile(fileId, db ?? getDb()).then((blob) => {
       if (cancelled) return;
       if (blob && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
         objectUrl = URL.createObjectURL(blob);
-        setSrc(objectUrl);
+        setResolved({ fileId, db, src: objectUrl });
       } else {
-        setSrc(`/api/files/${encodeURIComponent(fileId)}`);
+        setResolved({ fileId, db, src: `/api/files/${encodeURIComponent(fileId)}` });
       }
     });
     return () => {
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
+      // the object URL is revoked: forget it (a later return to this file resolves it again)
+      setResolved(null);
     };
   }, [fileId, db]);
-  return src;
+  return fileId && resolved && resolved.fileId === fileId && resolved.db === db ? resolved.src : null;
 }
 
 /**

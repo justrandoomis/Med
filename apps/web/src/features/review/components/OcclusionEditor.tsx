@@ -3,7 +3,7 @@
 // drag a mask moves it 1:1 from where it was grabbed, drag a corner resizes. Keyboard alternative: «أضف منطقة» adds a
 // centred mask; with a mask focused, arrows move it (Shift = bigger steps), Alt/Option + arrows resize, Delete removes,
 // Enter jumps to its label. Every mask is numbered (identity by number + text, never colour alone).
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { useId, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { newId, type NormBox } from '@medlevo/shared';
 import { Button, IconButton, TextField, cx } from '../../../design';
@@ -41,9 +41,8 @@ export function OcclusionEditor({ imageUrl, masks, onChange, onlyMaskId = null, 
   const canDraw = !onlyMaskId && !disabled;
   const editable = (id: string) => !disabled && (!onlyMaskId || onlyMaskId === id);
 
-  useEffect(() => {
-    if (selected && !masks.some((m) => m.id === selected)) setSelected(masks[0]?.id ?? null);
-  }, [masks, selected]);
+  // a removed mask is no longer selected (adjusted while rendering instead of in an effect)
+  if (selected && !masks.some((m) => m.id === selected)) setSelected(masks[0]?.id ?? null);
 
   const rect = () => stageRef.current?.getBoundingClientRect() ?? { left: 0, top: 0, width: 1, height: 1 };
   const point = (e: PointerEvent) => toImagePoint(e.clientX, e.clientY, rect());

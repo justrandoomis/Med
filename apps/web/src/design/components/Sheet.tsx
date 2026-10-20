@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { useCallback, useId, useInsertionEffect, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { X } from 'lucide-react';
 import { cx, isRtl, useFocusTrap, useInertAppRoot, useScrollLock } from '../utils';
 import { Portal } from './Portal';
@@ -32,9 +32,12 @@ export function Sheet({ open, onClose, title, children, side = 'end', width = '2
   useScrollLock(open);
   useInertAppRoot(open);
 
-  useEffect(() => {
+  // closing drops any drag offset (adjusted while rendering when `open` changes, instead of in an effect)
+  const [prevOpen, setPrevOpen] = useState(open);
+  if (prevOpen !== open) {
+    setPrevOpen(open);
     if (!open) setDragY(0);
-  }, [open]);
+  }
 
   const onHandleDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
@@ -159,14 +162,20 @@ export function useResizablePanel({ initial, min, max, side, onCommit, step = 16
   const clamp = useCallback((w: number) => Math.round(Math.min(max, Math.max(min, w))), [min, max]);
   const [width, setWidthState] = useState(() => clamp(initial));
   const widthRef = useRef(width);
-  widthRef.current = width;
   const drag = useRef<{ startX: number; startW: number; physicalRight: boolean; id: number } | null>(null);
   const commitRef = useRef(onCommit);
-  commitRef.current = onCommit;
+  // latest values for the handlers, written at commit (before any layout effect) rather than during render
+  useInsertionEffect(() => {
+    widthRef.current = width;
+    commitRef.current = onCommit;
+  });
 
-  useEffect(() => {
+  // a new initial width or bounds re-clamps the width (adjusted while rendering instead of in an effect)
+  const [synced, setSynced] = useState({ initial, min, max });
+  if (synced.initial !== initial || synced.min !== min || synced.max !== max) {
+    setSynced({ initial, min, max });
     setWidthState(clamp(initial));
-  }, [initial, clamp]);
+  }
 
   const setWidth = useCallback((w: number) => setWidthState(clamp(w)), [clamp]);
 

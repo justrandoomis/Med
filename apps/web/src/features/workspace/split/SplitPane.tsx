@@ -1,6 +1,6 @@
 // Split Study (§26): the lecture next to another source (reference, question source, another lecture).
 // Each side keeps its own page and zoom; changing one never resets the other.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useInsertionEffect, useMemo, useRef, useState } from 'react';
 import { Columns2, Minus, NotebookPen, Plus, X } from 'lucide-react';
 import { detectDir, SOURCE_TYPE_LABELS_AR, type AnnotationAnchor, type ContinueStudyingItem, type SourceDetail } from '@medlevo/shared';
 import { Button, Dialog, EmptyState, ErrorState, IconButton, LoadingState, Tooltip, cx } from '../../../design';
@@ -95,7 +95,10 @@ export function SecondaryPane({ sourceId, initialPage, initialZoom, onPage, onZo
   const sheets = useMemo(() => (doc ? buildSequence(doc.pages, noteRows) : []), [doc, noteRows]);
   const seq = useMemo(() => indexSequence(sheets), [sheets]);
   const sheetsRef = useRef(sheets);
-  sheetsRef.current = sheets;
+  // the latest sheets for the location callback, written at commit (before any layout effect) rather than during render
+  useInsertionEffect(() => {
+    sheetsRef.current = sheets;
+  });
   const inkCap = caps.feature('workspace.ink').available;
   const inkOnPages = inkCap && !!doc && doc.mode !== 'text';
   const writing = (inkOnPages || (inkCap && sheets.some((x) => x.kind === 'note'))) && ink.isWritingTool;
@@ -217,8 +220,9 @@ export function SecondaryPane({ sourceId, initialPage, initialZoom, onPage, onZo
       {doc && notesOpen && <SecondaryNotes doc={doc} pageIndex={pageIndex} anchorFor={anchorFor} online={online} />}
       {state.status === 'loading' && <LoadingState stage={state.stage} />}
       {state.status === 'error' && <ErrorState message={state.message} onRetry={retry} actions={<Button onClick={onClose}>إغلاق</Button>} />}
-      {doc && ctx && (
-        <ReaderPageContext.Provider value={ctx}>
+      {/* `ctx` is built from `doc` (non-null exactly when `doc` is); it holds ref callbacks, so it is not tested here */}
+      {doc && (
+        <ReaderPageContext.Provider value={ctx!}>
           <BookCanvas
             ref={canvas}
             sheets={sheets}
@@ -259,7 +263,12 @@ function SecondaryNotes({ doc, pageIndex, anchorFor, online }: { doc: SourceDocu
       .then((r) => mergeServerNotes(getDb(), r.notes))
       .catch(() => undefined);
   }, [doc.detail.id, online]);
-  useEffect(() => setEditing(null), [pageIndex]);
+  // another page closes the editor (adjusted while rendering instead of in an effect)
+  const [editingOn, setEditingOn] = useState(pageIndex);
+  if (editingOn !== pageIndex) {
+    setEditingOn(pageIndex);
+    setEditing(null);
+  }
   const label = page ? fullPageLabel(page) : '';
   return (
     <div className="wk-split__notes" role="region" aria-label={`ملاحظات ${label}`}>

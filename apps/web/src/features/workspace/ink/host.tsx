@@ -2,7 +2,7 @@
 // page is «current» for a pasted picture or the toolbar's «اختر صورة…». The reader and the notebook screen render
 // <InkHost> inside their <InkProvider>; without it links are not offered (the tool stays out of the toolbar) and a
 // pasted picture lands on the last page that was touched.
-import { createContext, useContext, useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useInsertionEffect, useMemo, useRef, type ReactNode } from 'react';
 import type { AnnotationAnchor, LinkTarget } from '@medlevo/shared';
 import { useInkInternal } from './InkProvider';
 import { insertImage, startImageUploader } from './images';
@@ -51,7 +51,10 @@ export function InkHost({ links, currentPage, notify, children }: InkHostValue &
   const { store, announce } = useInkInternal();
   const value = useMemo<InkHostValue>(() => ({ links, currentPage, notify }), [links, currentPage, notify]);
   const ref = useRef(value);
-  ref.current = value;
+  // the latest host value for the paste listener, written at commit (before any layout effect) rather than during render
+  useInsertionEffect(() => {
+    ref.current = value;
+  });
 
   useEffect(() => {
     startImageUploader();

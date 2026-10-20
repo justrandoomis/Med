@@ -260,3 +260,26 @@
     bottom: calc(var(--ml-space-4) + var(--ml-safe-bottom));
   }
 }
+
+/* (Round 7 — H3 item 4) a card / a question from the lasso selection */
+.hw-lasso__reading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+}
+.hw-lasso__occlusion {
+  max-inline-size: 100%;
+  overflow: hidden;
+}
+.hw-lasso__done {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-3);
+}
+.hw-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--ml-touch-target);
+  color: var(--ml-color-accent);
+  font-weight: 600;
+}

@@ -98,10 +98,9 @@ function MapView({ data }: { data: KnowledgeMapResponse }) {
   const [rtl, setRtl] = useState(true);
   const moved = useRef(false);
   useEffect(() => setRtl(isRtl(groupRef.current)), []);
-  useEffect(() => {
-    if (focused && !layout.byId.has(focused)) setFocused(layout.nodes[0]?.id ?? null);
-    if (selected && !layout.byId.has(selected)) setSelected(null);
-  }, [layout, focused, selected]);
+  // a node that left the map is dropped while rendering (React's «adjust state when a prop changes»), not in an effect
+  if (focused && !layout.byId.has(focused)) setFocused(layout.nodes[0]?.id ?? null);
+  if (selected && !layout.byId.has(selected)) setSelected(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!moved.current || !focused) return;

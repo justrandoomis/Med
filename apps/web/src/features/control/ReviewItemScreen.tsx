@@ -2,7 +2,7 @@
 // owner's decision — accept / correct / reject / close — each with exactly what it does, before it is applied.
 // Correcting extracted text never loses the previous text (history below) and raises a content change alert for
 // whatever depends on that page (AC-26). Items owned by another screen link there.
-import { useEffect, useId, useState, type FormEvent } from 'react';
+import { useId, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Bell, ChevronRight, ExternalLink } from 'lucide-react';
 import type { LectureKind, ResolveReviewResponse, ReviewActionSpec, ReviewItemDetail, ReviewStructured } from '@medlevo/shared';
@@ -262,7 +262,12 @@ export function ReviewItemScreen() {
   const [outcome, setOutcome] = useState<ResolveReviewResponse | null>(null);
   const { reloadOverview } = useControlContext();
   usePageTitle(item.data ? `${item.data.kind_label_ar} — المراجعة` : 'عنصر مراجعة');
-  useEffect(() => setOutcome(null), [itemId]);
+  // another item: the previous item's outcome is dropped while rendering (not in an effect)
+  const [outcomeFor, setOutcomeFor] = useState(itemId);
+  if (outcomeFor !== itemId) {
+    setOutcomeFor(itemId);
+    setOutcome(null);
+  }
   const d = item.data;
 
   return (

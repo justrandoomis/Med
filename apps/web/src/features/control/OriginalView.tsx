@@ -95,10 +95,15 @@ function PdfOriginal({ fileId, pageIndex, bbox, crop, label }: { fileId: string;
   const [wrapRef, width] = useWidth<HTMLDivElement>();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [state, setState] = useState<{ status: 'loading' | 'ready' | 'error'; w?: number; h?: number; box?: Rect | null }>({ status: 'loading' });
+  // a new page / size to draw shows «loading» again (reset while rendering; the drawing runs in the effect below)
+  const [drawFor, setDrawFor] = useState({ fileId, pageIndex, width, bbox, crop });
+  if (drawFor.fileId !== fileId || drawFor.pageIndex !== pageIndex || drawFor.width !== width || drawFor.bbox !== bbox || drawFor.crop !== crop) {
+    setDrawFor({ fileId, pageIndex, width, bbox, crop });
+    if (width > 0) setState({ status: 'loading' });
+  }
   useEffect(() => {
     if (width <= 0) return;
     let cancelled = false;
-    setState({ status: 'loading' });
     (async () => {
       try {
         const doc = await loadDoc(fileId);

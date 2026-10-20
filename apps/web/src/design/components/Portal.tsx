@@ -27,11 +27,10 @@ export function useFloatingPosition(
 ): FloatingPosition {
   const [pos, setPos] = useState<FloatingPosition>({ top: -9999, left: -9999, placement: opts.placement ?? 'bottom', ready: false });
   const { placement, align, offset } = opts;
+  // closing makes the position stale again (adjusted while rendering instead of in an effect)
+  if (!open && pos.ready) setPos({ ...pos, ready: false });
   useLayoutEffect(() => {
-    if (!open) {
-      setPos((p) => (p.ready ? { ...p, ready: false } : p));
-      return;
-    }
+    if (!open) return;
     const update = () => {
       const anchor = anchorRef.current;
       const floating = floatingRef.current;

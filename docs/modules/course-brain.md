@@ -215,6 +215,34 @@ Tests: `srv:brain/topic-links.h4.test.ts`, `srv:brain/h4-extractors.test.ts`, `s
 `srv:perf/brain-course.perf.test.ts` (`MEDLEVO_PERF=1`: cold / warm / incremental, slices, incremental = cold),
 `web:features/brain/{topics-h4,knowledge-h4}.test.tsx`.
 
+### Independent review of H4 (2026-10-20) — what is shown as stated is what the text states
+
+Each of these was reproduced with a failing test first (`srv:brain/h4-review.test.ts`, `srv:brain/h4-review-topics.test.ts`):
+* **Prose relations from hedges / refutations / clause fragments.** «Smoking is thought to cause cancer», «Vaccines were
+  wrongly claimed to cause autism», «يُعتقد خطأً أن اللقاحات تسبب التوحد», «من الخطأ القول إن …», «Whether X causes Y remains
+  controversial» each became a **stated** relation, and clause fragments became new suggested concepts («Smoking is
+  thought to», «Students should know that ischemia», «hypercapnia causes acidosis», «perforation less often than
+  cholecystitis», «أحيانًا التهاب الزائدة»). Fix (`prose.ts`): a sentence reporting a belief, claim, debate or refutation
+  (EN `thought / believed / claimed / suggested / whether / controversial / falsely / wrongly / formerly …`, AR `يعتقد /
+  يقال / يزعم / خطأ / المحتمل / ربما / الجدل / سابقًا …`) is not read; a name may not hold a verb, modal, «that / whether /
+  than», a frequency adverb, a relation verb or start with a preposition (hyphenated eponyms such as «May-Thurner
+  syndrome» stay names). Plain statements («Gallstones can cause …», «التدخين قد يسبب …») are still read.
+* **Algorithms: wrong condition / action splits and invented «otherwise» branches.** «If fever, tachycardia and
+  leukocytosis are present, start antibiotics» was read as «fever» → «tachycardia … start antibiotics» (Arabic: «إذا كان
+  الطفل مستقرًا، والألم خفيفًا، يُراقب» likewise); «Otherwise healthy children can be discharged» became the «otherwise»
+  branch of the rule before it, and an «Otherwise, …» several paragraphs later was attached too. Fix (`algorithms.ts`): a
+  printed «then» / arrow / Arabic consequence word is the split; a comma split is used only when no further comma follows
+  (and, in Arabic, the action does not start with «و + ال»), otherwise the sentence is not read as a rule; «otherwise /
+  else» is a branch word only before «,» «:» or an arrow (a bare «إلا» only before «،» «:»), and only for the rule read
+  RIGHT before it; «If not, …» is that rule's branch, never a rule with the condition «not».
+* **Arabic arrow direction.** In a right-to-left Arabic line «الألم → الفحص» is displayed «الفحص → الألم» (the arrow
+  glyph is not mirrored), so a rightward arrow there does not say which way it was meant: such a line is no longer read
+  as a chain (only «←» is, as before).
+* **Topic «محاولاتي السابقة» revealed a running exam (AC-19).** For an exam attempt still running in an assessed mode (or
+  with solutions «at the end»), the topic page listed each answer as «صحيحة / خاطئة», the linked attempt as «صحيحة X من
+  Y مُقيَّمة», and linked to its results — which the exams module itself refuses (409) until the exam is finished. Fix
+  (`topics.ts`): the same rule as `exams/results.ts` — «النتيجة بعد إنهاء الامتحان» and a link to the exam itself.
+
 ## Not done / limits (honest)
 
 * Extraction is pattern-based: it finds what the text states with recognizable structure (headings, definitions,
@@ -234,3 +262,12 @@ Tests: `srv:brain/topic-links.h4.test.ts`, `srv:brain/h4-extractors.test.ts`, `s
   extraction records and relation reasons are removed.
 * The background recompute still runs in the server process (sliced, not in a worker thread); its write transaction
   (≈ 3 500 relations) is one synchronous slice of ≈ 0.15 s on the 30 × 20 course.
+
+## Round 7 — final verification: «خريطة معرفتي» counts (2026-10-20; §22, §44)
+
+The critic sweep showed every concept row reading «0 من 1 صفحات يُذكر فيها» and «0 محاولة على 1 سؤال». The web row
+(`KnowledgeScreen.tsx`) and the server's «لماذا هذه الحالة؟» reasons (`student.ts knowledgeReadingAr` /
+`knowledgePracticeAr`) now use counted nouns that agree with their numbers («0 من صفحة واحدة يُذكر فيها», «1 من صفحتين»,
+«5 من 12 صفحة», «محاولتان على سؤالين · 3 مراجعات لبطاقة واحدة», «12 سؤالًا مرتبطًا به؛ أجبت 12 مرة»). Same numbers, same
+states. Tests (each failed first): `web:src/features/brain/KnowledgeScreen.final.test.tsx`,
+`srv:brain/knowledge-counts.final.test.ts`.

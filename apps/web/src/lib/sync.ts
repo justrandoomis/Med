@@ -1027,18 +1027,16 @@ export function useSyncSnapshot(e: SyncEngine = getSyncEngine()): SyncSnapshot {
  * (no local ops recorded for it → treat as synced / server-only).
  */
 export function useEntitySyncState(entityType: string, entityId: string | null | undefined, e: SyncEngine = getSyncEngine()): SyncState | null {
-  const [state, setState] = useState<SyncState | null>(null);
+  // the state is kept with the entity it was observed for, so another entity's state is never returned
+  const [observed, setObserved] = useState<{ entityType: string; entityId: string; state: SyncState | null } | null>(null);
   const { online } = useSyncSnapshot(e);
   useEffect(() => {
-    if (!entityId) {
-      setState(null);
-      return;
-    }
+    if (!entityId) return;
     const sub = liveQuery(() => e.db.outbox.where('[entity_type+entity_id]').equals([entityType, entityId]).toArray()).subscribe({
-      next: (ops) => setState(entityStateFromOps(ops, online)),
-      error: () => setState('error'),
+      next: (ops) => setObserved({ entityType, entityId, state: entityStateFromOps(ops, online) }),
+      error: () => setObserved({ entityType, entityId, state: 'error' }),
     });
     return () => sub.unsubscribe();
   }, [e, entityType, entityId, online]);
-  return state;
+  return entityId && observed && observed.entityType === entityType && observed.entityId === entityId ? observed.state : null;
 }

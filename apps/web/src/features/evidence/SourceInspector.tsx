@@ -133,11 +133,18 @@ export function SourceInspector({ evidence, context, open, onClose }: SourceInsp
   const availability = useEffectiveAvailability(evidence);
   const blocked = availability === 'source_deleted' || availability === 'not_downloaded_offline';
 
+  // a new request (opened, another evidence, retry) starts from empty, reset while rendering; the load runs below
+  const [requested, setRequested] = useState({ open, evidence, blocked, attempt });
+  if (requested.open !== open || requested.evidence !== evidence || requested.blocked !== blocked || requested.attempt !== attempt) {
+    setRequested({ open, evidence, blocked, attempt });
+    if (open && evidence && !blocked) {
+      setLoaded(null);
+      setError(null);
+    }
+  }
   useEffect(() => {
     if (!open || !evidence || blocked) return;
     const ctrl = new AbortController();
-    setLoaded(null);
-    setError(null);
     loadRender(evidence, ctrl.signal)
       .then(setLoaded)
       .catch((e) => {

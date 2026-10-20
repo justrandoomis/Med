@@ -1,6 +1,6 @@
 // Small shared pieces of the Control Center: the section header (with a way back on phones), an async loader
 // hook with honest error states, and the overview context the layout provides to every section.
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useInsertionEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useOutletContext } from 'react-router-dom';
 import { ChevronRight } from 'lucide-react';
 import type { ControlOverviewResponse } from '@medlevo/shared';
@@ -51,11 +51,20 @@ export function useLoad<T>(fn: () => Promise<T>, deps: unknown[], offlineMessage
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(0);
   const fnRef = useRef(fn);
-  fnRef.current = fn;
-  useEffect(() => {
-    let cancelled = false;
+  // the latest loader, written at commit (before any layout effect) rather than during render
+  useInsertionEffect(() => {
+    fnRef.current = fn;
+  });
+  // a new request (deps changed or reload) shows loading and clears the old error while rendering, not in the effect
+  const key = [...deps, tick];
+  const [requested, setRequested] = useState(key);
+  if (requested.length !== key.length || requested.some((v, i) => !Object.is(v, key[i]))) {
+    setRequested(key);
     setLoading(true);
     setError(null);
+  }
+  useEffect(() => {
+    let cancelled = false;
     fnRef
       .current()
       .then((d) => {

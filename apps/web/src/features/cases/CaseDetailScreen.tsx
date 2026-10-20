@@ -110,17 +110,29 @@ export function CaseDetailScreen() {
   const [trashOpen, setTrashOpen] = useState(false);
   usePageTitle(c?.title ?? 'حالة');
 
-  const load = useCallback(async () => {
+  // state is set only when the requests settle (no synchronous setState on the effect path)
+  const load = useCallback(
+    () =>
+      Promise.all([casesApi.get(caseId), casesApi.list(), casesApi.attempts(caseId)])
+        .then(([detail, list, a]) => {
+          setC(detail);
+          setCaps(list.capabilities);
+          setAttempts(a.attempts);
+        })
+        .catch((e: unknown) => setError(errorMessage(e, 'تعذّر تحميل الحالة.'))),
+    [caseId],
+  );
+  // a retry / poll clears the previous error at once
+  const reload = useCallback(() => {
     setError(null);
-    try {
-      const [detail, list, a] = await Promise.all([casesApi.get(caseId), casesApi.list(), casesApi.attempts(caseId)]);
-      setC(detail);
-      setCaps(list.capabilities);
-      setAttempts(a.attempts);
-    } catch (e) {
-      setError(errorMessage(e, 'تعذّر تحميل الحالة.'));
-    }
-  }, [caseId]);
+    return load();
+  }, [load]);
+  // another case: its predecessor's error is cleared while rendering
+  const [loadedFor, setLoadedFor] = useState(caseId);
+  if (loadedFor !== caseId) {
+    setLoadedFor(caseId);
+    setError(null);
+  }
   useEffect(() => {
     void load();
   }, [load]);
@@ -129,11 +141,11 @@ export function CaseDetailScreen() {
   const generating = !!c?.generation && ['queued', 'running'].includes(c.generation.status);
   useEffect(() => {
     if (!generating) return;
-    const t = window.setTimeout(() => void load(), 3000);
+    const t = window.setTimeout(() => void reload(), 3000);
     return () => window.clearTimeout(t);
-  }, [generating, c, load]);
+  }, [generating, c, reload]);
 
-  if (error) return <ErrorState message={error} onRetry={() => void load()} />;
+  if (error) return <ErrorState message={error} onRetry={() => void reload()} />;
   if (!c) return <LoadingState stage="جارٍ تحميل الحالة…" />;
 
   const playable = !c.validation.some((i) => i.severity === 'error') && c.version_no >= 1;

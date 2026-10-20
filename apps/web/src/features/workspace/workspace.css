@@ -196,10 +196,47 @@
   max-width: 100%;
   font-size: var(--ml-text-sm);
 }
+/* (Round 7 final) phone bar: back · title column · mode · search · rail · more. The save state moved onto the title
+   line and the icons sit 4 px apart, so the title column is ~124 px at 390 px instead of ~60 px. The column is a size
+   container: the indicator never grows past it (it used to run under the save icon and the mode switch, which took
+   its taps), the printed label is the last thing to give way, and the «n/N» count is dropped first. */
+.wk-topbar--phone .wk-topbar__row {
+  gap: var(--ml-space-1);
+}
+.wk-topbar--phone .wk-topbar__title {
+  container-type: inline-size;
+}
+.wk-topbar__titleline {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+}
+.wk-topbar__titleline .ml-save-status {
+  flex: none;
+  min-height: 0;
+  padding: 0 4px;
+}
 .wk-pageind--compact {
   min-height: 1.5rem;
+  max-width: 100%;
   padding: 0 6px;
+  overflow: hidden;
   background: transparent;
+}
+.wk-pageind--compact .wk-pageind__primary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wk-pageind--compact .wk-pageind__count {
+  flex: none;
+}
+@container (max-width: 7.5rem) {
+  .wk-pageind--compact .wk-pageind__count {
+    display: none;
+  }
 }
 .wk-topbar--phone .wk-topbar__ink {
   overflow-x: auto;

@@ -13,7 +13,7 @@ import { Button, ErrorState, IconButton, Kbd, LoadingState, Menu, MenuItem, Save
 import { getDb } from '../../../lib/localdb';
 import { useEntitySyncState, useSyncSnapshot } from '../../../lib/sync';
 import { formatTime, formatRelative } from '../../../lib/time';
-import { useLearningSync, useLocalCards, useSrsConfig } from '../local/hooks';
+import { useLearningSync, useLocalCards, useNow, useSrsConfig } from '../local/hooks';
 import { computeQueue, scheduleOf, tomorrowStart, type LocalQueueItem } from '../local/queue';
 import { intervalLabelAr, previewIntervals } from '../local/srs';
 import { recordRating, setBuriedLocal, setSuspendedLocal, undoCheck, undoRating, type UndoCheck } from '../local/store';
@@ -46,16 +46,14 @@ function isTypingTarget(t: EventTarget | null): boolean {
 }
 
 function useUndoState(eventId: string | null): UndoCheck | null {
-  const [st, setSt] = useState<UndoCheck | null>(null);
+  // kept with the event it was checked for, so another event's answer is never returned
+  const [st, setSt] = useState<{ eventId: string; check: UndoCheck | null } | null>(null);
   useEffect(() => {
-    if (!eventId) {
-      setSt(null);
-      return;
-    }
-    const sub = liveQuery(() => undoCheck(getDb(), eventId)).subscribe({ next: setSt, error: () => setSt(null) });
+    if (!eventId) return;
+    const sub = liveQuery(() => undoCheck(getDb(), eventId)).subscribe({ next: (check) => setSt({ eventId, check }), error: () => setSt({ eventId, check: null }) });
     return () => sub.unsubscribe();
   }, [eventId]);
-  return st;
+  return eventId && st?.eventId === eventId ? st.check : null;
 }
 
 function LastRatingBar({ last, onUndo }: { last: { eventId: string; rating: ReviewRating }; onUndo: () => void }) {
@@ -90,7 +88,12 @@ export function CardReviewer({ cardIds = null, sourceId = null, keyboard = true,
   const [currentId, setCurrentId] = useState<string | null>(null);
   // which card's answer is shown (per card, so a reveal pressed in the same frame the card arrives is never undone)
   const [revealedId, setRevealedId] = useState<string | null>(null);
-  const [shownAt, setShownAt] = useState(() => Date.now());
+  // when the card on screen was first shown (read only when it is rated): stamped by the effect below each time a
+  // card is newly put on screen, counted by `shownCount`
+  const shownAt = useRef(0);
+  const [shownCount, setShownCount] = useState(0);
+  // a clock for the labels that compare with «now» (interval previews, «soon»), not read during render
+  const clock = useNow();
   const [last, setLast] = useState<{ eventId: string; cardId: string; rating: ReviewRating } | null>(null);
   const [summary, setSummary] = useState<ReviewSummary>({ reviewed: 0, byRating: { 1: 0, 2: 0, 3: 0, 4: 0 } });
   const [busy, setBusy] = useState(false);
@@ -121,12 +124,14 @@ export function CardReviewer({ cardIds = null, sourceId = null, keyboard = true,
   }, [queue, currentId, revealedId, queueCfg, local.cards, local.events, now]);
   const revealed = !!current && revealedId === current.card.id;
 
+  // a new card on screen is pinned while rendering (React's «adjust state when a prop changes»), not in an effect
+  if (current && current.card.id !== currentId) {
+    setCurrentId(current.card.id);
+    setShownCount((n) => n + 1);
+  }
   useEffect(() => {
-    if (current && current.card.id !== currentId) {
-      setCurrentId(current.card.id);
-      setShownAt(Date.now());
-    }
-  }, [current, currentId]);
+    shownAt.current = Date.now();
+  }, [shownCount]);
 
   useEffect(() => {
     onProgress?.({ remaining: queue?.items.length ?? 0, reviewed: summary.reviewed });
@@ -143,11 +148,11 @@ export function CardReviewer({ cardIds = null, sourceId = null, keyboard = true,
 
   const previews = useMemo(() => {
     if (!current || !cfg.config) return null;
-    const at = Date.now();
+    const at = clock;
     const due = previewIntervals(cfg.config.params, current.fold.card, at);
     return Object.fromEntries(RATINGS.map((r) => [r, intervalLabelAr(due[r] - at)])) as Record<ReviewRating, string>;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [current?.card.id, current?.fold, cfg.config, revealed]);
+  }, [current?.card.id, current?.fold, cfg.config, revealed, clock]);
 
   const reveal = useCallback(() => {
     if (!current || revealed) return;
@@ -161,7 +166,7 @@ export function CardReviewer({ cardIds = null, sourceId = null, keyboard = true,
       setBusy(true);
       const at = Date.now();
       try {
-        const ev = await recordRating(getDb(), { cardId: current.card.id, rating, reviewedAt: at, durationMs: Math.max(0, at - shownAt) }, at);
+        const ev = await recordRating(getDb(), { cardId: current.card.id, rating, reviewedAt: at, durationMs: Math.max(0, at - shownAt.current) }, at);
         setLast({ eventId: ev.id, cardId: current.card.id, rating });
         setSummary((s) => ({ reviewed: s.reviewed + 1, byRating: { ...s.byRating, [rating]: s.byRating[rating] + 1 } }));
         setCurrentId(null);
@@ -173,7 +178,7 @@ export function CardReviewer({ cardIds = null, sourceId = null, keyboard = true,
         setBusy(false);
       }
     },
-    [current, revealed, busy, shownAt, toast],
+    [current, revealed, busy, toast],
   );
 
   const undo = useCallback(async () => {
@@ -258,7 +263,7 @@ export function CardReviewer({ cardIds = null, sourceId = null, keyboard = true,
       summary.reviewed > 0
         ? `راجعت في هذه الجلسة ${cardsAr(summary.reviewed)}: مجددًا ${summary.byRating[1]}، صعب ${summary.byRating[2]}، جيد ${summary.byRating[3]}، سهل ${summary.byRating[4]}.`
         : null;
-    const soon = queue.next_due_at !== null && queue.next_due_at - Date.now() <= WAIT_FOR_LEARNING_MS;
+    const soon = queue.next_due_at !== null && queue.next_due_at - clock <= WAIT_FOR_LEARNING_MS;
     return (
       <section className="lw-done" aria-labelledby="lw-done-h">
         <h2 id="lw-done-h" className="lw-done__title">

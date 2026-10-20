@@ -1,6 +1,6 @@
 // السجل (§48, §56): the owner-visible change log in words — what changed, by whom (you, a background job, the
 // system), when, and the before → after facts. Filter by kind; older entries on demand.
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { History } from 'lucide-react';
 import type { HistoryEntryView } from '@medlevo/shared';
@@ -58,10 +58,13 @@ export function HistoryScreen() {
   const [cursor, setCursor] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
+  // a fresh first page drops the older pages loaded after the previous one (adjusted while rendering, not in an effect)
+  const [firstPage, setFirstPage] = useState(first.data);
+  if (firstPage !== first.data) {
+    setFirstPage(first.data);
     setOlder([]);
     setCursor(first.data?.next_before ?? null);
-  }, [first.data]);
+  }
   const entries = [...(first.data?.entries ?? []), ...older];
   const loadMore = async () => {
     if (!cursor) return;

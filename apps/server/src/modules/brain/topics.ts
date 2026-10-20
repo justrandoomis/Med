@@ -5,10 +5,11 @@
 //    topic. Suggestions go through `suggestTopicLink`, which never overrides a link the owner decided (accepted,
 //    rejected or made by hand) — a rejected suggestion is never made again;
 //  * the topic detail with every link resolved to something readable (title, page, stem) and a reason.
-import { ARTIFACT_KIND_LABELS_AR, CASE_KIND_LABELS_AR, stemPreview, TOPIC_ENTITY_TYPES, type CaseKind, type RichText, type TopicAttemptView, type TopicDetailResponse, type TopicLinkDetail } from '@medlevo/shared';
+import { ARTIFACT_KIND_LABELS_AR, CASE_KIND_LABELS_AR, isAssessedMode, stemPreview, TOPIC_ENTITY_TYPES, type CaseKind, type ExamMode, type RichText, type TopicAttemptView, type TopicDetailResponse, type TopicLinkDetail } from '@medlevo/shared';
 import type { AppContext } from '../../context';
 import { fromJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
+import { examPolicy } from '../exams/store';
 import { suggestTopicLink } from '../library/tags';
 import { pageLabelAr } from '../sources/pagelabel';
 import { ConceptIndex, nameNorm, resolveConceptId } from './resolve';
@@ -112,6 +113,27 @@ function examAttemptScore(ctx: AppContext, attemptId: string): string | null {
   return r.scored > 0 ? `صحيحة ${r.correct ?? 0} من ${r.scored} مُقيَّمة` : `${r.answered} إجابات بلا مفتاح مُقيِّم`;
 }
 
+/** (review H4, AC-19) shown instead of a result the exams module still withholds */
+const RESULT_WITHHELD_AR = 'النتيجة بعد إنهاء الامتحان';
+
+/**
+ * (review H4, AC-19) The exams module shows no result of an attempt that is not finished when its exam is assessed
+ * (exam / time pressure / simulation) or shows solutions «at the end» (results.ts computeResult answers 409). The topic
+ * page follows the same rule: no «صحيحة / خاطئة», no score, no link to the results while it runs.
+ */
+function resultWithheld(ctx: AppContext, examAttemptId: string, memo?: Map<string, boolean>): boolean {
+  const known = memo?.get(examAttemptId);
+  if (known !== undefined) return known;
+  const r = ctx.db.get<{ mode: ExamMode; policy_json: string; status: string }>(
+    'SELECT e.mode, e.policy_json, a.status FROM exam_attempt a JOIN exam e ON e.id = a.exam_id WHERE a.id = ?',
+    [examAttemptId],
+  );
+  const finished = !r || r.status === 'completed' || r.status === 'abandoned';
+  const withheld = !finished && (isAssessedMode(r.mode) || examPolicy(r).show_solution === 'at_end');
+  memo?.set(examAttemptId, withheld);
+  return withheld;
+}
+
 const EXAM_STATUS_AR: Record<string, string> = { in_progress: 'جارية', paused: 'متوقفة مؤقتًا', completed: 'مكتملة', abandoned: 'متروكة' };
 const CASE_ATTEMPT_STATUS_AR: Record<string, string> = { in_progress: 'جارية', completed: 'مكتملة', abandoned: 'متروكة' };
 
@@ -199,7 +221,7 @@ function resolveLink(ctx: AppContext, l: { entity_type: string; entity_id: strin
       const done = x.status === 'completed';
       return {
         label: x.title,
-        sublabel: [fmtDate(x.started_at), EXAM_STATUS_AR[x.status] ?? x.status, examAttemptScore(ctx, l.entity_id)].filter(Boolean).join(' · '),
+        sublabel: [fmtDate(x.started_at), EXAM_STATUS_AR[x.status] ?? x.status, resultWithheld(ctx, l.entity_id) ? RESULT_WITHHELD_AR : examAttemptScore(ctx, l.entity_id)].filter(Boolean).join(' · '),
         href: done ? `/exams/${e(l.entity_id)}/results` : `/exams/${e(l.entity_id)}`,
         reason_ar: reason,
       };
@@ -274,6 +296,7 @@ function topicAttempts(ctx: AppContext, links: Array<{ entity_type: string; enti
     push({ kind: l.entity_type, id: l.entity_id, label: r.label, sublabel: r.sublabel, href: r.href, at, via: 'linked', via_ar: 'ربطتها بالموضوع' });
   }
   const questionIds = live.filter((l) => l.entity_type === 'question').map((l) => l.entity_id);
+  const withheld = new Map<string, boolean>();
   if (questionIds.length) {
     for (const qa of ctx.db.all<{ id: string; question_id: string; exam_attempt_id: string | null; is_correct: number | null; scored: number; answered_at: number; stem_json: string }>(
       `SELECT a.id, a.question_id, a.exam_attempt_id, a.is_correct, a.scored, a.answered_at, v.stem_json
@@ -281,12 +304,16 @@ function topicAttempts(ctx: AppContext, links: Array<{ entity_type: string; enti
         WHERE a.question_id IN (${inList(questionIds.length)}) ORDER BY a.answered_at DESC LIMIT 500`,
       questionIds,
     )) {
+      // (review H4, AC-19) an answer inside a running assessed exam: no correctness, the exam itself (not its results)
+      const hidden = !!qa.exam_attempt_id && resultWithheld(ctx, qa.exam_attempt_id, withheld);
       push({
         kind: 'question_attempt',
         id: qa.id,
         label: stemPreview(fromJson<RichText>(qa.stem_json), 140),
-        sublabel: [fmtDate(qa.answered_at), qa.scored ? (qa.is_correct ? 'صحيحة' : 'خاطئة') : 'غير مُقيَّمة (لا مفتاح مؤكد)'].join(' · '),
-        href: qa.exam_attempt_id ? `/exams/${encodeURIComponent(qa.exam_attempt_id)}/results` : `/questions/${encodeURIComponent(qa.question_id)}`,
+        sublabel: [fmtDate(qa.answered_at), hidden ? RESULT_WITHHELD_AR : qa.scored ? (qa.is_correct ? 'صحيحة' : 'خاطئة') : 'غير مُقيَّمة (لا مفتاح مؤكد)'].join(' · '),
+        href: qa.exam_attempt_id
+          ? `/exams/${encodeURIComponent(qa.exam_attempt_id)}${hidden ? '' : '/results'}`
+          : `/questions/${encodeURIComponent(qa.question_id)}`,
         at: qa.answered_at,
         via: 'question',
         via_ar: 'محاولة على سؤال مرتبط بالموضوع',

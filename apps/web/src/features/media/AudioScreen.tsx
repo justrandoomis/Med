@@ -32,9 +32,14 @@ function LinkDialog({ segment, open, onClose, onLinked }: { segment: TranscriptS
   const [pageId, setPageId] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
+  // another source (or a refreshed list): its pages are loaded afresh (cleared while rendering; the request runs below)
+  const [pagesFor, setPagesFor] = useState({ sourceId, sources });
+  if (pagesFor.sourceId !== sourceId || pagesFor.sources !== sources) {
+    setPagesFor({ sourceId, sources });
     setPages(null);
     setPageId('');
+  }
+  useEffect(() => {
     const s = sources.find((x) => x.id === sourceId);
     if (!s?.active_version_id) return;
     void mediaApi
@@ -262,14 +267,17 @@ export function AudioScreen() {
   const fileInput = useRef<HTMLInputElement>(null);
   usePageTitle(data?.audio.source_title ?? 'تسجيل');
 
-  const load = useCallback(async () => {
-    try {
-      setData(await mediaApi.transcript(audioId, showDeleted));
-      setError(null);
-    } catch (e) {
-      setError(errorMessage(e, 'تعذّر تحميل التسجيل.'));
-    }
-  }, [audioId, showDeleted]);
+  // state is set only when the request settles (no synchronous setState on the effect path)
+  const load = useCallback(
+    () =>
+      mediaApi.transcript(audioId, showDeleted)
+        .then((d) => {
+          setData(d);
+          setError(null);
+        })
+        .catch((e: unknown) => setError(errorMessage(e, 'تعذّر تحميل التسجيل.'))),
+    [audioId, showDeleted],
+  );
   useEffect(() => {
     void load();
   }, [load]);
@@ -282,8 +290,13 @@ export function AudioScreen() {
   // (track F4) strokes written while this recording was made in the app
   const [strokes, setStrokes] = useState<RecordingView['linked_strokes']>([]);
   const audioSourceId = data?.audio.source_id ?? null;
-  useEffect(() => {
+  // another recording: its strokes are loaded afresh (cleared while rendering; the request runs in the effect)
+  const [strokesFor, setStrokesFor] = useState(audioSourceId);
+  if (strokesFor !== audioSourceId) {
+    setStrokesFor(audioSourceId);
     setStrokes([]);
+  }
+  useEffect(() => {
     if (!audioSourceId) return;
     let alive = true;
     mediaApi

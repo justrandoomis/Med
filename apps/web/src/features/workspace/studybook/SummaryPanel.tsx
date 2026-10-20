@@ -41,9 +41,13 @@ export function SummaryPanel({ doc, pageIndex, online, gate }: { doc: SourceDocu
     instruction: type === 'custom' && instruction.trim() ? instruction.trim() : undefined,
   });
 
-  useEffect(() => {
+  // another choice (type, pages, page) invalidates the preview (adjusted while rendering instead of in an effect)
+  const previewKey = `${type}|${pages}|${pageIndex}`;
+  const [previewFor, setPreviewFor] = useState(previewKey);
+  if (previewFor !== previewKey) {
+    setPreviewFor(previewKey);
     setPreview(null);
-  }, [type, pages, pageIndex]);
+  }
 
   useEffect(() => {
     if (!online) return;

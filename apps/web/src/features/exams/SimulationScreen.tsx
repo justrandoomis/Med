@@ -252,7 +252,7 @@ export function PlanView({ plan }: { plan: SimulationPlanView }) {
       </p>
       <p className="ex-muted">{plan.counting_note_ar}</p>
       {plan.warnings_ar.length > 0 && (
-        <ul className="ex-list" aria-label="حدود العينة">
+        <ul className="ex-list ex-list--icons" role="list" aria-label="حدود العينة">
           {plan.warnings_ar.map((w) => (
             <li key={w}>
               <CircleAlert size={14} aria-hidden="true" /> {w}

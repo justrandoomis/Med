@@ -14,6 +14,7 @@ import { usePageTitle } from '../../lib/usePageTitle';
 import { BidiText } from '../evidence';
 import { useLibrary } from '../library/useLibrary';
 import { learningApi } from '../review/api';
+import { useNow } from '../review/local/hooks';
 import { planUrl } from '../review/links';
 import { WEEKDAYS_AR, dayLabelAr, dayOf, daysCountAr, minutesAr } from '../review/local/time';
 import { DayList } from './DayList';
@@ -37,7 +38,9 @@ export function PlanEditor() {
   const caps = useCapabilities();
   const toast = useToast();
   const { settings } = useSettings();
-  const today = dayOf(Date.now(), settings.timezone || 'Asia/Baghdad');
+  // the clock is read through the shared ticking hook, not during render (a new day is noticed within a minute)
+  const now = useNow(60_000);
+  const today = dayOf(now, settings.timezone || 'Asia/Baghdad');
   const lib = useLibrary();
   const [cfg, setCfg] = useState<StudyPlanConfig>(() => emptyConfig(today));
   const [old, setOld] = useState<StudyPlanView | null>(null);
@@ -60,8 +63,12 @@ export function PlanEditor() {
       .catch((e) => setLoadError(errorMessage(e, 'تعذّر تحميل الخطة.')));
   }, [id]);
 
-  // any change invalidates the preview
-  useEffect(() => setPreview(null), [cfg]);
+  // any change invalidates the preview (adjusted while rendering instead of in an effect)
+  const [previewedCfg, setPreviewedCfg] = useState(cfg);
+  if (previewedCfg !== cfg) {
+    setPreviewedCfg(cfg);
+    setPreview(null);
+  }
 
   const sources = useMemo(() => {
     const nodes = new Map((lib.data?.nodes ?? []).map((n) => [n.id, n]));

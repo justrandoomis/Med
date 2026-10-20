@@ -170,13 +170,18 @@ test.describe('H3 item 2 — manual re-anchoring in the reader', () => {
       await expect(group).toContainText(/مكانها السابق/);
       await group.getByRole('button', { name: 'اختر مكانها الجديد…' }).click();
       const dialog = page.getByRole('dialog', { name: /أين تضع كتابة بالقلم/ });
-      await dialog.getByLabel('الصفحة').selectOption({ index: 1 });
+      await dialog.getByLabel('الصفحة', { exact: true }).selectOption({ index: 1 });
       const para = dialog.getByRole('radio', { name: /عند الفقرة/ }).first();
       await expect(para).toBeVisible({ timeout: 15_000 });
       await para.check();
       await screenshot(page, testInfo, 'h3-reanchor-dialog');
       await dialog.getByRole('button', { name: 'اربطها هنا' }).click();
-      await expect(page.getByText(/أُعيد ربط/).first()).toBeVisible({ timeout: 15_000 });
+      const toast = page.locator('.ml-toast').filter({ hasText: /أُعيد ربط عنصرين/ });
+      await expect(toast).toBeVisible({ timeout: 15_000 });
+      await expect(toast.getByRole('button', { name: 'اذهب إليها' })).toBeVisible();
+      // the toast is dismissed like an owner would (on a phone it covers the list)
+      await toast.getByRole('button', { name: 'إغلاق الإشعار' }).click();
+      await expect(toast).toBeHidden();
     });
 
     await test.step('the note: «أبقِها دون ربط» — listed apart, nothing moved', async () => {

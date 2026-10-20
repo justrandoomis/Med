@@ -26,14 +26,18 @@ export function QuestionDetailScreen() {
   const toast = useToast();
   usePageTitle('سؤال من الخزنة');
 
-  const load = useCallback(async () => {
-    try {
-      setD(await questionsApi.detail(questionId));
-      setError(null);
-    } catch (e) {
-      setError({ message: errorMessage(e), notFound: isApiError(e) && e.status === 404 });
-    }
-  }, [questionId]);
+  // state is set only when the request settles (no synchronous setState on the effect path)
+  const load = useCallback(
+    () =>
+      questionsApi
+        .detail(questionId)
+        .then((detail) => {
+          setD(detail);
+          setError(null);
+        })
+        .catch((e: unknown) => setError({ message: errorMessage(e), notFound: isApiError(e) && e.status === 404 })),
+    [questionId],
+  );
 
   useEffect(() => {
     void load();

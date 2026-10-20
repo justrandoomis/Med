@@ -34,7 +34,7 @@ import { CardEvidenceList, StateLabel, useCardImage } from './components/CardBit
 import { CardFace } from './components/CardFace';
 import { FigurePicker, type PickedFigure } from './components/FigurePicker';
 import { OcclusionEditor, type MaskDraft } from './components/OcclusionEditor';
-import { useLearningSync, useLocalCards, useSrsConfig } from './local/hooks';
+import { useLearningSync, useLocalCards, useNow, useSrsConfig } from './local/hooks';
 import { scheduleOf, tomorrowStart } from './local/queue';
 import { createCardsLocal, deleteCardLocal, editCardLocal, hasPendingCardOps, putServerCards, setBuriedLocal, setSuspendedLocal, type LocalCardRow } from './local/store';
 import { cardsAr } from './local/time';
@@ -303,7 +303,13 @@ function OcclusionForm({ back, initialSourceId }: { back: string | null; initial
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<CardCreateResponse | null>(null);
   const noteId = useRef(newId());
-  useEffect(() => setMasks([]), [picked?.imageAssetId]);
+  // another image: its masks start empty (adjusted while rendering instead of in an effect)
+  const pickedImage = picked?.imageAssetId;
+  const [masksFor, setMasksFor] = useState(pickedImage);
+  if (masksFor !== pickedImage) {
+    setMasksFor(pickedImage);
+    setMasks([]);
+  }
   const unnamed = masks.filter((m) => !m.label.trim()).length;
   const validation = !picked ? 'اختر صورة من مصادرك.' : masks.length === 0 ? 'ارسم منطقة واحدة على الأقل لإخفائها.' : unnamed ? `اكتب اسم كل منطقة (${unnamed} بلا اسم).` : null;
   if (!caps.online) return <EmptyState title="بطاقات الصور تحتاج اتصالًا" description="اختيار الصورة من مصدرك وإنشاء البطاقات يتم على الخادم. بعد إنشائها تُراجع دون اتصال (احفظ صورها على هذا الجهاز من صفحة المراجعة)." headingLevel={2} />;
@@ -350,10 +356,15 @@ function FromMistake({ attemptId, back }: { attemptId: string; back: string | nu
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const id = useRef(newId());
+  // a new attempt (retry, back online) clears the previous error while rendering; the request runs in the effect
+  const [requested, setRequested] = useState({ online: caps.online, attemptId, tick });
+  if (requested.online !== caps.online || requested.attemptId !== attemptId || requested.tick !== tick) {
+    setRequested({ online: caps.online, attemptId, tick });
+    if (caps.online) setError(null);
+  }
   useEffect(() => {
     if (!caps.online) return;
     let cancelled = false;
-    setError(null);
     void learningApi
       .fromMistake({ attempt_id: attemptId, id: id.current })
       .then(async (r) => {
@@ -480,6 +491,8 @@ function EditCard({ cardId }: { cardId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const img = useCardImage(row && row.kind === 'image_occlusion' ? row : null);
+  // due times are shown against the shared ticking clock, not a clock read during render
+  const now = useNow();
 
   useEffect(() => {
     if (!caps.online) return;
@@ -496,13 +509,17 @@ function EditCard({ cardId }: { cardId: string }) {
     };
   }, [cardId, caps.online]);
 
-  // the form starts from the stored card (and follows it while untouched)
-  useEffect(() => {
-    if (!row) return;
-    setFront((f) => (f === null ? plain(row.front) : f));
-    setBackText((b) => (b === null ? plain(row.back) : b));
-    if (row.kind === 'image_occlusion' && row.image) setMask((m) => m ?? row.image!.masks.map((x) => ({ id: x.id, box: { ...x.box }, label: x.label })));
-  }, [row]);
+  // the form starts from the stored card (and follows it while untouched): applied when the stored row changes,
+  // while rendering instead of in an effect
+  const [formRow, setFormRow] = useState<typeof row>(undefined);
+  if (formRow !== row) {
+    setFormRow(row);
+    if (row) {
+      if (front === null) setFront(plain(row.front));
+      if (backText === null) setBackText(plain(row.back));
+      if (row.kind === 'image_occlusion' && row.image && mask === null) setMask(row.image.masks.map((x) => ({ id: x.id, box: { ...x.box }, label: x.label })));
+    }
+  }
 
   if (row === undefined) return <LoadingState stage="جارٍ فتح البطاقة…" />;
   if (row === null && !detail) {
@@ -515,7 +532,7 @@ function EditCard({ cardId }: { cardId: string }) {
   const card: LocalCardRow = row ?? ({} as LocalCardRow);
   if (!row) return <LoadingState stage="جارٍ حفظ البطاقة على هذا الجهاز…" />;
 
-  const sched = cfg.config && cfg.parity?.ok ? scheduleOf({ params: cfg.config.params }, card, local.events.get(card.id), Date.now()) : null;
+  const sched = cfg.config && cfg.parity?.ok ? scheduleOf({ params: cfg.config.params }, card, local.events.get(card.id), now) : null;
   const events = detail?.events ?? (local.events.get(card.id) ?? []).map((e) => ({ id: e.id, card_id: e.cardId, rating: e.rating, reviewed_at: e.reviewedAt, duration_ms: e.durationMs ?? null, device_id: null }));
   const frontChanged = front !== null && front !== plain(card.front);
   const backChanged = backText !== null && backText !== plain(card.back);
@@ -719,7 +736,7 @@ function EditCard({ cardId }: { cardId: string }) {
                   toast.show({ title: buried ? 'أُلغي التأجيل.' : 'أُجّلت إلى يومك التالي.', tone: 'success' });
                 }}
               >
-                {card.buriedUntil != null && card.buriedUntil > Date.now() ? `ألغِ التأجيل (حتى ${formatDate(card.buriedUntil)})` : 'أجّلها إلى الغد'}
+                {card.buriedUntil != null && card.buriedUntil > now ? `ألغِ التأجيل (حتى ${formatDate(card.buriedUntil)})` : 'أجّلها إلى الغد'}
               </Button>
               <Button size="sm" variant="destructive" icon={<Trash2 size={16} />} onClick={() => setConfirmDelete(true)}>
                 احذف

@@ -367,3 +367,13 @@ registry of allowed external visual sources. The data and API belong to the medi
 («معطّل على الخادم» / «لا يوجد مزود صور» + the server's reason — never implying a search runs), the list (name, kind,
 domain + atlas path LTR-isolated, the owner's licence note, «يُقبل منه» switch, edit, delete after a stated impact), and
 an add / edit form whose server field errors appear on their fields. Test: `web:features/control/visual-sources.h4.test.tsx`.
+
+## Round 7 — final verification: evaluation screen text (2026-10-20; §57, §22)
+
+The critic sweep (now also opening `/control/evaluation`, `/control/health` and `/control/visual-sources`) showed the
+evaluation empty state printing the server's how-to-run text with its markdown backticks («` npm run eval `») and the
+Arabic paragraph reordering the options («set=regression|tuning`،`--», «/eval-reports»). `EvaluationScreen` now renders
+each backtick-marked command or path as an isolated left-to-right `<bdi><code dir="ltr">` run (`CommandText`, also for a
+report's notes, e.g. «`npm run eval -- --mode=live`»); the server text marks `eval-reports/` and `docs/EVALUATION.md` the
+same way (`evaluation/store.ts HOW_TO_RUN_AR`). Test: `web:src/features/control/EvaluationScreen.final.test.tsx` (2;
+failed on the raw backticks). The sweep's red-flag probe now also flags raw markdown code in visible text.

@@ -58,16 +58,15 @@ export function ExportPanel() {
     if (kind === 'annotated') return all.filter((s) => s.format === null || s.format === 'pdf' || s.format === 'docx' || s.format === 'pptx');
     return all;
   }, [sources, kind]);
-  useEffect(() => {
-    if (sourceId && !pickable.some((s) => s.id === sourceId)) setSourceId('');
-  }, [pickable, sourceId]);
+  // a choice the current kind cannot export is dropped while rendering (React's «adjust state when a prop changes»)
+  if (sourceId && !pickable.some((s) => s.id === sourceId)) setSourceId('');
 
   const needsSource = kind === 'source' || kind === 'book' || kind === 'annotated';
   const effectiveFormat: ExportFormat = kind === 'all' ? 'json' : format;
   // a format the server no longer lists (e.g. «PDF» without LibreOffice) falls back to the first listed one
-  useEffect(() => {
-    if (formats && !formats.formats.some((f) => f.format === format)) setFormat(formats.formats[0]?.format ?? 'md');
-  }, [formats, format]);
+  // (adjusted while rendering; the `!== fallback` guard ends it even when the server lists no format at all)
+  const fallbackFormat = formats?.formats[0]?.format ?? 'md';
+  if (formats && !formats.formats.some((f) => f.format === format) && format !== fallbackFormat) setFormat(fallbackFormat);
 
   const resolveTarget = async (): Promise<ExportTarget | null> => {
     const src = sources?.find((s) => s.id === sourceId) ?? null;
@@ -199,10 +198,15 @@ const DRAWN_LABELS: Array<[keyof AnnotatedPdfSummary['drawn'], string]> = [
 function AnnotatedSummary({ sourceId }: { sourceId: string }) {
   const [summary, setSummary] = useState<AnnotatedPdfSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    let alive = true;
+  // another source: counted afresh (cleared while rendering; the request runs in the effect)
+  const [summaryFor, setSummaryFor] = useState(sourceId);
+  if (summaryFor !== sourceId) {
+    setSummaryFor(sourceId);
     setSummary(null);
     setError(null);
+  }
+  useEffect(() => {
+    let alive = true;
     dataApi
       .annotatedPdfSummary(sourceId)
       .then((s) => alive && setSummary(s))

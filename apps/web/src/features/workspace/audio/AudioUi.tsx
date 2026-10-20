@@ -80,17 +80,16 @@ export function RecordingBar({ recorder }: { recorder: RecorderController }) {
   const state = useRecorderState(recorder);
   const elapsed = useElapsed(recorder, state);
   const [announce, setAnnounce] = useState('');
-  const prev = useRef(state.kind);
   // (H3 item 9) while this bar is on screen the app-wide notice stays hidden; it takes over when the reader closes
   useEffect(() => registerRecordingBar(), []);
-  useEffect(() => {
-    if (prev.current !== state.kind) {
-      if (state.kind === 'recording') setAnnounce('بدأ التسجيل. زر «إيقاف التسجيل» في أسفل الشاشة.');
-      if (state.kind === 'saved') setAnnounce(state.where === 'server' ? RECORDER_SAVED_ON_SERVER_AR : 'توقف التسجيل وحُفظ على هذا الجهاز.');
-      if (state.kind === 'error') setAnnounce(state.message);
-      prev.current = state.kind;
-    }
-  }, [state]);
+  // a change of recorder state is announced; detected while rendering (React's «adjust state when a prop changes»)
+  const [prevKind, setPrevKind] = useState(state.kind);
+  if (prevKind !== state.kind) {
+    setPrevKind(state.kind);
+    if (state.kind === 'recording') setAnnounce('بدأ التسجيل. زر «إيقاف التسجيل» في أسفل الشاشة.');
+    if (state.kind === 'saved') setAnnounce(state.where === 'server' ? RECORDER_SAVED_ON_SERVER_AR : 'توقف التسجيل وحُفظ على هذا الجهاز.');
+    if (state.kind === 'error') setAnnounce(state.message);
+  }
   // leaving the page while recording, saving, or holding a recording that could not be stored asks first
   const unsavedOnly = state.kind === 'error' && state.code === 'save_failed';
   useEffect(() => {
@@ -273,9 +272,14 @@ export function RecordingPlayer({ request, onClose, resolve = playbackSource }: 
   const audio = useRef<HTMLAudioElement>(null);
   const [src, setSrc] = useState<{ url: string; local: boolean; title: string | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
+  // a new request starts from nothing (reset while rendering; the lookup runs in the effect below)
+  const [requested, setRequested] = useState({ request, resolve });
+  if (requested.request !== request || requested.resolve !== resolve) {
+    setRequested({ request, resolve });
     setError(null);
     setSrc(null);
+  }
+  useEffect(() => {
     if (!request) return;
     let alive = true;
     let objectUrl: string | null = null;
@@ -343,12 +347,16 @@ export function AudioLinkDialog({
 }) {
   const [text, setText] = useState('');
   const [err, setErr] = useState<string | null>(null);
-  useEffect(() => {
+  // opening (or another link) starts from the link's moment (reset while rendering instead of in an effect);
+  // `null` = not seen yet, so a dialog mounted open starts there too
+  const [shownFor, setShownFor] = useState<{ open: boolean; link: InkAudioLink | null } | null>(null);
+  if (!shownFor || shownFor.open !== open || shownFor.link !== link) {
+    setShownFor({ open, link });
     if (open && link) {
       setText(formatOffset(link.offset_ms));
       setErr(null);
     }
-  }, [open, link]);
+  }
   if (!link) return null;
   const save = () => {
     const ms = parseOffset(text);

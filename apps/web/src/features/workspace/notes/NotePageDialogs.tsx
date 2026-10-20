@@ -1,7 +1,7 @@
 // Dialogs of the notebook track (F1): a new note page (paper template, optional title, a section divider in a
 // notebook), renaming, choosing where a page link leads, and the explicit confirmation before an external link of a
 // PDF opens (the server never fetches it).
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { ExternalLink } from 'lucide-react';
 import {
   COVER_COLORS,
@@ -85,13 +85,16 @@ export function NewNotePageDialog({
   const [kind, setKind] = useState<'page' | 'divider'>(defaultKind);
   const [color, setColor] = useState<CoverColor>('teal');
   const [busy, setBusy] = useState(false);
-  useEffect(() => {
+  // (re)opening starts over (reset while rendering instead of in an effect)
+  const [shownFor, setShownFor] = useState({ open, defaultKind });
+  if (shownFor.open !== open || shownFor.defaultKind !== defaultKind) {
+    setShownFor({ open, defaultKind });
     if (open) {
       setTitle('');
       setKind(defaultKind);
       setBusy(false);
     }
-  }, [open, defaultKind]);
+  }
   const divider = kind === 'divider';
   const submit = async () => {
     if (divider && !title.trim()) return;
@@ -165,9 +168,12 @@ export function NewNotePageDialog({
 // ───────────────────────────── rename ─────────────────────────────
 export function RenameNotePageDialog({ open, initial, onClose, onSave }: { open: boolean; initial: string; onClose: () => void; onSave: (title: string | null) => void | Promise<void> }) {
   const [title, setTitle] = useState(initial);
-  useEffect(() => {
+  // (re)opening starts from the current title (reset while rendering instead of in an effect)
+  const [shownFor, setShownFor] = useState({ open, initial });
+  if (shownFor.open !== open || shownFor.initial !== initial) {
+    setShownFor({ open, initial });
     if (open) setTitle(initial);
-  }, [open, initial]);
+  }
   return (
     <Dialog
       open={open}
@@ -230,18 +236,22 @@ export function LinkTargetDialog({ open, sources, notePages, onCancel, onChoose 
   const [noteId, setNoteId] = useState(notePages[0]?.id ?? '');
   const [label, setLabel] = useState('');
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    if (!open) return;
-    setKind(sources.length ? 'source' : 'note');
-    setSourceId(sources[0]?.sourceId ?? '');
-    const cur = sources[0]?.current;
-    const pg = cur != null ? sources[0]?.pages?.[cur] : undefined;
-    setPageText(pg ? (pg.printed_label ?? `#${pg.page_index + 1}`) : '');
-    setNoteId(notePages[0]?.id ?? '');
-    setLabel('');
-    setError(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  // opening starts from the current page (reset while rendering instead of in an effect; only on opening, so the
+  // lists changing underneath never wipe a choice in progress)
+  const [wasOpen, setWasOpen] = useState(false);
+  if (wasOpen !== open) {
+    setWasOpen(open);
+    if (open) {
+      setKind(sources.length ? 'source' : 'note');
+      setSourceId(sources[0]?.sourceId ?? '');
+      const cur = sources[0]?.current;
+      const pg = cur != null ? sources[0]?.pages?.[cur] : undefined;
+      setPageText(pg ? (pg.printed_label ?? `#${pg.page_index + 1}`) : '');
+      setNoteId(notePages[0]?.id ?? '');
+      setLabel('');
+      setError(null);
+    }
+  }
   const src = useMemo(() => sources.find((s) => s.sourceId === sourceId) ?? null, [sources, sourceId]);
 
   const choose = () => {

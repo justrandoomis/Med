@@ -105,15 +105,18 @@ export function useCardImage(card: Pick<LocalCardRow, 'id' | 'kind' | 'image' | 
   const online = useOnline();
   const assetId = card?.kind === 'image_occlusion' ? (card.image?.image_asset_id ?? null) : null;
   const [st, setSt] = useState<CardImageState>({ url: null, loading: !!assetId, reason_ar: null });
+  // another card / image / connectivity starts over (reset while rendering; the load runs in the effect below)
+  const cardId = card?.id ?? null;
+  const [loadFor, setLoadFor] = useState({ cardId, assetId, online });
+  if (loadFor.cardId !== cardId || loadFor.assetId !== assetId || loadFor.online !== online) {
+    setLoadFor({ cardId, assetId, online });
+    setSt({ url: null, loading: !!(cardId && assetId), reason_ar: null });
+  }
   useEffect(() => {
-    if (!card || !assetId) {
-      setSt({ url: null, loading: false, reason_ar: null });
-      return;
-    }
+    if (!card || !assetId) return;
     let url: string | null = null;
     let cancelled = false;
     const db = getDb();
-    setSt({ url: null, loading: true, reason_ar: null });
     void (async () => {
       let blob = await storedCardImage(db, assetId).catch(() => null);
       if (!blob && online) {

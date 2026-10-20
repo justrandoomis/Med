@@ -48,7 +48,9 @@ export const reanchorBody = z
       ])
       .optional(),
   })
-  .refine((b) => b.action !== 'move' || !!b.target, { message: 'اختر المكان الجديد (target).' });
+  .refine((b) => b.action !== 'move' || !!b.target, { message: 'اختر المكان الجديد (target).' })
+  // (H3 review) one decision per item: a repeated item passed the revision check twice and was written twice
+  .refine((b) => new Set(b.items.map((i) => `${i.kind}:${i.id}`)).size === b.items.length, { message: 'تكرر عنصر في الطلب نفسه؛ أرسل كل عنصر مرة واحدة.' });
 
 const NOTE_PAGE_GONE_AR = 'صفحتها لم تعد موجودة في إصدار المصدر الذي كُتبت عليه؛ لم تُنقل إلى صفحة أخرى.';
 
@@ -72,28 +74,48 @@ function noteItem(ctx: AppContext, r: NoteRow, reason: string): NeedsReanchorNot
   return { note: dto, source_id: r.source_id ?? where.sourceId, source_title: where.sourceTitle, previous_location_ar: where.text, reason_ar: reason };
 }
 
+/** What the latest Study Book re-anchoring report says about one item: the paragraph it checked, and why it is listed. */
+interface BlockReport {
+  reason: string;
+  lineage_id: string;
+  /** the paragraph the report found gone (the item's block key when the report ran) */
+  block_key: string;
+  /** the Study Book version the item's anchor named then (null when it named none) */
+  previous_version_no: number | null;
+}
+
 /** Study Book paragraphs listed `needs_reanchor` in the LATEST report of each lineage (studybook's artifact_reanchor). */
-function blockReanchorReasons(ctx: AppContext, kind: 'note' | 'annotation'): Map<string, string> {
-  const rows = ctx.db.all<{ target_id: string; status: string; version_no: number; lineage_id: string; artifact_id: string }>(
-    `SELECT r.target_id, r.status, a.version_no, a.lineage_id, a.id AS artifact_id
+function blockReanchorReasons(ctx: AppContext, kind: 'note' | 'annotation'): Map<string, BlockReport> {
+  const rows = ctx.db.all<{ target_id: string; status: string; version_no: number; lineage_id: string; artifact_id: string; block_key: string; previous_version_no: number | null }>(
+    `SELECT r.target_id, r.status, a.version_no, a.lineage_id, a.id AS artifact_id, r.block_key, r.previous_version_no
        FROM artifact_reanchor r JOIN artifact a ON a.id = r.artifact_id
       WHERE r.target_kind = ?
       ORDER BY a.version_no`,
     [kind],
   );
-  const latest = new Map<string, { status: string; version_no: number; lineage_id: string }>();
+  const latest = new Map<string, (typeof rows)[number]>();
   for (const r of rows) latest.set(r.target_id, r); // ordered by version: the last one wins
-  const out = new Map<string, string>();
+  const out = new Map<string, BlockReport>();
   for (const [id, r] of latest) {
     if (r.status !== 'needs_reanchor') continue;
-    out.set(id, `فقرتها في كتاب الدراسة لم تعد هي نفسها في النسخة ${r.version_no}؛ لم تُنقل إلى فقرة أخرى.`);
+    out.set(id, {
+      reason: `فقرتها في كتاب الدراسة لم تعد هي نفسها في النسخة ${r.version_no}؛ لم تُنقل إلى فقرة أخرى.`,
+      lineage_id: r.lineage_id,
+      block_key: r.block_key,
+      previous_version_no: r.previous_version_no,
+    });
   }
   return out;
 }
 
-/** Does a note's (or a block annotation's) block anchor still point at the paragraph the report checked? */
-function blockAnchorStillListed(anchor: AnnotationAnchor | null): boolean {
-  return anchor?.type === 'block';
+/**
+ * Does a note's (or a block annotation's) block anchor still point at the paragraph the report checked? (H3 review:
+ * only the anchor TYPE was checked, so an item the owner had moved to another Study Book paragraph stayed listed.)
+ */
+function blockAnchorStillListed(anchor: AnnotationAnchor | null, report: BlockReport | undefined): boolean {
+  if (anchor?.type !== 'block' || !report) return false;
+  if (anchor.lineage_id !== report.lineage_id || anchor.block_key !== report.block_key) return false;
+  return report.previous_version_no === null || anchor.artifact_version === report.previous_version_no;
 }
 
 export function reanchorLists(ctx: AppContext, sourceId: string | undefined, limit: number): ReanchorLists {
@@ -107,7 +129,7 @@ export function reanchorLists(ctx: AppContext, sourceId: string | undefined, lim
     ? ctx.db.all<AnnotationRow>(`SELECT * FROM annotation WHERE deleted_at IS NULL AND id IN (${[...blockAnn.keys()].map(() => '?').join(',')})`, [...blockAnn.keys()])
     : [];
   const seen = new Set<string>();
-  for (const r of [...flagged, ...blockRows.filter((r) => blockAnchorStillListed(fromJson<AnnotationAnchor>(r.anchor_json)))]) {
+  for (const r of [...flagged, ...blockRows.filter((r) => blockAnchorStillListed(fromJson<AnnotationAnchor>(r.anchor_json), blockAnn.get(r.id)))]) {
     if (seen.has(r.id)) continue;
     seen.add(r.id);
     const item = annotationItem(ctx, r);
@@ -134,7 +156,8 @@ export function reanchorLists(ctx: AppContext, sourceId: string | undefined, lim
   }
   for (const r of blockNoteRows) {
     const anchor = fromJson<AnnotationAnchor | null>(r.anchor_json);
-    if (blockAnchorStillListed(anchor)) pushNote(r, blockNote.get(r.id)!);
+    const report = blockNote.get(r.id);
+    if (report && blockAnchorStillListed(anchor, report)) pushNote(r, report.reason);
   }
   return out;
 }
@@ -282,7 +305,7 @@ export function reanchor(ctx: AppContext, req: FastifyRequest): ReanchorResponse
     const annOut: AnnotationDTO[] = [];
     const noteOut: NoteDTO[] = [];
     const count = items.annotations.length + items.notes.length;
-    const what = items.notes.length && !items.annotations.length ? (count === 1 ? 'الملاحظة' : 'الملاحظات') : count === 1 ? 'العنصر' : `${count} عناصر`;
+    const what = items.notes.length && !items.annotations.length ? (count === 1 ? 'الملاحظة' : 'الملاحظات') : count === 1 ? 'العنصر' : count === 2 ? 'عنصرين' : count <= 10 ? `${count} عناصر` : `${count} عنصرًا`;
 
     if (body.action === 'keep_detached') {
       for (const r of items.annotations) {

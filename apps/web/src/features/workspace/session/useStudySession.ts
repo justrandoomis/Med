@@ -1,7 +1,7 @@
 // Study Session (§46): restore where the owner was (local first, then the server), autosave the place
 // (page, offset, zoom, rotation, layout, panels) through the outbox, and ask — never overwrite silently —
 // when another device saved a newer position.
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useInsertionEffect, useRef, useState } from 'react';
 import { liveQuery } from 'dexie';
 import { newId, type StudyMode, type StudySessionDTO } from '@medlevo/shared';
 import { getDeviceId } from '../../../lib/deviceId';
@@ -55,12 +55,15 @@ export function useStudySession(opts: {
   const pending = useRef<{ location: ReaderLocation; versionId: string; view: 'original' | 'split' } | null>(null);
   const timer = useRef<number | undefined>(undefined);
   const conflictRef = useRef<SessionConflict | null>(null);
-  conflictRef.current = conflict;
   const [mode, setModeState] = useState<StudyMode>('learn');
   const modeRef = useRef<StudyMode>('learn');
   const urlRef = useRef(opts.url);
   const onlineRef = useRef(opts.online);
-  onlineRef.current = opts.online;
+  // latest values for the async paths, written at commit (before any layout effect) rather than during render
+  useInsertionEffect(() => {
+    conflictRef.current = conflict;
+    onlineRef.current = opts.online;
+  });
 
   // ── decide where to start (once per source) ──
   useEffect(() => {

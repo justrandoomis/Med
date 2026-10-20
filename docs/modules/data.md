@@ -363,6 +363,13 @@ files) apart from `owner_hash` (annotations, notes, session, reading progress, l
 owner's own writing / reading did (the Downloads panel says «كتابتك تغيّرت على الخادم» calmly; nothing to re-download
 for the source); a download stored before H4 keeps the old single-hash comparison. Tests: `srv:data/offline.test.ts`
 (hash split), `web:features/offline/update-check.h4.test.ts`.
+*Independent review (2026-10-20):* two answers counted as source content also carry the owner's own activity — the
+source detail's `last_opened_at` / `is_favorite` (set when the owner OPENS or stars the source) and a linked question's
+detail (downloaded with solutions, the default) with its attempt counts (`question.attempts_summary`,
+`versions[].attempts`, `attempts_by_version`). Opening the lecture or answering one of its questions therefore still
+read as «تغيّر المحتوى على الخادم». Those fields are now digested with the owner's data (`splitOwnerFields` in
+`offline.ts`; the entry `sha256` of each answer is unchanged, so integrity checks are not affected); a real change (the
+title) still moves `source_hash`. Test: `srv:data/h4-review-offline.test.ts` (failed before the fix).
 
 **Server PDF (item 8)** — `modules/data/pdf-export.ts`, dependency `pdf-lib` 1.17.1 (MIT, pure JS: pdfjs-dist cannot
 write, and a vector copy of the original needs a PDF writer; nothing native).

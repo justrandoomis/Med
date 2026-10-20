@@ -529,8 +529,15 @@ export class InkDocumentStore {
   }
 
   private apply(dir: 'undo' | 'redo', changes: ItemChange[]): void {
+    const top = dir === 'undo' ? this.history.peekUndo() : this.history.peekRedo();
     if (dir === 'undo') this.history.undo();
     else this.history.redo();
+    // (H3 review) only what was applied can be redone / undone again: a change skipped because the item was already as
+    // the step wanted it (erased elsewhere) never comes back silently with the opposite step
+    if (top && changes.length !== top.changes.length) {
+      const applied = new Set(changes.map((c) => c.id));
+      this.history.narrowTop(dir === 'undo' ? 'redo' : 'undo', (c) => applied.has(c.id));
+    }
     if (changes.length) this.commit('', changes, { record: false });
   }
 

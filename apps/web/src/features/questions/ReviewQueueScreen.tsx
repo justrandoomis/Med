@@ -24,14 +24,18 @@ export function ReviewQueueScreen() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    try {
-      setData(await questionsApi.reviewQueue({ status }));
-      setError(null);
-    } catch (e) {
-      setError(errorMessage(e));
-    }
-  }, [status]);
+  // state is set only when the request settles (no synchronous setState on the effect path)
+  const load = useCallback(
+    () =>
+      questionsApi
+        .reviewQueue({ status })
+        .then((d) => {
+          setData(d);
+          setError(null);
+        })
+        .catch((e: unknown) => setError(errorMessage(e))),
+    [status],
+  );
 
   useEffect(() => {
     void load();

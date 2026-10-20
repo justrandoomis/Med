@@ -1,6 +1,6 @@
 // Source metadata (§06): only what the file or the owner provides. Empty bibliographic fields are
 // shown as «غير معروف» — never filled by guessing.
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useMemo, useState, type FormEvent } from 'react';
 import {
   LECTURE_KIND_LABELS_AR,
   LECTURE_KINDS,
@@ -77,7 +77,12 @@ export function MetadataForm({ detail, readOnly }: { detail: Detail; readOnly: b
   const [draft, setDraft] = useState<Draft>(initial);
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
-  useEffect(() => setDraft(initial), [initial]);
+  // a new stored version of the metadata replaces the draft (adjusted while rendering instead of in an effect)
+  const [draftOfInitial, setDraftOfInitial] = useState(initial);
+  if (draftOfInitial !== initial) {
+    setDraftOfInitial(initial);
+    setDraft(initial);
+  }
   const patch = toPatch(initial, draft);
   const dirty = Object.keys(patch).length > 0;
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setDraft((d) => ({ ...d, [k]: v }));

@@ -50,33 +50,51 @@ export function useQuery<T>(path: string | null, opts: { cache?: boolean } = {})
   const seq = useRef(0);
   const cache = opts.cache ?? false;
 
-  const load = useCallback(async () => {
-    if (!path) return;
-    const mine = ++seq.current;
+  // the request: state is set only when it settles (it is started from an effect as well as from events)
+  const request = useCallback(
+    (p: string): Promise<void> => {
+      const mine = ++seq.current;
+      return api.get<T>(p)
+        .then((data) => {
+          if (mine !== seq.current) return;
+          setState({ data, error: null, loading: false, fromCache: false, cachedAt: null });
+          if (cache) void writeCache(`GET ${p}`, data);
+        })
+        .catch(async (e: unknown) => {
+          if (mine !== seq.current) return;
+          const err = isApiError(e) ? e : new ApiError({ code: 'NETWORK_ERROR', status: 0, message: errorMessage(e), offline: true });
+          if (cache && err.offline) {
+            const cached = await readCache<T>(`GET ${p}`);
+            if (mine !== seq.current) return;
+            if (cached) {
+              setState({ data: cached.value, error: err, loading: false, fromCache: true, cachedAt: cached.storedAt });
+              return;
+            }
+          }
+          setState((s) => ({ ...s, error: err, loading: false }));
+        });
+    },
+    [cache],
+  );
+
+  // a refresh (invalidation, back online, the caller) shows loading at once and keeps the data on screen
+  const load = useCallback((): Promise<void> => {
+    if (!path) return Promise.resolve();
     setState((s) => ({ ...s, loading: true }));
-    try {
-      const data = await api.get<T>(path);
-      if (mine !== seq.current) return;
-      setState({ data, error: null, loading: false, fromCache: false, cachedAt: null });
-      if (cache) void writeCache(`GET ${path}`, data);
-    } catch (e) {
-      if (mine !== seq.current) return;
-      const err = isApiError(e) ? e : new ApiError({ code: 'NETWORK_ERROR', status: 0, message: errorMessage(e), offline: true });
-      if (cache && err.offline) {
-        const cached = await readCache<T>(`GET ${path}`);
-        if (mine !== seq.current) return;
-        if (cached) {
-          setState({ data: cached.value, error: err, loading: false, fromCache: true, cachedAt: cached.storedAt });
-          return;
-        }
-      }
-      setState((s) => ({ ...s, error: err, loading: false }));
-    }
-  }, [path, cache]);
+    return request(path);
+  }, [path, request]);
+
+  // another path: loading at once (adjusted while rendering; the first request starts in the loading state)
+  const queryKey = `${cache}|${path ?? ''}`;
+  const [queried, setQueried] = useState(queryKey);
+  if (queried !== queryKey) {
+    setQueried(queryKey);
+    if (path) setState((s) => ({ ...s, loading: true }));
+  }
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (path) void request(path);
+  }, [path, request]);
 
   useEffect(() => {
     if (!path) return;

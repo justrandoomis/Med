@@ -21,8 +21,8 @@ import { stashSelectionDraft } from '../../review/selectionDraft';
 
 export interface SelectionToolbarProps {
   selection: BookSelection;
-  /** the book canvas element (to find the page sheet) */
-  canvas: HTMLElement | null;
+  /** the book canvas element (to find the page sheet), looked up when the toolbar renders (like `textRoot`) */
+  canvas: () => HTMLElement | null;
   textRoot: (pageIndex: number) => HTMLElement | null;
   anchorFor: (pageIndex: number) => AnnotationAnchor | null;
   /** fixed-page sources only: DOCX paragraphs have no page geometry for highlight rects */
@@ -58,7 +58,7 @@ export function SelectionToolbar({ selection, canvas, textRoot, anchorFor, fixed
   const location = useLocation();
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const [overlapping, setOverlapping] = useState<AnnotationRow[]>([]);
-  const page = canvas?.querySelector<HTMLElement>(`[data-page-index="${selection.pageIndex}"]`) ?? null;
+  const page = canvas()?.querySelector<HTMLElement>(`[data-page-index="${selection.pageIndex}"]`) ?? null;
   const sheet = page?.querySelector<HTMLElement>('.wk-sheet') ?? null;
   const root = textRoot(selection.pageIndex);
   const anchor = anchorFor(selection.pageIndex);
@@ -87,13 +87,16 @@ export function SelectionToolbar({ selection, canvas, textRoot, anchorFor, fixed
     setPos({ top, left });
   }, [selection.rect]);
 
-  // existing highlights under the selection can be removed from here
+  // existing highlights under the selection can be removed from here: a selection that cannot carry one clears the
+  // list while rendering; the lookup runs in the effect below
+  const [lookedUp, setLookedUp] = useState(selection);
+  if (lookedUp !== selection) {
+    setLookedUp(selection);
+    if (!anchor || !highlight) setOverlapping([]);
+  }
   useLayoutEffect(() => {
     let cancelled = false;
-    if (!anchor || !highlight) {
-      setOverlapping([]);
-      return;
-    }
+    if (!anchor || !highlight) return;
     const key = anchor.type === 'page' ? `source_page:${anchor.page_id}` : null;
     if (!key) return;
     void getDb()

@@ -50,6 +50,20 @@
   line-height: var(--ml-leading-sm);
   overflow-wrap: anywhere;
 }
+/* (Round 7 final) a list whose items lead with an icon: the icon is the bullet and sits on the item's first line (the
+   global «svg { display: block }» reset used to put it on a line of its own, above its text) */
+.ex-list--icons {
+  padding-inline-start: 0;
+  list-style: none;
+}
+.ex-list--icons > li {
+  display: flex;
+  gap: var(--ml-space-2);
+  align-items: flex-start;
+}
+.ex-list--icons > li > svg {
+  margin-block-start: 0.25em;
+}
 .ex-note {
   display: flex;
   flex-wrap: wrap;

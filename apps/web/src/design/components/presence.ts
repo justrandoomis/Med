@@ -17,11 +17,10 @@ function motionReduced(): boolean {
  */
 export function usePresence(open: boolean, exitMs = 180): { mounted: boolean; state: 'open' | 'closed' } {
   const [mounted, setMounted] = useState(open);
+  // opening mounts at once (adjusted while rendering instead of in an effect); closing unmounts after the exit
+  if (open && !mounted) setMounted(true);
   useEffect(() => {
-    if (open) {
-      setMounted(true);
-      return;
-    }
+    if (open) return;
     const delay = motionReduced() ? 0 : exitMs;
     const t = window.setTimeout(() => setMounted(false), delay);
     return () => window.clearTimeout(t);

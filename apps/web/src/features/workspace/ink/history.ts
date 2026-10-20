@@ -121,6 +121,23 @@ export class InkHistory {
     if (stack.pop()) this.emit();
   }
 
+  /**
+   * (H3 review) The step that undo() / redo() just moved onto `stack` keeps only the changes `keep` accepts — the part
+   * that was really applied. A change skipped because the item was already as the step wanted it (e.g. a stroke erased
+   * on another device, so undoing its «كتابة» had nothing to remove) must not come back with the opposite step: redo
+   * would otherwise bring the erased stroke back without asking. A step left with no change leaves the stack.
+   */
+  narrowTop(stack: 'undo' | 'redo', keep: (c: ItemChange) => boolean): void {
+    const s = stack === 'undo' ? this.undoStack : this.redoStack;
+    const top = s[s.length - 1];
+    if (!top) return;
+    const changes = top.changes.filter(keep);
+    if (changes.length === top.changes.length) return;
+    if (changes.length === 0) s.pop();
+    else s[s.length - 1] = { ...top, changes };
+    this.emit();
+  }
+
   /** (H3) Both stacks, oldest first (for the command log). */
   snapshot(): { undo: Command[]; redo: Command[] } {
     return { undo: this.undoStack.slice(), redo: this.redoStack.slice() };

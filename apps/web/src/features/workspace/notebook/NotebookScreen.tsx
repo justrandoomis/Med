@@ -3,7 +3,7 @@
 // sections that show as tabs; every page is paper (blank / ruled / dotted / grid) with the same ink engine as the
 // reader (pens, shapes, text, pictures, page links, lasso …). Local-first: pages and writing are created on this
 // device and synced; the screen works offline from IndexedDB.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useInsertionEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowRight, FilePlus2, NotebookTabs, PanelLeft, Undo2 } from 'lucide-react';
 import { type AnnotationAnchor, type LinkTarget } from '@medlevo/shared';
@@ -105,12 +105,15 @@ function Notebook({ nodeId }: { nodeId: string }) {
   // ── the book: every live page (dividers included) as paper ──
   const sheets = useMemo<ReaderSheet[]>(() => live.map((n) => ({ kind: 'note', key: `note_page:${n.id}`, note: n, after: -1, placedByIndex: false })), [live]);
   const sheetsRef = useRef(sheets);
-  sheetsRef.current = sheets;
   const numbers = useMemo(() => pageNumbers(live), [live]);
   const sections = useMemo(() => sectionsOf(live), [live]);
   const [currentId, setCurrentId] = useState<string | null>(() => params.get('page') ?? readLast(nodeId));
   const currentRef = useRef(currentId);
-  currentRef.current = currentId;
+  // latest values for the callbacks, written at commit (before any layout effect) rather than during render
+  useInsertionEffect(() => {
+    sheetsRef.current = sheets;
+    currentRef.current = currentId;
+  });
   const currentIndex = Math.max(0, sheets.findIndex((s) => s.kind === 'note' && s.note.id === currentId));
   const canvasRef = useRef<BookCanvasHandle>(null);
   const [zoom, setZoom] = useState(1);

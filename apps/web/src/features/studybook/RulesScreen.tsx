@@ -79,19 +79,30 @@ export function RulesScreen() {
   const [busy, setBusy] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
 
-  const load = async () => {
+  // the request: state is set only when it settles (no synchronous setState on the effect path)
+  const fetchRules = () =>
+    studybookApi
+      .rules({ node_id: nodeId ?? undefined, source_id: nodeId ? undefined : (sourceId ?? undefined) })
+      .then((r) => {
+        setData(r);
+        setDraft(nodeId ? (r.layers.node?.override ?? {}) : (r.layers.owner ?? {}));
+      })
+      .catch((e: unknown) => setError(errorMessage(e, 'تعذّر تحميل قواعد الشرح.')));
+  // a retry clears the previous error at once
+  const load = () => {
     setError(null);
-    try {
-      const r = await studybookApi.rules({ node_id: nodeId ?? undefined, source_id: nodeId ? undefined : (sourceId ?? undefined) });
-      setData(r);
-      setDraft(nodeId ? (r.layers.node?.override ?? {}) : (r.layers.owner ?? {}));
-    } catch (e) {
-      setError(errorMessage(e, 'تعذّر تحميل قواعد الشرح.'));
-    }
+    return fetchRules();
   };
-  useEffect(() => {
+  // another folder / source: its rules are loaded afresh (cleared while rendering; the request runs in the effect)
+  const scopeKey = `${nodeId ?? ''}|${sourceId ?? ''}`;
+  const [rulesFor, setRulesFor] = useState(scopeKey);
+  if (rulesFor !== scopeKey) {
+    setRulesFor(scopeKey);
     setData(null);
-    void load();
+    setError(null);
+  }
+  useEffect(() => {
+    void fetchRules();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodeId, sourceId]);
   useEffect(() => {

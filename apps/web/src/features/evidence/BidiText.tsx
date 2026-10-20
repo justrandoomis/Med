@@ -37,21 +37,24 @@ export function BidiText({ text, highlights = [], dir, as: Tag = 'p', className,
   const paraDir = dir ?? detectDir(text);
   const sorted = [...highlights].sort((a, b) => a.start - b.start);
   const runs: Run[] = segmentRuns(text, paraDir);
+  // a plain loop: each run's offset is the running sum of the previous runs' lengths
+  const nodes: ReactNode[] = [];
   let offset = 0;
-  const nodes = runs.map((r, i) => {
-    const start = offset;
+  for (let i = 0; i < runs.length; i++) {
+    const r = runs[i]!;
+    const content = cut(r.t, offset, sorted);
     offset += r.t.length;
-    const content = cut(r.t, start, sorted);
     const rdir = r.dir ?? paraDir;
-    if (rdir !== paraDir) {
-      return (
+    nodes.push(
+      rdir !== paraDir ? (
         <bdi key={i} dir={rdir} lang={rdir === 'ltr' ? 'en' : 'ar'} className={rdir === 'ltr' ? 'ml-ltr' : 'ml-rtl-island'}>
           {content}
         </bdi>
-      );
-    }
-    return <Fragment key={i}>{content}</Fragment>;
-  });
+      ) : (
+        <Fragment key={i}>{content}</Fragment>
+      ),
+    );
+  }
   return (
     <Tag dir={paraDir} lang={lang ?? (paraDir === 'rtl' ? 'ar' : 'en')} className={className}>
       {nodes}

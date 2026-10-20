@@ -69,6 +69,7 @@ export function Tooltip({ content, children, describe = true, placement = 'top' 
 
   if (!isValidElement(children)) return children;
   const p = children.props;
+  // eslint-disable-next-line react-hooks/refs -- false positive: cloneElement only attaches the ref and the handlers; no ref is read during render
   const child = cloneElement(children, {
     ref: anchorRef as Ref<HTMLElement>,
     'aria-describedby': describe ? [p['aria-describedby'], open ? id : undefined].filter(Boolean).join(' ') || undefined : p['aria-describedby'],

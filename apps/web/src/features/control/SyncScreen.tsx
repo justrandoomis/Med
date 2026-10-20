@@ -83,14 +83,17 @@ export function SyncScreen({ engine = getSyncEngine() }: { engine?: SyncEngine }
   const [issues, setIssues] = useState<OutboxRecord[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const load = useCallback(async () => {
-    try {
-      setIssues(await engine.openIssues());
-      setError(null);
-    } catch {
-      setError('تعذّر قراءة سجل المزامنة على هذا الجهاز (التخزين المحلي غير متاح في هذا المتصفح أو هذه النافذة).');
-    }
-  }, [engine]);
+  // state is set only when the read settles (no synchronous setState on the effect path)
+  const load = useCallback(
+    () =>
+      engine.openIssues()
+        .then((list) => {
+          setIssues(list);
+          setError(null);
+        })
+        .catch(() => setError('تعذّر قراءة سجل المزامنة على هذا الجهاز (التخزين المحلي غير متاح في هذا المتصفح أو هذه النافذة).')),
+    [engine],
+  );
   useEffect(() => {
     void load();
   }, [load, snap.conflicts, snap.errors, snap.pending]);

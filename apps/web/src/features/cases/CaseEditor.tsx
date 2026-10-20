@@ -73,7 +73,12 @@ function Section({ title, hint, children }: { title: string; hint?: ReactNode; c
 /** A comma / line separated list of phrases, kept as typed until it loses focus. */
 function PhrasesField({ label, hint, value, onChange }: { label: string; hint?: string; value: string[]; onChange: (v: string[]) => void }) {
   const [text, setText] = useState(joinPhrases(value));
-  useEffect(() => setText(joinPhrases(value)), [value]);
+  // a new value from outside replaces the typed text (adjusted while rendering instead of in an effect)
+  const [shown, setShown] = useState(value);
+  if (shown !== value) {
+    setShown(value);
+    setText(joinPhrases(value));
+  }
   return <TextField label={label} hint={hint ?? 'افصل بين العبارات بفاصلة. تُطابَق بعد توحيد أشكال الحروف العربية، ولا يُحتسب الذكر المنفي.'} value={text} onChange={(e) => setText(e.target.value)} onBlur={() => onChange(splitPhrases(text))} />;
 }
 
@@ -83,30 +88,44 @@ function EvidencePicker({ open, onClose, ctx, initial, onPick }: { open: boolean
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const search = useCallback(
-    async (text: string) => {
-      if (!ctx.scope || text.trim().length < 2) return;
-      setBusy(true);
-      setError(null);
-      try {
-        const r = await casesApi.suggestEvidence({ scope: ctx.scope, text: text.trim(), limit: 8 });
-        setResults(r.evidence);
-        setNote(r.abstain_ar ?? r.searched_ar);
-        ctx.remember(r.evidence);
-      } catch (e) {
-        setError(errorMessage(e, 'تعذّر البحث في المصادر.'));
-      } finally {
-        setBusy(false);
-      }
+  const canSearch = (text: string) => !!ctx.scope && text.trim().length >= 2;
+  // the request itself: state is set only when it settles
+  const fetchEvidence = useCallback(
+    (text: string) => {
+      if (!ctx.scope) return Promise.resolve();
+      return casesApi
+        .suggestEvidence({ scope: ctx.scope, text: text.trim(), limit: 8 })
+        .then((r) => {
+          setResults(r.evidence);
+          setNote(r.abstain_ar ?? r.searched_ar);
+          ctx.remember(r.evidence);
+        })
+        .catch((e: unknown) => setError(errorMessage(e, 'تعذّر البحث في المصادر.')))
+        .finally(() => setBusy(false));
     },
     [ctx],
   );
-  useEffect(() => {
+  const search = (text: string) => {
+    if (!canSearch(text)) return;
+    setBusy(true);
+    setError(null);
+    void fetchEvidence(text);
+  };
+  // opening starts over with the initial text: reset while rendering, the request runs in the effect below
+  const [wasOpen, setWasOpen] = useState(false);
+  if (wasOpen !== open) {
+    setWasOpen(open);
     if (open) {
       setQ(initial);
       setResults(null);
-      void search(initial);
+      if (canSearch(initial)) {
+        setBusy(true);
+        setError(null);
+      }
     }
+  }
+  useEffect(() => {
+    if (open && canSearch(initial)) void fetchEvidence(initial);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
   return (
@@ -119,7 +138,7 @@ function EvidencePicker({ open, onClose, ctx, initial, onPick }: { open: boolean
             className="cs-form-row"
             onSubmit={(e) => {
               e.preventDefault();
-              void search(q);
+              search(q);
             }}
           >
             <TextField label="ابحث عن" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -224,6 +243,18 @@ const DRAFT_KEY = (id: string) => `medlevo.cases.editor.${id}`;
 const STALE_KEY = (draftKey: string) => `${draftKey}.stale`;
 type StoredDraft = { base: number; draft: CaseDraft };
 
+/** The unsaved local draft of a new case of this kind, if any (a broken or missing one → null). */
+function readLocalDraft(draftKey: string, kind: CaseKind): CaseDraft | null {
+  try {
+    const saved = window.localStorage.getItem(draftKey);
+    if (!saved) return null;
+    const parsed = JSON.parse(saved) as StoredDraft;
+    return parsed.draft?.kind === kind ? parsed.draft : null;
+  } catch {
+    return null;
+  }
+}
+
 export function CaseEditor() {
   const { caseId } = useParams();
   const [params] = useSearchParams();
@@ -302,22 +333,17 @@ export function CaseEditor() {
     };
   }, [caseId, draftKey, remember]);
 
-  // a new case: restore an unsaved local draft
-  useEffect(() => {
-    if (caseId) return;
-    try {
-      const saved = window.localStorage.getItem(draftKey);
-      if (saved) {
-        const parsed = JSON.parse(saved) as { base: number; draft: CaseDraft };
-        if (parsed.draft?.kind === kindParam) {
-          setDraft(parsed.draft);
-          setRestored(true);
-        }
-      }
-    } catch {
-      // ignore
+  // a new case: restore an unsaved local draft (once per draft key and kind, while rendering instead of in an effect)
+  const restoreKey = caseId ? null : `${draftKey}|${kindParam}`;
+  const [restoredFor, setRestoredFor] = useState<string | null>(null);
+  if (restoredFor !== restoreKey) {
+    setRestoredFor(restoreKey);
+    const local = restoreKey ? readLocalDraft(draftKey, kindParam) : null;
+    if (local) {
+      setDraft(local);
+      setRestored(true);
     }
-  }, [caseId, draftKey, kindParam]);
+  }
 
   // keep the unsaved draft on this device
   useEffect(() => {

@@ -136,14 +136,26 @@ export interface ContentAlertsPanelProps {
 export function ContentAlertsPanel({ sourceId, status = 'active', className }: ContentAlertsPanelProps) {
   const [alerts, setAlerts] = useState<ContentAlertView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const load = useCallback(async () => {
+  // state is set only when the request settles (no synchronous setState on the effect path)
+  const load = useCallback(
+    () =>
+      fetchAlerts(status, sourceId)
+        .then((r) => setAlerts(r.alerts))
+        .catch((e: unknown) => setError(isApiError(e) && e.offline ? 'تنبيهات تغيّر المحتوى تحتاج الاتصال بالخادم.' : errorMessage(e))),
+    [status, sourceId],
+  );
+  // a retry clears the previous error at once
+  const reload = () => {
     setError(null);
-    try {
-      setAlerts((await fetchAlerts(status, sourceId)).alerts);
-    } catch (e) {
-      setError(isApiError(e) && e.offline ? 'تنبيهات تغيّر المحتوى تحتاج الاتصال بالخادم.' : errorMessage(e));
-    }
-  }, [status, sourceId]);
+    void load();
+  };
+  // another source / status filter: the previous error is cleared while rendering
+  const filter = `${status}|${sourceId ?? ''}`;
+  const [loadedFor, setLoadedFor] = useState(filter);
+  if (loadedFor !== filter) {
+    setLoadedFor(filter);
+    setError(null);
+  }
   useEffect(() => {
     void load();
   }, [load]);
@@ -154,7 +166,7 @@ export function ContentAlertsPanel({ sourceId, status = 'active', className }: C
         تنبيهات تغيّر المحتوى
       </h2>
       {error ? (
-        <ErrorState inline message={error} onRetry={load} />
+        <ErrorState inline message={error} onRetry={reload} />
       ) : !alerts ? (
         <LoadingState inline stage="جارٍ تحميل التنبيهات…" />
       ) : alerts.length === 0 ? (

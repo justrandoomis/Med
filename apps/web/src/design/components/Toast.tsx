@@ -81,7 +81,8 @@ function ToastView({ item, onDismiss }: { item: ToastItem; onDismiss: (id: strin
   const duration = item.duration !== undefined ? item.duration : tone === 'danger' ? null : tone === 'warning' ? 8000 : 5000;
   const [paused, setPaused] = useState(false);
   const remaining = useRef(duration ?? 0);
-  const startedAt = useRef(Date.now());
+  // set when the timer starts (the effect below); never read before that
+  const startedAt = useRef(0);
 
   useEffect(() => {
     if (duration == null || paused) return;

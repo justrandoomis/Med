@@ -37,20 +37,22 @@ export function DerivedVersionsSection({ questionId, original }: { questionId: s
   const [shown, setShown] = useState<string | null>(null);
   const timer = useRef<number | undefined>(undefined);
 
-  const load = useCallback(async () => {
-    try {
-      const r = await derivedApi.list(questionId);
-      if (!r || !Array.isArray(r.derivations) || !r.can_derive) {
-        setError('تعذّر تحميل النسخ المشتقة.');
-        return;
-      }
-      setData(r);
-      setError(null);
-      window.clearTimeout(timer.current);
-      if (r.derivations.some((d) => PENDING.has(d.status))) timer.current = window.setTimeout(() => void load(), 2000);
-    } catch (e) {
-      setError(errorMessage(e, 'تعذّر تحميل النسخ المشتقة.'));
-    }
+  // state is set only when the request settles; a pending derivation polls the same request again in 2 s
+  const load = useCallback(() => {
+    const poll = (): Promise<void> =>
+      derivedApi.list(questionId)
+        .then((r) => {
+          if (!r || !Array.isArray(r.derivations) || !r.can_derive) {
+            setError('تعذّر تحميل النسخ المشتقة.');
+            return;
+          }
+          setData(r);
+          setError(null);
+          window.clearTimeout(timer.current);
+          if (r.derivations.some((d) => PENDING.has(d.status))) timer.current = window.setTimeout(() => void poll(), 2000);
+        })
+        .catch((e: unknown) => setError(errorMessage(e, 'تعذّر تحميل النسخ المشتقة.')));
+    return poll();
   }, [questionId]);
 
   useEffect(() => {

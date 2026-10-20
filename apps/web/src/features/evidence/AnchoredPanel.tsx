@@ -27,12 +27,11 @@ const MARGIN = 12;
 export function AnchoredPanel({ open, anchorRef, onClose, label, id, className, children }: AnchoredPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<Pos>({ top: 0, left: 0, docked: false, ready: false });
+  // closing makes the position stale again (adjusted while rendering instead of in an effect)
+  if (!open && pos.ready) setPos({ ...pos, ready: false });
 
   useLayoutEffect(() => {
-    if (!open) {
-      setPos((p) => ({ ...p, ready: false }));
-      return;
-    }
+    if (!open) return;
     const place = () => {
       const a = anchorRef.current?.getBoundingClientRect();
       const p = panelRef.current;

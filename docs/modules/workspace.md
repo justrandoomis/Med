@@ -448,7 +448,7 @@ then fixed minimally. Migrations (annotations range): `0280_annotation_image_rel
 | # | what was wrong / missing | what is built now | tests |
 |---|---|---|---|
 | 1 | Undo / redo lived in memory: a reload or closing the app lost the history. | Per-document command log in IndexedDB (`ink/historyLog.ts`, `kv` key `ink.history.v1:<doc>`, newest steps kept under a 2 MB cap, debounced + flushed on `pagehide`). A step is checked against the CURRENT state first (memory for loaded pages, IndexedDB otherwise): steps already satisfied are skipped; a step that would bring back writing deleted since (e.g. tombstoned by the server / another device) or overwrite a newer edit is never applied silently — «التراجع عن «…»» asks (`ink/InkProvider.tsx` `PendingStepDialog`: apply / skip). Details in `docs/modules/ink.md`. | `web:test/ink/history-persist.h3.test.ts` (6), `web:test/ink/history-dialog.h3.test.tsx` (1) |
-| 2 | «تحتاج إعادة ربط» listed items with their previous place only. | `POST /api/annotations/reanchor` (`annotations/reanchor.ts`): the OWNER moves a note / highlight / ink group to a page of the source — at the same spot or AT a paragraph / block region of that page (the group's box corner on the region's, sizes kept, kept inside the page) — or keeps it detached («محفوظة دون ربط», `detached_at`). The previous anchor is kept (`previous_anchor_json`, also on notes now), the revision the device saw is checked (409, nothing changes), every write touches the sync feed, open review-queue items are closed with the decision, and each decision is in the change log. `GET /needs-reanchor` also lists notes whose page is gone and Study Book items flagged by the re-anchoring report, plus the detached list. Web: `panels/ReanchorSection.tsx` (ink from the same old page moves as one group; online only — the reason is shown offline). The API accepts a Study Book paragraph target (`type: 'block'`); the reader offers pages and their paragraphs. | `srv:annotations/h3-hardening.test.ts` (4), `web:panels/ReanchorSection.h3.test.tsx` (4), `e2e:h3-reader-notes.spec.ts` «H3 item 2» |
+| 2 | «تحتاج إعادة ربط» listed items with their previous place only. | `POST /api/annotations/reanchor` (`annotations/reanchor.ts`): the OWNER moves a note / highlight / ink group to a page of the source — at the same spot or AT a paragraph / block region of that page (the group's box corner on the region's, sizes kept, kept inside the page) — or keeps it detached («محفوظة دون ربط», `detached_at`). The previous anchor is kept (`previous_anchor_json`, also on notes now), the revision the device saw is checked (409, nothing changes), every write touches the sync feed, open review-queue items are closed with the decision, and each decision is in the change log. `GET /needs-reanchor` also lists notes whose page is gone and Study Book items flagged by the re-anchoring report, plus the detached list. Web: `panels/ReanchorSection.tsx` (ink from the same old page moves as one group; online only — the reason is shown offline). The API accepts a Study Book paragraph target (`type: 'block'`); the reader offers pages and their paragraphs. The E2E run found that the place dialog re-ran its paragraph fetch on every render (an inline default loader) and froze the real reader on open — fixed with one stable loader; the jsdom test now asserts a single fetch. | `srv:annotations/h3-hardening.test.ts` (4), `web:panels/ReanchorSection.h3.test.tsx` (4), `e2e:h3-reader-notes.spec.ts` «H3 item 2» |
 | 3 | Split Study offered lecture ↔ lecture / Study Book only. | «بجانب المحاضرة: الأسئلة المرتبطة / الشرح والسؤال» (`split/SplitSidePane.tsx`, views `split_questions` / `split_explain` in the top bar): the lecture stays in the main canvas (its page, zoom and place untouched); both side kinds stay mounted once opened, so switching keeps each one's state; the choice is saved with the study session (`location.split.mode`); in «امتحن نفسك» the explanations are not offered (reason shown) and an open explain split switches to the questions. | `web:split/SplitSidePane.h3.test.tsx` (2) |
 | 4 | The lasso menu could not turn a selection into a card or a question. | «اصنع بطاقة من المحدد…» / «اكتب سؤالًا من المحدد…» (`handwriting/LassoCardDialog.tsx`, actions `card` / `question` in `ink/selectionActions.tsx`). Card «سؤال وجواب»: the front can be filled from an existing reading of exactly those strokes (labelled as derived); without a vision provider / offline / with no reading the control is disabled with its reason («اقرأها الآن…» opens «تحويل إلى نص»); saved on the device first (`createCardsLocal`, origin owner, source kept). Card «إخفاء في صورة»: `POST /api/annotations/page-crops` (`annotations/pageCrop.ts`) cuts the SOURCE page area under the selection out of the stored file on the server (pdftoppm for PDFs — a 409 with the reason when it is not installed; the stored picture for image sources; /Rotate handled) into an `image_asset` marked `owner_crop`; the owner draws and names masks → `POST /learning/cards/occlusion`. Re-processing the page keeps owner crops (`processing/persist.ts` deletes only figure pictures with a region) and the image explorer does not list them (`media/images.ts`). Question: owner-written text (+ the owner's key) → `POST /questions/quick-add` with the lecture link (origin owner). | `srv:annotations/h3-lasso-card.test.ts` (7), `web:handwriting/LassoCardDialog.h3.test.tsx` (7), `e2e:h3-reader-notes.spec.ts` «H3 item 4» |
 | 5 | The «انتقال» button of the go-to popover overflowed at 360–390 px. | `workspace.css` `.wk-goto` width follows the popover's own limit (`min(22rem, 100vw − 16px)` minus its padding). | `e2e:h3-reader-notes.spec.ts` «item 5» (phone 360/375/390; failed before: the button 3.5 px outside at 390) |
@@ -463,3 +463,90 @@ reader offers pages and their paragraphs (the Study Book paragraph target is API
 tabs: the last writer's log wins); the direct recording upload needs a connection (otherwise the device retries); an
 occlusion picture needs a connection and, for PDFs, poppler on the server; the card's picture is the source page area
 around the selected writing, not the writing itself.
+
+Runs (2026-10-20, this tree, no AI key):
+
+| command | result |
+|---|---|
+| `npm test` (root) | shared 8 files / 85 passed; server 1 file failed (4 tests in `test/brain/h4-review.test.ts`, the parallel H4 review's test-first work in progress — it passed when re-run minutes later), so the root script stopped before web |
+| `npm test -w @medlevo/server` (re-run) | 142 files passed, 7 skipped — **1511 passed**, 7 skipped |
+| `npm test -w @medlevo/web` | 125 files passed, 1 skipped — **787 passed**, 1 skipped |
+| `npm run typecheck` · `npm run lint` · `npm run build` | clean · clean (0 warnings) · success |
+| `npx playwright test e2e/h3-reader-notes.spec.ts` + `f1-notebook-pages`, `f3-study-modes`, `f4-handwriting-audio`, `g6-ac20-mixed-text`, `g6-ac21-ink-position`, `g6-ac22-font-size`, `g7-ac24-two-devices`, `smoke` (phone + desktop, real server) | **43 passed**, 1 skipped (the go-to popover check is phone-only) |
+
+### Independent review of H3 (2026-10-20)
+Every item was re-read against its claim; the fixed items' regression tests were spot-checked by reverting the fix
+locally (items 6, 8 and 10: their tests fail without the fix; the fix was restored). Confirmed and fixed, each with a
+test that failed first:
+
+| item | what was wrong | fix | test |
+|---|---|---|---|
+| 1 (major) | Redo brought back writing the server had tombstoned **without asking**: undoing «كتابة» of a stroke another device had erased was skipped quietly (already gone), but the whole step moved to the redo stack, and redo then re-created the stroke (an upsert the server applies over its tombstone). | `InkHistory.narrowTop` — the step that moves to the other stack keeps only the changes that were applied (`ink/store.ts` `apply`). | `web:test/ink/history-review.h3.test.ts` (3) |
+| 2 (major) | After the server refused a decision as stale (409 — an item changed elsewhere, or this device's own edits pushed right before the call), «تحتاج إعادة ربط» said «حدّث القائمة ثم أعد الاختيار» but never fetched the list again and had no way to: every retry sent the same old revisions and was refused again until the reader was reopened. | The list is fetched again after a failed decision; on 409 the place dialog (which held the old revisions) closes. | `web:panels/ReanchorSection.review.h3.test.tsx` |
+| 2 (major) | A Study Book note / highlight that the re-anchoring report lists stayed in «تحتاج إعادة ربط» after the owner moved it to another Study Book paragraph (`type: 'block'`): the list only checked that its anchor was still a Study Book anchor. | Listed only while the anchor still names the paragraph (lineage, block key, version) the report found gone. | `srv:annotations/h3-review.test.ts` «Study Book note» |
+| 2 (minor) | The same item twice in one `POST /reanchor` passed the revision check twice and was written twice (rev + 2, two audit entries). | Refused (400) — one decision per item. | `srv:annotations/h3-review.test.ts` «one decision per item» |
+| 9 (major) | While the refused recording was being uploaded straight to the server («saving» — minutes for a long recording on a phone) or retried by the owner, the app-wide «leave the page?» guard was off: closing the tab lost the recording silently. | `UnsavedRecordingNotice` guards whenever the recorder holds a recording stored nowhere yet or is saving. | `web:audio/unsavedGuard.review.h3.test.tsx` |
+| 9 (minor) | After a direct upload the chunks stayed on the (full) device and the next start «recovered» the recording as interrupted and uploaded it again. | `uploadRecordingDirect` drops that recording's chunks once the server has it (kept if the upload fails). | `web:audio/directUpload.review.h3.test.ts` (2) |
+
+Reviewed and found sound (no change): auth + CSRF on the new routes (global guard; tests cover 401 / 403), zod
+validation of `reanchor` / `page-crops` bodies, page crops cut from the stored source file only (never client bytes;
+pdftoppm refusal is honest), owner crops excluded from the image explorer and kept by re-processing, the lam-alef repair
+(length-preserving by construction, so text-layer, search offsets and hit rectangles stay aligned), the prune grace
+period (released → kept `UNREFERENCED_GRACE_MS` → removed; a referring annotation clears the release), the orphan-page
+list, the 360–390 px go-to popover, the restored place near the end, the question and occlusion cards labelled as the
+owner's (quick-add stores an owner question with an owner key).
+
+Open (not fixed, reported): undo pressed before this device has PULLED a tombstone made elsewhere cannot know about it —
+the server then restores the stroke and answers «merged» with its reason (inherent to offline-first); the prune grace
+period is 7 days, so a device offline longer than that whose queued copy of a picture arrives afterwards finds the
+picture gone (the device does not re-upload bytes it already uploaded); a basic card whose front the owner filled from a
+machine reading is stored as the owner's card without recording that the text came from a reading; Escape on the
+«undo step changed elsewhere» question skips the step (nothing in the writing changes); the re-anchoring list runs one
+query per page-anchored note (bounded at 5 000 notes).
+
+Review runs (2026-10-20, this tree, no AI key):
+
+| command | result |
+|---|---|
+| `npm test` (root) | shared 8 files / **85 passed**; server 143 files passed, 7 skipped — **1513 passed**, 7 skipped; web 129 files passed, 1 skipped — **794 passed**, 1 skipped |
+| `npm run typecheck` · `npm run lint` · `npm run build` | clean · clean (0 warnings) · success |
+| `npx playwright test e2e/h3-reader-notes.spec.ts e2e/f4-handwriting-audio.spec.ts e2e/g6-ac21-ink-position.spec.ts e2e/g6-ac22-font-size.spec.ts e2e/g7-ac24-two-devices.spec.ts e2e/f1-notebook-pages.spec.ts` (phone + desktop, real server) | **31 passed**, 1 skipped (the go-to popover check is phone-only) |
+
+## Round 7 — React Compiler lint rules in the reader (2026-10-20; §58)
+
+The react-hooks `recommended` rules now run on the whole web app (see `docs/modules/core-web.md` §10 for the patterns
+and the measured 184 findings, 98 of them in the workspace). In the reader: the latest-value refs of `WorkspaceScreen`
+(sheets, sequence, place to save, `goToNote`, Study Book view, sync, navigation), `useStudySession`, `SplitPane`,
+`NotebookScreen` and the note editor are written at commit (`useInsertionEffect`) instead of during render; panel
+closing, MCQ / explanation hand-overs, the re-anchoring list and place dialog, the chat resets (page, selection, Source
+Lock, composed question), the summary preview, the search panel, the lasso and recognition dialogs reset while
+rendering; the recognition picture is derived (`useMemo`); the selection toolbar reads the canvas through a getter;
+the OCR layer forwards its element with `useImperativeHandle`; the conflict dialog's «my place» is the `pageIndex`
+state. One targeted disable: leaving the Study Book when the session switches to «امتحن نفسك» stays an effect
+(`changeView` also writes the view preference and the reading position). Behaviour unchanged — the web suite passes
+(131 files, 802 tests) and the full E2E suite was re-run: 116 passed, 11 skipped (opt-in perf, phone-only check), 7
+failed — the two specs involved, run on the committed code without these changes (a `git archive HEAD` copy, its own
+build and server), fail in the same 7 tests with the same errors, so none comes from this work. One of them is a reader defect, reported and not fixed here: on a 390 px phone, while the reader is
+on a page without a printed number, the compact page indicator «الصفحة 1 في الملف» runs under the save-status icon,
+which takes its taps (`g1-ac04-printed-page.spec.ts` «detected labels», phone); the other 6 are `g6-ac28-pencil`
+(stale expectations, see `docs/modules/ink.md`). Details in `docs/TEST_LOG.md` (Round 7 lint).
+
+## Round 7 — final verification: the phone reading bar (2026-10-20; AC-04, §26, §55)
+
+**Defect (fixed).** Measured in the real app at 390 px (Playwright, built app + real server): the phone bar held back ·
+title column · save state · mode switch · search · rail · more, all 44 px with 8 px gaps, which left the title column
+**60 px** wide (45 px at 375, 30 px at 360). The compact page indicator does not shrink, so it ran out of its column
+under the save icon and the mode switch — «الصفحة 1 في الملف 1/14» was 155 px, and even an ordinary «ص 12 14/14» (94 px)
+overlapped the save icon by 26 px. The save icon took the taps meant for «الانتقال إلى صفحة» (the phone failure of
+`g1-ac04-printed-page.spec.ts` «detected labels», open since track F3 added the mode switch).
+**Fix** (`chrome/TopBar.tsx`, `chrome/GoToPage.tsx`, `workspace.css`): the compact save state moved onto the title line
+(it is still announced, with its tooltip); the phone row's icons sit 4 px apart; the title column is a size container
+and the compact indicator never grows past it (`max-width: 100%`, the label ellipsised only as a last resort); the
+«n/N» count is dropped when the column is under 7.5 rem, and always on a page whose label already is its file position
+(«الصفحة 1 في الملف» — the total stays in the accessible name and the go-to popover). Result: title column 124 px at
+390 px, «الصفحة 1 في الملف» shown whole and «ص 12 14/14» with its count; at 375 / 360 px the printed label stays whole
+without the count, and the front-matter label is ellipsised (known limit — its full text is the button's name).
+**Tests:** `web:src/features/workspace/chrome/TopBar.phone.final.test.tsx` (3; 2 fail on the old TopBar / GoToPage — the
+save state was a row item, the count repeated the file position); `e2e:g1-ac04-printed-page.spec.ts` now also checks on
+the phone that no control of the bar overlaps the indicator and that its centre hits it — at 390 px on «ص 12» and at
+390 / 375 / 360 px on the unnumbered cover — before tapping it. Both projects pass (`docs/TEST_LOG.md`).

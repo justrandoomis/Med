@@ -3,7 +3,7 @@
 // Dragging is 1:1 with the pointer and never re-renders React per move: the frame follows through
 // a CSS matrix on a ref, the selected items are drawn transformed on the live canvas, and the
 // change is committed once (one undo step) on release.
-import { useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
+import { useEffect, useInsertionEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
 import { ArrowDownToLine, ArrowUpToLine, Clock, Copy, CopyPlus, Ellipsis, FileQuestion, Layers, Lock, LockOpen, MessageCircleQuestion, Palette, Play, RotateCw, ScanText, Trash2, Undo2, Minus } from 'lucide-react';
 import { normBoxToView, normToView, viewToNorm, type NormBox } from '@medlevo/shared';
 import { IconButton, Menu, MenuItem, MenuSeparator, Toolbar, Tooltip } from '../../../design';
@@ -12,7 +12,8 @@ import type { PageInkController } from './layerController';
 import { IDENTITY, invertMat, isIdentity, multiply, rotateAbout, scaleAbout, translate, type Mat, type Vec } from './math';
 import { isInkStroke, isShape, limitScaleToRange, revertEnhancement, type InkItem } from './model';
 import { HIGHLIGHTER_COLORS, PEN_COLORS, resolveInkColor } from './palette';
-import { pageMatrix, paperToneOf } from './render';
+import { pageMatrix } from './render';
+import { usePaperTone } from './usePaperTone';
 import { audioLinkOf, formatOffset } from './audioLink';
 import { NO_ASK_HOST_AR, NO_CARD_HOST_AR, NO_RECOGNITION_HOST_AR, useInkSelectionActions } from './selectionActions';
 import type { InkPageView } from './types';
@@ -59,7 +60,11 @@ export function SelectionOverlay({
   const barRef = useRef<HTMLDivElement>(null);
   const drag = useRef<{ mode: Mode; pointerId: number; start: Vec; bbox: NormBox; m: Mat; ids: string[] } | null>(null);
   const activeRef = useRef(onStrokeActiveChange);
-  activeRef.current = onStrokeActiveChange;
+  // the latest callback for the unmount cleanup, written at commit (before any layout effect) rather than during render
+  useInsertionEffect(() => {
+    activeRef.current = onStrokeActiveChange;
+  });
+  const tone = usePaperTone(frameRef);
   // The overlay can disappear in the middle of a drag (Escape / Delete / a tool shortcut clears the
   // selection): cancel the drag so the items never stay hidden and the reader is not left thinking a
   // gesture is still running (it blocks page flips meanwhile).
@@ -138,7 +143,7 @@ export function SelectionOverlay({
     return `matrix(${T.join(',')})`;
   };
 
-  const begin = (mode: Mode) => (e: ReactPointerEvent<HTMLElement>) => {
+  const begin = (mode: Mode, e: ReactPointerEvent<HTMLElement>) => {
     if (e.button !== 0 && e.pointerType === 'mouse') return;
     if (locked) return;
     e.preventDefault();
@@ -176,9 +181,6 @@ export function SelectionOverlay({
     onStrokeActiveChange(false);
   };
 
-  const handlers = (mode: Mode) => ({ onPointerDown: begin(mode), onPointerMove: move, onPointerUp: end, onPointerCancel: end });
-
-  const tone = paperToneOf(frameRef.current);
   const colors = allHighlighter ? HIGHLIGHTER_COLORS : PEN_COLORS;
   const widths = allHighlighter ? HL_WIDTHS : PEN_WIDTHS;
   // above the rotate handle when there is room, otherwise below the frame (never covering a handle)
@@ -217,10 +219,13 @@ export function SelectionOverlay({
         data-ink-ui=""
         data-locked={locked ? '' : undefined}
         aria-hidden="true"
-        {...handlers({ kind: 'move' })}
+        onPointerDown={(e) => begin({ kind: 'move' }, e)}
+        onPointerMove={move}
+        onPointerUp={end}
+        onPointerCancel={end}
       >
         {!locked && (
-          <span className="ml-ink-selection__rotate" {...handlers({ kind: 'rotate' })}>
+          <span className="ml-ink-selection__rotate" onPointerDown={(e) => begin({ kind: 'rotate' }, e)} onPointerMove={move} onPointerUp={end} onPointerCancel={end}>
             <RotateCw size={14} />
           </span>
         )}
@@ -232,7 +237,17 @@ export function SelectionOverlay({
       </div>
       {!locked &&
         handles.map(([hx, hy], i) => (
-          <span key={i} className="ml-ink-handle" style={{ left: hx, top: hy }} data-ink-ui="" aria-hidden="true" {...handlers({ kind: 'scale', corner: i as 0 | 1 | 2 | 3 })} />
+          <span
+            key={i}
+            className="ml-ink-handle"
+            style={{ left: hx, top: hy }}
+            data-ink-ui=""
+            aria-hidden="true"
+            onPointerDown={(e) => begin({ kind: 'scale', corner: i as 0 | 1 | 2 | 3 }, e)}
+            onPointerMove={move}
+            onPointerUp={end}
+            onPointerCancel={end}
+          />
         ))}
       <div ref={barRef} className="ml-ink-selbar" style={{ top: barTop, left: barCenter }} data-ink-ui="" dir="rtl">
         <Toolbar label={`إجراءات التحديد (${items.length} عنصر)`}>

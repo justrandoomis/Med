@@ -22,23 +22,29 @@ export function HistoryScreen() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async (c: string | null) => {
+  // the request: state is set only when it settles (no synchronous setState on the effect path)
+  const fetchPage = useCallback(
+    (c: string | null) =>
+      examsApi
+        .history(c)
+        .then((res) => {
+          setItems((prev) => (c ? [...(prev ?? []), ...res.items] : res.items));
+          setCursor(res.next_cursor);
+        })
+        .catch((e: unknown) => setError(errorMessage(e, 'تعذّر تحميل سجل الاختبارات.')))
+        .finally(() => setLoading(false)),
+    [],
+  );
+  // a retry / «more» shows loading and clears the previous error at once (the first load starts in that state)
+  const load = (c: string | null) => {
     setLoading(true);
     setError(null);
-    try {
-      const res = await examsApi.history(c);
-      setItems((prev) => (c ? [...(prev ?? []), ...res.items] : res.items));
-      setCursor(res.next_cursor);
-    } catch (e) {
-      setError(errorMessage(e, 'تعذّر تحميل سجل الاختبارات.'));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    void fetchPage(c);
+  };
 
   useEffect(() => {
-    void load(null);
-  }, [load]);
+    void fetchPage(null);
+  }, [fetchPage]);
 
   const gen = caps.feature('ai.generate_questions');
   return (

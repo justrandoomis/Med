@@ -173,14 +173,18 @@ export function TopBar(p: TopBarProps) {
           <Link to={p.backTo} className={buttonClass({ variant: 'plain', size: 'sm', className: 'wk-back' })} aria-label="العودة إلى المكتبة">
             <ArrowRight size={20} aria-hidden="true" />
           </Link>
+          {/* (Round 7 final) the save state sits on the title line: as its own item in this row it left the title
+              column ~60 px at 390 px, and the page indicator ran under the save icon and the mode switch */}
           <div className="wk-topbar__title">
-            <h1 className="wk-title" dir={detectDir(p.title)}>
-              {p.title}
-            </h1>
+            <div className="wk-topbar__titleline">
+              <h1 className="wk-title" dir={detectDir(p.title)}>
+                {p.title}
+              </h1>
+              <SaveStatus state={p.saveState} detail={p.saveDetail} compact />
+            </div>
             <GoToPage pages={p.pages} pageIndex={p.pageIndex} onGo={p.onGoToPage} compact />
             {p.noteLabel && <span className="wk-note-chip">{p.noteLabel}</span>}
           </div>
-          <SaveStatus state={p.saveState} detail={p.saveDetail} compact />
           {p.modeSwitch}
           <Hint label="البحث في المصدر">
             <IconButton label="البحث في المصدر" icon={<Search size={20} />} pressed={p.searchOpen} onClick={p.onToggleSearch} />

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, type RefObject } from 'react';
+import { useEffect, useInsertionEffect, useLayoutEffect, useRef, type RefObject } from 'react';
 
 export function cx(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(' ');
@@ -101,7 +101,10 @@ export function useFocusTrap(
 ): void {
   // read at activation / deactivation time: a new `opts` object on every render must not re-run the trap
   const optsRef = useRef(opts);
-  optsRef.current = opts;
+  // latest value, written at commit (before any layout effect) rather than during render
+  useInsertionEffect(() => {
+    optsRef.current = opts;
+  });
   useEffect(() => {
     if (!active) return;
     const { initialFocus, returnFocus = true } = optsRef.current;
@@ -161,10 +164,13 @@ export function useOutsidePointer(
   handler: (e: PointerEvent) => void,
 ): void {
   const handlerRef = useRef(handler);
-  handlerRef.current = handler;
   // the latest refs (callers pass a new array literal on every render)
   const refsRef = useRef(refs);
-  refsRef.current = refs;
+  // latest values, written at commit (before any layout effect) rather than during render
+  useInsertionEffect(() => {
+    handlerRef.current = handler;
+    refsRef.current = refs;
+  });
   useEffect(() => {
     if (!active) return;
     const onDown = (e: PointerEvent) => {

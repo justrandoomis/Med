@@ -132,7 +132,7 @@ export function getRun(db: Db, id: string): { report: EvalReport; markdown: stri
 }
 
 export const HOW_TO_RUN_AR =
-  'شغّل التقييم على الخادم: `npm run eval` (يرفع ملفات الاختبار إلى مجلد بيانات مؤقت منفصل ثم يحذفه، ويحفظ التقرير JSON وMarkdown في eval-reports/ ويسجله هنا إن وُجدت قاعدة بيانات الخادم). خيارات: `--set=regression|tuning`، `--axis=key_binding`، `--compare=<تقرير سابق.json>`، `--mode=live` (يحتاج ANTHROPIC_API_KEY). خطوات المقارنة والتراجع في docs/EVALUATION.md.';
+  'شغّل التقييم على الخادم: `npm run eval` (يرفع ملفات الاختبار إلى مجلد بيانات مؤقت منفصل ثم يحذفه، ويحفظ التقرير JSON وMarkdown في `eval-reports/` ويسجله هنا إن وُجدت قاعدة بيانات الخادم). خيارات: `--set=regression|tuning`، `--axis=key_binding`، `--compare=<تقرير سابق.json>`، `--mode=live` (يحتاج ANTHROPIC_API_KEY). خطوات المقارنة والتراجع في `docs/EVALUATION.md`.';
 
 export function evaluationOverview(db: Db, catalogue: readonly EvalCaseDef[] = CATALOGUE): EvaluationOverviewResponse {
   const rows = db.all<RunRow>('SELECT * FROM evaluation_run ORDER BY started_at DESC, id DESC LIMIT 20');

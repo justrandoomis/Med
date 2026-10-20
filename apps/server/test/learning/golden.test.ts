@@ -21,6 +21,7 @@ import {
 import { newId } from '../../src/lib/ids';
 import { fromRegion } from '../../src/modules/evidence/services';
 import { createQuestion } from '../../src/modules/questions/service';
+import { partOfUniqueQuestionsAr, uniqueQuestionsAr } from '../../src/modules/learning/dna';
 import { createExamApp, questionAt, type ExamApp } from '../exams/helpers';
 import { golden } from '../questions/helpers';
 import { multipart } from '../sources/helpers';
@@ -278,6 +279,28 @@ describe('learning on the Golden Set', () => {
     // an owner question outside the sample
     const { questionId } = createQuestion(t.ctx, { origin: 'owner', qtype: 'sba', stem: 'Owner question', options: [{ text: 'a' }, { text: 'b' }], correctOptionIndexes: [0], answerStatus: 'owner_key' });
     expect((await ok<ExamRelevanceView>(api(t).get(`/api/learning/exam-dna/relevance?question_id=${questionId}`))).level).toBe('not_in_sample');
+  });
+
+  it('(Round 7 final) Exam DNA counts in Arabic agree with the number: «9 أسئلة فريدة», never «9 سؤالًا فريدًا»', async () => {
+    // found by the critic sweep on «محاكاة مولدة»: «العينة صغيرة (7 سؤالًا فريدًا)»; 3–10 take the plural
+    const dna = await ok<ExamDnaDetail>(api(t).get('/api/learning/exam-dna'));
+    const text = dna.warnings_ar.join(' ');
+    expect(dna.sample.unique_questions).toBe(9);
+    expect(text).toContain('العينة صغيرة (9 أسئلة فريدة)');
+    expect(text).not.toMatch(/\b([3-9]|10) سؤالًا/);
+    const rel = await ok<ExamRelevanceView>(api(t).get(`/api/learning/exam-dna/relevance?question_id=${qA1}`));
+    expect(rel.reasons_ar.join(' ')).toContain('العينة صغيرة (9 أسئلة فريدة)');
+    expect(rel.reasons_ar.join(' ')).not.toMatch(/من 9 سؤالًا/);
+    expect(uniqueQuestionsAr(1)).toBe('سؤال واحد فريد');
+    expect(uniqueQuestionsAr(2)).toBe('سؤالان فريدان');
+    expect(uniqueQuestionsAr(10)).toBe('10 أسئلة فريدة');
+    expect(uniqueQuestionsAr(11)).toBe('11 سؤالًا فريدًا');
+    expect(uniqueQuestionsAr(103)).toBe('103 أسئلة فريدة');
+    expect(uniqueQuestionsAr(111)).toBe('111 سؤالًا فريدًا');
+    // «X من N»: the noun agrees with N
+    expect(partOfUniqueQuestionsAr(5, 7)).toBe('5 من 7 أسئلة فريدة');
+    expect(partOfUniqueQuestionsAr(1, 2)).toBe('1 من سؤالين فريدين');
+    expect(partOfUniqueQuestionsAr(12, 40)).toBe('12 من 40 سؤالًا فريدًا');
   });
 
   it('one-tap revision fits the minutes, with reasons and estimate basis; planner sized by the real lecture; Home', async () => {

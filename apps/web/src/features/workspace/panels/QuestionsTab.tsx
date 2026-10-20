@@ -46,33 +46,52 @@ export function QuestionsTab({ doc, page, onGoToPage, online, arrangement }: Que
   const [loading, setLoading] = useState(false);
   const pageId = page?.id ?? null;
 
-  const load = useCallback(async () => {
+  // the request: state is set only when it settles (no synchronous setState on the effect path)
+  const fetchItems = useCallback((): Promise<void> => {
+    if (!vault.available) return Promise.resolve();
+    return questionsApi
+      .forLecture(sourceId, pageId)
+      .then((d) => {
+        setData(d);
+        setError(null);
+      })
+      .catch((e: unknown) => setError(errorMessage(e, 'تعذّر تحميل الأسئلة المرتبطة.')))
+      .finally(() => setLoading(false));
+  }, [sourceId, pageId, vault.available]);
+  // a retry / refresh after a change shows loading at once
+  const load = () => {
     if (!vault.available) return;
     setLoading(true);
-    try {
-      setData(await questionsApi.forLecture(sourceId, pageId));
-      setError(null);
-    } catch (e) {
-      setError(errorMessage(e, 'تعذّر تحميل الأسئلة المرتبطة.'));
-    } finally {
-      setLoading(false);
-    }
-  }, [sourceId, pageId, vault.available]);
+    void fetchItems();
+  };
+  // another page (or the vault becoming available) shows loading while rendering; `null` = not loaded yet, so the
+  // first render starts too (as the effect did on mount)
+  const loadKey = `${vault.available}|${sourceId}|${pageId ?? ''}`;
+  const [loadingFor, setLoadingFor] = useState<string | null>(null);
+  if (loadingFor !== loadKey) {
+    setLoadingFor(loadKey);
+    if (vault.available) setLoading(true);
+  }
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void fetchItems();
+  }, [fetchItems]);
 
   const groups = useMemo(() => groupLectureItems(data?.items ?? []), [data]);
 
   // «أنشئ سؤال اختيار من متعدد» handed over by the selection toolbar (this source only)
   const pendingMcq = useMcqRequest();
   const [mcq, setMcq] = useState<McqRequest | null>(null);
+  // a request for this source opens the panel (while rendering); the shared store is cleared in the effect
+  const forHere = pendingMcq && pendingMcq.source_id === sourceId ? pendingMcq : null;
+  const [takenMcq, setTakenMcq] = useState<McqRequest | null>(null);
+  if (takenMcq !== forHere) {
+    setTakenMcq(forHere);
+    if (forHere) setMcq(forHere);
+  }
   useEffect(() => {
-    if (!pendingMcq || pendingMcq.source_id !== sourceId) return;
-    setMcq(pendingMcq);
-    mcqRequestStore.clear(pendingMcq.id);
-  }, [pendingMcq, sourceId]);
+    if (forHere) mcqRequestStore.clear(forHere.id);
+  }, [forHere]);
   const mcqPanel = mcq ? (
     <CreateMcqPanel request={mcq} pageLabel={doc.pages[mcq.pageIndex] ? fullPageLabel(doc.pages[mcq.pageIndex]!) : 'الصفحة المحددة'} onClose={() => setMcq(null)} />
   ) : null;

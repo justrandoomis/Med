@@ -1,6 +1,6 @@
 // «تحديد المفتاح» — the owner chooses the answer (an OWNER key, never shown as the source's key). The server
 // creates a new version and reports the impact on past attempts; nothing is re-graded silently (AC-15, AC-26).
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { KeyChangeImpact, QuestionVersionView } from '@medlevo/shared';
 import { Bidi, Button, Dialog, RichTextView, TextField } from '../../design';
 import { errorMessage } from '../../lib/api';
@@ -25,14 +25,16 @@ export function KeyDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  // (re)opening, or another version, starts from the current key (reset while rendering instead of in an effect)
+  const [resetFor, setResetFor] = useState({ open, versionId: version.id });
+  if (resetFor.open !== open || resetFor.versionId !== version.id) {
+    setResetFor({ open, versionId: version.id });
     if (open) {
       setSelected(new Set(version.options.filter((o) => version.correct_option_ids?.includes(o.id)).map((o) => o.option_key)));
       setReason('');
       setError(null);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, version.id]);
+  }
 
   const save = async (keys: string[] | null) => {
     setBusy(true);

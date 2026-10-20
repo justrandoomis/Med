@@ -1,9 +1,9 @@
 // ESLint flat config (track F5, §58): `npm run lint` = `eslint . --max-warnings 0`.
 //   * @eslint/js recommended + typescript-eslint recommended for every TS / JS file of the repository;
-//   * react-hooks for the web app: the rules of hooks (error) and exhaustive dependencies (warning — and warnings
-//     fail the run). The React Compiler rule set of eslint-plugin-react-hooks 7 (`recommended`: set-state-in-effect,
-//     refs, purity, …) is NOT enabled: the app does not use the React Compiler, and those rules describe code the
-//     compiler can optimize, not bugs (measured: 171 findings; see docs/modules/core-web.md);
+//   * react-hooks for the web app: the whole `recommended` set of eslint-plugin-react-hooks 7 — the rules of hooks and
+//     exhaustive dependencies (warning — and warnings fail the run) plus the React Compiler rules (set-state-in-effect,
+//     refs, purity, immutability, preserve-manual-memoization, …). Enabled in Round 7 after the 184 findings were fixed
+//     in the code (see docs/modules/core-web.md §10);
 //   * unused eslint-disable directives are errors, so a disable can never outlive the problem it excused. Every
 //     remaining disable is targeted (one rule, one line) and says why.
 import js from '@eslint/js';
@@ -48,10 +48,7 @@ export default defineConfig(
   {
     files: ['apps/web/**/*.{ts,tsx}'],
     plugins: { 'react-hooks': reactHooks },
-    rules: {
-      'react-hooks/rules-of-hooks': 'error',
-      'react-hooks/exhaustive-deps': 'warn',
-    },
+    rules: { ...reactHooks.configs.flat.recommended.rules },
   },
   {
     // Playwright fixtures that need no other fixture are declared as `async ({}, use) => …`

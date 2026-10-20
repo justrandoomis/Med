@@ -86,14 +86,19 @@ export function CasesScreen() {
   const navigate = useNavigate();
   const [data, setData] = useState<CaseListResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const load = useCallback(async () => {
+  // state is set only when the request settles (no synchronous setState on the effect path)
+  const load = useCallback(
+    () =>
+      casesApi.list()
+        .then((d) => setData(d))
+        .catch((e: unknown) => setError(errorMessage(e, 'تعذّر تحميل الحالات.'))),
+    [],
+  );
+  // a retry clears the previous error at once
+  const reload = () => {
     setError(null);
-    try {
-      setData(await casesApi.list());
-    } catch (e) {
-      setError(errorMessage(e, 'تعذّر تحميل الحالات.'));
-    }
-  }, []);
+    void load();
+  };
   useEffect(() => {
     void load();
   }, [load]);
@@ -115,7 +120,7 @@ export function CasesScreen() {
         </div>
       </header>
 
-      {error && <ErrorState message={error} onRetry={() => void load()} />}
+      {error && <ErrorState message={error} onRetry={reload} />}
       {!data && !error && <LoadingState stage="جارٍ تحميل الحالات…" />}
       {data && (
         <>

@@ -164,6 +164,20 @@ change (`npm run eval -- --write-baseline`):
 | new baseline (`eval-20261020T143342-27d96f0b`, hash `b6115ad6d9690313`) | 80 / 80 | 69 / 69 | — |
 | CI command against the new baseline (`eval-20261020T143402-8ac938b7`) | 80 / 80 | — | `no_regressions`, exit 0 |
 
+**Round 7 — final verification (2026-10-20, the whole tree after H1–H4 and the lint track).** Reports under
+`eval-reports/` (git-ignored):
+
+| run (scripted mode) | regression | tuning | `--compare docs/eval/baseline.json` |
+|---|---|---|---|
+| `npm run eval -- --label=round7-final --compare=docs/eval/baseline.json` (`eval-20261020T195216-38d50040`, 14 s) | 80 / 80 | 69 / 69 | `no_regressions` (0 stopped passing, 0 now pass) |
+| the CI command `--set=regression --compare=… --no-record` (`eval-20261020T195235-1afee4bf`, 10 s) | 80 / 80 | — | `no_regressions`, exit 0 |
+
+Every axis is at its full count (regression / tuning): text_accuracy 6/6 · 23/23, negation_numbers 17/17 · 7/7,
+options_completeness 3/3 · 12/12, key_binding 18/18 · 11/11, citation_validity 5/5, claim_support 6/6, abstention 4/4,
+over_abstention 5/5, image_match 4/4 · 7/7, lecture_link 3/3 · 7/7, rtl_bidi 9/9 · 2/2 — all **small samples**
+(Wilson 95 % lower bounds 34 %–86 % per axis; 95 % for each whole set). The AI axes measure the server's guarantees
+with the evaluation-only scripted provider, not a model (`--mode=live` needs ANTHROPIC_API_KEY — not run).
+
 ## 4. Compare and roll back a change
 
 Every result depends on recorded versions (`report.system`): `pipeline` (processing / OCR orchestration,

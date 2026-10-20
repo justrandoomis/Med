@@ -2,7 +2,7 @@
 // external sites an image may come from — name, domain (+ optional atlas path), the owner's licence note, enabled.
 // An external picture is accepted as an example only from an ENABLED entry; fetching stays off unless the server
 // allows it AND a provider exists (none in this version) — the screen says so plainly, never implying a search runs.
-import { useEffect, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { VISUAL_SOURCE_KINDS, VISUAL_SOURCE_KIND_LABELS_AR, type VisualSourceKind, type VisualSourceListResponse, type VisualSourceView } from '@medlevo/shared';
 import { Bidi, Button, ConfirmDialog, ErrorState, LoadingState, Select, StatusPill, Switch, TextArea, TextField, useToast } from '../../design';
@@ -24,17 +24,24 @@ function place(v: VisualSourceView): string {
   return `${v.domain}${v.path_prefix ?? ''}`;
 }
 
+function draftOf(editing: VisualSourceView | null): Draft {
+  return editing ? { name: editing.name, domain: editing.domain, path_prefix: editing.path_prefix ?? '', kind: editing.kind, licence_note: editing.licence_note ?? '' } : EMPTY;
+}
+
 function SourceForm({ editing, onSaved, onCancel }: { editing: VisualSourceView | null; onSaved: (v: VisualSourceView) => void; onCancel: () => void }) {
   const toast = useToast();
-  const [draft, setDraft] = useState<Draft>(EMPTY);
+  const [draft, setDraft] = useState<Draft>(() => draftOf(editing));
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  useEffect(() => {
+  // another row to edit (or none) starts the form over (adjusted while rendering instead of in an effect)
+  const [formFor, setFormFor] = useState(editing);
+  if (formFor !== editing) {
+    setFormFor(editing);
     setErrors({});
     setFormError(null);
-    setDraft(editing ? { name: editing.name, domain: editing.domain, path_prefix: editing.path_prefix ?? '', kind: editing.kind, licence_note: editing.licence_note ?? '' } : EMPTY);
-  }, [editing]);
+    setDraft(draftOf(editing));
+  }
   const set = (k: keyof Draft) => (v: string) => setDraft((d) => ({ ...d, [k]: v }));
   const submit = async (e: FormEvent) => {
     e.preventDefault();

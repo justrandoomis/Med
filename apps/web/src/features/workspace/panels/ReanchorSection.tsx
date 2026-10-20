@@ -19,7 +19,7 @@ import {
   type SourceRegionView,
 } from '@medlevo/shared';
 import { Button, Dialog, EmptyState, Select, StatusPill, useToast } from '../../../design';
-import { api, errorMessage } from '../../../lib/api';
+import { api, ApiError, errorMessage } from '../../../lib/api';
 import { getDb, type AnnotationRow } from '../../../lib/localdb';
 import { getSyncEngine } from '../../../lib/sync';
 import { fetchNeedsReanchor, fetchRegions } from '../data/api';
@@ -112,10 +112,10 @@ export function ReanchorSection({ doc, local, online, onGoToPage, currentPageInd
   const [failed, setFailed] = useState(false);
   const [placing, setPlacing] = useState<ReanchorGroup | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const load = useCallback(() => {
+  // the request: state is set only when it settles (no synchronous setState on the effect path)
+  const request = useCallback(() => {
     if (!online) return () => undefined;
     let cancelled = false;
-    setFailed(false);
     fetchNeedsReanchor(doc.detail.id)
       .then((r) => !cancelled && setServer(r))
       .catch(() => !cancelled && setFailed(true));
@@ -123,7 +123,19 @@ export function ReanchorSection({ doc, local, online, onGoToPage, currentPageInd
       cancelled = true;
     };
   }, [doc.detail.id, online]);
-  useEffect(() => load(), [load]);
+  // a refresh after a decision clears an earlier failure at once
+  const load = () => {
+    if (online) setFailed(false);
+    request();
+  };
+  // another source / back online: an earlier failure is cleared while rendering; the request runs in the effect
+  const loadKey = `${online}|${doc.detail.id}`;
+  const [loadedFor, setLoadedFor] = useState(loadKey);
+  if (loadedFor !== loadKey) {
+    setLoadedFor(loadKey);
+    if (online) setFailed(false);
+  }
+  useEffect(() => request(), [request]);
   const pageIdx = useMemo(() => new Map(doc.pages.map((p, i) => [p.id, i])), [doc.pages]);
   const groups = useMemo(() => (server ? reanchorGroups(server, pageIdx) : []), [server, pageIdx]);
   const needs = groups.filter((g) => !g.detached);
@@ -152,6 +164,11 @@ export function ReanchorSection({ doc, local, online, onGoToPage, currentPageInd
       load();
     } catch (e) {
       toast.show({ title: 'لم يُنفَّذ القرار', description: errorMessage(e), tone: 'danger' });
+      // (H3 review) the list the decision was made from may be stale (409: an item changed since — on another device or
+      // by this device's own edits sent just before): fetch it again so the next decision carries the current revisions;
+      // the place dialog held the old ones, so it closes and the owner chooses again from the fresh list
+      if (e instanceof ApiError && e.status === 409) setPlacing(null);
+      load();
     } finally {
       setBusy(null);
     }
@@ -220,6 +237,9 @@ export function ReanchorSection({ doc, local, online, onGoToPage, currentPageInd
   );
 }
 
+/** One stable function (an inline default would be new on every render and re-run the fetch effect in a loop). */
+const loadPageRegions = (pageId: string) => fetchRegions(pageId).then((r) => r.regions);
+
 /** «أين تضعها؟»: a page of this source, then either the same place on that page or a paragraph on it. */
 export function ReanchorDialog({
   group,
@@ -228,7 +248,7 @@ export function ReanchorDialog({
   busy,
   onClose,
   onPlace,
-  loadRegions = (pageId: string) => fetchRegions(pageId).then((r) => r.regions),
+  loadRegions = loadPageRegions,
 }: {
   group: ReanchorGroup | null;
   doc: SourceDocument;
@@ -242,17 +262,27 @@ export function ReanchorDialog({
   const [regions, setRegions] = useState<SourceRegionView[] | null>(null);
   const [regionId, setRegionId] = useState<string>('');
   const name = useId();
-  useEffect(() => {
+  // a group to place starts at the current page (reset while rendering; `null` = not seen yet, so a dialog mounted with
+  // a group starts there too)
+  const pageCount = doc.pages.length;
+  const [placingFor, setPlacingFor] = useState<{ group: ReanchorGroup | null; initialPage: number; pageCount: number } | null>(null);
+  if (!placingFor || placingFor.group !== group || placingFor.initialPage !== initialPage || placingFor.pageCount !== pageCount) {
+    setPlacingFor({ group, initialPage, pageCount });
     if (group) {
-      setPageIndex(Math.min(Math.max(0, initialPage), Math.max(0, doc.pages.length - 1)));
+      setPageIndex(Math.min(Math.max(0, initialPage), Math.max(0, pageCount - 1)));
       setRegionId('');
     }
-  }, [group, initialPage, doc.pages.length]);
+  }
   const page = doc.pages[pageIndex];
+  // another page shows its regions afresh (cleared while rendering; the request runs in the effect)
+  const [regionsFor, setRegionsFor] = useState({ group, page, loadRegions });
+  if (regionsFor.group !== group || regionsFor.page !== page || regionsFor.loadRegions !== loadRegions) {
+    setRegionsFor({ group, page, loadRegions });
+    if (group && page && group.kind !== 'note') setRegions(null);
+  }
   useEffect(() => {
     if (!group || !page || group.kind === 'note') return;
     let cancelled = false;
-    setRegions(null);
     loadRegions(page.id)
       .then((r) => !cancelled && setRegions(r.filter((x) => !!x.bbox && !!x.text?.trim() && (x.kind === 'paragraph' || x.kind === 'text_block' || x.kind === 'heading' || x.kind === 'list_item' || x.kind === 'figure' || x.kind === 'table' || x.kind === 'caption'))))
       .catch(() => !cancelled && setRegions([]));

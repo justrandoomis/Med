@@ -21,16 +21,19 @@ export function CasesTab({ doc, online, examMode }: { doc: SourceDocument; onlin
   const [data, setData] = useState<CaseListResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    try {
-      const r = await api.get<CaseListResponse>('/cases', { query: { source_id: sourceId } });
-      if (!r || !Array.isArray(r.cases)) throw new Error('bad response');
-      setData(r);
-      setError(null);
-    } catch (e) {
-      setError(errorMessage(e, 'تعذّر تحميل حالات هذه المحاضرة.'));
-    }
-  }, [sourceId]);
+  // state is set only when the request settles (no synchronous setState on the effect path)
+  const load = useCallback(
+    () =>
+      api
+        .get<CaseListResponse>('/cases', { query: { source_id: sourceId } })
+        .then((r) => {
+          if (!r || !Array.isArray(r.cases)) throw new Error('bad response');
+          setData(r);
+          setError(null);
+        })
+        .catch((e: unknown) => setError(errorMessage(e, 'تعذّر تحميل حالات هذه المحاضرة.'))),
+    [sourceId],
+  );
 
   useEffect(() => {
     if (online) void load();

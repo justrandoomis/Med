@@ -98,8 +98,6 @@ export function RecognitionDialog({ target, onClose, recognition, chat, online, 
   const wait = deps.wait ?? waitForRecognition;
   const [lang, setLang] = useState<RecognitionLang>('mixed');
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' });
-  const [picture, setPicture] = useState<RenderedPicture | null>(null);
-  const [pictureError, setPictureError] = useState<string | null>(null);
   const [correction, setCorrection] = useState('');
   const [typed, setTyped] = useState('');
   const [question, setQuestion] = useState('');
@@ -109,23 +107,48 @@ export function RecognitionDialog({ target, onClose, recognition, chat, online, 
   const ids = useMemo(() => (target ? writingIds(target.items) : []), [target]);
   const pageAnchor = target?.anchor.type === 'page' ? target.anchor : null;
 
-  // a new selection: draw its picture and look for an earlier reading of the same strokes
-  useEffect(() => {
-    abort.current?.abort();
+  // a new selection: its picture is derived from it; the dialog starts over (reset while rendering); the effect below
+  // looks for an earlier reading of the same strokes
+  const renderPicture = deps.render ?? renderSelectionPicture;
+  const { picture, pictureError } = useMemo((): { picture: RenderedPicture | null; pictureError: string | null } => {
+    if (!target) return { picture: null, pictureError: null };
+    try {
+      return { picture: renderPicture(target.items, target.ar), pictureError: null };
+    } catch (e) {
+      return { picture: null, pictureError: errorMessage(e, 'تعذّر رسم الكتابة المحددة.') };
+    }
+  }, [target, renderPicture]);
+  const [shownTarget, setShownTarget] = useState(target);
+  if (shownTarget !== target) {
+    setShownTarget(target);
     setPhase({ kind: 'idle' });
     setNotice(null);
     setCorrection('');
     setTyped('');
     setQuestion('');
-    setPicture(null);
-    setPictureError(null);
-    if (!target) return;
+  }
+
+  const follow = async (id: string) => {
+    const ac = new AbortController();
+    abort.current?.abort();
+    abort.current = ac;
     try {
-      setPicture((deps.render ?? renderSelectionPicture)(target.items, target.ar));
+      const rec = await wait(id, { signal: ac.signal, onUpdate: (r) => setPhase({ kind: 'reading', rec: r }) });
+      if (ac.signal.aborted) return;
+      if (rec.status === 'failed') setPhase({ kind: 'error', message: failedMessage(rec), rec });
+      else {
+        setPhase({ kind: 'result', rec });
+        setCorrection(rec.effective_text);
+      }
     } catch (e) {
-      setPictureError(errorMessage(e, 'تعذّر رسم الكتابة المحددة.'));
+      if (ac.signal.aborted) return;
+      setPhase({ kind: 'error', message: errorMessage(e, 'تعذّر متابعة القراءة.') });
     }
-    if (!online) return;
+  };
+
+  useEffect(() => {
+    abort.current?.abort();
+    if (!target || !online) return;
     let alive = true;
     const q = target.anchor.type === 'page' ? { page_id: target.anchor.page_id } : target.anchor.type === 'note_page' ? { note_page_id: target.anchor.note_page_id } : null;
     if (q)
@@ -147,24 +170,6 @@ export function RecognitionDialog({ target, onClose, recognition, chat, online, 
   }, [target]);
 
   useEffect(() => () => abort.current?.abort(), []);
-
-  const follow = async (id: string) => {
-    const ac = new AbortController();
-    abort.current?.abort();
-    abort.current = ac;
-    try {
-      const rec = await wait(id, { signal: ac.signal, onUpdate: (r) => setPhase({ kind: 'reading', rec: r }) });
-      if (ac.signal.aborted) return;
-      if (rec.status === 'failed') setPhase({ kind: 'error', message: failedMessage(rec), rec });
-      else {
-        setPhase({ kind: 'result', rec });
-        setCorrection(rec.effective_text);
-      }
-    } catch (e) {
-      if (ac.signal.aborted) return;
-      setPhase({ kind: 'error', message: errorMessage(e, 'تعذّر متابعة القراءة.') });
-    }
-  };
 
   const read = async () => {
     if (!target || !picture) return;

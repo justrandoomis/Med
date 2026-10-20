@@ -1,6 +1,6 @@
 // «ملاحظاتي»: notes on this source (local-first; save status per note), bookmarks, and writing that
 // «تحتاج إعادة ربط» (§25: never deleted, never moved silently — listed with where it used to be).
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useInsertionEffect, useMemo, useRef, useState } from 'react';
 import { Bookmark, BookmarkMinus, BookmarkPlus, FilePlus2, FileText, MapPin, NotebookPen, Pencil, RotateCcw, Trash2 } from 'lucide-react';
 import {
   detectDir,
@@ -151,10 +151,14 @@ function NotesSection({ doc, pageIndex, pageKeys, draft, onDraftConsumed, anchor
       .catch(() => undefined);
   }, [doc.detail.id, online]);
 
+  // a draft handed over opens the editor (while rendering); the parent is told it was taken in the effect below
+  const [shownDraft, setShownDraft] = useState<typeof draft>(null);
+  if (shownDraft !== draft) {
+    setShownDraft(draft);
+    if (draft) setEditing({ id: null, pageIndex: draft.pageIndex, quote: draft.quote });
+  }
   useEffect(() => {
-    if (!draft) return;
-    setEditing({ id: null, pageIndex: draft.pageIndex, quote: draft.quote });
-    onDraftConsumed();
+    if (draft) onDraftConsumed();
   }, [draft, onDraftConsumed]);
 
   const currentKey = pageKeys[pageIndex];
@@ -283,9 +287,12 @@ export function NoteEditor({ existing, anchor, quote, pageLabel, onClose }: { ex
     return quote ? [quoteParagraph(quote)] : [];
   }, [existing, quote]);
   const quotesRef = useRef(quotes);
-  quotesRef.current = quotes;
   const anchorRef = useRef(anchor);
-  anchorRef.current = anchor;
+  // latest values for the save paths, written at commit (before any layout effect) rather than during render
+  useInsertionEffect(() => {
+    quotesRef.current = quotes;
+    anchorRef.current = anchor;
+  });
 
   /** text of the note as this editor last saw / wrote it (to notice another device's text arriving) */
   const lastSeen = useRef<string | null>(existing ? noteText(existing.body as RichText) : null);

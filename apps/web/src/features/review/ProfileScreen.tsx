@@ -32,7 +32,13 @@ export function ProfileScreen() {
   const [saving, setSaving] = useState(false);
   const [reset, setReset] = useState<LearningProfileView['signals'][number] | null>(null);
   const [newCards, setNewCards] = useState(String(settings.settings.daily_new_cards));
-  useEffect(() => setNewCards(String(settings.settings.daily_new_cards)), [settings.settings.daily_new_cards]);
+  // a new saved value replaces the field (adjusted while rendering instead of in an effect)
+  const savedNewCards = settings.settings.daily_new_cards;
+  const [shownNewCards, setShownNewCards] = useState(savedNewCards);
+  if (shownNewCards !== savedNewCards) {
+    setShownNewCards(savedNewCards);
+    setNewCards(String(savedNewCards));
+  }
   const retention = settings.settings.desired_retention.toFixed(2);
   const retentionOptions = [...new Set(['0.80', '0.85', '0.90', '0.95', retention])].sort();
 

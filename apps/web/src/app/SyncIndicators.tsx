@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { LogIn, RefreshCw, WifiOff } from 'lucide-react';
 import { SYNC_STATE_LABELS_AR, type SyncState } from '@medlevo/shared';
@@ -76,14 +76,13 @@ export function GlobalSaveStatus({ compact }: { compact?: boolean }) {
  */
 function useSaveAnnouncement(state: SyncState): string {
   const [text, setText] = useState('');
-  const prev = useRef<SyncState>(state);
-  useEffect(() => {
-    const was = prev.current;
-    prev.current = state;
-    if (was === state) return;
+  // the transition is detected while rendering (React's «adjust state when a prop changes»), not in an effect
+  const [was, setWas] = useState<SyncState>(state);
+  if (was !== state) {
+    setWas(state);
     if (state === 'conflict' || state === 'error' || state === 'saved_locally') setText(`حالة الحفظ: ${SYNC_STATE_LABELS_AR[state]}`);
     else if (state === 'synced' && (was === 'conflict' || was === 'error' || was === 'saved_locally')) setText(`حالة الحفظ: ${SYNC_STATE_LABELS_AR.synced}`);
-  }, [state]);
+  }
   return text;
 }
 

@@ -221,10 +221,9 @@ now per-weight files, verified: only Arabic + Latin subsets load).
   `e2e/f5-quality-ops.spec.ts`.
 * **Lint** (`eslint.config.js` at the repo root, `npm run lint` = `eslint . --max-warnings 0`): @eslint/js +
   typescript-eslint recommended everywhere, `react-hooks/rules-of-hooks` (error) and `react-hooks/exhaustive-deps`
-  (warning — and warnings fail the run) for the web app, unused disable directives are errors. The React Compiler rule
-  set of eslint-plugin-react-hooks 7 (`set-state-in-effect`, `refs`, `purity`, …) is **not** enabled: the app does not
-  use the React Compiler and those rules describe compiler-optimizable code rather than bugs (171 findings measured
-  when tried). The first run found 55 problems; all were fixed in code — e.g. the focus trap and outside-pointer hooks
+  (warning — and warnings fail the run) for the web app, unused disable directives are errors. ~~The React Compiler rule
+  set of eslint-plugin-react-hooks 7 (`set-state-in-effect`, `refs`, `purity`, …) is **not** enabled~~ — enabled in
+  Round 7 after its findings were fixed in the code, see §10. The first run found 55 problems; all were fixed in code — e.g. the focus trap and outside-pointer hooks
   read their options / refs through a ref instead of omitting dependencies, `SourcesTab` keys its effect on the page id,
   `BookCanvas` captures its visibility map for the cleanup, Search / Terms memoize their derived lists, unused imports
   and variables removed, 6 stale disable comments removed. The disables that remain are single-line, single-rule and say
@@ -232,4 +231,62 @@ now per-weight files, verified: only Arabic + Latin subsets load).
   regexes on the server).
 * `ExportPanel`: the format choice wraps on a phone now that there are four formats (DOCX) — found by the F5 browser
   test at 390 px.
+
+## 10. Round 7 — the React Compiler lint rules (react-hooks `recommended`, §58) (2026-10-20)
+
+`eslint.config.js` now applies the whole `recommended` set of eslint-plugin-react-hooks 7.1.1 to `apps/web`
+(`rules-of-hooks`, `exhaustive-deps` and the compiler rules `set-state-in-effect`, `refs`, `purity`, `immutability`,
+`preserve-manual-memoization`, `set-state-in-render`, `globals`, `static-components`, `use-memo`, …). Measured with the
+rules on and the code as it was: **184 findings** in 92 files (106 `set-state-in-effect`, 50 `refs`, 14
+`preserve-manual-memoization`, 7 `purity`, 7 `immutability`). `npm run lint` (`--max-warnings 0`) passes with them on.
+
+How they were fixed (behaviour-neutral refactors; the patterns repeat across screens):
+* **Latest-value refs** (`xRef.current = x` during render, e.g. handlers, options, the reader's place, ink view /
+  anchor): the `useRef` stays and the value is written in one `useInsertionEffect` per component — at commit, before
+  any layout effect, so every effect and event handler sees what it saw before; uncommitted renders no longer leak in.
+* **State mirrored from a prop / reset when something changes** (a dialog opening, another id, a new server value,
+  another page): React's «adjusting state when a prop changes» — the previous key is kept in state and compared while
+  rendering, so no commit shows the stale value. Where the old effect also ran on mount with a visible effect the tracker
+  starts at a «not seen» `null`. Every condition ends after one update (an explicit guard where the fallback could equal
+  the current value: the ExportPanel format, the StudyDiagram focus).
+* **Loaders** (`useCallback(async () => { setError(null); setX(await api()) … })` called from an effect): the request
+  sets state only when it settles (`.then(ok).catch(err)` — exactly the old try / catch, including errors thrown while
+  applying the answer); the synchronous reset moved to the retry / refresh path (`reload`), and to the render-time key
+  reset for keyed loaders. Polling loaders (`DerivedVersions`, `FigureReadingPanel`) poll through an inner function
+  instead of calling themselves before their declaration. Shared hooks treated the same way: `useLoad` (Control Center),
+  `useQuery` (library data, 65 callers; `refresh` still returns a promise), `useFileSrc`, `useEntitySyncState`,
+  `useEffectiveAvailability`, `useSourceDetail` / `useVersionDocument`, `useFloatingPosition`, `usePresence`,
+  `useResizablePanel`.
+* **Derived instead of stored**: the recognition dialog's rendered picture (`useMemo` on the selection); the lasso
+  dialog's «looking for an earlier reading» state.
+* **Clock reads in render** (`Date.now()`): the existing ticking `useNow` (`review/local/hooks.ts`) in the plan editor,
+  the card editor and the reviewer's interval previews; the reviewer's «shown at» stamp is a ref set after each newly
+  shown card (it is only read when rating).
+* **DOM read in render**: the ink paper tone (`paperToneOf(ref.current)` in the selection overlay, text boxes and sticky
+  notes) is measured by the new `ink/usePaperTone.ts` in a layout effect; the selection toolbar gets the canvas through a
+  getter like `textRoot`; the OCR layer forwards its element with `useImperativeHandle` instead of mutating the
+  parent's ref prop; the conflict dialog's «my place» uses the `pageIndex` state that mirrors the reading line.
+* **Memoization** (`preserve-manual-memoization`): `RunnerScreen.showSolution` depends on `policy.anti_shortcut` read
+  once; three WorkspaceScreen callbacks list the (stable) `useState` setters the compiler infers.
+
+Edge cases that now differ — each was a stale value shown for a moment, none is a different end state: a stored page
+image never shows another file's revoked object URL; an entity's / evidence's / undo event's sync, offline or undo
+state is never another one's; a new lecture in the scope picker shows «loading» instead of the previous lecture's
+references; ink text and sticky colours follow the paper tone from the first paint (before: from the next re-render);
+due / «soon» labels follow the ticking clock (≤ 30 s, a new day in the plan editor ≤ 1 min) instead of the last render.
+
+Targeted disables added (one line, one rule, with the reason): `react-hooks/refs` ×4 — `cloneElement` in `Menu`, `Popover`
+(both `Menu.tsx`) and `Tooltip`, and `Popover`'s render prop, false positives (they attach a ref / a callback, nothing is read during
+render); `react-hooks/set-state-in-effect` ×1 — WorkspaceScreen leaving the Study Book when the session switches to
+«امتحن نفسك» (`changeView` also writes the view preference and the reading position, which cannot run while
+rendering); `react-hooks/exhaustive-deps` ×1 — `usePaperTone`'s deliberately dependency-free re-measure. Seven older
+`exhaustive-deps` disables disappeared with the effects they excused.
+
+Tests: `test/hooks-render-adjust.test.tsx` (8) pins the shared hooks on **committed** renders — five of them fail on the
+old hooks (a commit with the stale value, the revoked URL) and pass now. Re-run after the change (`docs/TEST_LOG.md`,
+Round 7 lint): root `npm test` green (web 130 files passed, 1 skipped — 802 tests), `npm run typecheck`, `npm run lint`,
+`npm run build` clean; full E2E 116 passed, 11 skipped, 7 failed — and those 7 fail identically on the committed code
+without these changes (`g6-ac28-pencil` ×6: expectations older than track F4's recognition; `g1-ac04-printed-page`
+«detected labels» on the phone: the compact page indicator «الصفحة 1 في الملف» runs under the save-status icon, which
+takes the tap — a real layout defect, reported, not fixed here).
 

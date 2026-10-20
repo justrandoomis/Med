@@ -38,6 +38,8 @@ import type { InkItem } from '../ink/model';
 import { recognitionApi } from './api';
 import { matchingRecognition, writingIds, type Gate } from './RecognitionDialog';
 import './handwriting.css';
+// the occlusion editor's own styles (lw-occl-editor…) live with the review screens; the reader needs them here too
+import '../../review/learning.css';
 
 export interface LassoTarget {
   mode: 'card' | 'question';
@@ -95,8 +97,13 @@ export function LassoCardDialog({ target, onClose, recognition, online, onReadFi
   const cropId = useRef(newId());
   const noteId = useRef(newId());
 
-  // a new selection: start over and look for an earlier reading of exactly these strokes
-  useEffect(() => {
+  // a new selection: start over (reset while rendering; `null` = not seen yet, so the first selection starts too) and
+  // look for an earlier reading of exactly these strokes (the request runs in the effect below)
+  const a = target?.anchor;
+  const lookup = target && online && recognition.available && ids.length > 0 && a ? (a.type === 'page' ? { page_id: a.page_id } : a.type === 'note_page' ? { note_page_id: a.note_page_id } : null) : null;
+  const [shown, setShown] = useState<{ target: typeof target } | null>(null);
+  if (!shown || shown.target !== target) {
+    setShown({ target });
     setKind('basic');
     setFront('');
     setBack('');
@@ -107,15 +114,14 @@ export function LassoCardDialog({ target, onClose, recognition, online, onReadFi
     setPrompt('');
     setError(null);
     setDone(null);
+    setReading(lookup ? { kind: 'loading' } : { kind: 'idle' });
+  }
+  useEffect(() => {
     cropId.current = newId();
     noteId.current = newId();
-    setReading({ kind: 'idle' });
-    if (!target || !online || !recognition.available || ids.length === 0) return;
-    const a = target.anchor;
-    const q = a.type === 'page' ? { page_id: a.page_id } : a.type === 'note_page' ? { note_page_id: a.note_page_id } : null;
-    if (!q) return;
+    if (!lookup) return;
+    const q = lookup;
     let alive = true;
-    setReading({ kind: 'loading' });
     (deps.recognitions ?? recognitionApi.list)(q)
       .then((list) => {
         if (!alive) return;
@@ -365,7 +371,7 @@ export function LassoCardDialog({ target, onClose, recognition, online, onReadFi
             ) : (
               <>
                 <p className="hw-muted">
-                  <ImageIcon size={14} aria-hidden="true" /> صورة من الصفحة {crop.page_index + 1} في المصدر ({crop.width}×{crop.height}).
+                  <ImageIcon size={14} aria-hidden="true" /> صورة من الصفحة {crop.page_index + 1} في المصدر (<bdi dir="ltr">{crop.width}×{crop.height}</bdi> بكسل).
                 </p>
                 <div className="hw-lasso__occlusion">
                   <OcclusionEditor imageUrl={crop.url} masks={masks} onChange={setMasks} disabled={busy} />

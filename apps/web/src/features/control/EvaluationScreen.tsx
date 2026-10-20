@@ -12,6 +12,24 @@ import { SectionHeader, useLoad } from './shared';
 
 const KIND_AR = { deterministic: 'حتمي (دون نموذج)', scripted_ai: 'مسار الذكاء الاصطناعي بمزود مكتوب مسبقًا' } as const;
 
+/** (Round 7 final) the server's how-to-run text marks commands and paths with backticks: show each as an isolated
+ *  left-to-right code run (the raw backticks were printed, and the Arabic paragraph reordered «--set=…» / «eval-reports/»). */
+function CommandText({ text }: { text: string }) {
+  return (
+    <>
+      {text.split(/`([^`]+)`/).map((part, i) =>
+        i % 2 === 1 ? (
+          <bdi key={i}>
+            <code dir="ltr">{part}</code>
+          </bdi>
+        ) : (
+          part
+        ),
+      )}
+    </>
+  );
+}
+
 function RateCell({ r }: { r: EvalRate }) {
   if (r.total === 0 && r.not_run === 0) return <span className="cc-muted">—</span>;
   const tone = r.total === 0 ? 'neutral' : r.passed === r.total ? 'success' : 'warning';
@@ -197,7 +215,9 @@ export function EvaluationScreen() {
           title="لم يُسجَّل تقييم بعد"
           description={
             <>
-              <p>{d.how_to_run_ar}</p>
+              <p>
+                <CommandText text={d.how_to_run_ar} />
+              </p>
               <p>
                 الكتالوج الحالي: {formatCount(d.catalogue.cases)} حالة — {formatCount(d.catalogue.regression)} في عينة الانحدار و{formatCount(d.catalogue.tuning)} من أمثلة الضبط.
               </p>
@@ -273,13 +293,17 @@ export function EvaluationScreen() {
             </ul>
             <details className="cc-eval__how">
               <summary>كيف أشغّل التقييم وأقارن وأتراجع؟</summary>
-              <p>{d.how_to_run_ar}</p>
+              <p>
+                <CommandText text={d.how_to_run_ar} />
+              </p>
             </details>
           </section>
           {d.latest.notes_ar.length > 0 && (
             <ul className="cc-notes">
               {d.latest.notes_ar.map((n, i) => (
-                <li key={i}>{n}</li>
+                <li key={i}>
+                  <CommandText text={n} />
+                </li>
               ))}
             </ul>
           )}

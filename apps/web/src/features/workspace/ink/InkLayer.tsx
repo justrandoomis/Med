@@ -2,7 +2,7 @@
 // the text visually), committed ink, and a live layer for the stroke in progress — plus DOM for
 // text boxes, sticky notes and the lasso selection. Pointer input is handled imperatively by
 // PageInkController: a pointermove never causes a React render.
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { memo, useEffect, useInsertionEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { ImageOff, Link2, StickyNote as StickyIcon } from 'lucide-react';
 import { newId, normToView, richTextFromPlain, richTextToPlain, viewSize, type ImageAnnotationData, type LinkData, type NormBox, type StickyData, type TextBoxData } from '@medlevo/shared';
 import { cx, RichTextView } from '../../../design';
@@ -12,7 +12,7 @@ import { useInk, useInkInternal } from './InkProvider';
 import { PageInkController } from './layerController';
 import { isImage, isLink, isSticky, isTextBox, makeLinkItem, makeStickyItem, makeTextItem, type InkItem, type InkItemOf } from './model';
 import { resolveInkColor } from './palette';
-import { paperToneOf } from './render';
+import { usePaperTone } from './usePaperTone';
 import { SelectionOverlay } from './SelectionOverlay';
 import type { InkLayerProps, InkPageView } from './types';
 import './ink.css';
@@ -31,17 +31,21 @@ export function InkLayer({ targetKey, anchor, view, interactive, onStrokeActiveC
   const liveRef = useRef<HTMLCanvasElement>(null);
   const ctrlRef = useRef<PageInkController | null>(null);
   const viewRef = useRef(view);
-  viewRef.current = view;
   const anchorRef = useRef(anchor);
-  anchorRef.current = anchor;
   const interactiveRef = useRef(interactive);
-  interactiveRef.current = interactive;
   const activeCb = useRef(onStrokeActiveChange);
-  activeCb.current = onStrokeActiveChange;
   const ar = view.pageHeight / view.pageWidth;
   const host = useInkHost();
   const hostRef = useRef(host);
-  hostRef.current = host;
+  // latest values for the pointer handlers and the controller, written at commit (before any layout effect, so the
+  // layout effect below already sees them) rather than during render
+  useInsertionEffect(() => {
+    viewRef.current = view;
+    anchorRef.current = anchor;
+    interactiveRef.current = interactive;
+    activeCb.current = onStrokeActiveChange;
+    hostRef.current = host;
+  });
   /** a link box waiting for its target (shown dashed while the host's chooser is open) */
   const [pendingLink, setPendingLink] = useState<NormBox | null>(null);
   const [objectsVersion, setObjectsVersion] = useState(0);
@@ -131,12 +135,15 @@ export function InkLayer({ targetKey, anchor, view, interactive, onStrokeActiveC
     });
   }, [store, targetKey]);
 
-  const all = useMemo(() => {
-    const list = store.items(targetKey).filter(isDomObject);
-    objectIds.current = new Set(list.map((i) => i.id));
-    return list;
+  const all = useMemo(
+    () => store.items(targetKey).filter(isDomObject),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [store, targetKey, objectsVersion]);
+    [store, targetKey, objectsVersion],
+  );
+  // the ids the page subscription above checks, kept with the commit (not written during render)
+  useInsertionEffect(() => {
+    objectIds.current = new Set(all.map((i) => i.id));
+  }, [all]);
   const objects = useMemo(() => all.filter((i): i is InkItemOf<TextBoxData> | InkItemOf<StickyData> => isTextBox(i) || isSticky(i)), [all]);
   // pictures sit under the ink (rendered before the canvases), links above it; both in paint order
   const images = useMemo(() => all.filter((i): i is InkItemOf<ImageAnnotationData> => isImage(i)).sort((a, b) => a.z - b.z || a.created_at - b.created_at), [all]);
@@ -284,7 +291,7 @@ function textBoxStyle(box: NormBox, fontScale: number, view: InkPageView): CSSPr
 
 const TextBoxView = memo(function TextBoxView({ item, view, hidden, editable, onEdit }: { item: InkItemOf<TextBoxData>; view: InkPageView; hidden: boolean; editable: boolean; onEdit: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
-  const tone = paperToneOf(ref.current);
+  const tone = usePaperTone(ref);
   const style: CSSProperties = { ...textBoxStyle(item.data.box, item.data.font_scale, view), color: resolveInkColor(item.data.color, tone, null), visibility: hidden ? 'hidden' : undefined };
   return (
     <div
@@ -316,7 +323,8 @@ const TextBoxView = memo(function TextBoxView({ item, view, hidden, editable, on
 const StickyView = memo(function StickyView({ item, view, hidden, open, onOpen }: { item: InkItemOf<StickyData>; view: InkPageView; hidden: boolean; open: boolean; onOpen: () => void }) {
   const [x, y] = normToView(item.data.at[0], item.data.at[1], view);
   const ref = useRef<HTMLButtonElement>(null);
-  const color = resolveInkColor(item.data.color, paperToneOf(ref.current), null);
+  const tone = usePaperTone(ref);
+  const color = resolveInkColor(item.data.color, tone, null);
   const preview = item.data.text.trim().split(/\s+/).slice(0, 8).join(' ');
   if (open) return null;
   return (
@@ -346,7 +354,12 @@ function missingReason(): string {
 const ImageView = memo(function ImageView({ item, view, hidden }: { item: InkItemOf<ImageAnnotationData>; view: InkPageView; hidden: boolean }) {
   const src = useImageSource(item.data.image_key);
   const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [src.src]);
+  // another picture source gets another try (adjusted while rendering instead of in an effect)
+  const [triedSrc, setTriedSrc] = useState(src.src);
+  if (triedSrc !== src.src) {
+    setTriedSrc(src.src);
+    setFailed(false);
+  }
   const alt = item.data.alt || (item.data.name ? `صورة أضفتها: ${item.data.name}` : 'صورة أضفتها إلى الصفحة');
   const style: CSSProperties = { ...boxStyle(item.data.box, view), visibility: hidden ? 'hidden' : undefined };
   return (
@@ -468,34 +481,37 @@ function ObjectEditor({ editing, view, onDone, getAnchor }: { editing: NonNullab
 
   /** Writes the edit (if any). Pure data: no DOM reads, so it also works during unmount. */
   const commitRef = useRef<() => void>(() => {});
-  commitRef.current = () => {
-    if (done.current) return;
-    const text = valueRef.current.trim();
-    if (text === initial.trim()) return; // nothing changed (also: StrictMode's simulated unmount)
-    done.current = true;
-    const now = Date.now();
-    if (editing.kind === 'text') {
-      const hNorm = Math.max(0.02, heightRef.current / (view.pageHeight * view.scale));
-      if (existing && isTextBox(existing)) {
-        if (!text) store.commit('حذف مربع نص', [{ id: existing.id, targetKey: editing.targetKey, before: existing, after: null }]);
-        else {
-          const after = { ...existing, data: { ...existing.data, text: richTextFromPlain(text), box: { ...existing.data.box, h: hNorm } }, updated_at: now };
-          store.commit('تحرير نص', [{ id: existing.id, targetKey: editing.targetKey, before: existing, after }]);
+  // rebuilt with each commit (not during render), so a save on blur / unmount always uses the latest values
+  useInsertionEffect(() => {
+    commitRef.current = () => {
+      if (done.current) return;
+      const text = valueRef.current.trim();
+      if (text === initial.trim()) return; // nothing changed (also: StrictMode's simulated unmount)
+      done.current = true;
+      const now = Date.now();
+      if (editing.kind === 'text') {
+        const hNorm = Math.max(0.02, heightRef.current / (view.pageHeight * view.scale));
+        if (existing && isTextBox(existing)) {
+          if (!text) store.commit('حذف مربع نص', [{ id: existing.id, targetKey: editing.targetKey, before: existing, after: null }]);
+          else {
+            const after = { ...existing, data: { ...existing.data, text: richTextFromPlain(text), box: { ...existing.data.box, h: hNorm } }, updated_at: now };
+            store.commit('تحرير نص', [{ id: existing.id, targetKey: editing.targetKey, before: existing, after }]);
+          }
+        } else if (text) {
+          const preset = prefs.presets.text;
+          const w = Math.min(DRAFT_TEXT_WIDTH, 1 - editing.at[0]);
+          const item = makeTextItem({ id: newId(), anchor: getAnchor(), now, z: store.nextZ(editing.targetKey), box: { x: editing.at[0], y: editing.at[1], w: Math.max(0.08, w), h: hNorm }, text: richTextFromPlain(text), color: preset.color, fontScale: preset.width });
+          store.commit('مربع نص', [{ id: item.id, targetKey: editing.targetKey, before: null, after: item }]);
         }
+      } else if (existing && isSticky(existing)) {
+        const after = { ...existing, data: { ...existing.data, text }, updated_at: now };
+        store.commit('تحرير ملاحظة لاصقة', [{ id: existing.id, targetKey: editing.targetKey, before: existing, after }]);
       } else if (text) {
-        const preset = prefs.presets.text;
-        const w = Math.min(DRAFT_TEXT_WIDTH, 1 - editing.at[0]);
-        const item = makeTextItem({ id: newId(), anchor: getAnchor(), now, z: store.nextZ(editing.targetKey), box: { x: editing.at[0], y: editing.at[1], w: Math.max(0.08, w), h: hNorm }, text: richTextFromPlain(text), color: preset.color, fontScale: preset.width });
-        store.commit('مربع نص', [{ id: item.id, targetKey: editing.targetKey, before: null, after: item }]);
+        const item = makeStickyItem({ id: newId(), anchor: getAnchor(), now, z: store.nextZ(editing.targetKey), at: editing.at, text, color: STICKY_DEFAULT_COLOR });
+        store.commit('ملاحظة لاصقة', [{ id: item.id, targetKey: editing.targetKey, before: null, after: item }]);
       }
-    } else if (existing && isSticky(existing)) {
-      const after = { ...existing, data: { ...existing.data, text }, updated_at: now };
-      store.commit('تحرير ملاحظة لاصقة', [{ id: existing.id, targetKey: editing.targetKey, before: existing, after }]);
-    } else if (text) {
-      const item = makeStickyItem({ id: newId(), anchor: getAnchor(), now, z: store.nextZ(editing.targetKey), at: editing.at, text, color: STICKY_DEFAULT_COLOR });
-      store.commit('ملاحظة لاصقة', [{ id: item.id, targetKey: editing.targetKey, before: null, after: item }]);
-    }
-  };
+    };
+  });
 
   useEffect(() => {
     ref.current?.focus();

@@ -172,12 +172,21 @@ export function matchAllowedSource(url: string | null | undefined, registry: rea
   } catch {
     return null;
   }
+  // (review H4) a dot-dot segment that survived URL parsing (an encoded «/» around it) is never inside an atlas path
+  if (/(?:^|\/)\.\.?(?:\/|$)/.test(path)) return null;
   for (const e of registry) {
     if (host !== e.domain && !host.endsWith(`.${e.domain}`)) continue;
-    if (e.path_prefix && !path.startsWith(e.path_prefix)) continue;
+    if (e.path_prefix && !underPath(path, e.path_prefix)) continue;
     return e;
   }
   return null;
+}
+
+/** (review H4) `path` is the atlas path itself or below it — «/atlas» allows «/atlas/x», never «/atlas-evil/x». */
+function underPath(path: string, prefix: string): boolean {
+  const base = prefix.replace(/\/+$/, '');
+  if (!base) return true;
+  return path === base || path.startsWith(`${base}/`);
 }
 
 function hostOf(url: string): string {

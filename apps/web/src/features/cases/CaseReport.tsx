@@ -98,19 +98,30 @@ export function CaseReport() {
   const [actionError, setActionError] = useState<string | null>(null);
   usePageTitle(report ? `تقرير: ${report.case.title}` : 'تقرير المحاولة');
 
-  const load = useCallback(async () => {
+  // state is set only when the request settles (no synchronous setState on the effect path)
+  const load = useCallback(
+    () =>
+      casesApi.report(attemptId)
+        .then((r) => setReport(r))
+        .catch((e: unknown) => setError(errorMessage(e, 'تعذّر تحميل التقرير.'))),
+    [attemptId],
+  );
+  // a retry / refresh clears the previous error at once
+  const reload = useCallback(() => {
     setError(null);
-    try {
-      setReport(await casesApi.report(attemptId));
-    } catch (e) {
-      setError(errorMessage(e, 'تعذّر تحميل التقرير.'));
-    }
-  }, [attemptId]);
+    return load();
+  }, [load]);
+  // another attempt: its predecessor's error is cleared while rendering
+  const [loadedFor, setLoadedFor] = useState(attemptId);
+  if (loadedFor !== attemptId) {
+    setLoadedFor(attemptId);
+    setError(null);
+  }
   useEffect(() => {
     void load();
   }, [load]);
 
-  if (error) return <ErrorState message={error} onRetry={() => void load()} />;
+  if (error) return <ErrorState message={error} onRetry={() => void reload()} />;
   if (!report) return <LoadingState stage="جارٍ تحميل التقرير…" />;
 
   const override = (id: string) => async (met: boolean, note: string) => {

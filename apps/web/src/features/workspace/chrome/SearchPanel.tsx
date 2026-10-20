@@ -45,13 +45,20 @@ export function SearchPanel({ doc, query, onQuery, results, onResults, current, 
     inputRef.current?.select();
   }, [focusKey]);
 
+  // an emptied query clears the progress while rendering; the parent is told in the effect below
+  const [searched, setSearched] = useState({ query, doc });
+  if (searched.query !== query || searched.doc !== doc) {
+    setSearched({ query, doc });
+    if (!query.trim()) {
+      setProgress(null);
+      setTruncated(false);
+    }
+  }
   // debounced search over all pages (texts are cached per document)
   useEffect(() => {
     const q = query.trim();
     if (!q) {
       onResults([], false);
-      setProgress(null);
-      setTruncated(false);
       return;
     }
     let cancelled = false;

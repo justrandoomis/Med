@@ -1,7 +1,7 @@
 // One page of the Book Canvas: the paper sheet (pdf.js canvas / page image), an accessible selectable text
 // layer, overlays (text highlights, search hits, cited region) and the ink layer — all in the page's own
 // coordinate system — plus the folio that names the page (printed label + file position, AC-04).
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import type { RenderTask } from 'pdfjs-dist';
 import { annotationTargetKey, detectDir, richTextFromPlain, type NormBox, type PageViewTransform, type SourcePageView, type SourceRegionView } from '@medlevo/shared';
 import { RichTextView, Skeleton, cx } from '../../../design';
@@ -342,14 +342,9 @@ function ImageSheet({
  */
 function OcrTextLayer({ layerRef, runs, interactive, heightPx }: { layerRef: React.Ref<HTMLDivElement>; runs: SourceRegionView[]; interactive: boolean; heightPx: number }) {
   const localRef = useRef<HTMLDivElement | null>(null);
-  const setRef = useCallback(
-    (el: HTMLDivElement | null) => {
-      localRef.current = el;
-      if (typeof layerRef === 'function') layerRef(el);
-      else if (layerRef) (layerRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
-    },
-    [layerRef],
-  );
+  // the parent's ref (an object or a callback) gets the same element: React sets it with the commit, calls it again
+  // when the ref changes, and clears it when the layer unmounts
+  useImperativeHandle(layerRef, () => localRef.current as HTMLDivElement, []);
   // stretch each word to its box width (like pdf.js does for its text layer): measured once laid out
   useLayoutEffect(() => {
     const layer = localRef.current;
@@ -363,7 +358,7 @@ function OcrTextLayer({ layerRef, runs, interactive, heightPx }: { layerRef: Rea
     }
   }, [runs, heightPx]);
   return (
-    <div ref={setRef} className={cx('wk-ocrlayer', !interactive && 'wk-textlayer--inert')} lang={runs[0]?.lang ?? undefined}>
+    <div ref={localRef} className={cx('wk-ocrlayer', !interactive && 'wk-textlayer--inert')} lang={runs[0]?.lang ?? undefined}>
       {runs.map((r) => {
         const b = r.bbox!;
         const segments = ocrRunSegments(r);

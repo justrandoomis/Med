@@ -1,6 +1,6 @@
 // Create / edit a notebook, folder, subject, course… Title, kind, cover (cloth colour, weave,
 // symbol) with a live preview. Renaming keeps the node id, so every link and citation survives.
-import { useEffect, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import {
   COVER_COLOR_LABELS_AR,
   COVER_COLORS,
@@ -52,16 +52,20 @@ export function NodeDialog({ open, mode, onClose, onSaved }: { open: boolean; mo
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    setTitle(editing?.title ?? '');
-    setKind(initialKind);
-    setCover(editing ? coverOf(editing) : coverOf({ cover: null, kind: initialKind, color: null, icon: null }));
-    setDescription(editing?.description ?? '');
-    setErrors({});
-    setFormError(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset only when the dialog opens: a parent re-render must not wipe what the owner typed
-  }, [open]);
+  // reset only when the dialog opens (while rendering, not in an effect): a parent re-render must not wipe what the
+  // owner typed
+  const [wasOpen, setWasOpen] = useState(false);
+  if (wasOpen !== open) {
+    setWasOpen(open);
+    if (open) {
+      setTitle(editing?.title ?? '');
+      setKind(initialKind);
+      setCover(editing ? coverOf(editing) : coverOf({ cover: null, kind: initialKind, color: null, icon: null }));
+      setDescription(editing?.description ?? '');
+      setErrors({});
+      setFormError(null);
+    }
+  }
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();

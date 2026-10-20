@@ -49,10 +49,14 @@ export function CreateMcqPanel({ request, pageLabel, onClose }: { request: McqRe
   const reasonId = `mcq-why-${request.id}`;
 
   useEffect(() => () => window.clearTimeout(timer.current), []);
-  // a new selection starts a new request
-  useEffect(() => {
+  // a new selection starts a new request: cleared while rendering; the old poll is stopped in the effect
+  const [requestFor, setRequestFor] = useState(request.id);
+  if (requestFor !== request.id) {
+    setRequestFor(request.id);
     setRun(null);
     setError(null);
+  }
+  useEffect(() => {
     window.clearTimeout(timer.current);
   }, [request.id]);
 

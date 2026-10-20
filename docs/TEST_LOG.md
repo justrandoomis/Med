@@ -4,6 +4,9 @@ The full suites, run on 2026-10-10 in the integration and acceptance round, with
 durations and failures as they happened. A test that needs something this environment does not have is listed under
 **Not run** with the reason — never as passed (§58).
 
+> **Latest full verification:** «Round 7 — final verification» (2026-10-20) at the end of this file — `npm test`
+> 2 409 passed, full E2E 123 passed / 0 failed on phone + desktop, typecheck / lint / build / evaluation gate green.
+
 ## Environment
 
 | item | value |
@@ -172,3 +175,140 @@ the DOCX files in Microsoft Word (LibreOffice only), the deployment on a real ho
 | `npx playwright test e2e/f5-quality-ops.spec.ts` | **6 passed** (phone + desktop) |
 
 Not run in this review: the full E2E suite, `.github/workflows/ci.yml` on a GitHub runner, the live-model evaluation.
+
+## Round 7 — react-hooks `recommended` lint (§58) (2026-10-20, run in this container; another track was editing the tree in parallel)
+
+Change: `eslint.config.js` applies eslint-plugin-react-hooks 7.1.1 `recommended` (React Compiler rules) to `apps/web`;
+the 184 findings it raised were fixed in code (`docs/modules/core-web.md` §10). New test file
+`apps/web/test/hooks-render-adjust.test.tsx` (8 tests; 5 fail on the old hooks).
+
+| command | result |
+|---|---|
+| `npx eslint apps/web` with the rules on, before the fixes | **184 problems** (106 `set-state-in-effect`, 50 `refs`, 14 `preserve-manual-memoization`, 7 `purity`, 7 `immutability`) in 92 files |
+| `npm test -w @medlevo/web` before the change (baseline) | 129 files passed, 1 skipped · **794 passed**, 1 skipped (1 unhandled rejection from `ReanchorSection.review.h3.test.tsx`, another track's file under edit) |
+| `npm test` (root, after) | shared 8 files · **85 passed**; server 143 files passed, 7 skipped · **1513 passed**, 7 skipped; web 130 files passed, 1 skipped · **802 passed**, 1 skipped (+8 = the new file); exit 0, no unhandled errors |
+| `npx vitest run test/ink src/features/workspace/ink` (web) | 17 files · **138 passed** |
+| `npm run typecheck` | exit 0 |
+| `npm run lint` (`eslint . --max-warnings 0`) | exit 0 |
+| `npm run build` | exit 0 (PWA: 271 precache entries) |
+| `E2E_BUILD=0 npx playwright test` (full suite, phone + desktop, real server, after the build above) | **116 passed**, 11 skipped (perf specs are opt-in; one phone-only check on desktop), **7 failed** (21.1 min) |
+| the 2 failing specs on the committed code without this change (`git archive HEAD` copy in the scratch area, its own web build and server): `npx playwright test e2e/g1-ac04-printed-page.spec.ts e2e/g6-ac28-pencil.spec.ts` | 3 passed, **the same 7 failed with the same errors** → not caused by this change |
+
+The 7 E2E failures (pre-existing, not fixed here — outside this task):
+* `g6-ac28-pencil.spec.ts` ×3 on each project — the spec's expectations are older than track F4: it expects the ink
+  panel's recognition row to say «غير منفّذ بعد» (it now says «يحتاج إعدادًا على الخادم», `ink/capabilities.ts`, F4) and the
+  Control Center recognition text not to contain «تعمل» (it now says «كتابتك نفسها تُحفظ وتعمل كاملة دونه»). The product
+  is honest (recognition needs a vision provider that is not configured); the spec needs updating.
+* `g1-ac04-printed-page.spec.ts` «detected labels» on the **phone** — a real layout defect: with the reader on a page that
+  has no printed number, the compact page indicator «الصفحة 1 في الملف» in the phone top bar runs under the save-status
+  icon, which takes the tap (Playwright: `ml-save-status … intercepts pointer events`), so «الانتقال إلى صفحة» cannot be
+  opened by touching its visible text. Passes on desktop.
+
+Not run: the opt-in perf specs (`MEDLEVO_PERF=1`), `.github/workflows/ci.yml` on a GitHub runner, anything needing
+ANTHROPIC_API_KEY.
+
+## Round 7 — final verification (2026-10-20, 19:39 → 21:00 UTC, run in this container)
+
+The whole tree after Round 7 (H1–H4, their reviews and the react-hooks lint track; 127 changed / new paths uncommitted
+at the start, on top of `HEAD` deba34e). Same environment as above (Node 22.22, Chromium at
+`/opt/pw-browsers/chromium`, no `ANTHROPIC_API_KEY`); `NODE_OPTIONS='--disable-warning=ExperimentalWarning'`. Every
+command was run from the repository root; durations are wall-clock.
+
+### 1. First pass (before any change of this task)
+
+| # | command | exit | duration | result |
+|---|---|---|---|---|
+| 1 | `npm run typecheck` | 0 | 50 s | no type errors (shared, server, web, e2e) |
+| 2 | `npm run lint` (`eslint . --max-warnings 0`) | 0 | 62 s | no problems |
+| 3 | `npm test` | 0 | 355 s | shared 8 files · **85 passed** (1.3 s) · server 143 files passed, 7 skipped · **1513 passed**, 7 skipped (255.4 s) · web 130 files passed, 1 skipped · **802 passed**, 1 skipped (95.5 s) |
+
+### 2. The two known E2E failures, fixed (each reproduced first)
+
+* `g1-ac04-printed-page.spec.ts` «detected labels» on the **phone** — a real layout defect. Measured in the built app
+  on the real server (a throwaway Playwright probe, phone project): the reader's phone bar left the title column
+  **60 px** at 390 px (45 at 375, 30 at 360); the compact indicator «الصفحة 1 في الملف 1/14» is 155 px wide and even
+  «ص 12 14/14» (94 px) overlapped the save icon by 26 px, which took the tap. Fixed in `chrome/TopBar.tsx`,
+  `chrome/GoToPage.tsx`, `workspace.css` (save state on the title line, 4 px icon gaps, the indicator bounded by its
+  column, the redundant count dropped) → title column **124 px** at 390 px. New `TopBar.phone.final.test.tsx` (3; 2 fail
+  on the HEAD versions of the two components, swapped in and restored for the check); the spec now also asserts on the
+  phone that no control of the bar overlaps the indicator (390 px on «ص 12»; 390 / 375 / 360 px on the cover).
+* `g6-ac28-pencil.spec.ts` ×3 per project — expectations older than track F4 (recognition is
+  `requires_configuration`, not «not built»; the Control Center reason «…وتعمل كاملة دونه» speaks of the owner's
+  writing). The spec now asserts the honest states (row «يحتاج إعدادًا على الخادم», the lasso's vision reason, the
+  card's state pill «تحتاج إعدادًا على الخادم» + `ANTHROPIC_API_KEY` in its reason). No product change.
+
+| command | exit | duration | result |
+|---|---|---|---|
+| `npx playwright test e2e/g1-ac04-printed-page.spec.ts e2e/g6-ac28-pencil.spec.ts` | 0 | 64 s | **10 passed** (phone + desktop) |
+| `npm run build` | 0 | 5 s | built in 2.0 s; PWA **271 precache entries** (4 587 KiB) |
+| `npm run eval -- --label=round7-final --compare=docs/eval/baseline.json` | 0 | 14 s | regression **80 / 80**, tuning **69 / 69**, every axis at its full count; compare `no_regressions` (`eval-20261020T195216-38d50040`) |
+| `npm run eval -- --set=regression --compare=docs/eval/baseline.json --no-record` (the CI gate) | 0 | 10 s | regression 80 / 80, `no_regressions` |
+| `npm run e2e -- --output=e2e/.artifacts/final-results` (full suite, phone + desktop) | 0 | 1 134 s (18.9 min) | 134 tests: **123 passed, 0 failed, 11 skipped** (`perf.spec.ts` ×10 opt-in; one phone-only check of `h3-reader-notes` on desktop) |
+
+### 3. Critic pass (step 2 of the task)
+
+`e2e/critic-screens.spec.ts` (light + dark, 390 and 1280 px, real server, Golden Set data) was extended with the 8
+top-level screens added in Rounds 6–7 that it did not open (`/library/topics`, a topic page, `/concepts`, `/knowledge`,
+`/exams/simulate`, `/control/visual-sources`, `/control/health`, `/control/evaluation` → 55 screens + login / recover)
+and with two probes (an `<li>` whose leading icon sits on a line of its own; raw markdown code in visible text). The
+screenshots (`e2e/.artifacts/critic/<project>/`) were looked at; found and fixed, each with a test that failed first:
+
+| finding | fix | test |
+|---|---|---|
+| «محاكاة مولدة»: each «حدود العينة» warning icon on its own line above its text (both widths) | `exams.css` `.ex-list--icons` (icon as bullet, `role="list"` kept) | the sweep's new icon probe (failed on `exams-simulate` only, then passed) |
+| «7 سؤالًا فريدًا», «5 من 7 سؤالًا فريدًا» in Exam DNA / simulation wording | `learning/dna.ts uniqueQuestionsAr` / `partOfUniqueQuestionsAr`, used by `exams/simulation.ts` | `srv:learning/golden.test.ts` «(Round 7 final)» |
+| «تقييم الجودة» empty state printed raw backticks, the Arabic paragraph reordered the options / paths | `EvaluationScreen` `CommandText` (`<bdi><code dir="ltr">`), server text marks its paths | `web:src/features/control/EvaluationScreen.final.test.tsx` (2) + the sweep's raw-markdown probe |
+| «خريطة معرفتي»: «0 من 1 صفحات يُذكر فيها», «0 محاولة على 1 سؤال»; the reasons «12 أسئلة مرتبطة»، «أجبت 12 مرات» | counted nouns in `KnowledgeScreen.tsx` and `brain/student.ts` | `web:src/features/brain/KnowledgeScreen.final.test.tsx`, `srv:brain/knowledge-counts.final.test.ts` (2) |
+
+Looked at and left as they are (reported, not defects of this round): the full-page screenshots show the fixed bottom
+navigation in the middle of tall phone pages (a screenshot artefact of `position: fixed`); breadcrumb links and the skip
+link are 24 / 43 px tall on the phone (listed by the probe for a human look; inline text links); the appendicitis
+lecture's first page is «تحتاج مراجعة» by design (the tanween glyph mapped to a stray «S» — a Golden Set known defect
+that must flag the region); the disabled «ولّد المحاكاة وتحقق منها» button has low contrast because it is disabled
+(its reason is shown above it). Known limit added: at 375 / 360 px the phone bar ellipsises the front-matter label
+«الصفحة 1 في الملف» (full text in its accessible name and the go-to popover).
+
+| command | exit | duration | result |
+|---|---|---|---|
+| `npx playwright test e2e/critic-screens.spec.ts` (extended, before the icon probe) | 0 | 262 s | 4 passed |
+| `npx playwright test e2e/critic-screens.spec.ts --project=desktop -g "every top-level"` (with the icon probe, before the fix) | **1** | 121 s | **1 failed**: `exams-simulate: list items whose icon sits on a line of its own` (7 items) — reproduced |
+| `npx playwright test e2e/critic-screens.spec.ts` (after the fix) | 0 | 265 s | 4 passed (phone + desktop) |
+| targeted unit runs while fixing (`vitest run` of the new / touched files, server `test/brain`, `test/learning/golden.test.ts`, `test/f3`, `test/exams`, `test/control/evaluation.test.ts`) | 0 | — | all passed; each new test failed before its fix |
+
+### 4. Final runs (after every change of this task, 20:31 → 20:58 UTC)
+
+| # | command | exit | duration | result |
+|---|---|---|---|---|
+| 1 | `npm run typecheck` | 0 | 46 s | no type errors |
+| 2 | `npm run lint` | 0 | 52 s | no problems |
+| 3 | `npm test` | 0 | 319 s | shared 8 files · **85 passed** (1.0 s) · server 144 files passed, 7 skipped · **1516 passed**, 7 skipped (229.8 s) · web 133 files passed, 1 skipped · **808 passed**, 1 skipped (86.2 s) |
+| 4 | `npm run build` | 0 | 5 s | built in 1.7 s; PWA **271 precache entries** (4 587 KiB) |
+| 5 | `npm run e2e -- --output=e2e/.artifacts/final-results2` (full suite incl. the extended critic sweep) | 0 | 1 180 s (19.7 min) | 134 tests: **123 passed, 0 failed, 11 skipped** — every spec passed on both projects (the 11 skipped are `perf.spec.ts` ×10, opt-in, and the phone-only `h3-reader-notes` item 5 on desktop) |
+| 6 | `npm run eval -- --set=regression --compare=docs/eval/baseline.json --no-record` | 0 | 10 s | regression **80 / 80**, `no_regressions` (`eval-20261020T205821-5570e552`) |
+
+E2E per spec (run 5; phone + desktop): `critic-screens` 4 · `f1-notebook-pages` 6 · `f2-course-brain` 4 ·
+`f3-study-modes` 4 · `f4-handwriting-audio` 6 · `f5-quality-ops` 6 · `g1-ac01` 4 · `g1-ac02` 2 · `g1-ac03` 2 · `g1-ac04` 4 ·
+`g2-ac05` 2 · `g2-ac06` 2 · `g2-ac29` 2 · `g3-ac08` 2 · `g3-ac09` 2 · `g3-ac13` 2 · `g4-ac10-ac11` 2 · `g4-ac12-ac14-ac15` 2 ·
+`g5-ac16` 6 · `g5-ac17-ac19` 6 · `g6-ac20` 4 · `g6-ac21` 4 · `g6-ac22` 6 · `g6-ac28` 6 · `g7-ac23` 2 · `g7-ac24` 4 · `g7-ac30` 2 ·
+`g8-ac26` 2 · `g8-ac27` 2 · `g8-security` 8 · `h3-reader-notes` 5 (+1 skipped) · `h4-exports-sources` 4 · `smoke` 4 — all passed;
+`perf` 10 skipped. No flaky test was seen: both full runs (sections 2 and 4) were green with `retries: 0`.
+
+#### Totals of Round 7
+
+| suite | passed | skipped (opt-in / project-specific) | failed in the final run |
+|---|---|---|---|
+| shared (vitest) | 85 | 0 | 0 |
+| server (vitest) | 1 516 | 7 | 0 |
+| web (vitest) | 808 | 1 | 0 |
+| E2E (Playwright, real server, phone + desktop) | 123 | 11 | 0 (7 in the Round 7 lint run → both causes fixed here) |
+| evaluation (scripted mode) | regression 80 / 80 · tuning 69 / 69 | — | 0 |
+
+#### Not run in this task (and why)
+
+| what | why |
+|---|---|
+| A live AI provider; `npm run eval -- --mode=live` | no `ANTHROPIC_API_KEY` — every AI path stays tested only with the test-only scripted / fake providers, and the real server reports `requires_configuration` (asserted by the E2E specs) |
+| `MEDLEVO_PERF=1` suites (`apps/server/test/perf/*.perf.test.ts`, `e2e/perf.spec.ts`, `apps/web/test/learning/queue.perf.test.ts`) | opt-in by design (several minutes, generated 300-page PDF); last numbers in `docs/PERFORMANCE.md` (H4 re-measured the Course Brain recompute) |
+| The ink harness `npx playwright test -c apps/web/test/ink/playwright.config.ts` | not re-run in this task (no ink engine change); the ink E2E specs (`g6-ac21`, `g6-ac22`, `g6-ac28`, `f1`, `f4`, `h3`) passed |
+| `.github/workflows/ci.yml` on a GitHub runner | no runner here; each of its commands was run locally above |
+| Real iPad / iPhone / Apple Pencil, Safari / iPadOS / Firefox, screen readers (VoiceOver / NVDA / TalkBack) | no device or screen reader in this container; Chromium phone (390 × 844, touch, DPR 2) and desktop projects only |

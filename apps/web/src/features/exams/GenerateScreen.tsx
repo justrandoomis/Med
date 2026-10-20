@@ -58,9 +58,15 @@ export function GenerateScreen() {
 
   const lecture = lectures.find((l) => l.id === lectureId) ?? null;
 
-  useEffect(() => {
+  // another lecture / version: its pages are loaded afresh (cleared while rendering; the requests run in the effect)
+  const pagesKey = `${lecture?.id ?? ''}|${lecture?.active_version_id ?? ''}`;
+  const [pagesFor, setPagesFor] = useState(pagesKey);
+  if (pagesFor !== pagesKey) {
+    setPagesFor(pagesKey);
     setPages([]);
     setPageIds([]);
+  }
+  useEffect(() => {
     if (!lecture?.active_version_id) return;
     let cancel = false;
     examsApi

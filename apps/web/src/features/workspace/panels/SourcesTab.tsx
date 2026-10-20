@@ -24,11 +24,19 @@ export function SourcesTab({ doc, page, onOpenSplit, splitReason }: { doc: Sourc
   const [reading, setReading] = useState<string | null>(null);
   const online = useOnline();
   const pageId = page?.id ?? null;
+  // another page (or a retry) starts from empty, while rendering; the request runs in the effect below
+  const regionsKey = `${attempt}|${pageId ?? ''}`;
+  const [regionsFor, setRegionsFor] = useState(regionsKey);
+  if (regionsFor !== regionsKey) {
+    setRegionsFor(regionsKey);
+    if (pageId) {
+      setRegions(null);
+      setError(null);
+    }
+  }
   useEffect(() => {
     if (!pageId) return;
     let cancelled = false;
-    setRegions(null);
-    setError(null);
     fetchRegions(pageId)
       .then((r) => !cancelled && setRegions([...r.regions].sort((a, b) => a.reading_order - b.reading_order)))
       .catch((e) => !cancelled && setError(errorMessage(e, 'تعذّر تحميل مناطق الصفحة.')));

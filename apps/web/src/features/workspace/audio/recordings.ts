@@ -246,8 +246,20 @@ function recordingForm(r: { recordingId: string; startedAt: number; durationMs: 
  * (H3 item 9) The device could not store a finished recording: upload it straight to the owner's server (the same
  * idempotent route the device uploads use), so it does not live only in this page's memory.
  */
-export async function uploadRecordingDirect(r: FinishedRecording, post: (form: FormData) => Promise<RecordingResponse> = (form) => api.post<RecordingResponse>('/media/recordings', form, { timeoutMs: 300_000, skipAuthRedirect: true })): Promise<void> {
+export async function uploadRecordingDirect(
+  r: FinishedRecording,
+  post: (form: FormData) => Promise<RecordingResponse> = (form) => api.post<RecordingResponse>('/media/recordings', form, { timeoutMs: 300_000, skipAuthRedirect: true }),
+  db: MedLevoDB = getDb(),
+): Promise<void> {
   await post(recordingForm({ ...r, durationMs: r.durationMs || null }));
+  // (H3 review) the server has it now: the chunks stored while it was being made are dropped, or the next start would
+  // «recover» them as an interrupted recording and upload it again (on a device whose storage was already full)
+  try {
+    const chunks = await db.blobs.where('kind').equals(RECORDING_CHUNK_KIND).filter((c) => (c as ChunkRecord).recordingId === r.recordingId).primaryKeys();
+    await db.blobs.bulkDelete(chunks);
+  } catch {
+    // storage unavailable: a later recovery pass uploads them again — the server keeps one copy (idempotent by id)
+  }
   notify();
 }
 

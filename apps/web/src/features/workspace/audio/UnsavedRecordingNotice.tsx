@@ -24,16 +24,18 @@ export function UnsavedRecordingNotice() {
 function Notice({ recorder, barOnScreen }: { recorder: RecorderController; barOnScreen: boolean }) {
   const state = useRecorderState(recorder);
   const unsaved = state.kind === 'error' && state.code === 'save_failed' && !!recorder.unsaved();
-  // closing the page while the recording exists only in memory asks first (the reader's bar does the same)
+  // closing the page while the recording exists only in memory asks first (the reader's bar does the same) — also while
+  // it is being saved or uploaded straight to the server (H3 review: a long upload left it unguarded for minutes)
+  const holding = unsaved || state.kind === 'saving' || !!recorder.unsaved();
   useEffect(() => {
-    if (!unsaved || barOnScreen) return;
+    if (!holding || barOnScreen) return;
     const guard = (e: BeforeUnloadEvent) => {
       e.preventDefault();
       e.returnValue = '';
     };
     window.addEventListener('beforeunload', guard);
     return () => window.removeEventListener('beforeunload', guard);
-  }, [unsaved, barOnScreen]);
+  }, [holding, barOnScreen]);
   if (!unsaved || barOnScreen || state.kind !== 'error') return null;
   return (
     <div className="hw-dock hw-dock--global">

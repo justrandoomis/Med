@@ -474,6 +474,11 @@ Confirmed and fixed (regression tests fail on the code before the fix):
   gate with the switch off and on, export + change log), `web:features/control/visual-sources.h4.test.tsx`,
   `e2e:h4-exports-sources.spec.ts` (Control Center screen on phone + desktop: add from a URL, disable, delete).
 * Limits: an entry is a host + path prefix, not a per-image licence; the licence note is the owner's text, unchecked.
+* Independent review (2026-10-20): the atlas path was compared as plain text, so an entry for `/atlas` also allowed
+  `/atlas-evil/…` and `/atlasfake.png`, and an encoded slash (`/atlas%2F..%2Fprivate/…`) passed. `matchAllowedSource` now
+  allows the path itself or what is below it (`/atlas` or `/atlas/…`, with or without a trailing slash in the entry) and
+  refuses a URL whose decoded path still holds a `.` / `..` segment. Test: `srv:media/h4-review-visual-sources.test.ts`
+  (failed before the fix).
 
 ## Round 7 — H3: a recording that could not be saved on the device is never only in memory (§29, 2026-10-20)
 * Before: when IndexedDB refused the finished recording (quota, private mode) and the owner then left the reader, the
@@ -491,3 +496,12 @@ Confirmed and fixed (regression tests fail on the code before the fix):
   guards closing the page).
 * Limit: without a connection and with a device that keeps refusing the write, the recording can only be downloaded
   as a file (the notice says so); it survives a reload only if one of the retries succeeded.
+* Independent review (2026-10-20), fixed with regression tests that failed before:
+  * while the refused recording was being uploaded straight to the server (state «saving», possibly minutes for a long
+    recording on a phone) — or retried by the owner — the app-wide «leave the page?» guard was off, so closing the tab
+    lost it silently. `UnsavedRecordingNotice.tsx` now guards whenever the recorder holds a recording stored nowhere
+    yet or is saving. Test: `web:src/features/workspace/audio/unsavedGuard.review.h3.test.tsx`.
+  * after a successful direct upload the chunks stored while recording stayed on the device; the next start
+    «recovered» them as an interrupted recording (listed for attention, uploaded again — the server keeps one copy) on a
+    device whose storage was already full. `uploadRecordingDirect` now drops that recording's chunks once the server
+    has it (kept when the upload fails). Test: `web:src/features/workspace/audio/directUpload.review.h3.test.ts` (2).

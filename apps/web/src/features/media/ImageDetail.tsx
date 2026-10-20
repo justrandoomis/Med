@@ -161,19 +161,31 @@ export function ImageDetail() {
   const frame = useRef<HTMLDivElement>(null);
   usePageTitle(img?.title ?? img?.caption?.slice(0, 40) ?? 'صورة');
 
-  const load = useCallback(async () => {
+  // state is set only when the request settles (no synchronous setState on the effect path)
+  const fetchImage = useCallback(
+    () =>
+      mediaApi.image(imageId)
+        .then((d) => {
+          setImg(d);
+          setMeta({ image_kind: d.image_kind, modality: d.modality ?? '', anatomic_region: d.anatomic_region ?? '', age_group: d.age_group ?? '', title: d.title ?? '' });
+        })
+        .catch((e: unknown) => setError(errorMessage(e, 'تعذّر تحميل الصورة.'))),
+    [imageId],
+  );
+  // a retry / refresh after an action clears the previous error at once
+  const load = () => {
     setError(null);
-    try {
-      const d = await mediaApi.image(imageId);
-      setImg(d);
-      setMeta({ image_kind: d.image_kind, modality: d.modality ?? '', anatomic_region: d.anatomic_region ?? '', age_group: d.age_group ?? '', title: d.title ?? '' });
-    } catch (e) {
-      setError(errorMessage(e, 'تعذّر تحميل الصورة.'));
-    }
-  }, [imageId]);
+    return fetchImage();
+  };
+  // another image: its predecessor's error is cleared while rendering
+  const [loadedFor, setLoadedFor] = useState(imageId);
+  if (loadedFor !== imageId) {
+    setLoadedFor(imageId);
+    setError(null);
+  }
   useEffect(() => {
-    void load();
-  }, [load]);
+    void fetchImage();
+  }, [fetchImage]);
 
   if (error) return <ErrorState message={error} onRetry={() => void load()} />;
   if (!img || !meta) return <LoadingState stage="جارٍ تحميل الصورة…" />;

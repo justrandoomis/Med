@@ -48,21 +48,33 @@ export function VaultScreen() {
   const lib = useLibrary();
   const openReview = useOpenReviewCount();
 
-  const load = useCallback(async () => {
+  // the request: state is set only when it settles (no synchronous setState on the effect path)
+  const fetchList = useCallback(
+    () =>
+      questionsApi
+        .list(filters)
+        .then((d) => setData(d))
+        .catch((e: unknown) => setError(errorMessage(e, 'تعذّر تحميل الأسئلة.')))
+        .finally(() => setLoading(false)),
+    [filters],
+  );
+  // a retry shows loading and clears the previous error at once
+  const load = () => {
     setLoading(true);
     setError(null);
-    try {
-      setData(await questionsApi.list(filters));
-    } catch (e) {
-      setError(errorMessage(e, 'تعذّر تحميل الأسئلة.'));
-    } finally {
-      setLoading(false);
-    }
-  }, [filters]);
+    return fetchList();
+  };
+  // new filters: loading at once, the previous error cleared (adjusted while rendering; the request runs below)
+  const [loadedFor, setLoadedFor] = useState(filters);
+  if (loadedFor !== filters) {
+    setLoadedFor(filters);
+    setLoading(true);
+    setError(null);
+  }
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void fetchList();
+  }, [fetchList]);
 
   const setFilter = (k: (typeof FILTER_KEYS)[number], v: string) => {
     const next = new URLSearchParams(params);

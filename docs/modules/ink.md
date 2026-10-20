@@ -422,6 +422,13 @@ every new route sits behind the global session + CSRF guard, the PNG is magic-ch
   purpose; an item edited elsewhere is not overwritten without a question; a step on a page not on screen is checked
   against this device's copy; the size cap keeps the newest steps),
   `test/ink/history-dialog.h3.test.tsx` (1).
+* *Independent review (2026-10-20).* A change skipped because its item was already as the step wanted it (e.g. undo
+  «كتابة» of a stroke another device had erased: nothing to remove) used to stay in the step that moved to the redo
+  stack, so **redo then brought the erased stroke back without asking** (an upsert the server applies over its
+  tombstone). The step that moves to the other stack now keeps only the changes that were really applied
+  (`InkHistory.narrowTop`, called from `store.apply`; a step left with none leaves the stack). Test:
+  `test/ink/history-review.h3.test.ts` (3 — the erased stroke stays erased after undo + redo, also for a page not on
+  screen; a partly skipped step redoes exactly its applied part); failed before the fix.
 * **Lasso → card / question (§28/§29).** `selectionActions.tsx` gained `card` / `question`; `SelectionOverlay` shows
   «اصنع بطاقة من المحدد…» and «اكتب سؤالًا من المحدد…» under «المزيد» (disabled with a reason where no host provides
   them). The host (`handwriting/HandwritingHost.tsx` → `LassoCardDialog.tsx`) does the rest: a basic card whose front can
@@ -430,3 +437,29 @@ every new route sits behind the global session + CSRF guard, the PNG is magic-ch
   to the lecture. See `docs/modules/workspace.md` «Round 7 — H3» item 4. Tests:
   `src/features/workspace/handwriting/LassoCardDialog.h3.test.tsx` (7), `srv:annotations/h3-lasso-card.test.ts` (7),
   `e2e/h3-reader-notes.spec.ts`.
+
+## Round 7 — React Compiler lint rules (2026-10-20; §58)
+
+`InkLayer`, `InkProvider`, `SelectionOverlay` and the ink host write their latest-value refs (view, anchor, tool,
+host, callbacks, the text editor's commit function) in `useInsertionEffect` — before any layout effect, so the layer's
+own layout effect and every pointer handler see the same values as before. The selection overlay's handles call
+`begin(mode, e)` from inline handlers (no curried handler built during render). The paper tone for ink text, sticky
+notes and the selection swatches comes from the new `usePaperTone(ref)` (measured in a layout effect; before it was
+read from the ref during render, so the first paint used the theme until a later re-render). Details:
+`docs/modules/core-web.md` §10. Ink unit tests (`test/ink` + `src/features/workspace/ink`: 17 files, 138 tests) pass
+unchanged; in the full E2E run the ink specs `g6-ac21-ink-position`, `g6-ac22-font-size`, `f1-notebook-pages`,
+`f4-handwriting-audio` and `h3-reader-notes` pass. `g6-ac28-pencil` fails (3 tests × 2 projects) — identically on the
+committed code without these changes: its expectations predate track F4 (it expects recognition «غير منفّذ بعد», the
+panel now says «يحتاج إعدادًا على الخادم», and the Control Center text «…وتعمل كاملة دونه» trips its «not تعمل» check).
+The spec was not changed here (`docs/TEST_LOG.md`, Round 7 lint).
+
+## Round 7 — final verification: `g6-ac28-pencil` brought up to date (2026-10-20; AC-28)
+
+The spec's three expectations that predated track F4 now assert what the product honestly says: the capability panel's
+recognition row is «يحتاج إعدادًا على الخادم» (`requires_configuration` — built in F4, no vision provider here; never
+«مدعوم ورُصد هنا»), the lasso's disabled «تحويل إلى نص» carries the server's reason (it names the missing vision
+provider), and in the Control Center the recognition card's state pill is «تحتاج إعدادًا على الخادم» (not «تعمل» /
+«تعمل بحدود») with a reason naming `ANTHROPIC_API_KEY`. The old «not تعمل anywhere in the card» check matched the
+reason's «كتابتك نفسها تُحفظ وتعمل كاملة دونه», which speaks of the owner's writing, not of recognition. No product
+code changed. `npx playwright test e2e/g6-ac28-pencil.spec.ts`: 6 passed (3 × phone + desktop); also green in the full
+run (`docs/TEST_LOG.md`, Round 7 final verification).

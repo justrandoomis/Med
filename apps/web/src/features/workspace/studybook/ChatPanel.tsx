@@ -67,40 +67,42 @@ export function ChatPanel({ sourceId, page, anchor, anchorText, scope, style, ga
   const pageId = page?.id ?? null;
   const anchorKey = anchor ? `${anchor.page_id}|${anchor.quote?.exact ?? ''}|${(anchor.region_ids ?? []).join(',')}` : `page:${pageId}`;
 
-  const loadThreads = useCallback(async () => {
-    if (!online) return;
-    try {
-      const r = await studybookApi.threads(sourceId, pageId);
-      setThreads(r.threads);
-    } catch (e) {
-      setError(errorMessage(e, 'تعذّر تحميل المحادثات.'));
-    }
+  // state is set only when the request settles (no synchronous setState on the effect path)
+  const loadThreads = useCallback((): Promise<void> => {
+    if (!online) return Promise.resolve();
+    return studybookApi
+      .threads(sourceId, pageId)
+      .then((r) => setThreads(r.threads))
+      .catch((e: unknown) => setError(errorMessage(e, 'تعذّر تحميل المحادثات.')));
   }, [sourceId, pageId, online]);
 
+  // The resets below are made while rendering (React's «adjust state when a prop changes»), not in effects:
+  //  * another page / connectivity: the thread list is loaded afresh (the request runs in the effect)
+  //  * a new selection starts a new conversation (never continues another passage's thread silently)
+  //  * G2 / AC-05: a changed Source Lock in the rail starts a new conversation — a question is never sent to a thread
+  //    pinned to another (e.g. wider) lock than the one the rail shows
+  const scopeKey = JSON.stringify([scope.mode, scope.lecture_source_id ?? null, [...scope.reference_source_ids].sort(), scope.include_my_notes]);
+  const listKey = `${online}|${sourceId}|${pageId ?? ''}`;
+  const [shownFor, setShownFor] = useState({ listKey, anchorKey, scopeKey });
+  if (shownFor.listKey !== listKey || shownFor.anchorKey !== anchorKey || shownFor.scopeKey !== scopeKey) {
+    setShownFor({ listKey, anchorKey, scopeKey });
+    if (shownFor.listKey !== listKey || shownFor.anchorKey !== anchorKey) setActive(null);
+    else if (active && !threadMatchesScope(active.thread, scope)) setActive(null);
+  }
   useEffect(() => {
-    setActive(null);
     void loadThreads();
   }, [loadThreads]);
 
-  // a new selection starts a new conversation (never continues another passage's thread silently)
-  useEffect(() => {
-    setActive(null);
-  }, [anchorKey]);
-
-  // G2 / AC-05: a changed Source Lock in the rail starts a new conversation — a question is never sent to a thread
-  // pinned to another (e.g. wider) lock than the one the rail shows
-  const scopeKey = JSON.stringify([scope.mode, scope.lecture_source_id ?? null, [...scope.reference_source_ids].sort(), scope.include_my_notes]);
-  useEffect(() => {
-    setActive((a) => (a && !threadMatchesScope(a.thread, scope) ? null : a));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scopeKey]);
-
-  useEffect(() => {
-    if (focusKey <= 0) return;
+  // a composed question handed over (focusKey bumped) joins the draft while rendering; the composer is focused in the
+  // effect. `null` = not seen yet, so a panel opened with a question takes it too.
+  const [takenFocusKey, setTakenFocusKey] = useState<number | null>(null);
+  if (takenFocusKey !== focusKey) {
+    setTakenFocusKey(focusKey);
     // (track F4) the composed question joins an unsent draft instead of replacing it (the owner's words are kept)
-    if (prefill) setText((t) => (t.trim() && t.trim() !== prefill.trim() ? `${t.trimEnd()}\n\n${prefill}` : prefill));
-    composer.current?.focus();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (focusKey > 0 && prefill) setText((t) => (t.trim() && t.trim() !== prefill.trim() ? `${t.trimEnd()}\n\n${prefill}` : prefill));
+  }
+  useEffect(() => {
+    if (focusKey > 0) composer.current?.focus();
   }, [focusKey]);
 
   const open = async (id: string) => {

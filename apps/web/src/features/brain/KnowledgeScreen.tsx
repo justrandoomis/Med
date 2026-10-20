@@ -9,7 +9,7 @@ import { Breadcrumbs, EmptyState, ErrorState, LoadingState, Select, StatusPill }
 import { usePageTitle } from '../../lib/usePageTitle';
 import { useQuery } from '../library/data';
 import { BRAIN_PATHS, conceptUrl } from './api';
-import { KNOWLEDGE_STATE_META, masteryText, prerequisiteLabel } from './model';
+import { KNOWLEDGE_STATE_META, countAr, masteryText, prerequisiteLabel, type NounForms } from './model';
 import '../review/learning.css';
 import './brain.css';
 
@@ -99,6 +99,15 @@ export function KnowledgeScreen() {
   );
 }
 
+// (Round 7 final) counted nouns that agree with their number; the genitive forms follow «من» / «على» / «لـ»
+const PAGES_GEN: NounForms = { one: 'صفحة واحدة', two: 'صفحتين', few: 'صفحات', many: 'صفحة' };
+const ATTEMPTS: NounForms = { one: 'محاولة واحدة', two: 'محاولتان', few: 'محاولات', many: 'محاولة' };
+const QUESTIONS_GEN: NounForms = { one: 'سؤال واحد', two: 'سؤالين', few: 'أسئلة', many: 'سؤالًا' };
+const REVIEWS: NounForms = { one: 'مراجعة واحدة', two: 'مراجعتان', few: 'مراجعات', many: 'مراجعة' };
+const CARDS_GEN: NounForms = { one: 'بطاقة واحدة', two: 'بطاقتين', few: 'بطاقات', many: 'بطاقة' };
+/** «لبطاقة واحدة» / «لبطاقتين» / «لـ5 بطاقات» */
+const forAr = (phrase: string) => (/^\d/.test(phrase) ? `لـ${phrase}` : `ل${phrase}`);
+
 function ConceptKnowledge({ item: i }: { item: StudentConceptView }) {
   return (
     <li className="kb-know">
@@ -112,12 +121,13 @@ function ConceptKnowledge({ item: i }: { item: StudentConceptView }) {
       <dl className="kb-know__facts">
         <div>
           <dt>القراءة</dt>
-          <dd>{i.reading.pages_total ? `${i.reading.pages_viewed} من ${i.reading.pages_total} صفحات يُذكر فيها` : 'لا صفحات معروفة'}</dd>
+          <dd>{i.reading.pages_total ? `${i.reading.pages_viewed} من ${countAr(i.reading.pages_total, PAGES_GEN)} يُذكر فيها` : 'لا صفحات معروفة'}</dd>
         </div>
         <div>
           <dt>التدريب</dt>
           <dd>
-            {i.practice.question_attempts} محاولة على {i.practice.questions} سؤال{i.practice.cards ? ` · ${i.practice.card_reviews} مراجعة لـ${i.practice.cards} بطاقة` : ''}
+            {countAr(i.practice.question_attempts, ATTEMPTS)} على {countAr(i.practice.questions, QUESTIONS_GEN)}
+            {i.practice.cards ? ` · ${countAr(i.practice.card_reviews, REVIEWS)} ${forAr(countAr(i.practice.cards, CARDS_GEN))}` : ''}
           </dd>
         </div>
         <div>

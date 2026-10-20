@@ -3,7 +3,8 @@
 // MOUSE (no stylus, no iPad here). Checked:
 //  * the on-device panel «قدرات القلم على هذا الجهاز» before and after writing with the mouse: pressure / tilt / hover
 //    stay «not observed», native-only Pencil features say they need a native iPad app, handwriting recognition says it
-//    is not built, palm rejection says it is approximate, and the panel itself says a mouse proves nothing about a pen;
+//    needs a server setting (built in track F4; it needs a vision provider, and none is configured here — never
+//    «supported»), palm rejection says it is approximate, and the panel itself says a mouse proves nothing about a pen;
 //  * a stroke written with the mouse is STORED as a mouse stroke (pointer type, no pressure, no tilt, 3-value points);
 //  * a SIMULATED pen (CDP pointer events with pointerType «pen» and the constant 0.5 pressure of pressure-less
 //    hardware) is not reported as pressure-capable;
@@ -30,7 +31,8 @@ async function expectNativeAndHonestRows(dialog: Locator) {
   for (const native of ['حبر PencilKit بأقل تأخير', 'النقر المزدوج على القلم', 'الضغط على جسم القلم (Squeeze)', 'Scribble']) {
     await expect(rowState(dialog, native), native).toHaveText('يتطلب تطبيق iPad أصليًا');
   }
-  await expect(rowState(dialog, 'التعرف على الخط اليدوي')).toHaveText('غير منفّذ بعد');
+  // track F4 built recognition; without a vision provider on the server it is «requires_configuration», never «supported»
+  await expect(rowState(dialog, 'التعرف على الخط اليدوي')).toHaveText('يحتاج إعدادًا على الخادم');
   await expect(rowState(dialog, 'رفض راحة اليد')).toHaveText('تقريبي على الويب');
 }
 
@@ -97,7 +99,8 @@ test.describe('G6 AC-28 pen capabilities are reported honestly', () => {
       await page.getByRole('button', { name: 'المزيد', exact: true }).last().click();
       const convert = page.getByRole('menuitem', { name: /تحويل إلى نص/ });
       await expect(convert).toHaveAttribute('aria-disabled', 'true');
-      await expect(convert).toContainText('يحتاج التعرف على الخط اليدوي، ولم يُبنَ بعد.');
+      // the server's reason (track F4): recognition needs a vision provider, and none is configured here
+      await expect(convert).toContainText(/vision/);
       await page.keyboard.press('Escape');
     });
   });
@@ -141,7 +144,10 @@ test.describe('G6 AC-28 pen capabilities are reported honestly', () => {
     await expect(pen).toContainText('اختُبرت آليًا بالفأرة في Chromium');
     const rec = page.locator('.cc-cap', { hasText: 'التعرف على خط اليد' });
     await expect(rec).toBeVisible();
-    await expect(rec).not.toContainText('تعمل');
+    // the state pill is «needs a server setting», never «تعمل» / «تعمل بحدود»; the reason line names what is missing
+    // (its «كتابتك نفسها تُحفظ وتعمل كاملة دونه» speaks of the owner's writing, not of recognition)
+    await expect(rec.locator('.ml-pill')).toHaveText('تحتاج إعدادًا على الخادم');
+    await expect(rec.locator('.cc-cap__why')).toContainText('ANTHROPIC_API_KEY');
     await screenshot(page, testInfo, 'g6-ac28-control-center', { fullPage: true });
   });
 });

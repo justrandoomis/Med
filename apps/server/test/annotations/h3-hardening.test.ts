@@ -199,7 +199,7 @@ describe('H3 item 2 — manual re-anchoring («تحتاج إعادة ربط»): 
     expect(res.map((r) => r.result)).toEqual(['applied', 'applied']);
     return ids;
   }
-  const reanchorReq = (payload: unknown) => t.app.inject({ method: 'POST', url: '/api/annotations/reanchor', headers: h, payload });
+  const reanchorReq = (payload: unknown) => t.app.inject({ method: 'POST', url: '/api/annotations/reanchor', headers: h, payload: payload as Record<string, unknown> });
   const lists = async () => (await get(`/api/annotations/needs-reanchor?source_id=${f.sourceId}`)).json() as NeedsReanchorResponse;
 
   it('an ink group moves to a paragraph of a page: placed AT the paragraph, shape kept, previous anchor kept, audited, synced', async () => {

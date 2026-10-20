@@ -130,14 +130,26 @@ function ImagesTab({ status }: { status: MediaStatusResponse | null }) {
   const [query, setQuery] = useState('');
   const [data, setData] = useState<ImageListResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const load = useCallback(async () => {
+  // state is set only when the request settles (no synchronous setState on the effect path)
+  const load = useCallback(
+    () =>
+      mediaApi.images({ kind, q: query })
+        .then((d) => setData(d))
+        .catch((e: unknown) => setError(errorMessage(e, 'تعذّر تحميل الصور.'))),
+    [kind, query],
+  );
+  // a retry clears the previous error at once
+  const reload = () => {
     setError(null);
-    try {
-      setData(await mediaApi.images({ kind, q: query }));
-    } catch (e) {
-      setError(errorMessage(e, 'تعذّر تحميل الصور.'));
-    }
-  }, [kind, query]);
+    void load();
+  };
+  // another filter: the previous error is cleared while rendering
+  const filter = `${kind}|${query}`;
+  const [loadedFor, setLoadedFor] = useState(filter);
+  if (loadedFor !== filter) {
+    setLoadedFor(filter);
+    setError(null);
+  }
   useEffect(() => {
     void load();
   }, [load]);
@@ -162,7 +174,7 @@ function ImagesTab({ status }: { status: MediaStatusResponse | null }) {
           اعرض
         </Button>
       </form>
-      {error && <ErrorState message={error} onRetry={() => void load()} />}
+      {error && <ErrorState message={error} onRetry={reload} />}
       {!data && !error && <LoadingState stage="جارٍ تحميل الصور…" />}
       {data?.notes_ar.map((n) => (
         <p key={n} className="md-muted">
@@ -185,20 +197,25 @@ function ImagesTab({ status }: { status: MediaStatusResponse | null }) {
 function AudioTab({ status }: { status: MediaStatusResponse | null }) {
   const [data, setData] = useState<AudioListResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const load = useCallback(async () => {
+  // state is set only when the request settles (no synchronous setState on the effect path)
+  const load = useCallback(
+    () =>
+      mediaApi.audio()
+        .then((d) => setData(d))
+        .catch((e: unknown) => setError(errorMessage(e, 'تعذّر تحميل التسجيلات.'))),
+    [],
+  );
+  // a retry clears the previous error at once
+  const reload = () => {
     setError(null);
-    try {
-      setData(await mediaApi.audio());
-    } catch (e) {
-      setError(errorMessage(e, 'تعذّر تحميل التسجيلات.'));
-    }
-  }, []);
+    void load();
+  };
   useEffect(() => {
     void load();
   }, [load]);
   return (
     <>
-      {error && <ErrorState message={error} onRetry={() => void load()} />}
+      {error && <ErrorState message={error} onRetry={reload} />}
       {!data && !error && <LoadingState stage="جارٍ تحميل التسجيلات…" />}
       {data && data.audio.length === 0 && (
         <EmptyState

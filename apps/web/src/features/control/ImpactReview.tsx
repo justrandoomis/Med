@@ -30,11 +30,17 @@ export function ImpactReview({ change, onApplied, onCancel }: { change: ImpactCh
   const [tick, setTick] = useState(0);
   const [showAll, setShowAll] = useState(false);
   const key = JSON.stringify(change);
-  useEffect(() => {
-    let cancelled = false;
+  // a new change (or a re-check) starts from an empty preview, reset while rendering; the request runs in the effect
+  const request = `${tick}:${key}`;
+  const [requested, setRequested] = useState(request);
+  if (requested !== request) {
+    setRequested(request);
     setPreview(null);
     setError(null);
     setStale(false);
+  }
+  useEffect(() => {
+    let cancelled = false;
     controlApi
       .preview(change)
       .then((p) => {

@@ -30,25 +30,29 @@ Control Center («مركز التحكم» → «القدرات») lists each fea
 |---|---|
 | Library | notebooks with covers, nested folders, drag & drop, tags, favorites, recent, archive, restorable trash with impact preview, study templates |
 | Upload & processing | PDF (digital, scanned, mixed), DOCX, PPTX, images, ZIP of images; DOC/PPT through LibreOffice; offline OCR (Arabic + English); tables, figures, captions; printed page numbers vs file pages; real progress per page; failed pages shown, never hidden |
-| Reader & writing | book canvas (continuous, single, two-page), search in the document, highlights, notes, bookmarks; pens, highlighter, erasers, lasso, shapes, text, sticky notes; everything saved on the device first |
+| Reader & writing | book canvas (continuous, single, two-page), search in the document, highlights, notes, bookmarks; pens, highlighter, erasers, lasso, shapes, text, sticky notes, pictures, links; note pages between lecture pages and notebooks of their own; split study (lecture + another source, its Study Book, its questions or the explanations); undo / redo kept on the device across a reload; manual re-anchoring of notes whose place changed; in-app voice notes linked to the strokes written meanwhile; everything saved on the device first |
 | Evidence & Source Lock | citations that open the exact page and region; Lecture Only / References / Lecture + References enforced on the server |
 | Search | keyword and exact-phrase search over sources, questions, notes, generated content and transcripts (Arabic-normalized) |
-| Question Vault | extraction of questions, options and keys from your files and photos, separate key states (source key, missing, AI-derived, conflicting, unresolved), automatic linking to lecture pages, duplicates kept with every occurrence |
+| Question Vault | extraction of questions, options and keys from your files and photos, separate key states (source key, missing, AI-derived, conflicting, unresolved), automatic linking to lecture pages, duplicates kept with every occurrence, version history with labelled derived versions |
+| Course Brain | concepts, relations stated in your lectures (with the quoted sentence), algorithms / flowcharts read from numbered steps and figures, topics that gather lectures, questions, cases and your attempts, course coverage and knowledge maps |
+| Study modes | تعلّم / افهم / تدرّب / راجع / امتحن نفسك: the same workspace re-arranged; «امتحن نفسك» hides explanations, solutions and evidence previews |
 | Practice & exams | practice with hints, exams with a fixed timer policy and no answer leaks, results by lecture and concept |
 | Learning | flashcards (basic, cloze, image occlusion, from mistakes) with FSRS, Weakness Center, Mistake Genome, planner, one-tap revision, Exam DNA, Anki-compatible text export |
 | Cases & media | owner-written clinical cases, OSCE checklists and viva; image explorer with non-destructive overlays and image quiz; audio playback with manual / VTT / SRT transcripts |
-| Devices & data | offline downloads, sync between devices without losing writing, backup + verified restore, export to Markdown / print-ready HTML / JSON |
+| Devices & data | offline downloads, sync between devices without losing writing, backup + verified restore, export to Markdown / print-ready HTML / JSON / Word (DOCX) / PDF (the original PDF with your writing drawn on it; other exports through LibreOffice when it is installed) |
+| Quality & control | Personal Control Center: live capabilities with reasons, processing and review queues, sync conflicts, client error log and failure trends, the evaluation runs (`npm run eval`), the allowed external visual-source registry |
 
 | needs `ANTHROPIC_API_KEY` on the server | shown as «تحتاج إعدادًا على الخادم» until then |
 |---|---|
-| Explanations (explain, simplify, translate, explain the figure), contextual chat, Study Book, summaries, comparisons | all generated text passes server-side evidence checks; unsupported sentences are removed, never softened |
-| Generated hard MCQs, answer check for keyless questions, written-answer grading, AI case generation and viva judge | nothing is published or scored unless its evidence is verified |
+| Explanations (explain, simplify, translate, explain the figure), contextual chat, Study Book, summaries, comparisons, timelines / flowcharts from a selection | all generated text passes server-side evidence checks; unsupported sentences are removed, never softened. A streamed answer is shown as «مسودة لم تُتحقق بعد» until the checked result replaces it |
+| Handwriting recognition, reading a figure's structure | need a provider that reads images (vision); the result is labelled derived, shows what is uncertain and can be corrected; your ink and the original figure are never replaced |
+| Generated hard MCQs and full simulations, Create MCQ from a selection, answer check for keyless questions, written-answer grading, AI case generation and viva judge | nothing is published or scored unless its evidence is verified |
 
 | not available in this version | why |
 |---|---|
 | Semantic search, automatic transcription, external image / evidence search | they need an embeddings, speech-to-text or search provider that is not built |
-| Handwriting recognition, native iPad layer (PencilKit, double tap, squeeze) | not built; the web ink records pressure / tilt when the browser sends them, but no real Apple Pencil was tested |
-| Server-side PDF export | not built; PDF = print the HTML export from the browser (Word (DOCX) export exists since track F5) |
+| Native iPad layer (PencilKit, double tap, squeeze, Scribble on the page) | needs a native app; the web ink records pressure / tilt when the browser sends them, but no real Apple Pencil was tested |
+| Recognition and lasso actions on a notebook's own page screen, automatic audio ↔ page alignment | not built yet (in the reader they exist; see the matrix) |
 
 The full, evidence-based list (with the tests behind each line) is the [Requirement Matrix](docs/REQUIREMENTS_MATRIX.md).
 
@@ -178,9 +182,9 @@ locally.
 
 ```
 packages/shared/    typed contracts shared by server and web (zod schemas, enums, rich text / bidi, page labels)
-apps/server/        Fastify API: src/modules/<module>/ (21 modules), db/migrations/, cli/ (backup, restore-verify), test/
+apps/server/        Fastify API: src/modules/<module>/ (22 modules), db/migrations/, cli/ (backup, restore-verify, eval), test/
 apps/web/           React PWA: src/app (shell, routes), src/design (design system), src/lib (api, sync, offline),
-                    src/features/<feature>/ (18 features), test/
+                    src/features/<feature>/ (20 features), test/
 e2e/                Playwright specs against the real server
 fixtures/           Golden Set and acceptance fixtures (synthetic TEST FIXTURE documents, not medical references)
 tools/, scripts/    fixture generator, dev runner

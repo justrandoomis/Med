@@ -7,7 +7,7 @@
 //  * the details panel (aria-live) shows the step's verified statement with its citation chips (Evidence Peek → open
 //    the source → back), and every relation in words with its direction «من … إلى …» (AC-08);
 //  * the text twin carries exactly the same steps, relations, statements and chips.
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { GitBranch, List, Shapes } from 'lucide-react';
 import { DIAGRAM_NODE_KIND_LABELS_AR, type ClaimView, type StudyDiagramEdgeView, type StudyDiagramNodeView, type StudyDiagramView } from '@medlevo/shared';
 import { SegmentedControl, StatusPill, cx, isRtl } from '../../../design';
@@ -148,9 +148,10 @@ function DiagramCanvas({ diagram }: { diagram: StudyDiagramView }) {
     return () => ro.disconnect();
   }, []);
 
-  useEffect(() => {
-    if (!byKey.has(focus)) setFocus(diagram.nodes[0]?.key ?? '');
-  }, [byKey, focus, diagram.nodes]);
+  // a focused node that left the diagram moves to the first one (adjusted while rendering; the `!== fallback` guard
+  // ends it for an empty diagram)
+  const fallbackFocus = diagram.nodes[0]?.key ?? '';
+  if (!byKey.has(focus) && focus !== fallbackFocus) setFocus(fallbackFocus);
 
   const onKey = (e: KeyboardEvent<HTMLButtonElement>, key: string) => {
     if (e.key === 'Escape') {

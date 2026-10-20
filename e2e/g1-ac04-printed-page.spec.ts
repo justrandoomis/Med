@@ -51,6 +51,35 @@ async function openCitationFromCard(page: Page, cardId: string, chipText: RegExp
   await expect(page).toHaveURL(/\/study\//);
 }
 
+/**
+ * (Round 7 final) On the phone bar the compact page indicator must not be covered by another control of the bar: at
+ * 390 px it used to run under the save-status icon and the mode switch (title column ~60 px), and the save icon took
+ * the tap meant for «الانتقال إلى صفحة». Checks every control's box against the indicator's and that the indicator's
+ * centre really is the indicator.
+ */
+async function expectIndicatorUncovered(page: Page) {
+  const problems = await page.evaluate(() => {
+    const bar = document.querySelector('.wk-topbar');
+    const ind = bar?.querySelector('.wk-pageind');
+    if (!bar || !ind) return ['no page indicator in the top bar'];
+    const a = ind.getBoundingClientRect();
+    const out: string[] = [];
+    if (a.left < 0 || a.right > window.innerWidth) out.push(`indicator outside the viewport (${Math.round(a.left)}–${Math.round(a.right)})`);
+    for (const el of Array.from(bar.querySelectorAll('button, a, .ml-save-status'))) {
+      if (el === ind || ind.contains(el) || el.contains(ind)) continue;
+      const b = el.getBoundingClientRect();
+      if (b.width === 0 || b.height === 0) continue;
+      const ix = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+      const iy = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+      if (ix > 0.5 && iy > 0.5) out.push(`overlaps ${el.className} «${el.getAttribute('aria-label') ?? el.textContent ?? ''}» by ${Math.round(ix)}×${Math.round(iy)} px`);
+    }
+    const hit = document.elementFromPoint(a.left + a.width / 2, a.top + a.height / 2);
+    if (!hit || !ind.contains(hit)) out.push(`the indicator's centre hits ${hit ? hit.className : 'nothing'}`);
+    return out;
+  });
+  expect(problems).toEqual([]);
+}
+
 async function goTo(page: Page, input: string) {
   await page.locator('.wk-pageind').first().click();
   const field = page.getByLabel('انتقل إلى صفحة');
@@ -110,12 +139,22 @@ test.describe('G1 AC-04 printed page vs file page', () => {
       const card12 = await citeMarker(api, up, pages, 13);
       await openCitationFromCard(page, card12, /^محاضرة ص12$/, /^ص 12 \(الصفحة 14 في الملف\)$/);
       await expectReaderAt(page, 13, /^ص 12$/, /^الصفحة 14 في الملف$/);
+      if (testInfo.project.name === 'phone') await expectIndicatorUncovered(page);
     });
 
     await test.step('citation of the unnumbered cover: identified by its file position, not as «ص1» (which is printed on file page 3)', async () => {
       const cardCover = await citeMarker(api, up, pages, 0);
       await openCitationFromCard(page, cardCover, /^محاضرة الصفحة 1 في الملف$/, /^الصفحة 1 في الملف$/);
       await expectReaderAt(page, 0, /^الصفحة 1 في الملف$/, null);
+      if (testInfo.project.name === 'phone') {
+        // (Round 7 final) the longest compact label, at the common phone widths: never under another control
+        for (const width of [390, 375, 360]) {
+          await page.setViewportSize({ width, height: 844 });
+          await expectIndicatorUncovered(page);
+        }
+        await page.setViewportSize({ width: 390, height: 844 });
+        await screenshot(page, testInfo, 'g1-ac04-phone-bar-unnumbered');
+      }
       // and the page that IS printed 1 keeps its identity
       await goTo(page, '1');
       await expectReaderAt(page, 2, /^ص 1$/, /^الصفحة 3 في الملف$/);

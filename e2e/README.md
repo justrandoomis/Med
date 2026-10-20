@@ -108,11 +108,14 @@ container only — never a device FPS / pen-latency claim.
 
 ## `critic-screens.spec.ts` (screen sweep)
 
-On both projects: sets up an owner, uploads the Golden Set lecture + question source, creates a card and an exam, then
-opens **every top-level screen** (47 shell / full-bleed routes + login / recover signed out) in the light AND the dark
-colour scheme. Each screen must pass `expectHealthyScreen`, have exactly one visible `<h1>`, no control without an
-accessible name, no `<img>` without `alt`, no honesty red flags in the visible text (accuracy / «100%» claims, «AI
-Verified», raw `undefined` / `NaN` / JSON) and no text under 3:1 contrast; on the phone the segmented options, switches
+On both projects: sets up an owner, uploads the Golden Set lecture + question source, creates a card, an exam and a
+topic, then opens **every top-level screen** (55 shell / full-bleed routes — since the Round 7 final verification also
+the topics list and a topic page, concepts, «خريطة معرفتي», the generated simulation and the Control Center's visual
+sources, health and evaluation screens — + login / recover signed out) in the light AND the dark colour scheme. Each
+screen must pass `expectHealthyScreen`, have exactly one visible `<h1>`, no control without an accessible name, no
+`<img>` without `alt`, no honesty red flags in the visible text (accuracy / «100%» claims, «AI Verified», raw
+`undefined` / `NaN` / JSON, raw markdown code between backticks), no list item whose leading icon sits on a line of its
+own, and no text under 3:1 contrast; on the phone the segmented options, switches
 (transparent 45px ring), the brand link and the save-status button must keep a 44px touch target. Full-page screenshots
 and a probe report (`report.json`, also listing 3–4.5:1 contrast and smaller touch targets for a human look) go to
 `e2e/.artifacts/critic/<project>/`. Screenshots are for review; they are not pixel-compared.

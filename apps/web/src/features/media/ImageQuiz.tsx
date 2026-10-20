@@ -28,19 +28,30 @@ export function ImageQuiz() {
   const [busy, setBusy] = useState<string | null>(null);
   const [announce, setAnnounce] = useState('');
 
-  const load = useCallback(async () => {
+  // state is set only when the request settles (no synchronous setState on the effect path)
+  const fetchQuiz = useCallback(
+    () =>
+      mediaApi.quiz(quizId)
+        .then((q) => setQuiz(q))
+        .catch((e: unknown) => setError(errorMessage(e, 'تعذّر فتح الاختبار.'))),
+    [quizId],
+  );
+  // a retry clears the previous error at once
+  const reload = () => {
     setError(null);
-    try {
-      setQuiz(await mediaApi.quiz(quizId));
-    } catch (e) {
-      setError(errorMessage(e, 'تعذّر فتح الاختبار.'));
-    }
-  }, [quizId]);
+    void fetchQuiz();
+  };
+  // another quiz: its predecessor's error is cleared while rendering
+  const [loadedFor, setLoadedFor] = useState(quizId);
+  if (loadedFor !== quizId) {
+    setLoadedFor(quizId);
+    setError(null);
+  }
   useEffect(() => {
-    void load();
-  }, [load]);
+    void fetchQuiz();
+  }, [fetchQuiz]);
 
-  if (error) return <ErrorState message={error} onRetry={() => void load()} />;
+  if (error) return <ErrorState message={error} onRetry={reload} />;
   if (!quiz) return <LoadingState stage="جارٍ فتح الاختبار…" />;
 
   const answered = new Map(quiz.answers.map((a) => [a.key, a]));

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useInsertionEffect, useMemo, useRef, useState } from 'react';
 import { useRouteLoaderData } from 'react-router-dom';
 import { BookA, BookOpenText, ChevronLeft, Clock, CloudDownload, Info, Monitor, Moon, Palette, ScrollText, Shield, SlidersHorizontal, Sun } from 'lucide-react';
 import { richTextFromPlain, type OwnerSettings } from '@medlevo/shared';
@@ -122,7 +122,10 @@ export function SettingsScreen() {
   }, [customDraft]);
   // leaving the screen inside the debounce window still saves the draft
   const draftRef = useRef(customDraft);
-  draftRef.current = customDraft;
+  // the latest draft, written at commit (before any layout effect) rather than during render
+  useInsertionEffect(() => {
+    draftRef.current = customDraft;
+  });
   useEffect(
     () => () => {
       if (settingsStore.get().settings.custom_instruction !== draftRef.current) void settingsStore.update({ custom_instruction: draftRef.current });

@@ -35,13 +35,18 @@ const REGIONS: PageRegionsResponse = {
 };
 
 let posted: ReanchorRequest[];
+let regionCalls: number;
 beforeEach(async () => {
   posted = [];
+  regionCalls = 0;
   await getDb().open();
   await Promise.all([getDb().annotations.clear(), getDb().notes.clear(), getDb().outbox.clear()]);
   vi.spyOn(api, 'get').mockImplementation(async (path: string) => {
     if (path === '/annotations/needs-reanchor') return LIST;
-    if (path === '/sources/pages/P1/regions') return REGIONS;
+    if (path === '/sources/pages/P1/regions') {
+      regionCalls++;
+      return REGIONS;
+    }
     if (path.startsWith('/sources/pages/')) return { page: page(0), regions: [] };
     throw new Error(`unexpected ${path}`);
   });
@@ -86,6 +91,11 @@ describe('H3 item 2 — choosing a new place in «تحتاج إعادة ربط»
     const dialog = await screen.findByRole('dialog', { name: /أين تضع كتابة بالقلم/ });
     fireEvent.change(within(dialog).getByLabelText('الصفحة'), { target: { value: '1' } });
     const para = await within(dialog).findByRole('radio', { name: /عند الفقرة: «يبدأ الألم عادة حول السرة»/ });
+    // the page's paragraphs are fetched once — not again on every render (that loop froze the real reader)
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(regionCalls).toBe(1);
     fireEvent.click(para);
     await act(async () => {
       fireEvent.click(within(dialog).getByRole('button', { name: 'اربطها هنا' }));
