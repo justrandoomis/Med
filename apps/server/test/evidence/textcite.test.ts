@@ -59,6 +59,20 @@ describe('pseudo citations — unusual phrasings (H1)', () => {
     expect(hasPseudoCitation(t)).toBe(false);
   });
 
+  // H1 review: «slide» is also a verb (the sliding-filament mechanism): a number word after the VERB is not a reference
+  it.each([
+    'During contraction the thin and thick filaments slide one over the other.',
+    'The two layers of pleura slide one against the other.',
+    'The femoral head slides two millimetres.',
+    'Actin and myosin filaments tend to slide one over the other.',
+    'The filaments shorten and slide one past the other.',
+  ])('does not flag the verb «slide» before a number word: «%s»', (t) => {
+    expect(hasPseudoCitation(t)).toBe(false);
+  });
+  it.each(['As shown on slide two, CT is preferred.', 'see slide three', 'Slide two lists the causes.', '(slide four)', 'Refer to slide two for the pathway.'])('still flags the noun: «%s»', (t) => {
+    expect(hasPseudoCitation(t)).toBe(true);
+  });
+
   it('strips the new forms from a label and keeps the rest', () => {
     expect(stripPseudoCitations('Imaging pathway (see the third page)')).toBe('Imaging pathway');
     expect(stripPseudoCitations('مسار التصوير (انظر الصفحة الثالثة)')).toBe('مسار التصوير');

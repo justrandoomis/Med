@@ -135,9 +135,9 @@ segment's row is removed.
   reason, never with their label. A quiz where every label is uncertain is refused.
 - The quiz payload has neutral keys (`m1`, `m2`…) and mask geometry only: no image id, file id, caption, title,
   source, page or label. The image comes from `/api/media/quiz/:id/image` with `no-store`, no file name and no ETag.
-- PNG images are served with the masks burned into a derived copy (the stored file is untouched), so removing a layer
-  in the browser reveals nothing. Other formats are served as-is with client-drawn masks (`masks_rendered: 'client'`),
-  and the UI says so.
+- PNG and (since Round 7 H2) JPEG images are served with the masks burned into a derived copy (the stored file is
+  untouched), so removing a layer in the browser reveals nothing. Other formats, and pictures that cannot be decoded,
+  are served as-is with client-drawn masks (`masks_rendered: 'client'`), and the UI says so.
 - Answers are append-only and matched against the label and its aliases (normalized Arabic). A non-matching answer
   can be self-marked correct; it is stored as `self_marked_correct`, not as a match. The source is revealed only after
   finishing.
@@ -253,7 +253,8 @@ passed.
 - Two saves of the same case racing through evidence validation are refused with 409 inside the transaction; this is
   not covered by a deterministic test (the race needs real asynchronous I/O).
 - The OSCE order check uses the position of first mention in the typed text, not the real sequence of actions.
-- Image Quiz masks are burned in server-side only for PNG. Other formats use client-drawn masks, and the UI says so.
+- Image Quiz masks are burned in server-side for PNG (≤ 40 MP) and JPEG (≤ 24 MP; since Round 7 H2). Other formats,
+  interlaced PNG, and damaged or over-budget pictures use client-drawn masks, and the UI says so.
 - The audio duration comes from the owner's player (labelled). The server does not decode audio.
 - Cases and media need a connection. Nothing was added to the offline (Dexie) schema; only unsent runner input and
   editor drafts are kept in `localStorage`.
@@ -421,3 +422,18 @@ Confirmed and fixed (regression tests fail on the code before the fix):
   (`features/workspace/panels/CasesTab.tsx`, see `docs/modules/workspace.md` «Track F3»). Tests:
   `srv:f3/unconfigured.test.ts` (filter), `web:src/features/workspace/modes/studyModes.test.tsx`,
   `e2e:f3-study-modes.spec.ts` (an owner OSCE station of the lecture listed in the rail).
+
+## Round 7 — H2: JPEG in the Image Quiz (2026-10-20; H2 item 4)
+- **Before**: a JPEG photo was served UNMASKED with the masks only drawn by the browser (`masks_rendered: 'client'`),
+  so removing the overlay element in the page revealed the label — the AC-08 «no leak» guarantee held for PNG only.
+- **Now** (`media/quiz.ts`, decoder `processing/image.ts`, dependency `jpeg-js` — justified in `processing.md`
+  «Round 7 — H2»): JPEG is decoded with its EXIF orientation applied, so the masks (drawn by the owner on the picture as
+  the browser DISPLAYS it) land on the right place; the masked copy is re-encoded without EXIF; the stored original is
+  untouched. Decoding is bounded (PNG 40 MP, JPEG 24 MP, checked from the header before allocating). The rendered copy is
+  cached in memory (LRU, ≤ 48 MB and ≤ 32 entries, one copy ≤ 12 MB; key = sha256 of quiz id, file id, file sha256 and
+  mask shapes, so a changed mask renders a new copy; `quizImageCacheStats()` for tests). A quiz created as server-masked
+  whose picture can no longer be decoded answers 409 — the unmasked original is never sent. An undecodable picture at
+  creation keeps client masks, said in the payload (`ImageQuiz.tsx` message no longer says «PNG only»).
+- Tests: `srv:media/quiz-jpeg.test.ts` (4: a real JPEG masked on the server with the label area covered in the served
+  bytes and the original unchanged; EXIF 6 — the mask follows the displayed picture; cache hit / new copy on a changed
+  mask; an undecodable JPEG stays `client`, never «masked» by pretence). Existing quiz tests unchanged and passing.

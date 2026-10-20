@@ -36,7 +36,14 @@ const PSEUDO_CITATION_PATTERNS: RegExp[] = [
   /\b(?:pages?|slides?)\s+\d+/giu, // page 12 · slides 3
   /\b(?:pages?|slides?)\s*(?:#|no\.?|number|num\.?)\s*\d+/giu, // slide #4 · page no. 12 · page number 7
   new RegExp(`\\b(?:${EN_ORDINAL})\\s+(?:pages?|slides?)\\b`, 'giu'), // the third page · the next slide
-  new RegExp(`\\b(?:pages?|slides?)\\s+(?:${EN_NUMBER_WORD})\\b`, 'giu'), // page three · slide two
+  new RegExp(`\\bpages?\\s+(?:${EN_NUMBER_WORD})\\b`, 'giu'), // page three
+  // slide two — the NOUN only (after a preposition / article, or at the start of a sentence or a bracket): «filaments
+  // slide one over the other» is the verb (H1 review)
+  // («to» only after a referral verb: «refer to slide two», not «tend to slide one over the other»)
+  new RegExp(
+    `(?:(?<=\\b(?:on|in|at|from|see|of|the|per|(?:refer|referring|back|go|turn|according)\\s+to)\\s+)|(?<=^\\s*)|(?<=[.!?:;([]\\s*))slides?\\s+(?:${EN_NUMBER_WORD})\\b`,
+    'giu',
+  ),
   /\b(?:pages?|p\.)\s+(?=[ivxlc]+\b)(?:x{0,3})(?:ix|iv|v?i{0,3})(?![a-z])/giu, // page xii · p. iv
 ];
 

@@ -656,14 +656,22 @@ function isLaterality(w: string): boolean {
  * medical terms by their form (-itis, -osis, -ectomy, -graphy, hyper-/hypo- …), laterality (left / right / اليمنى …)
  * and — in an Arabic claim — every Latin term.
  */
-export function directlyStatedKeyTerms(claim: string): Array<{ raw: string; stem: string }> {
+export function directlyStatedKeyTerms(claim: string): DirectlyStatedKeyTerm[] {
   const text = stripBidiControls(claim).normalize('NFC');
   const arabicClaim = isArabicDominant(text);
-  const out = new Map<string, string>();
+  const out = new Map<string, DirectlyStatedKeyTerm>();
+  // a term written twice keeps the strictest form: required wins over optional
+  const put = (stem: string, raw: string, optional?: { kind: 'gloss' | 'acronym'; span: [number, number] }) => {
+    const had = out.get(stem);
+    if (had && !had.optional) return;
+    if (had && optional) return;
+    out.set(stem, optional ? { stem, raw, optional: optional.kind, span: optional.span } : { stem, raw });
+  };
   const re = /[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu;
   for (const m of text.matchAll(re)) {
     const before = text.slice(0, m.index!).trimEnd();
     const sentenceStart = before.length === 0 || /[.!?؟:•\n]$/.test(before);
+    const paren = enclosingParen(text, m.index!);
     for (const partRaw of m[0].split('-')) {
       const part = partRaw.replace(/['’]s?$/u, '').replace(/['’]/g, '');
       if (!part || /^\p{N}+$/u.test(part)) continue;
@@ -678,16 +686,70 @@ export function directlyStatedKeyTerms(claim: string): Array<{ raw: string; stem
           isMedicalTerm(lower) ||
           LATERALITY_EN.has(lower) ||
           (arabicClaim && lower.length >= 2);
-        if (key) out.set(lightStemEn(lower), part);
+        if (!key) continue;
+        // H1 review: «التهاب الزائدة (appendicitis)» — a Latin gloss in parentheses inside an Arabic claim — and
+        // «computed tomography (CT)» — an acronym of the words right before it — add no fact of their own
+        const optional = paren
+          ? arabicClaim && /[A-Za-z]/.test(paren.content) && !/[؀-ۿ]/.test(paren.content)
+            ? 'gloss'
+            : expandsAcronym(text, paren, m[0], part)
+              ? 'acronym'
+              : null
+          : null;
+        put(keyStemEn(lower), part, optional && paren ? { kind: optional, span: [paren.start, paren.end] } : undefined);
       } else if (/[Ͱ-Ͽ]/.test(part)) {
-        out.set(lower, part);
+        put(lower, part);
       } else if (/[؀-ۿ]/.test(part)) {
         const w = normalizeForSearch(baseNormalize(part));
-        if (isLaterality(w)) out.set(lightStemAr(w), part);
+        if (isLaterality(w)) put(lightStemAr(w), part);
       }
     }
   }
-  return [...out].map(([stem, raw]) => ({ stem, raw }));
+  return [...out.values()];
+}
+
+/** A key term of a «directly stated» claim; `optional` ones (with the span of their parenthesis) need not be quoted. */
+export interface DirectlyStatedKeyTerm {
+  raw: string;
+  stem: string;
+  /**
+   * 'gloss': a Latin term in parentheses inside an Arabic claim — required only when the quote itself carries Latin
+   * script (then it may be the quote's own term, swapped); 'acronym': «(CT)» right after the words it abbreviates.
+   */
+  optional?: 'gloss' | 'acronym';
+  span?: [number, number];
+}
+
+/** British / American spellings of one term share a stem: «anaemia» / «anemia», «oedema» / «edema» (H1 review). */
+function keyStemEn(w: string): string {
+  return lightStemEn(w.length >= 5 ? w.replace(/ae/g, 'e').replace(/oe/g, 'e') : w);
+}
+
+/** The «( … )» around position `i` of `text` (no nesting), or null. */
+function enclosingParen(text: string, i: number): { start: number; end: number; content: string } | null {
+  const open = Math.max(text.lastIndexOf('(', i), text.lastIndexOf('（', i));
+  if (open < 0) return null;
+  if (Math.max(text.lastIndexOf(')', i), text.lastIndexOf('）', i)) > open) return null;
+  const rel = text.slice(i).search(/[)）]/u);
+  if (rel < 0) return null;
+  const end = i + rel + 1;
+  return { start: open, end, content: text.slice(open + 1, end - 1) };
+}
+
+/** «(CT)» / «(NSAIDs)» alone in its parentheses, its letters the initials of the words right before them. */
+function expandsAcronym(text: string, paren: { start: number; content: string }, token: string, part: string): boolean {
+  if (paren.content.trim() !== token || !/^[A-Z]{2,}s?$/.test(part)) return false;
+  const letters = part.replace(/s$/, '');
+  const words = text.slice(0, paren.start).split(/[^\p{L}\p{N}]+/u).filter(Boolean).slice(-letters.length);
+  return words.length === letters.length && words.every((w) => /^[A-Za-z]/.test(w)) && words.map((w) => w[0]!.toUpperCase()).join('') === letters;
+}
+
+/** `text` without the given spans (each replaced by a space). */
+function withoutSpans(text: string, spans: Array<[number, number]>): string {
+  let out = text;
+  const unique = [...new Map(spans.map((sp) => [`${sp[0]}:${sp[1]}`, sp])).values()];
+  for (const [a, b] of unique.sort((x, y) => y[0] - x[0])) out = `${out.slice(0, a)} ${out.slice(b)}`;
+  return out;
 }
 
 /** Content words in reading order (stop words, negations, numbers left out; 2-letter Latin terms kept: «CT»). */
@@ -699,7 +761,7 @@ function contentSeq(text: string, keyStems: Set<string>): SeqWord[] {
     if (!raw || /^\d+$/.test(raw)) continue;
     if (isLatinWord(raw)) {
       if (raw.length < 2 || EN_STOP.has(raw) || EN_NEGATIONS.has(raw) || EN_NEG_CONTRACTION.test(raw)) continue;
-      const stem = lightStemEn(raw);
+      const stem = keyStemEn(raw);
       out.push({ stem, raw, key: keyStems.has(stem) || isMedicalTerm(raw) || LATERALITY_EN.has(raw) || /\d/.test(raw) });
     } else {
       if (raw.length < 2 || AR_STOP.has(raw) || AR_NEGATIONS.has(raw) || isPrefixedArFunctionWord(raw)) continue;
@@ -823,8 +885,14 @@ export function checkContainment(claim: string, quotes: string[], mode: 'origina
     if (coverage < 0.8) continue;
     const present = quoteStems(q);
     const qNorm = ` ${normalizeForSearch(baseNormalize(q)).split(/[^\p{L}\p{N}]+/u).join(' ')} `;
-    const missing = keys.filter((k) => !present.has(k.stem) && !qNorm.includes(` ${matchNormalize(k.raw).replace(/['’]/g, '')} `)).map((k) => k.raw);
-    const swapped = missing.length === 0 ? findSwap(claim, q, keyStems) : null;
+    // a gloss / an expanded acronym is not required, and is not aligned against the quote's words (H1 review)
+    const quoteHasLatin = /[A-Za-z]/.test(q);
+    const optionalHere = keys.filter((k) => k.optional === 'acronym' || (k.optional === 'gloss' && !quoteHasLatin));
+    const missing = keys
+      .filter((k) => !optionalHere.includes(k) && !present.has(k.stem) && !qNorm.includes(` ${matchNormalize(k.raw).replace(/['’]/g, '')} `))
+      .map((k) => k.raw);
+    const alignClaim = optionalHere.length ? withoutSpans(stripBidiControls(claim).normalize('NFC'), optionalHere.map((k) => k.span!)) : claim;
+    const swapped = missing.length === 0 ? findSwap(alignClaim, q, keyStems) : null;
     if (missing.length === 0 && !swapped) return { passed: true, reason_ar: null, method: 'coverage', coverage, missing_key_terms: [], swapped: null };
     if (!closest || coverage > closest.coverage) closest = { coverage, missing, swapped };
   }

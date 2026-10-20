@@ -426,3 +426,12 @@ Runs of the review (2026-10-10, this tree):
   `test/f3/review.test.ts`, 5); `npm test -w @medlevo/web` 103 files / 700 passed, 1 skipped; `npm test -w
   @medlevo/shared` 48 passed; `npx tsc -p apps/server|apps/web|e2e --noEmit` clean; `npm run build -w @medlevo/web`
   success; `npx playwright test e2e/f3-study-modes.spec.ts` (phone + desktop, real server, no AI key): 4 passed.
+
+## Round 7 — H2: OCR text layer on the words (2026-10-20; H2 item 6)
+* OCR regions now carry tesseract's word boxes (`locator.words`, shared `regionWords()`; `processing.md` «Round 7 — H2»).
+  `reader/PageView.tsx OcrTextLayer` renders one transparent span per word at its box (left / top / height in % of the
+  page, font size from the box height, `scaleX` fitted after layout) plus zero-size gap spans, so a selection and the
+  in-document search-hit rectangles fall on the scanned words instead of one run per region (`model/regionText.ts
+  ocrRunSegments`; tables are left to their cells). Regions without word boxes (stored before H2, digital text) keep the
+  previous layer. Photos the server read after turning them are shown upright through the page rotation it stored.
+  Test: `web:src/features/workspace/reader/PageView.ocrwords.test.tsx` (3).

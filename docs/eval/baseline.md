@@ -1,18 +1,18 @@
-# MedLevo evaluation report — eval-20261010T152136-015d6292
+# MedLevo evaluation report — eval-20261020T143342-27d96f0b
 
 > Mode: **scripted** — AI axes ran with the evaluation-only scripted provider: they measure the server's validation and abstention guarantees, **not** a model's quality.
 > Every rate is shown with its denominator and a Wilson 95% interval. A sample under 30 cases is a small sample; no rate here is an accuracy claim beyond these synthetic TEST FIXTURE cases.
 
-* Run: 2026-10-10 15:21:36 UTC → 2026-10-10 15:21:51 UTC · label «F5 baseline (catalogue v1)» · set filter: all
-* Catalogue: eval-catalogue-2026.10-1 · 149 cases (80 regression, 69 tuning) · regression hash `8e8344f0789688d4`
-* System: app 0.1.0 @ 77b7fdd89a51 · node v22.22.0
-* Versions: pipeline=process-v1 · index=chunk-v1 · question_parser=qparse-v1 · question_matcher=qmatch-v1 · ai_rules=rules-2026.10-1 · studybook_generator=studybook-gen-3 · claim_verifier=claims-v1 · ocr.tesseract.js=7.0.0 · ocr.data.eng=1.0.0 · ocr.data.ara=1.0.0 · pdf.pdfjs-dist=6.4.299
+* Run: 2026-10-20 14:33:42 UTC → 2026-10-20 14:33:59 UTC · label «H2 item 10b catalogue 2026.10-2 (process-v2, qparse-v2)» · set filter: all
+* Catalogue: eval-catalogue-2026.10-2 · 149 cases (80 regression, 69 tuning) · regression hash `b6115ad6d9690313`
+* System: app 0.1.0 @ e8fad6a8179b · node v22.22.0
+* Versions: pipeline=process-v2 · index=chunk-v1 · question_parser=qparse-v2 · question_matcher=qmatch-v1 · ai_rules=rules-2026.10-1 · studybook_generator=studybook-gen-3 · claim_verifier=claims-v1 · ocr.tesseract.js=7.0.0 · ocr.data.eng=1.0.0 · ocr.data.ara=1.0.0 · pdf.pdfjs-dist=6.4.299
 
 ## Overall
 
 | set | result |
 |---|---|
-| regression (frozen) | 79/80 (95% CI 93%–99%) |
+| regression (frozen) | 80/80 passed (95% CI lower bound 95%) |
 | tuning examples | 69/69 passed (95% CI lower bound 95%) |
 
 ## Per axis
@@ -26,16 +26,14 @@
 | citation_validity — صحة الاستشهاد | deterministic | 5/5 passed (95% CI lower bound 57%, small sample) | — |
 | claim_support — دعم الادعاء بالدليل | scripted_ai | 6/6 passed (95% CI lower bound 61%, small sample) | — |
 | abstention — الامتناع الصحيح عند غياب الدليل | scripted_ai | 4/4 passed (95% CI lower bound 51%, small sample) | — |
-| over_abstention — عدم الامتناع حين يوجد دليل واضح | scripted_ai | 4/5 (95% CI 38%–96%, small sample) | — |
+| over_abstention — عدم الامتناع حين يوجد دليل واضح | scripted_ai | 5/5 passed (95% CI lower bound 57%, small sample) | — |
 | image_match — مطابقة الصورة للطلب | deterministic | 4/4 passed (95% CI lower bound 51%, small sample) | 7/7 passed (95% CI lower bound 65%, small sample) |
 | lecture_link — ربط السؤال بالمحاضرة | deterministic | 3/3 passed (95% CI lower bound 44%, small sample) | 7/7 passed (95% CI lower bound 65%, small sample) |
 | rtl_bidi — تنسيق العربية والإنجليزية (RTL/bidi) | deterministic | 9/9 passed (95% CI lower bound 70%, small sample) | 2/2 passed (95% CI lower bound 34%, small sample) |
 
-## Cases that did not pass (1)
+## Cases that did not pass (0)
 
-| case | set | outcome | expected | observed | reason |
-|---|---|---|---|---|---|
-| overabstain.pregnancy_test | regression | fail | {"supported_shown":true} | {"status":"abstained","abstain":"not_found_in_scope","linked_claims":0,"generator_calls":0,"script_errors":[]} | امتنع النظام (not_found_in_scope) مع وجود دليل واضح في المحاضرة. |
+None in this run.
 
 ## All cases
 
@@ -157,7 +155,7 @@
 | overabstain.retrieved_ct | over_abstention | regression | pass | golden/lecture_appendicitis.pdf |
 | overabstain.retrieved_wcc | over_abstention | regression | pass | golden/lecture_appendicitis.pdf |
 | overabstain.arabic_question | over_abstention | regression | pass | golden/lecture_appendicitis.pdf |
-| overabstain.pregnancy_test | over_abstention | regression | fail | golden/lecture_appendicitis.pdf |
+| overabstain.pregnancy_test | over_abstention | regression | pass | golden/lecture_appendicitis.pdf |
 | image.caption.1 | image_match | tuning | pass | — |
 | image.caption.2 | image_match | tuning | pass | — |
 | image.caption.3 | image_match | tuning | pass | — |
@@ -195,5 +193,5 @@
 
 * كل الحالات على ملفات اختبار اصطناعية (TEST FIXTURE)؛ ليست مرجعًا طبيًا، والنتائج مقيدة بنطاق هذه الحالات وحجمها وطريقة تقييمها.
 * كل نسبة مكتوبة مع مقامها وفاصل ثقة 95% (Wilson). عينة أقل من 30 حالة «عينة صغيرة» ولا تُعمَّم.
-* عينة الانحدار مجمّدة عند إصدار الكتالوج ومنفصلة عن أمثلة الضبط (مجموعة Golden Set التي طُوّرت عليها أدوات الاستخراج).
+* عينة الانحدار مجمّدة عند إصدار الكتالوج ومنفصلة عن أمثلة الضبط (مجموعة Golden Set التي طُوّرت عليها أدوات الاستخراج). ليست بيانات محجوبة عن المطوّرين: أُصلحت عيوب على ملفاتها نفسها في مراحل القبول، فلا تقيس أي من المجموعتين التعميم على ملفات جديدة؛ فائدتها أنها لا تتغير.
 * محاور الذكاء الاصطناعي شُغّلت بمزود مكتوب مسبقًا للتقييم فقط: تقيس ضمانات الخادم (التحقق من الأدلة، الامتناع، عدم الامتناع الزائد)، لا جودة نموذج. تقييم نموذج حقيقي يحتاج ANTHROPIC_API_KEY وتشغيل `npm run eval -- --mode=live`.

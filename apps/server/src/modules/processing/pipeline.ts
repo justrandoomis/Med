@@ -37,7 +37,9 @@ import { writeSummary } from './summary';
 import { hasReversedLamAlef, prepareRegionText, suspicionReasonAr, type SuspicionContext } from './text';
 import { convertToPdf, popplerReportsDamage, renderPdfPage, ToolError, type ToolPaths } from './tools';
 
-export const PIPELINE_VERSION = 'process-v1';
+// process-v2 (Round 7 H2): orientation trials, JPEG decoding + EXIF, vector figures, OCR tables / word boxes, /Rotate text
+// direction, lam-alef glyph repair — recorded on every job and in evaluation reports (docs/EVALUATION.md §4)
+export const PIPELINE_VERSION = 'process-v2';
 export const MAX_ATTEMPTS = 3;
 export const RENDER_DPI = 200;
 /** pixel budget of one page render (a huge /MediaBox must not produce a multi-gigapixel raster) */

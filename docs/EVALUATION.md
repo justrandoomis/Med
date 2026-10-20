@@ -69,7 +69,7 @@ the expected values and where they come from); a case removed from the catalogue
 | `text_accuracy` | page text contains the printed sentences (EN + AR), OCR of the scanned page, page labels from `/PageLabels` and detected footers, DOCX headings, PPTX titles, the reversed lam-alef never stored, no bogus question from a value or a key line, no running header in a stem | 6 / 23 |
 | `negation_numbers` | NOT / EXCEPT / except / لا / إلا / عدا / خاطئة kept AND emphasized, values and units exactly as printed (10⁹ as a font effect, PaCO₂, «6,5», «< 0.5 mL/kg/h», «٣٫٥ ملمول/لتر») | 17 / 7 |
 | `options_completeness` | the real number of options, their printed labels (A–E, أ–هـ) and texts, options at the bottom of the next page | 3 / 12 |
-| `key_binding` | source key per section, sections that restart at 1, a merged key line, an unreadable key format (no guess), a trailing unlabeled key (not bound by number), missing key, a hand-circled option = unofficial mark (AC-13) | 18 / 11 |
+| `key_binding` | source key per section, sections that restart at 1, a merged key line, an unreadable key format (no guess), a trailing unlabeled key (bound to the last part only when the file keys its parts one by one — catalogue 2026.10-2), missing key, a hand-circled option = unofficial mark (AC-13) | 18 / 11 |
 | `citation_validity` | a valid in-scope alias is kept; an alias never handed out, a raw / fabricated id, out-of-scope evidence are refused and never become citations (AC-05 / AC-06) | 5 / 0 |
 | `claim_support` | restated claim linked; cross-language claim linked (no over-rejection); changed number, added negation, changed unit not linked even when the verifier says «supported»; topical-only claim rejected by the independent verifier (AC-07) | 6 / 0 |
 | `abstention` | out-of-scope question abstains **without** a generator call; real-patient request abstains; an answer citing only a fabricated alias or an unsupported claim shows nothing as supported | 4 / 0 |
@@ -83,7 +83,7 @@ the expected values and where they come from); a case removed from the catalogue
 * **tuning** — the Golden Set (`fixtures/golden`, ground truth `expected.json`): the extractors, parsers and matchers
   were *developed against these files*, and the AC-09 caption examples were written while fixing the validator. A high
   rate here shows fit to what the system was tuned on, not generalization.
-* **regression** — checks **frozen** at `CATALOGUE_VERSION` (`eval-catalogue-2026.10-1`): the acceptance fixtures
+* **regression** — checks **frozen** at `CATALOGUE_VERSION` (`eval-catalogue-2026.10-2`; `-1` until Round 7 H2): the acceptance fixtures
   built later by the adversarial groups G3–G5 (`fixtures/acceptance`) and the behavioural checks written for this track.
   They are **not held-out data**: G3–G5 fixed defects against these very fixtures (`docs/ACCEPTANCE.md`,
   «pass_after_fix»), so a high regression rate is not evidence of generalization either.
@@ -113,7 +113,7 @@ throwaway data directory; it is never registered by the server.
 `ANTHROPIC_API_KEY` those axes are `not_run` with the reason (tested). **Blocked:** model-quality evaluation has never
 been run here.
 
-## 3. Results (baseline, 2026-10-10, scripted mode)
+## 3. Results (baseline, 2026-10-10, scripted mode; rewritten 2026-10-20 — see «Round 7 — H2» at the end of this section)
 
 Committed reference run: [`docs/eval/baseline.json`](eval/baseline.json) / [`baseline.md`](eval/baseline.md)
 (`npm run eval -- --write-baseline`; 149 cases, 18 fixtures, ~15 s on this container).
@@ -147,6 +147,22 @@ The last run's three failures are `key.g4_inline.2_{1,2,3}` (key_binding 15 / 18
 bound to part 2 by number alone»). They come from the parallel H2 change to `questions/keys.ts` (`trailingBlockSection`,
 binding a trailing unlabelled key block to the last section), not from H1; `--compare` against `docs/eval/baseline.json`
 reports them (exit 4). The committed baseline was not rewritten.
+
+**Round 7 — H2 (2026-10-20): reviewed catalogue bump `eval-catalogue-2026.10-2` and a new baseline.** The three
+`key.g4_inline.2_{1,2,3}` failures above are the intended behaviour change of H2 item 10b, not a regression: in
+`g4_sections_inline_keys.pdf` Part 1 is keyed by its own «Answers» block, the trailing unlabelled block is the only one
+after Part 2 and lists only numbers Part 2 has, so it is Part 2's key (`questions.md` «Round 7 — H2»; the cases where
+binding stays unsafe are tested in `srv:questions/h2-extraction.test.ts`). Their expected values changed from
+`missing_key` to `source_key` with the printed texts (Calcaneus, Brachialis, Hip); no other case changed. The
+processing and parser versions were bumped (`process-v2`, `qparse-v2`, §4), and the baseline was rewritten in the same
+change (`npm run eval -- --write-baseline`):
+
+| run (scripted, reports under the session's scratch directory, not committed) | regression | tuning | `--compare` |
+|---|---|---|---|
+| before the bump, CI command against the old baseline (`eval-20261020T142621-cc7df254`) | 77 / 80 | — | `regressions`, exit 4 (3 stopped passing, 1 now passes) |
+| after the bump against the OLD baseline (`eval-20261020T142727-9212d6b9`) | 80 / 80 | — | `not_comparable`, exit 6 (another regression hash) |
+| new baseline (`eval-20261020T143342-27d96f0b`, hash `b6115ad6d9690313`) | 80 / 80 | 69 / 69 | — |
+| CI command against the new baseline (`eval-20261020T143402-8ac938b7`) | 80 / 80 | — | `no_regressions`, exit 0 |
 
 ## 4. Compare and roll back a change
 

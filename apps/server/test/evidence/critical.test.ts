@@ -239,3 +239,37 @@ describe('H1 hardening — «directly stated» catches a swapped key noun / term
     expect(ds(DDX, [US, DDX]).passed).toBe(true);
   });
 });
+
+describe('H1 review — «directly stated» does not refuse a gloss, an expanded acronym or a spelling variant', () => {
+  const ds = (claim: string, quotes: string[]) => checkContainment(claim, quotes, 'directly_stated');
+  const AR_APP = 'يسبب التهاب الزائدة الدودية ألمًا في الحفرة الحرقفية اليمنى.';
+  const AR_CT = 'يُطلب التصوير المقطعي عند البالغين إذا بقي التشخيص غير مؤكد.';
+  const AR_RIF = 'يبدأ الألم عادةً حول السرة ثم ينتقل إلى الحفرة الحرقفية اليمنى عند نقطة McBurney.';
+  const EN_CT = 'Computed tomography is preferred in adults when the diagnosis remains uncertain.';
+  const EN_ANAEMIA = 'Iron deficiency anaemia is the commonest cause of microcytic anaemia in women of reproductive age.';
+  const EN_OEDEMA = 'Pulmonary oedema causes breathlessness on lying flat in patients with heart failure.';
+
+  it('valid: an English term glossed in parentheses after the Arabic one, the quote being Arabic only', () => {
+    expect(ds('يسبب التهاب الزائدة الدودية (appendicitis) ألمًا في الحفرة الحرقفية اليمنى.', [AR_APP]).passed).toBe(true);
+    expect(ds('يُطلب التصوير المقطعي (CT) عند البالغين إذا بقي التشخيص غير مؤكد.', [AR_CT]).passed).toBe(true);
+    // several Latin words in one parenthesis (one span, removed once)
+    expect(ds('يسبب التهاب الزائدة الدودية (acute appendicitis) ألمًا في الحفرة الحرقفية اليمنى.', [AR_APP]).passed).toBe(true);
+  });
+
+  it('valid: an acronym in parentheses right after the words it abbreviates', () => {
+    expect(ds('Computed tomography (CT) is preferred in adults when the diagnosis remains uncertain.', [EN_CT]).passed).toBe(true);
+  });
+
+  it('valid: British / American spelling of the same key term (anaemia / anemia, oedema / edema)', () => {
+    expect(ds('Iron deficiency anemia is the commonest cause of microcytic anemia in women of reproductive age.', [EN_ANAEMIA]).passed).toBe(true);
+    expect(ds('Pulmonary edema causes breathlessness on lying flat in patients with heart failure.', [EN_OEDEMA]).passed).toBe(true);
+  });
+
+  it('still refused: a wrong acronym, a Latin term the Arabic quote itself carries swapped in a parenthesis, a real swap under a spelling variant', () => {
+    expect(ds('Magnetic resonance imaging (CT) is preferred in adults when the diagnosis remains uncertain.', [EN_CT]).passed).toBe(false);
+    // the quote carries Latin terms: a parenthetical Latin term is not a gloss there — «Murphy» for «McBurney» is a swap
+    expect(ds('يبدأ الألم عادةً حول السرة ثم ينتقل إلى الحفرة الحرقفية اليمنى عند نقطة (Murphy).', [AR_RIF]).passed).toBe(false);
+    expect(ds('Iron deficiency anemia is the commonest cause of macrocytic anemia in women of reproductive age.', [EN_ANAEMIA]).passed).toBe(false);
+    expect(ds('Hyperkalemia causes peaked T waves and a short QT interval.', ['Hypokalaemia causes peaked T waves and a short QT interval.']).passed).toBe(false);
+  });
+});

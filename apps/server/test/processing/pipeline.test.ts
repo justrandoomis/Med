@@ -198,7 +198,7 @@ describe('honest degradation when converters / OCR are missing (§61)', () => {
     expect(body.tools.pdftoppm.reason_ar).toContain('pdftoppm');
     expect(body.tools.soffice.available).toBe(false);
     expect(body.tools.tesseract.available).toBe(false);
-    expect(body.pipeline_version).toBe('process-v1');
+    expect(body.pipeline_version).toBe('process-v2');
     expect(body.index_version).toBe('chunk-v1');
     expect(body.features.find((f) => f.key === 'processing.ocr')?.state).toBe('requires_configuration');
     const anon = await t.app.inject({ method: 'GET', url: '/api/processing/status' });

@@ -68,6 +68,29 @@ describe('migration 0310 — content_alert kind «question_corrected»', () => {
     expect(db.all('PRAGMA foreign_key_check')).toEqual([]);
   });
 
+  it('an owner database already at the latest Round 6/7 schema (every migration but 0310) gets 0310 applied last, out of order, without losing a row', () => {
+    const allBut = join(dir, 'all-but');
+    mkdirSync(allBut);
+    for (const f of readdirSync(MIGRATIONS_DIR)) if (f.endsWith('.sql') && f !== MIGRATION) copyFileSync(join(MIGRATIONS_DIR, f), join(allBut, f));
+    migrate(db, { dir: allBut });
+    expect(db.get<{ n: number }>('SELECT COUNT(*) AS n FROM schema_migration WHERE name = ?', [MIGRATION])!.n).toBe(0);
+    alert('A-1', 'ocr_corrected', '{"pages_changed":[2]}');
+    alert('Q-1', 'source_updated', JSON.stringify({ question_id: 'q1', corrected: 'نص السؤال', by: 'owner' }));
+    db.run(`INSERT INTO content_alert_item (alert_id, dependent_type, dependent_id, impact, frozen, reason_ar, version_ids_json) VALUES ('A-1', 'artifact', 'art-1', 'needs_regeneration', 0, NULL, '[]')`);
+    db.run(`INSERT INTO content_alert_job (job_id, alert_id, created_at) VALUES ('job-1', 'A-1', 5)`);
+    const before = { alerts: db.all('SELECT * FROM content_alert ORDER BY id'), items: db.all('SELECT * FROM content_alert_item'), jobs: db.all('SELECT * FROM content_alert_job') };
+
+    const r = migrate(db);
+    expect(r.applied).toEqual([MIGRATION]);
+    const after = db.all<Record<string, unknown>>('SELECT * FROM content_alert ORDER BY id');
+    expect(after.map((a) => ({ ...a, kind: a.id === 'Q-1' ? 'source_updated' : a.kind }))).toEqual(before.alerts);
+    expect(after.find((a) => a.id === 'Q-1')!.kind).toBe('question_corrected');
+    expect(db.all('SELECT * FROM content_alert_item')).toEqual(before.items);
+    expect(db.all('SELECT * FROM content_alert_job')).toEqual(before.jobs);
+    expect(db.all('PRAGMA foreign_key_check')).toEqual([]);
+    expect(db.all(`SELECT name FROM sqlite_temp_master WHERE name LIKE 'h1_%'`)).toEqual([]);
+  });
+
   it('the shared contract names the kind with an Arabic label', () => {
     expect(CONTENT_ALERT_KINDS).toContain('question_corrected');
     expect(CONTENT_ALERT_KIND_LABELS_AR.question_corrected).toMatch(/سؤال/);

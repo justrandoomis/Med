@@ -1,6 +1,8 @@
 // G1 / AC-03 — partial failure (§60) against the REAL server with real failures (no hooks, no SQL):
 //   * fixtures/acceptance/g1_partial_images.zip — an ordered image set whose 2nd picture is a truncated PNG: the real
-//     OCR fails on it → that page «تعثّرت» with its reason, the version is partial, pages 1 and 3 stay readable;
+//     OCR fails on it → that page «تعثّرت» with its reason — since Round 7 H2 item 7 the reason says the picture ITSELF
+//     is damaged and re-processing will not help (it said «فشل محرك التعرف الضوئي … أعد المعالجة» before) — the version
+//     is partial, pages 1 and 3 stay readable;
 //   * fixtures/acceptance/g1_damaged_page.pdf — a PDF whose 2nd page has a damaged content stream: flagged
 //     (unreadable, needs review) instead of a silent «ready» empty page.
 // The source page, the reader and the Control Center show the stumble; the summary preview (no AI needed) says the
@@ -45,7 +47,8 @@ test.describe('G1 AC-03 partial failure', () => {
       await expect(rows.nth(1)).toHaveAttribute('data-status', 'failed');
       await expect(rows.nth(1)).toContainText('تعثّرت');
       await expect(rows.nth(1)).toContainText('02_damaged.png');
-      await expect(rows.nth(1)).toContainText('فشل محرك التعرف الضوئي');
+      await expect(rows.nth(1)).toContainText('الصورة نفسها تالفة — إعادة المعالجة لن تفيد');
+      await expect(rows.nth(1)).not.toContainText('فشل محرك التعرف الضوئي');
       await expect(rows.nth(1).getByRole('button', { name: /إعادة المعالجة/ })).toBeVisible();
       for (const i of [0, 2]) await expect(rows.nth(i)).not.toHaveAttribute('data-status', 'failed');
       await screenshot(page, testInfo, 'g1-ac03-source-partial');
@@ -72,7 +75,7 @@ test.describe('G1 AC-03 partial failure', () => {
     await test.step('Control Center → processing: both versions page by page with the specific reason', async () => {
       await page.goto('/control/processing');
       for (const [title, reason] of [
-        [`G1 partial images ${stamp}`, 'فشل محرك التعرف الضوئي'],
+        [`G1 partial images ${stamp}`, 'الصورة نفسها تالفة — إعادة المعالجة لن تفيد'],
         [`G1 damaged page ${stamp}`, 'تالف جزئيًا'],
       ] as const) {
         const item = page.locator('li.cc-version').filter({ hasText: title });

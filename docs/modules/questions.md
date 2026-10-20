@@ -26,7 +26,7 @@ match_questions: {version_id} of a lecture (all question sources of its course) 
   unless the status is `failed`. Guarded by `ctx.jobs.isRegistered(kind)` (nothing happens when the questions
   module is absent, tested), wrapped in try/catch (a failure here never fails processing), idempotency key
   `<kind>:<version_id>:<process job id>`, `parentJobId` = the processing job.
-* **Jobs** (`index.ts`): `extract_questions` (version `qparse-v1`, 2 attempts, 10 min, concurrency 1, strict zod
+* **Jobs** (`index.ts`): `extract_questions` (version `qparse-v2` since Round 7 H2, was `qparse-v1`; 2 attempts, 10 min, concurrency 1, strict zod
   input, checkpoint `extract`), `match_questions` (version `qmatch-v1`, `version_id` XOR `question_ids`).
 * `POST /api/questions/extract {version_id}` and `POST /api/questions/match {version_id | question_ids}` enqueue
   the same jobs manually (`JobStartedResponse`).
@@ -316,7 +316,7 @@ console errors.
 
 ## Limits and decisions
 
-* The parser is rule-based (`qparse-v1`): unusual layouts (two-column question sheets mixed with keys, options on
+* The parser is rule-based (`qparse-v2`): unusual layouts (two-column question sheets mixed with keys, options on
   one line without separators, keys as images) can yield truncated/merged items — they are flagged for review,
   never silently approved.
 * OCR quality bounds what photos give; low-confidence regions add a review reason.
@@ -431,10 +431,10 @@ Verified adversarially on derived fixtures (`fixtures/acceptance/make_g4_fixture
 * Web: `AnswerCheck.tsx` on the detail screen — the button disabled with the server's reason without a provider or a
   linked lecture; the last check with its outcome, reason and evidence chips (`ClaimChips`).
 
-Known limits (not changed): Part 2's trailing unlabeled key after per-part keys stays `ambiguous_section` (safe, review
-item); «Paper I/II» sections vs a «Paper 1/2» key → `no_matching_question` (roman ↔ digit not mapped); a LibreOffice
-line wrap inside «38.4 °C» is stored «38.4 ° C»; the answer check's judgement is a model's (no key here — exercised only
-with the test-only scripted provider).
+Known limits (not changed in G4): ~~Part 2's trailing unlabeled key after per-part keys stays `ambiguous_section`~~;
+~~«Paper I/II» sections vs a «Paper 1/2» key → `no_matching_question`~~; ~~a LibreOffice line wrap inside «38.4 °C» is
+stored «38.4 ° C»~~ — all three fixed in Round 7 H2 (below); the answer check's judgement is a model's (no key here —
+exercised only with the test-only scripted provider).
 
 
 ## Acceptance round G5 — AC-16, AC-17 (2026-10-10)
@@ -455,8 +455,8 @@ with the test-only scripted provider).
 * **The lecture tab shows the question from this lecture's course** (`routes.ts for-lecture`): a question printed in the
   banks of two courses showed the other course's file and page as its origin.
 * Tests: `apps/server/test/acceptance/g5-ac16.test.ts`, `g5-ac17.test.ts`; `e2e/g5-ac16-late-linking.spec.ts`.
-  Known limit seen there (processing, not fixed here): LibreOffice PDFs reverse plain lam-alef in the text layer
-  («العلامة» → «العالمة»); matching still links (both sides carry it) but the owner reads the wrong spelling.
+  Known limit seen there (processing): LibreOffice PDFs reverse plain lam-alef in the text layer («العلامة» →
+  «العالمة») — fixed in Round 7 H2 item 9 (`processing.md` «Round 7 — H2»): the words are rebuilt from the ligature glyphs.
 
 ## Acceptance round G7 — AC-25 (2026-10-10)
 * **Near-duplicate suggestions were lost after an interrupted extraction.** The extraction runs in one transaction and its
@@ -534,3 +534,36 @@ with the test-only scripted provider).
   query computes it), `match.ts`, `concepts.ts`, `keys.ts`, `routes.ts` label pages through `sources/pagelabel.ts`
   (an unnumbered page among printed ones is «الصفحة N في الملف»). Test: `srv:sources/page-labels.h1.test.ts`
   (question occurrences).
+
+## Round 7 — H2 (2026-10-20): extraction fixes (H2 item 10)
+Each was reproduced by a failing test first. Unit / parser level: `srv:questions/h2-extraction.test.ts` (9); real
+pipeline (upload → processing → extraction): `srv:questions/h2-extraction-pipeline.test.ts` (4).
+* **a. Roman ↔ digit section labels** (`keys.ts sectionCanon`, `romanValue`): «Paper I / II» sections with a «Paper 1 / 2»
+  key (or the reverse) are the same sections for key binding (they were `no_matching_question`). A file whose sections
+  are LETTERS (any of A–H, J–U, W, Y, Z among its section labels) never reads «Section I» as a roman 1.
+* **b. A trailing unlabelled key block after the last section** (`keys.ts trailingBlockSection`): binds to the last
+  section ONLY when the file keys its sections one by one (every earlier section has its own key block), it is the only
+  unlabelled block after the last section, and every number it lists exists in that section. Otherwise it stays
+  `ambiguous_section` with a review item (a single key at the end of a multi-part file, a number the last part does not
+  have, two trailing blocks). `fixtures/acceptance/g4_sections_inline_keys.pdf` Part 2 is now keyed (Calcaneus,
+  Brachialis, Hip): `srv:acceptance/g4-ac12.test.ts` updated, and the evaluation catalogue's frozen cases
+  `key.g4_inline.2_{1,2,3}` were changed in a reviewed catalogue bump (`eval-catalogue-2026.10-2`, baseline rewritten,
+  `docs/EVALUATION.md` §3).
+* **c. «38.4 ° C»** (`text.ts structuredText`): a degree sign split from its unit by a line wrap is joined («38.4 °C»,
+  also «°F») in the STRUCTURED stem / options only; `stem_raw` keeps what the text layer gave; «30 ° Cobb» is untouched.
+  The content hash still uses the raw parsed text, so re-extraction stays idempotent. Pipeline test: the Arabic
+  LibreOffice question stores «38.4 °C», raw «38.4 ° C», `checks_passed`.
+* **d. Resumed extraction counts** (`extract.ts`): after a crash between the extraction commit and its checkpoint, the
+  re-run reported every question as «already in the vault». New questions are now counted from the versions created by
+  THIS job (`question_version.job_id`, version 1, `created_by` extraction) and attachments from occurrences created since
+  the job started; the summary, message and audit equal those of an uninterrupted run (pipeline test with a simulated
+  power loss).
+* **e. A circle read together with the option label by OCR** (`parser.ts ocrCircledOption`, OCR lines only): «(8 Ditrasound»
+  after option A is option B with an unofficial `circled_option` mark (`markReason: 'ocr_label_confusion'`, OCR
+  confusions 8→B, 0→D, 6→G, 4→A, 3→E, €/¢/©→C), never glued to option A — and only for the EXPECTED next label
+  («(8 mg daily)» after C stays text; digital text is never re-read). The keyed photo `g3_photo_circled_with_key.png`
+  now has four options, the printed key C bound and the circle on B as a mark (never a key), `needs_review`.
+* **f. Re-fingerprinting** (migration `0530_question_fingerprint_v2.sql`, `fingerprints.ts refingerprintVersions`, run at
+  module registration): fingerprints written before the G5 fix are marked `fingerprint_algo = 1` and recomputed from the
+  stored stem and options (batches of 500 in transactions, idempotent), so a later «base excess 8» from another file is
+  not attached to a stored «base excess −8». Derived versions keep a NULL fingerprint.

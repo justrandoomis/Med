@@ -19,7 +19,11 @@ import { createHash } from 'node:crypto';
 import type { AbstainReason, EvalAxis, EvalSet, ImageRequest } from '@medlevo/shared';
 import type { EvalVerdict } from './scripted';
 
-export const CATALOGUE_VERSION = 'eval-catalogue-2026.10-1';
+// 2026.10-2 (Round 7 H2 item 10b, reviewed): `key.g4_inline.2_{1,2,3}` — Part 2's trailing unlabelled key block of
+// g4_sections_inline_keys.pdf is now bound to Part 2: Part 1 is keyed by its own block, the trailing block is the only
+// one after Part 2 and every number it lists exists there (the H2 rule, refuted cases in srv:questions/h2-extraction).
+// It expected `missing_key` before. No other expected value changed.
+export const CATALOGUE_VERSION = 'eval-catalogue-2026.10-2';
 
 // ───────────── sources the cases read (uploaded through the real API into a throwaway data directory) ─────────────
 export type SourceKey =
@@ -271,8 +275,12 @@ for (const n of ['1', '2', '3']) {
 }
 add('key.g4_inline.1_1', 'key_binding', 'regression', 'مفتاح بعد كل جزء: الجزء 1 السؤال 1', { type: 'q_key', source: 'g4_inline', section: '1', n: '1' }, { answer_status: 'source_key', key_texts: ['Phrenic'] });
 add('key.g4_inline.1_2', 'key_binding', 'regression', 'مفتاح بعد كل جزء: الجزء 1 السؤال 2', { type: 'q_key', source: 'g4_inline', section: '1', n: '2' }, { answer_status: 'source_key', key_texts: ['Left anterior descending'] });
-for (const n of ['1', '2', '3']) {
-  add(`key.g4_inline.2_${n}`, 'key_binding', 'regression', `مفتاح أخير بلا تسمية قسم: الجزء 2 السؤال ${n} لا يُربط بالرقم وحده`, { type: 'q_key', source: 'g4_inline', section: '2', n }, { answer_status: 'missing_key' });
+for (const [n, text] of [
+  ['1', 'Calcaneus'],
+  ['2', 'Brachialis'],
+  ['3', 'Hip'],
+] as const) {
+  add(`key.g4_inline.2_${n}`, 'key_binding', 'regression', `مفتاح أخير بلا تسمية قسم بعد الجزء الأخير (والجزء 1 له مفتاحه): يُربط بالجزء 2 السؤال ${n}`, { type: 'q_key', source: 'g4_inline', section: '2', n }, { answer_status: 'source_key', key_texts: [text] });
 }
 add('key.g4_long_en.Q2', 'key_binding', 'regression', 'المفتاح في آخر الملف يُربط بسؤال ممتد على صفحتين (D)', { type: 'q_key', source: 'g4_long_en', section: '', n: '2' }, { answer_status: 'source_key', key_labels: ['D'] });
 add('key.g4_long_ar.Q2', 'key_binding', 'regression', 'مفتاح عربي (ج) لسؤال عربي ممتد', { type: 'q_key', source: 'g4_long_ar', section: '', n: '2' }, { answer_status: 'source_key', key_labels: ['ج'] });

@@ -1,26 +1,26 @@
 {
   "format": "medlevo-eval-1",
-  "run_id": "eval-20261010T152136-015d6292",
-  "label": "F5 baseline (catalogue v1)",
+  "run_id": "eval-20261020T143342-27d96f0b",
+  "label": "H2 item 10b catalogue 2026.10-2 (process-v2, qparse-v2)",
   "mode": "scripted",
   "set_filter": "all",
-  "started_at": 1791645696346,
-  "finished_at": 1791645711029,
+  "started_at": 1792506822862,
+  "finished_at": 1792506839997,
   "catalogue": {
-    "version": "eval-catalogue-2026.10-1",
-    "regression_hash": "8e8344f0789688d45c344fc9437f0b56678b79ae670fb9832e2f3915b92a1556",
+    "version": "eval-catalogue-2026.10-2",
+    "regression_hash": "b6115ad6d96903133edaf7e3600bf96e1842ab3cc76bbe24a9edc0c75b2a6757",
     "cases": 149,
     "regression": 80,
     "tuning": 69
   },
   "system": {
     "app_version": "0.1.0",
-    "git_commit": "77b7fdd89a512c367bf3cb58e3d0762fd6cf93c4",
+    "git_commit": "e8fad6a8179bd665b16cbf54661fc298da701630",
     "node": "v22.22.0",
     "versions": {
-      "pipeline": "process-v1",
+      "pipeline": "process-v2",
       "index": "chunk-v1",
-      "question_parser": "qparse-v1",
+      "question_parser": "qparse-v2",
       "question_matcher": "qmatch-v1",
       "ai_rules": "rules-2026.10-1",
       "studybook_generator": "studybook-gen-3",
@@ -34,15 +34,15 @@
   },
   "overall": {
     "regression": {
-      "passed": 79,
+      "passed": 80,
       "total": 80,
-      "failed": 1,
+      "failed": 0,
       "errors": 0,
       "not_run": 0,
-      "rate": 0.988,
+      "rate": 1,
       "ci95": [
-        0.933,
-        0.998
+        0.954,
+        1
       ],
       "small_sample": false
     },
@@ -274,15 +274,15 @@
       "label_ar": "عدم الامتناع حين يوجد دليل واضح",
       "kind": "scripted_ai",
       "regression": {
-        "passed": 4,
+        "passed": 5,
         "total": 5,
-        "failed": 1,
+        "failed": 0,
         "errors": 0,
         "not_run": 0,
-        "rate": 0.8,
+        "rate": 1,
         "ci95": [
-          0.376,
-          0.964
+          0.566,
+          1
         ],
         "small_sample": true
       },
@@ -438,7 +438,7 @@
       "expected": "Ultrasound is the first-line",
       "observed": "Ultrasound is the first-line",
       "reason_ar": null,
-      "ms": 1
+      "ms": 0
     },
     {
       "case_id": "text.appendicitis.p1.ectopic_pregnancy",
@@ -474,7 +474,7 @@
       "expected": "Leukocytosis",
       "observed": "Leukocytosis",
       "reason_ar": null,
-      "ms": 0
+      "ms": 1
     },
     {
       "case_id": "text.appendicitis.p2.10_10_l",
@@ -546,7 +546,7 @@
       "expected": "لا يحتوي «األلم»",
       "observed": "غير موجود",
       "reason_ar": null,
-      "ms": 1
+      "ms": 0
     },
     {
       "case_id": "text.appendicitis.page_labels",
@@ -666,7 +666,7 @@
       "expected": "Initial management",
       "observed": "Initial management",
       "reason_ar": null,
-      "ms": 0
+      "ms": 1
     },
     {
       "case_id": "text.g4_long_en.no_bogus_question",
@@ -690,7 +690,7 @@
       "expected": "not_contains: TEST FIXTURE",
       "observed": "A 58-year-old man is brought to the emergency department two hours after the onset of severe epigastric pain radiating to the back. On examination his temperature is 38.4 °C, his blood pressure is 90/",
       "reason_ar": null,
-      "ms": 8
+      "ms": 5
     },
     {
       "case_id": "text.g4_long_en.stem_across_pages",
@@ -702,7 +702,7 @@
       "expected": "contains: On examination his temperature is",
       "observed": "A 58-year-old man is brought to the emergency department two hours after the onset of severe epigastric pain radiating to the back. On examination his temperature is 38.4 °C, his blood pressure is 90/",
       "reason_ar": null,
-      "ms": 3
+      "ms": 2
     },
     {
       "case_id": "text.g4_long_ar.stem",
@@ -712,9 +712,9 @@
       "fixture": "acceptance/g4_long_question_ar.pdf",
       "outcome": "pass",
       "expected": "contains: امرأة عمرها 30 سنة تراجع بألم في الحفرة الحرقفية اليمنى منذ 12 ساعة",
-      "observed": "امرأة عمرها 30 سنة تراجع بألم في الحفرة الحرقفية اليمنى منذ 12 ساعة، وحرارتها 38.4 ° C وتعداد الكريات البيض 11.5 ×10⁹/L. جميع ما يلي مناسب في التقييم الأولي عدا:",
+      "observed": "امرأة عمرها 30 سنة تراجع بألم في الحفرة الحرقفية اليمنى منذ 12 ساعة، وحرارتها 38.4 °C وتعداد الكريات البيض 11.5 ×10⁹/L. جميع ما يلي مناسب في التقييم الأولي عدا:",
       "reason_ar": null,
-      "ms": 2
+      "ms": 1
     },
     {
       "case_id": "text.g4_formats.no_bogus_question",
@@ -750,7 +750,7 @@
       "expected": "{\"has_negation\":true,\"terms\":[\"not\"],\"emphasized\":[\"not\"]}",
       "observed": "{\"has_negation\":true,\"terms\":[\"not\"],\"emphasized\":[\"not\"]}",
       "reason_ar": null,
-      "ms": 3
+      "ms": 4
     },
     {
       "case_id": "neg.surgery.B2.except",
@@ -774,7 +774,7 @@
       "expected": "contains: 11.5 ×10⁹/L",
       "observed": "In suspected appendicitis, a white cell count of 11.5 ×10⁹/L:",
       "reason_ar": null,
-      "ms": 2
+      "ms": 1
     },
     {
       "case_id": "neg.prev.Q3.na",
@@ -786,7 +786,7 @@
       "expected": "Na+ 140 mmol/L",
       "observed": "[\"Na+ 125 mmol/L\",\"Na+ 140 mmol/L\",\"K+ 6.5 mmol/L\",\"K+ 2.5 mmol/L\"]",
       "reason_ar": null,
-      "ms": 2
+      "ms": 1
     },
     {
       "case_id": "neg.prev.Q3.k",
@@ -834,7 +834,7 @@
       "expected": "equals: In suspected appendicitis, a white cell count of 11.5 × 10⁹/L:",
       "observed": "In suspected appendicitis, a white cell count of 11.5 × 10⁹/L:",
       "reason_ar": null,
-      "ms": 8
+      "ms": 1
     },
     {
       "case_id": "neg.g4_units.Q2",
@@ -846,7 +846,7 @@
       "expected": "equals: An arterial blood gas shows pH 7.32 and PaCO₂ 52 mmHg. Which disturbance is present?",
       "observed": "An arterial blood gas shows pH 7.32 and PaCO₂ 52 mmHg. Which disturbance is present?",
       "reason_ar": null,
-      "ms": 3
+      "ms": 2
     },
     {
       "case_id": "neg.g4_units.Q3",
@@ -858,7 +858,7 @@
       "expected": "equals: Serum potassium is 6,5 mmol/L and creatinine 1,2 mg/dL. Which is the first step?",
       "observed": "Serum potassium is 6,5 mmol/L and creatinine 1,2 mg/dL. Which is the first step?",
       "reason_ar": null,
-      "ms": 3
+      "ms": 1
     },
     {
       "case_id": "neg.g4_units.Q4.option",
@@ -870,7 +870,7 @@
       "expected": "Oliguria < 0.5 mL/kg/h",
       "observed": "[\"Tachycardia\",\"Hypotension\",\"Warm peripheries in all cases\",\"Oliguria < 0.5 mL/kg/h\"]",
       "reason_ar": null,
-      "ms": 2
+      "ms": 1
     },
     {
       "case_id": "neg.g4_units.Q4.not",
@@ -882,7 +882,7 @@
       "expected": "{\"has_negation\":true,\"terms\":[\"not\"],\"emphasized\":[\"not\"]}",
       "observed": "{\"has_negation\":true,\"terms\":[\"not\"],\"emphasized\":[\"not\"]}",
       "reason_ar": null,
-      "ms": 4
+      "ms": 1
     },
     {
       "case_id": "neg.g4_units.Q5.except",
@@ -894,7 +894,7 @@
       "expected": "{\"has_negation\":true,\"terms\":[\"except\"],\"emphasized\":[\"except\"]}",
       "observed": "{\"has_negation\":true,\"terms\":[\"except\"],\"emphasized\":[\"except\"]}",
       "reason_ar": null,
-      "ms": 4
+      "ms": 2
     },
     {
       "case_id": "neg.g4_neg_ar.Q1",
@@ -906,7 +906,7 @@
       "expected": "{\"has_negation\":true,\"terms\":[\"لا\"],\"emphasized\":[\"لا\"]}",
       "observed": "{\"has_negation\":true,\"terms\":[\"لا\"],\"emphasized\":[\"لا\"]}",
       "reason_ar": null,
-      "ms": 3
+      "ms": 2
     },
     {
       "case_id": "neg.g4_neg_ar.Q1.stem",
@@ -918,7 +918,7 @@
       "expected": "equals: أي مما يلي لا يسبب ارتفاع حرارة المريض؟",
       "observed": "أي مما يلي لا يسبب ارتفاع حرارة المريض؟",
       "reason_ar": null,
-      "ms": 2
+      "ms": 1
     },
     {
       "case_id": "neg.g4_neg_ar.Q2",
@@ -930,7 +930,7 @@
       "expected": "{\"has_negation\":true,\"terms\":[\"إلا\"],\"emphasized\":[\"إلا\"]}",
       "observed": "{\"has_negation\":true,\"terms\":[\"إلا\"],\"emphasized\":[\"إلا\"]}",
       "reason_ar": null,
-      "ms": 3
+      "ms": 1
     },
     {
       "case_id": "neg.g4_neg_ar.Q3",
@@ -942,7 +942,7 @@
       "expected": "{\"has_negation\":true,\"terms\":[\"عدا\"],\"emphasized\":[\"عدا\"]}",
       "observed": "{\"has_negation\":true,\"terms\":[\"عدا\"],\"emphasized\":[\"عدا\"]}",
       "reason_ar": null,
-      "ms": 3
+      "ms": 1
     },
     {
       "case_id": "neg.g4_neg_ar.Q4",
@@ -954,7 +954,7 @@
       "expected": "{\"has_negation\":true,\"terms\":[\"خاطئة\"],\"emphasized\":[\"خاطئة\"]}",
       "observed": "{\"has_negation\":true,\"terms\":[\"خاطئة\"],\"emphasized\":[\"خاطئة\"]}",
       "reason_ar": null,
-      "ms": 3
+      "ms": 1
     },
     {
       "case_id": "neg.g4_neg_ar.Q4.decimal",
@@ -966,7 +966,7 @@
       "expected": "contains: ٣٫٥ ملمول/لتر",
       "observed": "مريض صوديوم المصل لديه 128 ملمول/لتر والبوتاسيوم ٣٫٥ ملمول/لتر. أي العبارات التالية خاطئة؟",
       "reason_ar": null,
-      "ms": 3
+      "ms": 2
     },
     {
       "case_id": "neg.g4_neg_ar.E5",
@@ -978,7 +978,7 @@
       "expected": "equals: A white cell count of 11.5 × 10⁹/L in suspected appendicitis:",
       "observed": "A white cell count of 11.5 × 10⁹/L in suspected appendicitis:",
       "reason_ar": null,
-      "ms": 3
+      "ms": 1
     },
     {
       "case_id": "neg.g4_neg_ar.E6",
@@ -990,7 +990,7 @@
       "expected": "equals: pH 7.32 with PaCO₂ 52 mmHg and HCO₃⁻ 26 mmol/L indicates:",
       "observed": "pH 7.32 with PaCO₂ 52 mmHg and HCO₃⁻ 26 mmol/L indicates:",
       "reason_ar": null,
-      "ms": 3
+      "ms": 1
     },
     {
       "case_id": "neg.g4_long_en.vitals",
@@ -1002,7 +1002,7 @@
       "expected": "contains: 38.4 °C, his blood pressure is 90/60 mmHg and his pulse is 118/min.",
       "observed": "A 58-year-old man is brought to the emergency department two hours after the onset of severe epigastric pain radiating to the back. On examination his temperature is 38.4 °C, his blood pressure is 90/",
       "reason_ar": null,
-      "ms": 2
+      "ms": 1
     },
     {
       "case_id": "neg.g4_long_en.not",
@@ -1014,7 +1014,7 @@
       "expected": "{\"has_negation\":true,\"terms\":[\"not\"],\"emphasized\":[\"not\"]}",
       "observed": "{\"has_negation\":true,\"terms\":[\"not\"],\"emphasized\":[\"not\"]}",
       "reason_ar": null,
-      "ms": 3
+      "ms": 1
     },
     {
       "case_id": "neg.g4_long_ar.except",
@@ -1038,7 +1038,7 @@
       "expected": "{\"count\":4}",
       "observed": "{\"count\":4,\"labels\":[\"A\",\"B\",\"C\",\"D\"],\"texts\":[\"Murphy's point\",\"McBurney's point\",\"Kehr's point\",\"Castell's point\"]}",
       "reason_ar": null,
-      "ms": 3
+      "ms": 1
     },
     {
       "case_id": "opt.surgery.A2",
@@ -1050,7 +1050,7 @@
       "expected": "{\"count\":4}",
       "observed": "{\"count\":4,\"labels\":[\"A\",\"B\",\"C\",\"D\"],\"texts\":[\"Migration of pain\",\"Anorexia\",\"Serum amylase\",\"Leukocytosis\"]}",
       "reason_ar": null,
-      "ms": 3
+      "ms": 6
     },
     {
       "case_id": "opt.surgery.A3",
@@ -1074,7 +1074,7 @@
       "expected": "{\"count\":4}",
       "observed": "{\"count\":4,\"labels\":[\"A\",\"B\",\"C\",\"D\"],\"texts\":[\"Confirms the diagnosis\",\"Supports but does not confirm the diagnosis\",\"Excludes the diagnosis\",\"Indicates perforation\"]}",
       "reason_ar": null,
-      "ms": 3
+      "ms": 2
     },
     {
       "case_id": "opt.surgery.B1",
@@ -1086,7 +1086,7 @@
       "expected": "{\"count\":4}",
       "observed": "{\"count\":4,\"labels\":[\"A\",\"B\",\"C\",\"D\"],\"texts\":[\"Murphy's sign\",\"Psoas sign\",\"Obturator sign\",\"Rovsing's sign\"]}",
       "reason_ar": null,
-      "ms": 2
+      "ms": 1
     },
     {
       "case_id": "opt.surgery.B2",
@@ -1098,7 +1098,7 @@
       "expected": "{\"count\":4}",
       "observed": "{\"count\":4,\"labels\":[\"A\",\"B\",\"C\",\"D\"],\"texts\":[\"Female sex\",\"Obesity\",\"Rapid weight loss\",\"Regular physical activity\"]}",
       "reason_ar": null,
-      "ms": 2
+      "ms": 1
     },
     {
       "case_id": "opt.surgery.B3",
@@ -1122,7 +1122,7 @@
       "expected": "{\"count\":4,\"labels\":[\"أ\",\"ب\",\"ج\",\"د\"]}",
       "observed": "{\"count\":4,\"labels\":[\"أ\",\"ب\",\"ج\",\"د\"],\"texts\":[\"Ultrasound\",\"CT abdomen\",\"MRCP\",\"Plain X-ray\"]}",
       "reason_ar": null,
-      "ms": 2
+      "ms": 1
     },
     {
       "case_id": "opt.prev.Q1",
@@ -1134,7 +1134,7 @@
       "expected": "{\"count\":4}",
       "observed": "{\"count\":4,\"labels\":[\"A\",\"B\",\"C\",\"D\"],\"texts\":[\"Murphy's point\",\"McBurney's point\",\"Kehr's point\",\"Castell's point\"]}",
       "reason_ar": null,
-      "ms": 2
+      "ms": 1
     },
     {
       "case_id": "opt.prev.Q2",
@@ -1146,7 +1146,7 @@
       "expected": "{\"count\":4}",
       "observed": "{\"count\":4,\"labels\":[\"A\",\"B\",\"C\",\"D\"],\"texts\":[\"Migration of pain\",\"Serum amylase\",\"Serum lipase\",\"Blood glucose\"]}",
       "reason_ar": null,
-      "ms": 2
+      "ms": 3
     },
     {
       "case_id": "opt.prev.Q3",
@@ -1158,7 +1158,7 @@
       "expected": "{\"count\":4}",
       "observed": "{\"count\":4,\"labels\":[\"A\",\"B\",\"C\",\"D\"],\"texts\":[\"Na+ 125 mmol/L\",\"Na+ 140 mmol/L\",\"K+ 6.5 mmol/L\",\"K+ 2.5 mmol/L\"]}",
       "reason_ar": null,
-      "ms": 2
+      "ms": 1
     },
     {
       "case_id": "opt.photo.Q7",
@@ -1170,7 +1170,7 @@
       "expected": "{\"count\":4}",
       "observed": "{\"count\":4,\"labels\":[\"A\",\"B\",\"C\",\"D\"],\"texts\":[\"Dttrasound\",\"CT abdomen\",\"MRCP\",\"ERCP\"]}",
       "reason_ar": null,
-      "ms": 2
+      "ms": 4
     },
     {
       "case_id": "opt.g4_long_en.Q2",
@@ -1194,7 +1194,7 @@
       "expected": "{\"count\":4,\"texts\":[\"Plain abdominal X-ray\",\"Ultrasound of the abdomen\",\"MRCP\",\"CT of the abdomen\"]}",
       "observed": "{\"count\":4,\"labels\":[\"A\",\"B\",\"C\",\"D\"],\"texts\":[\"Plain abdominal X-ray\",\"Ultrasound of the abdomen\",\"MRCP\",\"CT of the abdomen\"]}",
       "reason_ar": null,
-      "ms": 2
+      "ms": 1
     },
     {
       "case_id": "opt.g4_long_ar.Q2",
@@ -1206,7 +1206,7 @@
       "expected": "{\"count\":5,\"labels\":[\"أ\",\"ب\",\"ج\",\"د\",\"هـ\"],\"texts\":[\"اختبار الحمل\",\"تعداد الدم الكامل\",\"حقنة الباريوم الشرجية\",\"فحص البول\",\"الأمواج فوق الصوتية\"]}",
       "observed": "{\"count\":5,\"labels\":[\"أ\",\"ب\",\"ج\",\"د\",\"هـ\"],\"texts\":[\"اختبار الحمل\",\"تعداد الدم الكامل\",\"حقنة الباريوم الشرجية\",\"فحص البول\",\"الأمواج فوق الصوتية\"]}",
       "reason_ar": null,
-      "ms": 2
+      "ms": 1
     },
     {
       "case_id": "key.surgery.A1",
@@ -1230,7 +1230,7 @@
       "expected": "{\"answer_status\":\"source_key\",\"key_labels\":[\"C\"]}",
       "observed": "{\"answer_status\":\"source_key\",\"key_labels\":[\"C\"],\"key_texts\":[\"Serum amylase\"],\"unofficial_mark\":null}",
       "reason_ar": null,
-      "ms": 2
+      "ms": 1
     },
     {
       "case_id": "key.surgery.A3",
@@ -1254,7 +1254,7 @@
       "expected": "{\"answer_status\":\"source_key\",\"key_labels\":[\"B\"]}",
       "observed": "{\"answer_status\":\"source_key\",\"key_labels\":[\"B\"],\"key_texts\":[\"Supports but does not confirm the diagnosis\"],\"unofficial_mark\":null}",
       "reason_ar": null,
-      "ms": 3
+      "ms": 1
     },
     {
       "case_id": "key.surgery.B1",
@@ -1266,7 +1266,7 @@
       "expected": "{\"answer_status\":\"source_key\",\"key_labels\":[\"A\"]}",
       "observed": "{\"answer_status\":\"source_key\",\"key_labels\":[\"A\"],\"key_texts\":[\"Murphy's sign\"],\"unofficial_mark\":null}",
       "reason_ar": null,
-      "ms": 1
+      "ms": 2
     },
     {
       "case_id": "key.surgery.B2",
@@ -1302,7 +1302,7 @@
       "expected": "{\"answer_status\":\"source_key\",\"key_labels\":[\"B\"]}",
       "observed": "{\"answer_status\":\"source_key\",\"key_labels\":[\"B\"],\"key_texts\":[\"McBurney's point\"],\"unofficial_mark\":null}",
       "reason_ar": null,
-      "ms": 3
+      "ms": 1
     },
     {
       "case_id": "key.prev.Q2",
@@ -1326,7 +1326,7 @@
       "expected": "{\"answer_status\":\"missing_key\"}",
       "observed": "{\"answer_status\":\"missing_key\",\"key_labels\":[],\"key_texts\":[],\"unofficial_mark\":null}",
       "reason_ar": null,
-      "ms": 2
+      "ms": 1
     },
     {
       "case_id": "key.photo.circled",
@@ -1338,7 +1338,7 @@
       "expected": "{\"answer_status\":\"missing_key\",\"unofficial_mark\":\"A\"}",
       "observed": "{\"answer_status\":\"missing_key\",\"key_labels\":[],\"key_texts\":[],\"unofficial_mark\":\"A:unofficial\"}",
       "reason_ar": null,
-      "ms": 2
+      "ms": 1
     },
     {
       "case_id": "key.g4_merged.A1",
@@ -1362,7 +1362,7 @@
       "expected": "{\"answer_status\":\"source_key\",\"key_texts\":[\"Vitamin E\"]}",
       "observed": "{\"answer_status\":\"source_key\",\"key_labels\":[\"D\"],\"key_texts\":[\"Vitamin E\"],\"unofficial_mark\":null}",
       "reason_ar": null,
-      "ms": 2
+      "ms": 1
     },
     {
       "case_id": "key.g4_merged.B1",
@@ -1374,7 +1374,7 @@
       "expected": "{\"answer_status\":\"source_key\",\"key_texts\":[\"Pancreas\"]}",
       "observed": "{\"answer_status\":\"source_key\",\"key_labels\":[\"C\"],\"key_texts\":[\"Pancreas\"],\"unofficial_mark\":null}",
       "reason_ar": null,
-      "ms": 2
+      "ms": 1
     },
     {
       "case_id": "key.g4_merged.B2",
@@ -1386,7 +1386,7 @@
       "expected": "{\"answer_status\":\"source_key\",\"key_texts\":[\"Glucagon\"]}",
       "observed": "{\"answer_status\":\"source_key\",\"key_labels\":[\"B\"],\"key_texts\":[\"Glucagon\"],\"unofficial_mark\":null}",
       "reason_ar": null,
-      "ms": 2
+      "ms": 1
     },
     {
       "case_id": "key.g4_merged.B3",
@@ -1398,7 +1398,7 @@
       "expected": "{\"answer_status\":\"source_key\",\"key_texts\":[\"Alpha cells\"]}",
       "observed": "{\"answer_status\":\"source_key\",\"key_labels\":[\"A\"],\"key_texts\":[\"Alpha cells\"],\"unofficial_mark\":null}",
       "reason_ar": null,
-      "ms": 2
+      "ms": 1
     },
     {
       "case_id": "key.g4_merged.C1",
@@ -1410,7 +1410,7 @@
       "expected": "{\"answer_status\":\"missing_key\"}",
       "observed": "{\"answer_status\":\"missing_key\",\"key_labels\":[],\"key_texts\":[],\"unofficial_mark\":null}",
       "reason_ar": null,
-      "ms": 1
+      "ms": 3
     },
     {
       "case_id": "key.g4_formats.1_1",
@@ -1422,7 +1422,7 @@
       "expected": "{\"answer_status\":\"source_key\",\"key_texts\":[\"Vitamin D\"]}",
       "observed": "{\"answer_status\":\"source_key\",\"key_labels\":[\"B\"],\"key_texts\":[\"Vitamin D\"],\"unofficial_mark\":null}",
       "reason_ar": null,
-      "ms": 2
+      "ms": 1
     },
     {
       "case_id": "key.g4_formats.1_2",
@@ -1446,7 +1446,7 @@
       "expected": "{\"answer_status\":\"missing_key\"}",
       "observed": "{\"answer_status\":\"missing_key\",\"key_labels\":[],\"key_texts\":[],\"unofficial_mark\":null}",
       "reason_ar": null,
-      "ms": 3
+      "ms": 2
     },
     {
       "case_id": "key.g4_formats.2_2",
@@ -1470,7 +1470,7 @@
       "expected": "{\"answer_status\":\"missing_key\"}",
       "observed": "{\"answer_status\":\"missing_key\",\"key_labels\":[],\"key_texts\":[],\"unofficial_mark\":null}",
       "reason_ar": null,
-      "ms": 2
+      "ms": 1
     },
     {
       "case_id": "key.g4_inline.1_1",
@@ -1482,7 +1482,7 @@
       "expected": "{\"answer_status\":\"source_key\",\"key_texts\":[\"Phrenic\"]}",
       "observed": "{\"answer_status\":\"source_key\",\"key_labels\":[\"B\"],\"key_texts\":[\"Phrenic\"],\"unofficial_mark\":null}",
       "reason_ar": null,
-      "ms": 2
+      "ms": 1
     },
     {
       "case_id": "key.g4_inline.1_2",
@@ -1494,29 +1494,29 @@
       "expected": "{\"answer_status\":\"source_key\",\"key_texts\":[\"Left anterior descending\"]}",
       "observed": "{\"answer_status\":\"source_key\",\"key_labels\":[\"B\"],\"key_texts\":[\"Left anterior descending\"],\"unofficial_mark\":null}",
       "reason_ar": null,
-      "ms": 3
+      "ms": 1
     },
     {
       "case_id": "key.g4_inline.2_1",
       "axis": "key_binding",
       "set": "regression",
-      "title_ar": "مفتاح أخير بلا تسمية قسم: الجزء 2 السؤال 1 لا يُربط بالرقم وحده",
+      "title_ar": "مفتاح أخير بلا تسمية قسم بعد الجزء الأخير (والجزء 1 له مفتاحه): يُربط بالجزء 2 السؤال 1",
       "fixture": "acceptance/g4_sections_inline_keys.pdf",
       "outcome": "pass",
-      "expected": "{\"answer_status\":\"missing_key\"}",
-      "observed": "{\"answer_status\":\"missing_key\",\"key_labels\":[],\"key_texts\":[],\"unofficial_mark\":null}",
+      "expected": "{\"answer_status\":\"source_key\",\"key_texts\":[\"Calcaneus\"]}",
+      "observed": "{\"answer_status\":\"source_key\",\"key_labels\":[\"C\"],\"key_texts\":[\"Calcaneus\"],\"unofficial_mark\":null}",
       "reason_ar": null,
-      "ms": 2
+      "ms": 1
     },
     {
       "case_id": "key.g4_inline.2_2",
       "axis": "key_binding",
       "set": "regression",
-      "title_ar": "مفتاح أخير بلا تسمية قسم: الجزء 2 السؤال 2 لا يُربط بالرقم وحده",
+      "title_ar": "مفتاح أخير بلا تسمية قسم بعد الجزء الأخير (والجزء 1 له مفتاحه): يُربط بالجزء 2 السؤال 2",
       "fixture": "acceptance/g4_sections_inline_keys.pdf",
       "outcome": "pass",
-      "expected": "{\"answer_status\":\"missing_key\"}",
-      "observed": "{\"answer_status\":\"missing_key\",\"key_labels\":[],\"key_texts\":[],\"unofficial_mark\":null}",
+      "expected": "{\"answer_status\":\"source_key\",\"key_texts\":[\"Brachialis\"]}",
+      "observed": "{\"answer_status\":\"source_key\",\"key_labels\":[\"B\"],\"key_texts\":[\"Brachialis\"],\"unofficial_mark\":null}",
       "reason_ar": null,
       "ms": 2
     },
@@ -1524,11 +1524,11 @@
       "case_id": "key.g4_inline.2_3",
       "axis": "key_binding",
       "set": "regression",
-      "title_ar": "مفتاح أخير بلا تسمية قسم: الجزء 2 السؤال 3 لا يُربط بالرقم وحده",
+      "title_ar": "مفتاح أخير بلا تسمية قسم بعد الجزء الأخير (والجزء 1 له مفتاحه): يُربط بالجزء 2 السؤال 3",
       "fixture": "acceptance/g4_sections_inline_keys.pdf",
       "outcome": "pass",
-      "expected": "{\"answer_status\":\"missing_key\"}",
-      "observed": "{\"answer_status\":\"missing_key\",\"key_labels\":[],\"key_texts\":[],\"unofficial_mark\":null}",
+      "expected": "{\"answer_status\":\"source_key\",\"key_texts\":[\"Hip\"]}",
+      "observed": "{\"answer_status\":\"source_key\",\"key_labels\":[\"A\"],\"key_texts\":[\"Hip\"],\"unofficial_mark\":null}",
       "reason_ar": null,
       "ms": 1
     },
@@ -1542,7 +1542,7 @@
       "expected": "{\"answer_status\":\"source_key\",\"key_labels\":[\"D\"]}",
       "observed": "{\"answer_status\":\"source_key\",\"key_labels\":[\"D\"],\"key_texts\":[\"Routine prophylactic antibiotics\"],\"unofficial_mark\":null}",
       "reason_ar": null,
-      "ms": 3
+      "ms": 2
     },
     {
       "case_id": "key.g4_long_ar.Q2",
@@ -1554,7 +1554,7 @@
       "expected": "{\"answer_status\":\"source_key\",\"key_labels\":[\"ج\"]}",
       "observed": "{\"answer_status\":\"source_key\",\"key_labels\":[\"ج\"],\"key_texts\":[\"حقنة الباريوم الشرجية\"],\"unofficial_mark\":null}",
       "reason_ar": null,
-      "ms": 3
+      "ms": 2
     },
     {
       "case_id": "cite.valid_in_scope",
@@ -1588,7 +1588,7 @@
       "fixture": "golden/lecture_appendicitis.pdf",
       "outcome": "pass",
       "expected": "{\"kept\":false}",
-      "observed": "{\"status\":\"rejected\",\"keep\":false,\"evidence_ids\":0,\"rejected_aliases\":[\"01M4K6FY18ZK9MRK06FY59X1ZV\"],\"failed\":[\"evidence_exists\"]}",
+      "observed": "{\"status\":\"rejected\",\"keep\":false,\"evidence_ids\":0,\"rejected_aliases\":[\"01M5CVQGBNBVZDVE63FH32370W\"],\"failed\":[\"evidence_exists\"]}",
       "reason_ar": null,
       "ms": 1
     },
@@ -1602,7 +1602,7 @@
       "expected": "{\"kept\":false}",
       "observed": "{\"status\":\"rejected\",\"keep\":false,\"evidence_ids\":0,\"rejected_aliases\":[\"E1\"],\"failed\":[\"in_scope\"]}",
       "reason_ar": null,
-      "ms": 2
+      "ms": 1
     },
     {
       "case_id": "cite.valid_plus_unknown",
@@ -1626,7 +1626,7 @@
       "expected": "{\"linked\":true}",
       "observed": "{\"status\":\"linked\",\"failed\":[],\"verifier\":\"scripted:supported\"}",
       "reason_ar": null,
-      "ms": 27
+      "ms": 19
     },
     {
       "case_id": "support.cross_language",
@@ -1650,7 +1650,7 @@
       "expected": "{\"linked\":false}",
       "observed": "{\"status\":\"rejected\",\"failed\":[\"critical_tokens\"],\"verifier\":\"unavailable\"}",
       "reason_ar": null,
-      "ms": 7
+      "ms": 2
     },
     {
       "case_id": "support.added_negation",
@@ -1662,7 +1662,7 @@
       "expected": "{\"linked\":false}",
       "observed": "{\"status\":\"rejected\",\"failed\":[\"critical_tokens\"],\"verifier\":\"unavailable\"}",
       "reason_ar": null,
-      "ms": 3
+      "ms": 1
     },
     {
       "case_id": "support.changed_unit",
@@ -1686,7 +1686,7 @@
       "expected": "{\"linked\":false}",
       "observed": "{\"status\":\"rejected\",\"failed\":[\"entailment\"],\"verifier\":\"scripted:not_supported\"}",
       "reason_ar": null,
-      "ms": 5
+      "ms": 4
     },
     {
       "case_id": "abstain.out_of_scope",
@@ -1698,7 +1698,7 @@
       "expected": "{\"supported_shown\":false,\"abstain_reason\":\"not_found_in_scope\"}",
       "observed": "{\"status\":\"abstained\",\"abstain\":\"not_found_in_scope\",\"linked_claims\":0,\"generator_calls\":0,\"script_errors\":[]}",
       "reason_ar": null,
-      "ms": 52
+      "ms": 27
     },
     {
       "case_id": "abstain.real_patient",
@@ -1710,7 +1710,7 @@
       "expected": "{\"supported_shown\":false,\"abstain_reason\":\"real_patient_request\"}",
       "observed": "{\"status\":\"abstained\",\"abstain\":\"real_patient_request\",\"linked_claims\":0,\"generator_calls\":0,\"script_errors\":[]}",
       "reason_ar": null,
-      "ms": 6
+      "ms": 28
     },
     {
       "case_id": "abstain.fabricated_alias",
@@ -1722,7 +1722,7 @@
       "expected": "{\"supported_shown\":false}",
       "observed": "{\"status\":\"abstained\",\"abstain\":\"insufficient_evidence\",\"linked_claims\":0,\"generator_calls\":1,\"script_errors\":[]}",
       "reason_ar": null,
-      "ms": 33
+      "ms": 39
     },
     {
       "case_id": "abstain.unsupported_answer",
@@ -1734,7 +1734,7 @@
       "expected": "{\"supported_shown\":false}",
       "observed": "{\"status\":\"abstained\",\"abstain\":\"insufficient_evidence\",\"linked_claims\":0,\"generator_calls\":1,\"script_errors\":[]}",
       "reason_ar": null,
-      "ms": 35
+      "ms": 31
     },
     {
       "case_id": "overabstain.anchored",
@@ -1746,7 +1746,7 @@
       "expected": "{\"supported_shown\":true}",
       "observed": "{\"status\":\"final\",\"abstain\":null,\"linked_claims\":1,\"generator_calls\":1,\"script_errors\":[]}",
       "reason_ar": null,
-      "ms": 26
+      "ms": 29
     },
     {
       "case_id": "overabstain.retrieved_ct",
@@ -1758,7 +1758,7 @@
       "expected": "{\"supported_shown\":true}",
       "observed": "{\"status\":\"final\",\"abstain\":null,\"linked_claims\":1,\"generator_calls\":1,\"script_errors\":[]}",
       "reason_ar": null,
-      "ms": 24
+      "ms": 21
     },
     {
       "case_id": "overabstain.retrieved_wcc",
@@ -1770,7 +1770,7 @@
       "expected": "{\"supported_shown\":true}",
       "observed": "{\"status\":\"final\",\"abstain\":null,\"linked_claims\":1,\"generator_calls\":1,\"script_errors\":[]}",
       "reason_ar": null,
-      "ms": 27
+      "ms": 18
     },
     {
       "case_id": "overabstain.arabic_question",
@@ -1782,7 +1782,7 @@
       "expected": "{\"supported_shown\":true}",
       "observed": "{\"status\":\"final\",\"abstain\":null,\"linked_claims\":1,\"generator_calls\":1,\"script_errors\":[]}",
       "reason_ar": null,
-      "ms": 27
+      "ms": 13
     },
     {
       "case_id": "overabstain.pregnancy_test",
@@ -1790,10 +1790,10 @@
       "set": "regression",
       "title_ar": "سؤال إنجليزي عن جملة في المحاضرة: لا امتناع",
       "fixture": "golden/lecture_appendicitis.pdf",
-      "outcome": "fail",
+      "outcome": "pass",
       "expected": "{\"supported_shown\":true}",
-      "observed": "{\"status\":\"abstained\",\"abstain\":\"not_found_in_scope\",\"linked_claims\":0,\"generator_calls\":0,\"script_errors\":[]}",
-      "reason_ar": "امتنع النظام (not_found_in_scope) مع وجود دليل واضح في المحاضرة.",
+      "observed": "{\"status\":\"final\",\"abstain\":null,\"linked_claims\":1,\"generator_calls\":1,\"script_errors\":[]}",
+      "reason_ar": null,
       "ms": 16
     },
     {
@@ -1806,7 +1806,7 @@
       "expected": "{\"accepted\":true}",
       "observed": "{\"accepted\":true,\"reasons\":[]}",
       "reason_ar": null,
-      "ms": 11
+      "ms": 15
     },
     {
       "case_id": "image.caption.2",
@@ -1818,7 +1818,7 @@
       "expected": "{\"accepted\":true}",
       "observed": "{\"accepted\":true,\"reasons\":[]}",
       "reason_ar": null,
-      "ms": 8
+      "ms": 5
     },
     {
       "case_id": "image.caption.3",
@@ -1842,7 +1842,7 @@
       "expected": "{\"accepted\":false}",
       "observed": "{\"accepted\":false,\"reasons\":[\"التعليق يذكر العلامة منفية أو مستبعدة (مثل «no evidence of …» أو «… ruled out»)؛ الصورة ليست مثالًا عليها.\"]}",
       "reason_ar": null,
-      "ms": 2
+      "ms": 3
     },
     {
       "case_id": "image.caption.5",
@@ -1854,7 +1854,7 @@
       "expected": "{\"accepted\":false}",
       "observed": "{\"accepted\":false,\"reasons\":[\"التعليق يذكر العلامة منفية أو مستبعدة (مثل «no evidence of …» أو «… ruled out»)؛ الصورة ليست مثالًا عليها.\"]}",
       "reason_ar": null,
-      "ms": 5
+      "ms": 2
     },
     {
       "case_id": "image.caption.6",
@@ -1866,7 +1866,7 @@
       "expected": "{\"accepted\":false}",
       "observed": "{\"accepted\":false,\"reasons\":[\"نوع التصوير رسم تعليمي لا يطابق المطلوب أشعة سينية (X-ray).\",\"رسم تعليمي أو مخطط من المصدر، وليس صورة حقيقية من نوع التصوير المطلوب.\"]}",
       "reason_ar": null,
-      "ms": 5
+      "ms": 3
     },
     {
       "case_id": "image.caption.7",
@@ -1878,7 +1878,7 @@
       "expected": "{\"accepted\":false}",
       "observed": "{\"accepted\":false,\"reasons\":[\"نوع التصوير تصوير مقطعي (CT) لا يطابق المطلوب أشعة سينية (X-ray).\"]}",
       "reason_ar": null,
-      "ms": 2
+      "ms": 1
     },
     {
       "case_id": "image.atlas.xray_ptx",
@@ -1890,7 +1890,7 @@
       "expected": "[1,7,9]",
       "observed": "[1,7,9]",
       "reason_ar": null,
-      "ms": 48
+      "ms": 36
     },
     {
       "case_id": "image.atlas.arabic",
@@ -1902,7 +1902,7 @@
       "expected": "[7]",
       "observed": "[7]",
       "reason_ar": null,
-      "ms": 46
+      "ms": 43
     },
     {
       "case_id": "image.atlas.ct",
@@ -1914,7 +1914,7 @@
       "expected": "[2]",
       "observed": "[2]",
       "reason_ar": null,
-      "ms": 40
+      "ms": 26
     },
     {
       "case_id": "image.atlas.child",
@@ -1926,7 +1926,7 @@
       "expected": "[9]",
       "observed": "[9]",
       "reason_ar": null,
-      "ms": 34
+      "ms": 35
     },
     {
       "case_id": "link.surgery.A1",
@@ -1938,7 +1938,7 @@
       "expected": "{\"directly_covered\":true}",
       "observed": "{\"relation\":\"directly_covered\",\"answerable\":true,\"pages\":[\"ص 11\",\"ص 13\",\"ص 14\"],\"matching\":\"done\"}",
       "reason_ar": null,
-      "ms": 7
+      "ms": 6
     },
     {
       "case_id": "link.surgery.A2",
@@ -1962,7 +1962,7 @@
       "expected": "{\"directly_covered\":true}",
       "observed": "{\"relation\":\"directly_covered\",\"answerable\":true,\"pages\":[\"ص 12\",\"ص 13\",\"ص 11\"],\"matching\":\"done\"}",
       "reason_ar": null,
-      "ms": 3
+      "ms": 5
     },
     {
       "case_id": "link.surgery.A4",
@@ -1998,7 +1998,7 @@
       "expected": "{\"directly_covered\":false}",
       "observed": "{\"relation\":\"none\",\"answerable\":false,\"pages\":[],\"matching\":\"done\"}",
       "reason_ar": null,
-      "ms": 4
+      "ms": 3
     },
     {
       "case_id": "link.surgery.B3",
@@ -2010,7 +2010,7 @@
       "expected": "{\"directly_covered\":false}",
       "observed": "{\"relation\":\"course_related_only\",\"answerable\":false,\"pages\":[\"ص 12\"],\"matching\":\"done\"}",
       "reason_ar": null,
-      "ms": 4
+      "ms": 2
     },
     {
       "case_id": "link.g5_ar.Q1",
@@ -2022,7 +2022,7 @@
       "expected": "{\"directly_covered\":true,\"page_label\":\"ص 1\"}",
       "observed": "{\"relation\":\"directly_covered\",\"answerable\":true,\"pages\":[\"ص 1\",\"ص 2\"],\"matching\":\"done\"}",
       "reason_ar": null,
-      "ms": 3
+      "ms": 2
     },
     {
       "case_id": "link.g5_ar.Q2",
@@ -2034,7 +2034,7 @@
       "expected": "{\"directly_covered\":true,\"page_label\":\"ص 2\"}",
       "observed": "{\"relation\":\"directly_covered\",\"answerable\":true,\"pages\":[\"ص 2\",\"ص 1\"],\"matching\":\"done\"}",
       "reason_ar": null,
-      "ms": 3
+      "ms": 2
     },
     {
       "case_id": "link.g5_ar.Q3",
@@ -2046,7 +2046,7 @@
       "expected": "{\"directly_covered\":false}",
       "observed": "{\"relation\":\"none\",\"answerable\":false,\"pages\":[],\"matching\":\"done\"}",
       "reason_ar": null,
-      "ms": 2
+      "ms": 1
     },
     {
       "case_id": "bidi.no_controls.appendicitis",
@@ -2058,7 +2058,7 @@
       "expected": "0",
       "observed": "0",
       "reason_ar": null,
-      "ms": 1
+      "ms": 0
     },
     {
       "case_id": "bidi.no_controls.shock_docx",
@@ -2082,7 +2082,7 @@
       "expected": "0",
       "observed": "0",
       "reason_ar": null,
-      "ms": 0
+      "ms": 1
     },
     {
       "case_id": "bidi.no_controls.g5_lecture_ar",
@@ -2104,9 +2104,9 @@
       "fixture": "acceptance/g4_long_question_ar.pdf",
       "outcome": "pass",
       "expected": "contains: 11.5 ×10⁹/L. جميع ما يلي مناسب في التقييم الأولي عدا:",
-      "observed": "امرأة عمرها 30 سنة تراجع بألم في الحفرة الحرقفية اليمنى منذ 12 ساعة، وحرارتها 38.4 ° C وتعداد الكريات البيض 11.5 ×10⁹/L. جميع ما يلي مناسب في التقييم الأولي عدا:",
+      "observed": "امرأة عمرها 30 سنة تراجع بألم في الحفرة الحرقفية اليمنى منذ 12 ساعة، وحرارتها 38.4 °C وتعداد الكريات البيض 11.5 ×10⁹/L. جميع ما يلي مناسب في التقييم الأولي عدا:",
       "reason_ar": null,
-      "ms": 2
+      "ms": 1
     },
     {
       "case_id": "bidi.dir.1",
@@ -2185,7 +2185,7 @@
   "notes_ar": [
     "كل الحالات على ملفات اختبار اصطناعية (TEST FIXTURE)؛ ليست مرجعًا طبيًا، والنتائج مقيدة بنطاق هذه الحالات وحجمها وطريقة تقييمها.",
     "كل نسبة مكتوبة مع مقامها وفاصل ثقة 95% (Wilson). عينة أقل من 30 حالة «عينة صغيرة» ولا تُعمَّم.",
-    "عينة الانحدار مجمّدة عند إصدار الكتالوج ومنفصلة عن أمثلة الضبط (مجموعة Golden Set التي طُوّرت عليها أدوات الاستخراج).",
+    "عينة الانحدار مجمّدة عند إصدار الكتالوج ومنفصلة عن أمثلة الضبط (مجموعة Golden Set التي طُوّرت عليها أدوات الاستخراج). ليست بيانات محجوبة عن المطوّرين: أُصلحت عيوب على ملفاتها نفسها في مراحل القبول، فلا تقيس أي من المجموعتين التعميم على ملفات جديدة؛ فائدتها أنها لا تتغير.",
     "محاور الذكاء الاصطناعي شُغّلت بمزود مكتوب مسبقًا للتقييم فقط: تقيس ضمانات الخادم (التحقق من الأدلة، الامتناع، عدم الامتناع الزائد)، لا جودة نموذج. تقييم نموذج حقيقي يحتاج ANTHROPIC_API_KEY وتشغيل `npm run eval -- --mode=live`."
   ]
 }

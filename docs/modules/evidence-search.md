@@ -346,3 +346,42 @@ Each item was first reproduced by a failing test, then fixed minimally; existing
   hand-built «ص ${…}» outside `pagelabel.ts`; helper; one test per producer family: evidence, search, annotations,
   Home continue, question occurrences, exam results + weakness, media links, Course Brain coverage + mentions, export),
   `sh:page-label.test.ts` (`withNumberedVersion`), `web:test/learning/home-page-label.h1.test.tsx`.
+
+### Round 7 — independent review of H1 (2026-10-20)
+
+Every H1 item was re-checked against its test; two fixes were reverted locally (coverage cap in `terms.ts`, the
+`based_on` rule in `claims.ts`) and their H1 tests failed, then the code was restored. Scripted eval after the review
+fixes: regression 80/80, abstention 4/4, over_abstention 5/5, claim_support 6/6, citation_validity 5/5.
+
+Fixed in the review (each reproduced by a failing test first):
+
+* **«مذكور نصًا» refused valid claims (H1 regression)** (`evidence/critical.ts`). The new key-term rule required, in
+  the cited quote, (a) a Latin gloss the model adds in parentheses to an Arabic claim citing an Arabic-only excerpt
+  («التهاب الزائدة الدودية (appendicitis)», «التصوير المقطعي (CT)»), (b) an acronym written right after the words it
+  abbreviates («computed tomography (CT)»), and (c) the same spelling of a key term («anemia» vs the quote's
+  «anaemia», «edema» / «oedema»). All three passed before H1 and were refused (the sentence removed) after it. Now:
+  a parenthetical Latin gloss in an Arabic claim is optional when the quote carries no Latin script at all (when the
+  quote has Latin terms, «(Murphy)» may be a swapped copy of the quote's «McBurney» and stays required); an acronym
+  whose letters are the initials of the words right before its parenthesis is optional; optional terms are also left
+  out of the swap alignment; British / American spellings (ae / oe → e) share a stem in key-term and swap matching.
+  A wrong acronym («magnetic resonance imaging (CT)»), a swap hidden behind a spelling variant («microcytic» →
+  «macrocytic anemia», «hypokalaemia» → «hyperkalemia») are still refused. Tests: `srv:evidence/critical.test.ts`
+  «H1 review — «directly stated» does not refuse a gloss, an expanded acronym or a spelling variant» (4).
+* **Text-citation false positive on the verb «slide»** (`evidence/textcite.ts`): «filaments slide one over the
+  other» (the sliding-filament mechanism) was flagged as a reference to «slide one» and the sentence removed. «slide +
+  number word» now needs the noun reading (after a preposition / article, after «refer / back / go / turn / according
+  to», or at the start of a sentence or bracket — not after an infinitive «to» or «and»); «on slide two», «see slide
+  three», «refer to slide two», «Slide two lists…», «(slide four)» are still flagged. Tests:
+  `srv:evidence/textcite.test.ts` (verb cases + noun cases).
+* **Migration 0310 on a real owner database** — added coverage, no defect: an owner database is already at 0801, so
+  0310 is applied LAST and out of order; the test applies every other migration first, then 0310, and checks that every
+  alert, item and `content_alert_job` row is kept (`srv:evidence/alert-kind-migration.test.ts`, 3rd case).
+
+Known limits (not fixed, by design or out of reach of a deterministic check):
+
+* An in-place SYNONYM in a «مذكور نصًا» claim («moves» for the quote's «migrates», «شائعة» for «منتشرة») is refused like
+  a swapped noun: a deterministic check cannot tell a synonym from «biliary» for «ureteric». The sentence is removed;
+  the generator should label a reworded sentence `derived`. Coverage-based refusals (< 80 % of the words) are as before H1.
+* Text-citation detector: «the last page of the drug chart», «في الشريحة التالية من التصوير المقطعي» (a CT slice) are
+  still flagged (rare in generated explanations; the cost is one removed sentence, reported).
+* AI judgement paths (verifier `based_on`, entailment) are still tested only with scripted / fake providers.

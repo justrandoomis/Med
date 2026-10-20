@@ -21,7 +21,7 @@ Spec: §07, §13, §14, §15, §16 (lecture kind only), §17, §52, §53, §55, 
   (legacy conversion only, never overwritten), `display_file_id`, `lecture_kind` (+ origin `'auto'`).
   An owner-set printed label (`printed_label_origin='owner'`) and an owner-set lecture kind are never overwritten.
 
-## Pipeline (`pipeline.ts`, job version `process-v1`, max 3 attempts, 60 min timeout, concurrency 1)
+## Pipeline (`pipeline.ts`, job version `process-v2` since Round 7 H2 (was `process-v1`), max 3 attempts, 60 min timeout, concurrency 1)
 
 `inspect` → per page `extract / OCR / layout / persist` → `layout` (cross-page links) → `structure` → `index` → `validate`.
 
@@ -48,7 +48,7 @@ Spec: §07, §13, §14, §15, §16 (lecture kind only), §17, §52, §53, §55, 
 |---|---|
 | PDF | `pdfjs-dist` 6 legacy build in Node (`disableFontFace`, `fontExtraProperties` for bold detection, cMaps/standard fonts/wasm from the package, `maxImageSize` cap). `/PageLabels` → `printed_label` origin `pdf_page_labels`; otherwise page numbers detected in the header/footer bands with a cross-page offset check (≥ 2 agreeing pages, majority) → `detected_text`; never invented. Page size from the unrotated view box (pt), intrinsic `/Rotate` stored. |
 | Scanned / image-only PDF pages | Page has < 25 body chars and images/vector drawing (or a non-blank render) → poppler `pdftoppm -cropbox` render (200 dpi, lowered for huge pages to a 36 MP budget) stored as `render_file_id` → tesseract.js OCR. Digital text is kept where it exists (OCR words overlapping digital text are dropped). A page with no text and nothing drawn is verified blank by a 50 dpi render before being called empty. |
-| Images / image sets | tesseract.js on each page; PNG scans also get quality metrics. No text → the image itself becomes a `figure` region + `image_asset` (never an "empty page"). Regions carry `locator.file_name`. |
+| Images / image sets | tesseract.js on each page, read as DISPLAYED (JPEG EXIF orientation applied) and in the orientation where the text reads (Round 7 H2); PNG and JPEG scans also get quality metrics. No text → the image itself becomes a `figure` region + `image_asset` (never an "empty page"). Regions carry `locator.file_name`. |
 | DOCX | mammoth document model (`transformDocument`): headings (`Heading N`/`Title`/`عنوان N`), numbered paragraphs → `list_item`, tables (colSpan/rowSpan from mammoth), embedded images → `figure` + `image_asset`. Pages are `docx_section` per top-level heading (a single document-title heading does not split), `printed_label` NULL, no bbox; every region has `locator {paragraph_index, heading_path[]}` (paragraph_index = index of the body-level block). |
 | PPTX | jszip + a minimal non-validating XML parser (`xml.ts`, rejects DTDs). Slide order from `presentation.xml` `sldIdLst` → rels; slide size from `sldSz` (EMU→pt); shape boxes from `a:off/a:ext` with group transforms; placeholders without `xfrm` inherit layout/master positions; title placeholders (or, if none, the largest-font short shape in the top third) → `heading`; bullets → `list_item`; tables (`gridSpan/rowSpan/hMerge/vMerge`); pictures → `figure` + `image_asset`; speaker notes → `note`. Pages `kind='slide'`, `printed_label` = slide number, origin `slide_number`. Display PDF via LibreOffice when installed (warning otherwise). |
 | Legacy DOC / PPT | LibreOffice headless in an isolated temp dir (`-env:UserInstallation=file://<tmp>/profile`, `--norestore`, own HOME/TMPDIR, generated input name, 180 s timeout, process group SIGKILL on timeout/abort, temp dir always removed). The PDF is stored, `file_id`/`display_file_id` set, then processed as PDF. No soffice → version `failed` with a specific reason. |
@@ -101,14 +101,15 @@ Logical order, bidi controls stripped, Arabic presentation forms → base letter
 tesseract.js 7, `eng+ara` `4.0.0_best_int` from `@tesseract.js-data/*`, copied once into `DATA_DIR/tessdata`
 (cache `DATA_DIR/tessdata-cache`); one lazily created worker per app, recognitions serialized, terminated on close.
 Region `confidence` is stored on a **0–1 scale** (page `ocr_confidence` too). A region needs review when its weakest
-word is < 60 % (the reason lists the weak words). Scan quality (`png.ts`, PNG only): contrast (paper vs darkest 0.2 %)
+word is < 60 % (the reason lists the weak words). Scan quality (`png.ts`; PNG, and JPEG through `image.ts` since Round 7 H2): contrast (paper vs darkest 0.2 %)
 < 90 or edge sharpness < 0.4 → page `needs_review`, `error_code LOW_QUALITY_SCAN`, one page-level `ocr_error` item.
 OCR finding nothing on a PDF page → `no_text_found` + `unreadable_page` item (never "empty").
 **Coverage check (G3, `coverage.ts`)**: on image pages and pure scans (PNG), text-like ink that no OCR word covers is
 found (line bands → ink segments; pictures, rules, borders ignored). Then the page is read again as one block (PSM 6)
 and only the words that fall where the first reading read nothing are added; writing still unread → page
 `needs_review`, `error_code TEXT_NOT_READ`, an `ocr_error` item with the places (`details.not_read`). Found by AC-13:
-PSM 3 read the stem of an Arabic question photo and silently dropped its four options. Not done for JPEG (no decoder).
+PSM 3 read the stem of an Arabic question photo and silently dropped its four options. JPEG photos too since Round 7 H2
+(decoded by `image.ts`).
 
 ### Index (`chunks.ts`, `chunk-v1`) and search
 * Chunks: paragraph/list groups under one heading path (≤ ~1200 chars), each table (serialized with header context:
@@ -178,18 +179,18 @@ Commands run:
   explicitly uncertain. No arrows/edges are ever produced.
 * **Concept / term candidate extraction** (§16): out of scope for this track.
 * **Page thumbnails** (`thumbnail_file_id`) are not generated (the web reader renders PDFs itself).
-* **Vector-drawn figures** (flowcharts made of paths, no image): not detected as figures; their digital text stays as
-  ordinary text blocks.
-* **OCR table detection**, multi-column OCR beyond the generic XY-cut, and OCR rotation detection (OSD) are not built.
-* **JPEG/TIFF quality metrics**: the quality check decodes PNG only (no image library); other formats rely on OCR
-  confidence alone.
+* ~~Vector-drawn figures~~, ~~OCR table detection~~, ~~OCR rotation detection~~, ~~JPEG quality metrics~~ — built in
+  Round 7 H2 (see «Round 7 — H2» below). Still not built: multi-column OCR beyond the generic XY-cut, an OSD model (the
+  rotation is found by rotated OCR trials, not by a trained orientation classifier), TIFF decoding (other raster formats
+  rely on OCR confidence alone).
 * **Legacy PPT slide numbers**: converted PPT pages are `kind='slide'` but get no printed label (hidden slides may be
   skipped by the converter, so the PDF page order cannot be trusted as the slide number).
 * No dedicated reprocess route here: the sources module already exposes `POST /api/sources/versions/:id/reprocess`.
 
 ## Known limits
-* The lam-alef rule repairs only the word-initial pattern; mid-word reversed ligatures cannot be told apart from real words
-  (they are flagged for review in documents that show the defect, so such documents produce many review items).
+* The lam-alef rule repairs only the word-initial pattern from TEXT alone; a mid-word reversed ligature is repaired since
+  Round 7 H2 only when the PDF draws it with a lam-alef glyph (LibreOffice output — `pdf.ts ligatureWordMap`). A PDF
+  whose font maps the ligature differently still gets the review flags in documents that show the defect.
 * Scan-quality thresholds were calibrated on the Golden Set renders (crisp pages: contrast ≈ 238, sharpness ≥ 0.65;
   the low-quality fixture: 52 / 0.27); unusual scans may need tuning.
 * `ml_norm` is a connection-level function: a tool that opens the database without `db/db.ts` (e.g. the `sqlite3` CLI)
@@ -251,12 +252,12 @@ requires the session; tool runs use argument arrays (no shell), generated input 
 process-group kill and temp-dir removal; pdfjs 6 (no eval), XML parser rejects DTDs.
 
 Still open (not fixed):
-* JPEG EXIF orientation is not applied before OCR: a phone photo stored sideways is OCR'd (and its boxes are stored) in
-  raw pixel orientation while browsers display it rotated. Needs an image decoder/rotator.
+* ~~JPEG EXIF orientation is not applied before OCR~~ — fixed in Round 7 H2 (`image.ts`, see below).
 * A scanned page that also carries ≥ 25 characters of digital body text (e.g. a watermark line) is treated as digital and
   its picture is not OCR'd (heuristic `MIN_BODY_CHARS`); it is not shown as empty, but the scan's text is missing.
-* LibreOffice runs without network isolation: a document with linked (remote) images/OLE objects could make it fetch
-  URLs during conversion. Leftover temp dirs after a hard crash are not swept at boot.
+* ~~LibreOffice runs without network isolation~~ — closed by G8 (hardened profile + closed proxy) and, for OOXML, by
+  Round 7 H2 (external relationships stripped before conversion). Legacy OLE2 `.doc` / `.ppt` links are still only
+  blocked by the G8 profile. Leftover temp dirs after a hard crash are not swept at boot.
 * Re-processed pages get new region ids; other modules' JSON anchors to old region ids (annotations, study-book blocks)
   must re-anchor (cited evidence/overlays are protected by foreign keys).
 * A protected page (`REGIONS_IN_USE` / `OWNER_REVIEWED_REGIONS`) is marked `failed` although its previous content is
@@ -350,3 +351,94 @@ regressions in `apps/server/test/acceptance/g4-ac11.test.ts` (8 of its 12 tests 
   `e2e:f3-study-modes.spec.ts` (page 14 flowchart of the Golden Set lecture: panel disabled with the reason, API 409,
   region status unchanged).
 * Not run: a real vision model (no key). Arrow direction quality on real figures is therefore unmeasured.
+
+## Round 7 — H2: processing & extraction quality (2026-10-20)
+
+Every item below was reproduced with a test that FAILED before the fix (checked by disabling the fix or running the old
+file), then fixed minimally. Fixtures are generated inside the tests (synthetic TEST FIXTURE pages: `test/helpers/pdfgen.ts`
+writes PDFs with text, rectangles, lines, polygons and arrows; `test/helpers/images.ts` paints and rotates pictures; pages
+are rendered by the real `pdftoppm` and read by the real tesseract.js). Question-extraction items (H2 item 10) are in
+`questions.md` «Round 7 — H2»; the Image Quiz part of item 4 in `cases-media.md` «Round 7 — H2».
+
+* **Item 1 — figures drawn with PDF paths** (`layout/vector.ts detectVectorFigures`, drawings collected by `pdf.ts` from
+  `constructPath` with the current transform). A flowchart of boxes and arrows or a bar chart had no figure at all: its
+  labels were paragraphs, the «Figure 2» caption stayed unlinked, no crop. Now marks of the drawing (closed shapes,
+  curves, polygons, lines; marks < 10 pt only as arrowheads at line ends) are clustered (gap ≤ 12 pt) into a figure
+  region when the cluster is a drawing (≥ 3 separate shapes, or 2 with arrows / connectors, or ≥ 2 curves / polygons in
+  a group of ≥ 4); short labels inside it (≤ 24 chars, not a caption) are its label set, not paragraphs. The caption,
+  «Figure N» references and the 200 dpi crop asset work as for pictures (`FigureStructure.origin = 'vector'`).
+  A drawing that is not clearly a diagram (no arrows, no connectors between curved shapes) is status `uncertain`.
+  Never a figure: a ruled table grid, a frame around prose (≥ 50-char item or > 300 chars inside), a page-wide header
+  bar or background, drawn bullets, zebra rows. No edge / arrow meaning is inferred (that stays the vision step's job).
+  Test `srv:processing/vector-figures.test.ts` (4). Also checked: no vector figure on any existing fixture PDF.
+* **Item 2 — tables on scanned pages** (`layout/lines.ts mergeSideBySideLines`, `layout/tables.ts`, `layout/page.ts`).
+  tesseract reads each cell of a ruled table as its own line: a 5 × 3 drug table became 15 one-word paragraphs in column
+  order. OCR lines on one baseline are now joined into row bands, and the borderless column-alignment detector builds the
+  `TableStructure` from the word boxes: `method: 'ocr_aligned'`, `certainty: 'uncertain'`, region status `uncertain`;
+  every cell text comes from OCR words (an empty cell stays empty — nothing invented); cells with weak words (< 60 %) or
+  words crossing a column boundary give a review note. Two columns of prose are not a table (median ≥ 4 words per
+  segment and ≥ 75 % fill). OCR header rows are not detected (no bold on a scan). Test `srv:processing/ocr-table.test.ts` (3).
+* **Item 3 — orientation of scans and photos** (`orientation.ts`, `pipeline.ts readOriented`; no OSD model is bundled,
+  so the decision is deterministic). The first reading's word boxes say when the picture is sideways (≥ 60 % of the
+  words of ≥ 3 characters are > 1.3 × taller than wide → trials at 90° and 270°) or reads poorly (mean confidence
+  < 70 → a 180° trial). A trial is kept only when it reads clearly better (sideways: the best trial; otherwise
+  ≥ 1.3 × the score + 60), so a poor upright scan is never turned. The turn is stored (`source_page.content_rotation`,
+  `content_rotation_origin = 'ocr_trials'`, migration `0220_page_orientation.sql`), the page geometry carries it as the
+  page rotation (the reader shows the photo upright) and every box stays in the picture's own space. Applies to image
+  pages and to scanned PDF pages. Test `srv:processing/orientation.test.ts` (8: upright → 0; turned 90 / 180 / 270 read
+  upright with boxes in the photo's space; EXIF 6 in both byte orders; JPEG quality; the two failure reasons).
+* **Item 4 — JPEG** (`image.ts`, dependency **`jpeg-js` 0.4.4**, BSD-3-Clause, pure JavaScript: chosen because the
+  server has no image library and native modules (sharp / canvas) need a platform build; it decodes baseline and
+  progressive JPEG and encodes). Decoding is bounded: pixel budget checked from the frame header BEFORE allocating
+  (24 MP for metrics), `maxResolutionInMP` / `maxMemoryUsageInMB` passed to the decoder; errors are typed
+  (`NOT_IMAGE` / `UNSUPPORTED` / `CORRUPT` / `TOO_LARGE`). The EXIF Orientation tag is read in both TIFF byte orders
+  («II» Android, «MM» iPhone — tesseract.js honours only big-endian) and all eight orientations are applied as a browser
+  displays them (`decodeDisplayed`); OCR reads the displayed picture, the page has the displayed size, `image_orientation`
+  keeps the tag. JPEG scans now get the quality metrics (`LOW_QUALITY_SCAN`) and the G3 coverage re-read. A JPEG that
+  cannot be decoded is still OCR'd as stored and its word boxes are mapped to the displayed orientation
+  (`exifWordToDisplayed`); the same holds between the 24 MP decode budget and the 40 MP OCR budget: the EXIF turn is
+  applied, but the rotated trials, the metrics and the coverage re-read are skipped (`content_rotation` stays NULL =
+  not checked, never 0). Test `srv:processing/image.test.ts` (5).
+* **Item 5 — a `/Rotate` page holding upright text** (`pdf.ts` text directions, `orientation.ts contentRotationFromText`,
+  `pipeline.ts layoutSpace`). Layout ran in display space, where such text is vertical: lines stored item by item,
+  reading order scrambled, the repeated footer missed (G6 / AC-21: «the McBurney line becomes 6 regions»). The direction
+  of the text matrices now picks the space where ≥ 60 % of the characters run left → right; layout runs there and boxes
+  go back to the unrotated page box; the turn is stored with origin `text_direction`. Ordinary rotated pages (text drawn
+  sideways and shown upright) are unchanged — the review's `rotated_lecture.pdf` test still passes.
+  Test `srv:processing/sideways.test.ts` (3: same regions as the page without `/Rotate`, bands, boxes + stored turn).
+* **Item 6 — OCR word geometry** (`persist.ts`, `layout/page.ts`, shared `RegionWord` / `regionWords()`). OCR regions
+  store tesseract's word boxes in reading order (`locator.words`, normalized to the unrotated page box, rounded to 1e-5),
+  returned by the regions API. The web reader's OCR text layer (`reader/PageView.tsx OcrTextLayer`) places one span per
+  word over the scanned glyphs (font size from the box height, horizontally fitted) with zero-size gap spans, so the
+  selection and the in-document search-hit rectangles land on the words instead of one run per region; regions without
+  words keep the old layer. Tests `srv:processing/ocr-words.test.ts` (4), `web:reader/PageView.ocrwords.test.tsx` (3).
+* **Item 7 — «the picture itself is damaged»** (`pipeline.ts recognize`, `MSG.imageDamaged`). An OCR failure on a picture
+  whose data does not decode (truncated / corrupt PNG or JPEG, `ImageDecodeError CORRUPT`) now says «الصورة نفسها تالفة —
+  إعادة المعالجة لن تفيد: …» (`OCR_FAILED`); a transient engine failure on a sound picture keeps «أعد المعالجة». Tests in
+  `orientation.test.ts`; AC-03's partial image set still gives `partial` with the failed page listed.
+* **Item 8 — LibreOffice and linked files** (`office-safety.ts sanitizeOoxmlForConversion`, called by `tools.ts
+  convertToPdf` for every zip input). Every `.rels` part loses its relationships with `TargetMode="External"` or a
+  target outside the package (`scheme:`, `//`, `\\`) before LibreOffice sees the file; the original upload is never
+  changed; an unreadable zip is refused (`TOOL_INPUT_REJECTED`). Reproduced: with LibreOffice's DEFAULT profile a PPTX
+  picture linked to `file:///<server file>` is embedded into the PDF (1 image); the G8 hardened profile already blocked
+  it, so this is a second, independent layer. Test `srv:processing/office-links.test.ts` (4: sanitizer, the default-profile
+  reproduction, PPTX and DOCX linking a server file, `file:///etc/hostname` and `http://127.0.0.1` → nothing embedded,
+  no request reaches the trap). Not covered: legacy OLE2 `.doc` / `.ppt` links (binary formats, G8 profile only).
+* **Item 9 — LibreOffice's reversed plain lam-alef** («العلامة» stored «العالمة», «العلاج» «العالج», «السلام» «السالم»;
+  `pdf.ts ligatureWordMap`). The PDF itself shows the ligature: its glyph maps to the two letters «لا», which pdf.js
+  reverses with the RTL run. Words drawn with a lam-alef glyph (U+0644 + alef forms, also the presentation forms) are
+  rebuilt from the glyph order; a word drawn with separate alef and lam glyphs (a real «العالم») is never touched and is
+  recorded as verified, so the `ambiguous_lam_alef` flag no longer fires for it; a form that is both a repaired word and
+  a real word of the document is not mapped (stays flagged). Only lam-alef glyphs are rebuilt (a letter + harakah glyph
+  keeps pdf.js text, so the orphan-mark check still flags the `.doc` damma case). Search and lecture ↔ question
+  matching read the repaired text. Tests `srv:processing/lam-alef-glyphs.test.ts` (7 incl. a real Word → LibreOffice
+  PDF); `review.test.ts` «LibreOffice Arabic export» now expects the repaired «العلاج», no flags, page `ready`.
+
+Known limits after H2: the vector-figure rule is a heuristic (a drawing of one or two plain boxes is not a figure;
+diagram meaning still needs the vision step); OCR tables have no header detection and are always `uncertain`; the
+orientation trials cost one or two extra OCR passes on sideways / poor pages; TIFF is not decoded.
+
+Commands (real results, 2026-10-20, shared tree with the parallel H1 review): `npm test` (root) → shared 58 passed;
+server 126 files, 1389 passed, 7 skipped; web 109 files, 727 passed, 1 skipped. `npm run typecheck`, `npm run lint`,
+`npm run build` → exit 0. `npm run eval` → regression 80 / 80 after the reviewed catalogue bump for H2 item 10b
+(`docs/EVALUATION.md` §3).

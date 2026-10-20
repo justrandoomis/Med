@@ -9,7 +9,9 @@ import type { NormBox, QuestionValidationIssue, TableStructure } from '@medlevo/
 import { normalizeForSearch, stripBidiControls } from '@medlevo/shared';
 import { circledLetter, endsMidPhrase, labelAt, labelInfo, type LabelScript } from './text';
 
-export const PARSER_VERSION = 'qparse-v1';
+// qparse-v2 (Round 7 H2 item 10): OCR circled-option marks, «38.4 ° C» structured text (keys: roman ↔ digit sections,
+// trailing per-section key block) — recorded per extraction and in evaluation reports (docs/EVALUATION.md §4)
+export const PARSER_VERSION = 'qparse-v2';
 
 export interface ParserLine {
   text: string;
