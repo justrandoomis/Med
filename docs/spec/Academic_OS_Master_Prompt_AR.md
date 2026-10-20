@@ -5,6 +5,28 @@
 > Clean-room note: features are built in MedLevo's own design from this specification and public information only — no other app's
 > binaries, code, text, UI layouts, templates or assets are used.
 
+## Owner clarifications (2026-10-20) — binding constraints for design and build
+
+1. **The owner has no computer** (phone/tablet only). Everything — running the server, deploying, building store apps, installing test
+   builds — must be doable from a phone/tablet browser and cloud services: a cloud host with a persistent disk deployed from GitHub,
+   store builds produced by cloud CI (e.g. macOS runners for iOS), test installs through TestFlight / Google Play internal testing.
+   No step may require the owner to run a terminal on a local machine.
+2. **Goal: stronger than the leading handwriting-notes apps, published on the App Store and Google Play, very smooth and very fast.**
+   Writing latency and smoothness with a stylus are first-class requirements, not polish: the design must state honestly what a
+   web canvas can reach and plan a native, low-latency ink surface (with stroke prediction) inside a native shell that reuses the
+   existing web app and the same stroke data model and sync — not a rewrite of the whole product.
+3. Until the store apps exist, the owner uses the hosted web app (PWA installed from the browser).
+4. **Primary writing device: iPad + Apple Pencil.** The first native ink surface targets iPadOS (Swift; PencilKit or a custom
+   Metal renderer, with Apple Pencil prediction, pressure/tilt/hover, double-tap/squeeze where the hardware has them), delivered
+   through TestFlight then the App Store; Android follows on the same data model.
+5. **Hosting choice delegated to the engineer ("the best place for the data, e.g. Cloudflare or another").** Decision (2026-10-20):
+   the current server needs a long-running process with a persistent disk (node:sqlite, poppler/LibreOffice, background jobs),
+   which Cloudflare Workers/Containers do not provide as-is, so the server runs on a phone-manageable host with a persistent disk
+   (Render, deployed from GitHub with a blueprint), and **Cloudflare R2** (S3-compatible, no egress fees) holds off-site backups now
+   and is the preferred object store for files in the multi-user design.
+
+---
+
 الرؤية الأساسية
 
 أريد بناء منصة تعليمية متكاملة تتجاوز Goodnotes وCollaNote وNotability من حيث تكامل المميزات، تجمع بين:
