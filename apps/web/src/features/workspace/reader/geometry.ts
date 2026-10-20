@@ -116,6 +116,36 @@ export function readingLineY(scrollTop: number, viewportH: number, contentH: num
   return scrollTop + base + t * ramp;
 }
 
+/**
+ * (H3 item 6) The scrollTop at which the reading line — sliding as in `readingLineY` — falls on content y: the exact
+ * inverse of `readingLineY` (it is strictly increasing in scrollTop). Clamped to the scrollable range.
+ */
+export function scrollTopForLine(y: number, viewportH: number, contentH: number): number {
+  const base = viewportH * ANCHOR_LINE;
+  const ramp = viewportH - base;
+  const maxScroll = Math.max(0, contentH - viewportH);
+  const start = Math.max(0, maxScroll - ramp);
+  const span = maxScroll - start;
+  const fixed = y - base;
+  if (span <= 0 || ramp <= 0 || fixed <= start) return Math.max(0, Math.min(fixed, maxScroll));
+  // y = s + base + (s − start) · ramp / span  ⇒  s = (y − base + start · ramp / span) / (1 + ramp / span)
+  const k = ramp / span;
+  return Math.max(start, Math.min((fixed + start * k) / (1 + k), maxScroll));
+}
+
+/**
+ * (H3 item 6) scrollTop that shows a saved PLACE again — `frac` of page `index` under the reading line as the reader
+ * computes it (`readingLineY`, which slides down over the last stretch of a book). `scrollTopFor` puts the point under
+ * a FIXED quarter line instead: right for an explicit jump to a page top (the last page then scrolls fully into view),
+ * but near the end it re-applied a saved place lower than it was saved — a book reopened at its second-to-last page
+ * on a phone landed one page later.
+ */
+export function scrollTopForPlace(layout: Layout, index: number, frac: number, viewportH: number): number {
+  const g = layout.pages.find((p) => p.index === index) ?? layout.pages[0];
+  if (!g) return 0;
+  return scrollTopForLine(g.top + Math.min(1, Math.max(0, frac)) * g.viewH, viewportH, layout.contentH);
+}
+
 /** Page under content coordinate y, and how far into that page (0 = top, 1 = bottom of the page box). */
 export function anchorAt(layout: Layout, y: number): { index: number; frac: number } {
   const pages = layout.pages;

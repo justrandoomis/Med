@@ -329,7 +329,7 @@ function RelationsSection({ relations, loading, onAdd }: { relations: ConceptRel
         </Button>
       </div>
       {loading && !relations && <LoadingState stage="جارٍ تحميل العلاقات…" inline />}
-      {relations && relations.items.length === 0 && <p className="lw-muted">لا علاقات بعد. تُقترح العلاقات حين يُعرَّف مفهوم في محاضرة ويُستخدم في محاضرة لاحقة، أو يُذكر تحت «التشخيص التفريقي».</p>}
+      {relations && relations.items.length === 0 && <p className="lw-muted">لا علاقات بعد. تُقترح العلاقات حين يُعرَّف مفهوم في محاضرة ويُستخدم في محاضرة لاحقة، أو يُذكر تحت «التشخيص التفريقي»، أو تذكرها جملة في المحاضرة صراحةً (مثل «X يسبب Y» أو «يُعالَج X بـ Y»).</p>}
       {relations && relations.items.length > 0 && (
         <ul className="kb-relations">
           {relations.items.map((r) => (
@@ -381,11 +381,17 @@ export function RelationRow({ relation: r }: { relation: ConceptRelationView }) 
           {r.reasons.map((x, i) => (
             <li key={i} className="lw-muted">
               {x.text_ar}
+              {x.kind === 'stated_in_text' && x.from?.quote && (
+                <blockquote className="kb-quote kb-reason__quote" dir="auto">
+                  {x.from.quote}
+                </blockquote>
+              )}
+              {x.kind === 'stated_in_text' && x.uncertain && <StatusPill tone="warning">جملة مقروءة آليًا (OCR) — قارنها بالصفحة</StatusPill>}
               {x.from?.page_id && (
                 <>
                   {' '}
                   <Link className="lw-link" to={`/study/${encodeURIComponent(x.from.source_id)}?page_id=${encodeURIComponent(x.from.page_id)}&region=${encodeURIComponent(x.from.region_id)}`}>
-                    موضع التعريف
+                    {x.kind === 'stated_in_text' ? 'موضع الجملة' : 'موضع التعريف'}
                   </Link>
                 </>
               )}

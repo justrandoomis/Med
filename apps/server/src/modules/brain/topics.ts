@@ -5,7 +5,7 @@
 //    topic. Suggestions go through `suggestTopicLink`, which never overrides a link the owner decided (accepted,
 //    rejected or made by hand) — a rejected suggestion is never made again;
 //  * the topic detail with every link resolved to something readable (title, page, stem) and a reason.
-import { stemPreview, TOPIC_ENTITY_TYPES, type RichText, type TopicDetailResponse, type TopicLinkDetail } from '@medlevo/shared';
+import { ARTIFACT_KIND_LABELS_AR, CASE_KIND_LABELS_AR, stemPreview, TOPIC_ENTITY_TYPES, type CaseKind, type RichText, type TopicAttemptView, type TopicDetailResponse, type TopicLinkDetail } from '@medlevo/shared';
 import type { AppContext } from '../../context';
 import { fromJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
@@ -44,6 +44,7 @@ export function suggestTopicLinks(ctx: AppContext, topicId?: string): { created:
   };
   // live questions (current version text) — read once
   let questions: Array<{ id: string; norm: string }> | null = null;
+  let cases: Array<{ id: string; norm: string }> | null = null;
   ctx.db.tx(() => {
     for (const t of topics) {
       const names = [t.title, t.title_ar].filter((n): n is string => !!n && nameNorm(n).length >= 3);
@@ -77,6 +78,11 @@ export function suggestTopicLinks(ctx: AppContext, topicId?: string): { created:
           .map((q) => ({ id: q.id, norm: nameNorm(q.stem_raw ?? stemPreview(fromJson<RichText>(q.stem_json), 2000)) }));
         const re = new RegExp(`(?:^|[^\\p{L}\\p{N}])(?:${names.map((n) => escapeRe(nameNorm(n))).join('|')})(?:$|[^\\p{L}\\p{N}])`, 'u');
         for (const q of questions) if (re.test(q.norm)) suggest(t.id, 'question', q.id);
+        // Round 7 H4: a clinical case / OSCE station / viva whose TITLE names the topic (not trashed)
+        cases ??= ctx.db
+          .all<{ id: string; title: string }>('SELECT id, title FROM clinical_case WHERE deleted_at IS NULL ORDER BY created_at LIMIT 5000')
+          .map((c) => ({ id: c.id, norm: nameNorm(c.title) }));
+        for (const c of cases) if (re.test(c.norm)) suggest(t.id, 'clinical_case', c.id);
       }
     }
   });
@@ -88,7 +94,26 @@ const REASON_AR: Record<string, string> = {
   source: 'اسم الموضوع عنوان أو تعريف في هذا المصدر.',
   source_region: 'هنا يظهر اسم الموضوع عنوانًا أو تعريفًا.',
   question: 'اسم الموضوع مذكور في نص السؤال.',
+  clinical_case: 'اسم الموضوع في عنوان الحالة.',
 };
+
+function fmtDate(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+/** «صحيحة 3 من 5 مُقيَّمة» from the attempt's own rows (unscored answers are not counted as wrong). */
+function examAttemptScore(ctx: AppContext, attemptId: string): string | null {
+  const r = ctx.db.get<{ scored: number; correct: number | null; answered: number }>(
+    `SELECT COUNT(*) AS answered, COALESCE(SUM(scored), 0) AS scored, SUM(CASE WHEN scored = 1 AND is_correct = 1 THEN 1 ELSE 0 END) AS correct
+       FROM question_attempt WHERE exam_attempt_id = ?`,
+    [attemptId],
+  );
+  if (!r || r.answered === 0) return 'لا إجابات مسجّلة';
+  return r.scored > 0 ? `صحيحة ${r.correct ?? 0} من ${r.scored} مُقيَّمة` : `${r.answered} إجابات بلا مفتاح مُقيِّم`;
+}
+
+const EXAM_STATUS_AR: Record<string, string> = { in_progress: 'جارية', paused: 'متوقفة مؤقتًا', completed: 'مكتملة', abandoned: 'متروكة' };
+const CASE_ATTEMPT_STATUS_AR: Record<string, string> = { in_progress: 'جارية', completed: 'مكتملة', abandoned: 'متروكة' };
 
 function resolveLink(ctx: AppContext, l: { entity_type: string; entity_id: string; origin: string }): Pick<TopicLinkDetail, 'label' | 'sublabel' | 'href' | 'reason_ar'> {
   const reason = l.origin === 'auto' ? (REASON_AR[l.entity_type] ?? 'اقتراح تلقائي.') : null;
@@ -145,6 +170,54 @@ function resolveLink(ctx: AppContext, l: { entity_type: string; entity_id: strin
       const n = ctx.db.get<{ body_json: string }>('SELECT body_json FROM note WHERE id = ?', [l.entity_id]);
       return n ? { label: stemPreview(fromJson<RichText>(n.body_json), 120) || 'ملاحظة', sublabel: 'ملاحظة', href: null, reason_ar: reason } : { label: null, sublabel: null, href: null, reason_ar: reason };
     }
+    // ───── Round 7 H4 ─────
+    case 'clinical_case': {
+      const c = ctx.db.get<{ title: string; kind: CaseKind; origin: string | null; deleted_at: number | null }>('SELECT title, kind, origin, deleted_at FROM clinical_case WHERE id = ?', [l.entity_id]);
+      if (!c) return { label: null, sublabel: null, href: null, reason_ar: reason };
+      const parts = [CASE_KIND_LABELS_AR[c.kind] ?? 'حالة', c.origin === 'generated' ? 'مولّدة' : 'كتبتها بنفسك'];
+      if (c.deleted_at !== null) parts.push('في سلة المحذوفات');
+      return { label: c.title, sublabel: parts.join(' · '), href: `/cases/${e(l.entity_id)}`, reason_ar: reason };
+    }
+    case 'artifact': {
+      const a = ctx.db.get<{ kind: string; title: string | null; status: string; lineage_id: string; version_no: number; created_at: number }>(
+        'SELECT kind, title, status, lineage_id, version_no, created_at FROM artifact WHERE id = ?',
+        [l.entity_id],
+      );
+      if (!a) return { label: null, sublabel: null, href: null, reason_ar: reason };
+      const newer = ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM artifact WHERE lineage_id = ? AND version_no > ?', [a.lineage_id, a.version_no])?.n ?? 0;
+      const parts = [ARTIFACT_KIND_LABELS_AR[a.kind] ?? 'محتوى مولّد', fmtDate(a.created_at)];
+      if (a.status === 'stale') parts.push('قديم — تغيّر مصدره');
+      if (newer > 0) parts.push('توجد نسخة أحدث');
+      return { label: a.title ?? ARTIFACT_KIND_LABELS_AR[a.kind] ?? 'محتوى مولّد', sublabel: parts.join(' · '), href: `/explanations/${e(l.entity_id)}`, reason_ar: reason };
+    }
+    case 'exam_attempt': {
+      const x = ctx.db.get<{ title: string; mode: string; status: string; started_at: number }>(
+        'SELECT e.title, e.mode, a.status, a.started_at FROM exam_attempt a JOIN exam e ON e.id = a.exam_id WHERE a.id = ?',
+        [l.entity_id],
+      );
+      if (!x) return { label: null, sublabel: null, href: null, reason_ar: reason };
+      const done = x.status === 'completed';
+      return {
+        label: x.title,
+        sublabel: [fmtDate(x.started_at), EXAM_STATUS_AR[x.status] ?? x.status, examAttemptScore(ctx, l.entity_id)].filter(Boolean).join(' · '),
+        href: done ? `/exams/${e(l.entity_id)}/results` : `/exams/${e(l.entity_id)}`,
+        reason_ar: reason,
+      };
+    }
+    case 'case_attempt': {
+      const x = ctx.db.get<{ title: string; kind: CaseKind; status: string; started_at: number; assessment_json: string | null }>(
+        'SELECT c.title, c.kind, a.status, a.started_at, a.assessment_json FROM case_attempt a JOIN clinical_case c ON c.id = a.case_id WHERE a.id = ?',
+        [l.entity_id],
+      );
+      if (!x) return { label: null, sublabel: null, href: null, reason_ar: reason };
+      const score = fromJson<{ score?: { got: number; max: number } | null }>(x.assessment_json, {})?.score ?? null;
+      return {
+        label: x.title,
+        sublabel: [CASE_KIND_LABELS_AR[x.kind], fmtDate(x.started_at), CASE_ATTEMPT_STATUS_AR[x.status] ?? x.status, score ? `تقدير ${score.got} من ${score.max}` : null].filter(Boolean).join(' · '),
+        href: x.status === 'in_progress' ? `/cases/run/${e(l.entity_id)}` : `/cases/report/${e(l.entity_id)}`,
+        reason_ar: reason,
+      };
+    }
     default:
       return { label: null, sublabel: null, href: null, reason_ar: reason };
   }
@@ -161,6 +234,7 @@ export function topicDetail(ctx: AppContext, topicId: string): TopicDetailRespon
   const links: TopicLinkDetail[] = rows.map((r) => ({ ...r, ...resolveLink(ctx, r) }));
   const children = ctx.db.all<{ id: string; title: string; title_ar: string | null }>('SELECT id, title, title_ar FROM topic WHERE parent_topic_id = ? ORDER BY title COLLATE NOCASE', [topicId]);
   return {
+    attempts: topicAttempts(ctx, rows),
     topic: { id: t.id, title: t.title, title_ar: t.title_ar, parent_topic_id: t.parent_topic_id, created_at: t.created_at, updated_at: t.updated_at },
     links,
     children,
@@ -170,6 +244,66 @@ export function topicDetail(ctx: AppContext, topicId: string): TopicDetailRespon
       rejected: rows.filter((r) => r.status === 'rejected').length,
     },
   };
+}
+
+const ATTEMPTS_CAP = 50;
+
+/**
+ * Past attempts of a topic (Round 7 H4, §05 «محاولاتي السابقة»): attempts the owner linked, plus — read from the
+ * attempt history, never stored — attempts on the questions and cases the topic links to (accepted or suggested;
+ * a rejected link contributes nothing). Newest first; `total` counts every one, the list is capped.
+ */
+function topicAttempts(ctx: AppContext, links: Array<{ entity_type: string; entity_id: string; status: string; origin: string }>): { items: TopicAttemptView[]; total: number } {
+  const live = links.filter((l) => l.status !== 'rejected');
+  const items: TopicAttemptView[] = [];
+  const seen = new Set<string>();
+  const push = (v: TopicAttemptView) => {
+    const k = `${v.kind}:${v.id}`;
+    if (seen.has(k)) return;
+    seen.add(k);
+    items.push(v);
+  };
+  for (const l of live) {
+    if (l.entity_type !== 'exam_attempt' && l.entity_type !== 'case_attempt') continue;
+    const r = resolveLink(ctx, { entity_type: l.entity_type, entity_id: l.entity_id, origin: 'owner' });
+    if (!r.label) continue;
+    const at =
+      l.entity_type === 'exam_attempt'
+        ? (ctx.db.get<{ t: number }>('SELECT started_at AS t FROM exam_attempt WHERE id = ?', [l.entity_id])?.t ?? 0)
+        : (ctx.db.get<{ t: number }>('SELECT started_at AS t FROM case_attempt WHERE id = ?', [l.entity_id])?.t ?? 0);
+    push({ kind: l.entity_type, id: l.entity_id, label: r.label, sublabel: r.sublabel, href: r.href, at, via: 'linked', via_ar: 'ربطتها بالموضوع' });
+  }
+  const questionIds = live.filter((l) => l.entity_type === 'question').map((l) => l.entity_id);
+  if (questionIds.length) {
+    for (const qa of ctx.db.all<{ id: string; question_id: string; exam_attempt_id: string | null; is_correct: number | null; scored: number; answered_at: number; stem_json: string }>(
+      `SELECT a.id, a.question_id, a.exam_attempt_id, a.is_correct, a.scored, a.answered_at, v.stem_json
+         FROM question_attempt a JOIN question_version v ON v.id = a.question_version_id
+        WHERE a.question_id IN (${inList(questionIds.length)}) ORDER BY a.answered_at DESC LIMIT 500`,
+      questionIds,
+    )) {
+      push({
+        kind: 'question_attempt',
+        id: qa.id,
+        label: stemPreview(fromJson<RichText>(qa.stem_json), 140),
+        sublabel: [fmtDate(qa.answered_at), qa.scored ? (qa.is_correct ? 'صحيحة' : 'خاطئة') : 'غير مُقيَّمة (لا مفتاح مؤكد)'].join(' · '),
+        href: qa.exam_attempt_id ? `/exams/${encodeURIComponent(qa.exam_attempt_id)}/results` : `/questions/${encodeURIComponent(qa.question_id)}`,
+        at: qa.answered_at,
+        via: 'question',
+        via_ar: 'محاولة على سؤال مرتبط بالموضوع',
+      });
+    }
+  }
+  const caseIds = live.filter((l) => l.entity_type === 'clinical_case').map((l) => l.entity_id);
+  if (caseIds.length) {
+    for (const ca of ctx.db.all<{ id: string }>(`SELECT id FROM case_attempt WHERE case_id IN (${inList(caseIds.length)}) ORDER BY started_at DESC LIMIT 200`, caseIds)) {
+      const r = resolveLink(ctx, { entity_type: 'case_attempt', entity_id: ca.id, origin: 'owner' });
+      if (!r.label) continue;
+      const at = ctx.db.get<{ t: number }>('SELECT started_at AS t FROM case_attempt WHERE id = ?', [ca.id])?.t ?? 0;
+      push({ kind: 'case_attempt', id: ca.id, label: r.label, sublabel: r.sublabel, href: r.href, at, via: 'case', via_ar: 'محاولة على حالة مرتبطة بالموضوع' });
+    }
+  }
+  items.sort((a, b) => b.at - a.at || a.id.localeCompare(b.id));
+  return { items: items.slice(0, ATTEMPTS_CAP), total: items.length };
 }
 
 export interface TopicListItem {
@@ -216,6 +350,10 @@ export function topicEntityExists(ctx: AppContext, type: string, id: string): bo
     image_asset: 'image_asset',
     flashcard: 'flashcard',
     note: 'note',
+    clinical_case: 'clinical_case',
+    artifact: 'artifact',
+    exam_attempt: 'exam_attempt',
+    case_attempt: 'case_attempt',
   };
   if (!(TOPIC_ENTITY_TYPES as readonly string[]).includes(type)) return false;
   return !!ctx.db.get(`SELECT 1 AS x FROM ${table[type]} WHERE id = ?`, [id]);

@@ -6,6 +6,7 @@ import type {
   NeedsReanchorItem,
   NoteDTO,
   NotebookContentResponse,
+  OrphanNotePagesResponse,
   NotePageView,
   ReadingProgressView,
   SourceAnnotationsResponse,
@@ -14,6 +15,7 @@ import type {
 } from '@medlevo/shared';
 import type { AppContext } from '../../context';
 import { AppError, Errors } from '../../lib/errors';
+import { reanchorLists, type ReanchorLists } from './reanchor';
 import {
   describeAnchorAr,
   pageLabelAr,
@@ -109,9 +111,11 @@ export class AnnotationsService {
 
   // ───────── note pages (notebook track F1) ─────────
   /** Note pages of a notebook / folder or of a source, in their order. Trashed ones only when asked (restore list). */
-  notePages(q: { node_id?: string; source_id?: string; include_deleted?: boolean }): NotePageView[] {
+  notePages(q: { node_id?: string; source_id?: string; orphans?: boolean; include_deleted?: boolean }): NotePageView[] {
     const where: string[] = [];
     const params: unknown[] = [];
+    // (H3 item 7) «صفحات بلا دفتر»: pages whose notebook and source are both gone (purged while a device was offline)
+    if (q.orphans) where.push('node_id IS NULL AND source_id IS NULL');
     if (q.node_id) {
       if (!this.db.get('SELECT 1 AS x FROM library_node WHERE id = ?', [q.node_id])) throw Errors.notFound('الدفتر أو المجلد');
       where.push('node_id = ?');
@@ -132,7 +136,21 @@ export class AnnotationsService {
   /** A notebook's live pages and everything written on them (seeding a device / reading offline later). */
   notebook(nodeId: string): NotebookContentResponse {
     const pages = this.notePages({ node_id: nodeId });
+    return { node_id: nodeId, note_pages: pages, annotations: this.liveAnnotationsOnNotePages(pages.map((p) => p.id)) };
+  }
+
+  /**
+   * (H3 item 7) «صفحات بلا دفتر»: note pages with neither a notebook nor a source, and what is written on the live ones,
+   * so a device can show, move (into a notebook) or trash them. Nothing here deletes anything.
+   */
+  orphanPages(includeDeleted: boolean): OrphanNotePagesResponse {
+    const pages = this.notePages({ orphans: true, include_deleted: includeDeleted });
+    return { note_pages: pages, annotations: this.liveAnnotationsOnNotePages(pages.filter((p) => p.deleted_at === null).map((p) => p.id)) };
+  }
+
+  private liveAnnotationsOnNotePages(pageIds: string[]): AnnotationDTO[] {
     const annotations: AnnotationDTO[] = [];
+    const pages = pageIds.map((id) => ({ id }));
     for (let i = 0; i < pages.length; i += 400) {
       const ids = pages.slice(i, i + 400).map((p) => p.id);
       const rows = this.db.all<AnnotationRow>(
@@ -143,7 +161,7 @@ export class AnnotationsService {
       );
       annotations.push(...rows.map(toAnnotationDTO));
     }
-    return { node_id: nodeId, note_pages: pages, annotations };
+    return annotations;
   }
 
   // ───────── notes ─────────
@@ -168,6 +186,11 @@ export class AnnotationsService {
   }
 
   // ───────── needs re-anchor ─────────
+  /** (H3 item 2) the full «تحتاج إعادة ربط» view: annotations, notes, and what the owner kept detached */
+  reanchorLists(sourceId: string | undefined, limit = 200): ReanchorLists {
+    return reanchorLists(this.ctx, sourceId, limit);
+  }
+
   needsReanchor(sourceId?: string, limit = 200): NeedsReanchorItem[] {
     const rows = this.db.all<AnnotationRow>(
       `SELECT * FROM annotation WHERE anchor_status = 'needs_reanchor' AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT ?`,

@@ -27,6 +27,7 @@ import { useCapabilities } from '../../../lib/capabilities';
 import { useSettings } from '../../../lib/settings';
 import { ArtifactContent, BidiText, ScopeBadge, ScopePicker } from '../../evidence';
 import { studybookApi, type ArtifactListItem } from '../../studybook/api';
+import { DraftOutcome, EMPTY_STREAM, reduceStream, StreamDraft, type StreamView } from '../../studybook/streaming';
 import { defaultScopeFor, referencesOf, regionsUnder, shortQuote } from '../../studybook/model';
 import { fetchRegions } from '../data/api';
 import type { SourceDocument } from '../data/useSourceDocument';
@@ -56,6 +57,9 @@ interface RunState {
   action?: ExplainAction | 'compare';
   result?: ExplainResponse;
   error?: { message: string; code: string | null };
+  /** (Round 7 H4) the streamed draft while running; after it, what verification removed from it */
+  stream?: StreamView;
+  outcome?: { hadDraft: boolean; removed: Array<{ text: string; reason_ar: string }> };
 }
 
 /** last result per source (the tab remounts when the rail switches tabs) */
@@ -147,13 +151,21 @@ export function ExplainTab({ doc, page, pageIndex, online }: ExplainTabProps) {
     const ac = new AbortController();
     abort.current = ac;
     setMode('explain');
-    setRun({ status: 'running', action });
+    setRun({ status: 'running', action, stream: EMPTY_STREAM });
     try {
-      const result = await studybookApi.explain(
+      // (Round 7 H4, §30) streamed: an unverified, labelled draft while the model writes, then the verified result
+      const { result, removed, hadDraft } = await studybookApi.explainStream(
         { action, anchor: ctx.anchor, scope: opts.scope ?? scope, style, level, retry_of: opts.retry ?? null },
-        ac.signal,
+        {
+          signal: ac.signal,
+          onEvent: (e) => {
+            if (ac.signal.aborted) return;
+            setRun((r) => (r.status === 'running' ? { ...r, stream: reduceStream(r.stream ?? EMPTY_STREAM, e) } : r));
+          },
+        },
       );
-      setRun({ status: 'done', action, result });
+      if (ac.signal.aborted) return;
+      setRun({ status: 'done', action, result, outcome: { hadDraft, removed } });
       loadHistory();
     } catch (e) {
       if (ac.signal.aborted) return;
@@ -352,9 +364,22 @@ export function ExplainTab({ doc, page, pageIndex, online }: ExplainTabProps) {
         />
       )}
 
-      {mode !== 'ask' && run.status === 'running' && (
+      {mode !== 'ask' && run.status === 'running' && run.stream && run.stream.blocks.length > 0 ? (
+        <StreamDraft
+          view={run.stream}
+          actions={
+            <Button size="sm" variant="plain" onClick={() => {
+              abort.current?.abort();
+              setRun({ status: 'idle' });
+            }}>
+              أوقف
+            </Button>
+          }
+        />
+      ) : mode !== 'ask' && run.status === 'running' ? (
         <div className="sb-running">
-          <LoadingState inline stage={RUNNING_STAGE[run.action ?? 'explain']} />
+          <LoadingState inline stage={run.stream?.phaseLabel ?? RUNNING_STAGE[run.action ?? 'explain']} />
+          {run.stream?.restartNote && <p className="sb-draft__restart">{run.stream.restartNote}</p>}
           <Button size="sm" variant="plain" onClick={() => {
             abort.current?.abort();
             setRun({ status: 'idle' });
@@ -362,7 +387,7 @@ export function ExplainTab({ doc, page, pageIndex, online }: ExplainTabProps) {
             توقّف عن الانتظار
           </Button>
         </div>
-      )}
+      ) : null}
       {mode !== 'ask' && run.status === 'error' && run.error && (
         <ErrorState
           inline
@@ -375,6 +400,11 @@ export function ExplainTab({ doc, page, pageIndex, online }: ExplainTabProps) {
         <div className="sb-result">
           <div className="sb-row">
             {run.result?.cached && <StatusPill tone="neutral">من محفوظاتك — النطاق والقواعد والنسخة نفسها</StatusPill>}
+            {!result.abstain && (
+              <Link className={buttonClass({ variant: 'plain', size: 'sm' })} to={`/explanations/${encodeURIComponent(result.id)}`}>
+                صفحته وربطه بموضوع
+              </Link>
+            )}
             {result.kind !== 'comparison' && !result.abstain && (
               <Menu
                 label="اشرح بطريقة أخرى"
@@ -392,6 +422,7 @@ export function ExplainTab({ doc, page, pageIndex, online }: ExplainTabProps) {
               </Menu>
             )}
           </div>
+          {run.outcome && <DraftOutcome hadDraft={run.outcome.hadDraft} removed={run.outcome.removed} />}
           <ArtifactContent
             artifact={result}
             onWidenScope={(wider) => {

@@ -610,6 +610,25 @@ export function parseQuestions(input: ParserLine[]): ParseResult {
     if (!d.lines.includes(line)) d.lines.push(line);
   };
 
+  // the text lines of an input line exactly as the loop below reads them (for the one-line look-ahead of step 6b)
+  const subLinesOf = (l: ParserLine) =>
+    l.text
+      .split('\n')
+      .flatMap(splitSectionKeyRuns)
+      .map((t) => stripBidiControls(t).trim())
+      .filter(Boolean);
+  const inputIndex = new Map(input.map((l, i) => [l, i] as const));
+  const nextTextAfter = (l: ParserLine, text: string): string | null => {
+    const subs = subLinesOf(l);
+    const k = subs.indexOf(text);
+    if (k >= 0 && k + 1 < subs.length) return subs[k + 1]!;
+    for (let i = (inputIndex.get(l) ?? input.length) + 1; i < input.length; i++) {
+      const first = subLinesOf(input[i]!)[0];
+      if (first) return first;
+    }
+    return null;
+  };
+
   for (const line0 of input) {
     const isFigure = line0.regionKind === 'figure' || line0.regionKind === 'diagram' || line0.regionKind === 'caption';
     if (isFigure) {
@@ -824,7 +843,14 @@ export function parseQuestions(input: ParserLine[]): ParseResult {
       if (draft && line.textOrigin === 'ocr') {
         const d = draft as Draft;
         const prevOpt = d.options[d.options.length - 1];
-        const circled = prevOpt && !d.numericOptions ? ocrCircledOption(text, prevOpt.label) : null;
+        let circled = prevOpt && !d.numericOptions ? ocrCircledOption(text, prevOpt.label) : null;
+        // (H2 review) the REAL next option follows on the next line: this line is the previous option wrapping
+        // («A. Metronidazole 500 mg IV» / «(8 hourly) for 5 days» / «B. …»), not a circled «B»
+        if (circled) {
+          const next = nextTextAfter(line0, text);
+          const nextOpt = next ? parseOptionStart(next) : null;
+          if (nextOpt && nextOpt.script === circled.script && nextOpt.label === circled.label) circled = null;
+        }
         if (circled) {
           appendOption(d, circled, line);
           continue;

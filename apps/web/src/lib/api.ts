@@ -182,6 +182,32 @@ export async function request<T = unknown>(method: HttpMethod, path: string, bod
   return data as T;
 }
 
+/**
+ * (Round 7 H4) The raw transport (`setFetchImpl` in tests) for callers that read a response body as a stream (SSE).
+ * Same-origin credentials and the CSRF header on mutations are the caller's job — `postStream` below does both.
+ */
+export function apiFetch(input: string, init: RequestInit): Promise<Response> {
+  const doFetch: FetchLike = fetchImpl ?? ((i, n) => fetch(i, n));
+  return doFetch(buildUrl(input), init);
+}
+
+/** (Round 7 H4) The ApiError a non-OK response stands for (server Arabic message; 401 → the session handler). */
+export async function apiErrorFromResponse(res: Response, opts: { skipAuthRedirect?: boolean } = {}): Promise<ApiError> {
+  let data: unknown;
+  try {
+    data = JSON.parse(await res.text());
+  } catch {
+    data = undefined;
+  }
+  if (res.status === 401 && !opts.skipAuthRedirect) unauthenticatedHandler?.();
+  if (isApiErrorBody(data)) return new ApiError({ code: data.error.code, message: data.error.message || STATUS_MESSAGES_AR[res.status] || 'تعذّر إكمال الطلب.', status: res.status, details: data.error.details });
+  return new ApiError({
+    code: res.status === 401 ? 'UNAUTHENTICATED' : res.status === 404 ? 'NOT_FOUND' : res.status >= 500 ? 'INTERNAL' : 'HTTP_ERROR',
+    status: res.status,
+    message: STATUS_MESSAGES_AR[res.status] ?? `تعذّر إكمال الطلب (رمز ${res.status}).`,
+  });
+}
+
 function anySignal(signals: AbortSignal[]): AbortSignal {
   const anyFn = (AbortSignal as unknown as { any?: (s: AbortSignal[]) => AbortSignal }).any;
   if (anyFn) return anyFn(signals);

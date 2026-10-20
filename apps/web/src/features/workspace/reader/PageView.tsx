@@ -16,7 +16,7 @@ import type { PageGeom } from './geometry';
 import { BoxesLayer, RegionHighlight, TextHighlightsLayer } from './overlays';
 import { PdfLinkLayer } from './pdfLinks';
 import { useReaderPage } from './readerContext';
-import { logicalTextContent } from './textOrder';
+import { readerTextContent } from './textOrder';
 
 const MAX_CANVAS_PIXELS = 12_000_000; // stays under iOS Safari's canvas memory limit
 
@@ -233,8 +233,9 @@ function PdfSheet({
       if (regionText) return; // the OCR layer below carries this page's text
       container.style.setProperty('--total-scale-factor', String(geom.scale));
       // items in logical reading order (textOrder.ts): selection, copy and in-document search follow the reading,
-      // not the order the PDF producer drew mixed Arabic/English pieces in (AC-20)
-      const content = logicalTextContent(await page.getTextContent());
+      // not the order the PDF producer drew mixed Arabic/English pieces in (AC-20); the PDF's reversed lam-alef is
+      // repaired with the server's rule, length for length (H3 item 8)
+      const content = readerTextContent(await page.getTextContent());
       if (cancelled) return;
       const tl = new pdfjs.TextLayer({ textContentSource: content, container, viewport: page.getViewport({ scale: geom.scale, rotation: 0 }) });
       layer = tl;

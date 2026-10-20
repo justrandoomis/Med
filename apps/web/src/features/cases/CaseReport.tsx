@@ -10,6 +10,7 @@ import { type CaseReportView, type ChecklistResult } from '@medlevo/shared';
 import { Breadcrumbs, Button, ErrorState, LoadingState, StatusPill, TextField, buttonClass } from '../../design';
 import { errorMessage } from '../../lib/api';
 import { usePageTitle } from '../../lib/usePageTitle';
+import { TopicLinksControl } from '../brain/TopicLinksControl';
 import { BidiText, CitationChip } from '../evidence';
 import { casesApi } from './api';
 import { AppropriatenessPill, AuthoredLabel, CaseSentences, HonestyNotes } from './components';
@@ -140,6 +141,7 @@ export function CaseReport() {
             </StatusPill>
             {report.case.kind !== 'viva' && <AuthoredLabel note={report.case.authored_note_ar} />}
           </div>
+          <TopicLinksControl entityType="case_attempt" entityId={attemptId} itemLabel={`محاولة «${report.case.title}»`} />
         </div>
         <div className="ml-cluster">
           <Link to={`/cases/run/${encodeURIComponent(attemptId)}`} className={buttonClass({ variant: 'plain' })}>

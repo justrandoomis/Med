@@ -174,7 +174,8 @@ orchestrator usage records, budget pre-check with reasoning headroom).
   `validateClaims`). `GENERATOR_VERSION` → `studybook-gen-3`.
 * Study Book sections follow heading regions; a document with no headings gets one section per page. Very large
   sections are split at page boundaries (7 000 characters), not semantically.
-* Chat answers are not streamed token by token (the request returns when verified); the UI shows the running state.
+* ~~Chat answers are not streamed token by token~~ — Round 7 H4 (below): explain and chat stream an UNVERIFIED draft,
+  labelled, then the verified result. Compare, summaries and the Study Book are not streamed (they show their state).
 * «Save answer as note» stores the answer text without chips (the evidence ids/labels are in `ai_record` and listed in
   the note body).
 * Notes on Study Book paragraphs anchor to the block at the top of the view (no per-paragraph button inside C1's
@@ -305,3 +306,43 @@ The Playwright browser check (`real-server-check.mjs`) was **not re-run** in thi
   تقوله عبارتها المتحقق منها …»); a title with an unsupported value falls back to «<النوع> — <المصدر>».
   `DIAGRAM_GENERATOR_VERSION` → `diagram-2026.10-2`, so no diagram cached before the check is reused
   (`srv:f3/review.test.ts`).
+
+## Round 7 H4 — token streaming: an unverified draft, then the verified result (§30, 2026-10-20)
+
+«عند streaming، ميّز المسودة التي لم تجتز الفحص عن النتيجة المنشورة. لا تجعل ادعاءً طبيًا غير متحقق يظهر أولًا بثقة ثم
+تختفي مشكلته بصمت.»
+
+* Provider: `ProviderRequest.onTextDelta` — the Anthropic adapter forwards the visible text deltas of its existing stream
+  (`stream.on('text')`, SDK, `claude-api` skill) in order; the result is still built from `finalMessage()` only (refusal /
+  truncation unchanged); a throwing listener never breaks the call; an abort mid-stream ends it. `FakeAiProvider` /
+  `ScriptedAi` stream their scripted JSON in chunks (and can pause mid-stream for cancellation tests).
+* Orchestrator: `onText` events carry the attempt (1 or 2); before the single repair attempt it emits `restart` — the
+  first draft is void. Nothing streams without a listener.
+* Draft text: `studybook/draft.ts` reads sentence texts out of the PARTIAL GeneratedContent JSON (escapes, a `\u` escape
+  cut in half dropped, figure output `{content:{blocks}}`, table cells). Never the abstain detail, coverage note,
+  evidence aliases or claim types; model-typed «citations» («(ص 12)») are stripped. A draft cites nothing.
+* Routes (owner session + CSRF + the AI rate limit, like the JSON routes): `POST /api/studybook/explain/stream` and
+  `POST /api/studybook/threads/:id/messages/stream` → `text/event-stream` (`studybook/stream.ts`). Events (shared
+  `StudyStreamEvent`): `phase` (retrieving → generating → verifying), `draft` (the whole draft so far, throttled ≈ 120 ms,
+  flushed before verifying and before a restart, label «مسودة لم تُتحقق بعد» + note), `restart`, `final` (exactly the JSON
+  endpoint's response + `removed` — the sentences verification removed — + `had_draft`), `error` (the same Arabic
+  reasons). Validation, the AI capability and the thread are checked BEFORE the stream opens (ordinary JSON 400 / 409 /
+  404). Keep-alive comment every 15 s. Closing the connection (or «أوقف») aborts the provider call: a chat answer is
+  recorded `rejected` with `CANCELLED` «أوقفتَ الإجابة قبل اكتمالها…», nothing is published. The draft is never stored:
+  the message row stays empty until the verified answer is written.
+* Web: `features/studybook/streaming.tsx` — `postStudyStream` (fetch + reader; EventSource cannot POST nor send the CSRF
+  header; events split anywhere across chunks are reassembled; an `error` event / a non-OK answer → ApiError with the
+  server's message; a stream cut before `final` is an error, never a result), `StreamDraft` (dashed, muted, the label as
+  a warning pill, the phase as a polite status; `aria-busy`; outside the conversation's live region so it is not read
+  word by word; no chips) and `DraftOutcome` (after a draft: «استُبدلت المسودة بالنتيجة بعد التحقق», and each removed
+  sentence in `<del>` with its reason — shown, not collapsed). ExplainTab and ChatPanel use them, with «أوقف».
+* Tests: `srv:studybook/streaming.h4.test.ts` (order of events; draft shows the unsupported sentence as written; final
+  lists it as removed and stores only the verified text; cached → no draft; restart voids attempt 1; pseudo-citation
+  stripped; JSON errors before the stream; closing a real socket mid-draft aborts the provider signal and records
+  `CANCELLED`, no artifact), `srv:ai-provider/streaming.h4.test.ts` (adapter deltas against mocked SSE HTTP, abort
+  mid-stream, orchestrator attempts / restart, the partial-JSON reader on every prefix),
+  `web:features/studybook/streaming.h4.test.ts`, `web:features/workspace/studybook/{ExplainTab.test.tsx (streaming),
+  ChatStream.h4.test.tsx}`; existing ExplainTab / ChatScope tests now go through the stream endpoints.
+* Not verified: a real model's stream (no API key here — the adapter is tested against mocked HTTP; the server keeps
+  reporting `requires_configuration` without a key). Behind a buffering reverse proxy the draft would arrive at once
+  (`X-Accel-Buffering: no` is sent; `docs/DEPLOYMENT.md` proxies were not re-tested with SSE).

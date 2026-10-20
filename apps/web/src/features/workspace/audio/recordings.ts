@@ -227,6 +227,30 @@ export function downloadRecording(blob: Blob, fileName: string, doc: Document = 
   return true;
 }
 
+/** The multipart body of POST /api/media/recordings (idempotent by recording_id). */
+function recordingForm(r: { recordingId: string; startedAt: number; durationMs: number | null; linkedSourceId: string | null; nodeId: string | null; title?: string | null; mime: string; blob: Blob }): FormData {
+  const form = new FormData();
+  form.append('recording_id', r.recordingId);
+  form.append('started_at', String(Math.round(r.startedAt)));
+  if (r.durationMs) form.append('duration_ms', String(Math.round(r.durationMs)));
+  if (r.linkedSourceId) form.append('linked_source_id', r.linkedSourceId);
+  if (r.nodeId) form.append('node_id', r.nodeId);
+  if (r.title) form.append('title', r.title);
+  const device = peekDeviceId();
+  if (device) form.append('device_id', device.slice(0, 64));
+  form.append('file', r.blob, recordingFileName(r.recordingId, r.mime));
+  return form;
+}
+
+/**
+ * (H3 item 9) The device could not store a finished recording: upload it straight to the owner's server (the same
+ * idempotent route the device uploads use), so it does not live only in this page's memory.
+ */
+export async function uploadRecordingDirect(r: FinishedRecording, post: (form: FormData) => Promise<RecordingResponse> = (form) => api.post<RecordingResponse>('/media/recordings', form, { timeoutMs: 300_000, skipAuthRedirect: true })): Promise<void> {
+  await post(recordingForm({ ...r, durationMs: r.durationMs || null }));
+  notify();
+}
+
 export interface RecordingUploadDeps {
   post?: (form: FormData) => Promise<RecordingResponse>;
   now?: () => number;
@@ -252,16 +276,7 @@ export function kickRecordingUploads(db: MedLevoDB = getDb(), deps: RecordingUpl
         out.rejected++;
         continue;
       }
-      const form = new FormData();
-      form.append('recording_id', rec.recordingId);
-      form.append('started_at', String(Math.round(rec.startedAt)));
-      if (rec.durationMs) form.append('duration_ms', String(Math.round(rec.durationMs)));
-      if (rec.linkedSourceId) form.append('linked_source_id', rec.linkedSourceId);
-      if (rec.nodeId) form.append('node_id', rec.nodeId);
-      if (rec.title) form.append('title', rec.title);
-      const device = peekDeviceId();
-      if (device) form.append('device_id', device.slice(0, 64));
-      form.append('file', rec.data, recordingFileName(rec.recordingId, rec.mime));
+      const form = recordingForm({ ...rec, blob: rec.data });
       try {
         const res = await post(form);
         await db.blobs.update(rec.id, { uploadState: 'uploaded', uploadError: null, serverSourceId: res.recording.source_id } as Partial<RecordingBlobRecord>);

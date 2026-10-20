@@ -66,8 +66,9 @@ const SELECT = `SELECT i.*, m.image_kind AS m_kind, m.title AS m_title, m.modali
   LEFT JOIN source s ON s.id = i.source_id
   LEFT JOIN source_page p ON p.id = i.page_id`;
 
-/** Visible = has a file and its source is not in the trash. */
-const VISIBLE = `i.file_id IS NOT NULL AND (i.source_id IS NULL OR s.deleted_at IS NULL)`;
+/** Visible = has a file and its source is not in the trash. (H3 item 4) An owner's page crop made for an image-occlusion
+ *  card (annotations/pageCrop.ts) is not one of the source's figures: not listed here. */
+const VISIBLE = `i.file_id IS NOT NULL AND (i.source_id IS NULL OR s.deleted_at IS NULL) AND json_extract(COALESCE(i.match_details_json, '{}'), '$.owner_crop') IS NULL`;
 const EFFECTIVE_KIND = `COALESCE(m.image_kind, i.image_kind)`;
 
 const PHOTO_KINDS = new Set<ImageKind>(['clinical_photo', 'radiology', 'histology', 'pathology', 'ecg', 'dermatology', 'ophthalmology']);

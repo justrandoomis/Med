@@ -106,6 +106,41 @@ times are therefore upper-end; canvas counts and heap sizes do not depend on loa
 | 6 | 5 000 strokes on one page | (a) highlight / bookmark / re-anchor live queries scanned all strokes and re-ran on every ink write — O(n²) while the pull delivered strokes one by one; (b) the reader's download at open did not tell the open ink layer; (c) the pull rewrote strokes already held at the same revision | local schema v2: `[targetKey+kind]`, `anchorStatus` indexes + indexed queries; one page reload after `mergeServerAnnotations`; applier skips same-rev synced rows | 377 of 5 000 strokes shown after 120 s → all 5 000 (see browser table) | `apps/web/src/features/workspace/data/annotationsAtScale.test.tsx` |
 | 7 | first sync of 3 000 cards + 12 000 events in a fresh browser | `useLocalCards` whole-table live queries re-read both tables and every consumer re-folded all cards after nearly every pulled change (> 50 % of the main thread in a CPU profile) | `review/local/hooks.ts`: Dexie `storagemutated` + leading/trailing coalescing (≤ 1 re-read per 400 ms during a burst; a single write after a quiet period is immediate) | ≈ 55 → ≈ 250 events/s reaching IndexedDB | `apps/web/test/learning/local-cards-burst.test.tsx` (old: 153 re-reads for 300 writes) |
 
+## Course Brain recompute (Round 7 H4)
+
+`MEDLEVO_PERF=1 npx vitest run test/perf/brain-course.perf.test.ts` (in `apps/server`): a synthetic **30 lectures ×
+20 pages** TEST course (each page a heading, six definitions, a list item; every lecture uses the previous ones' terms)
+→ 4 800 concepts, 4 800 mentions, **3 480 inferred relations**. Same VM class as above (4 vCPU Xeon 2.8 GHz, Node 22).
+
+**Before** (code before H4, load ≈ 3.3): every `extract_knowledge` job recomputed the whole course's relations
+synchronously at its end, so the extraction of the 30th lecture blocked the event loop for the full recompute.
+**After** (final code, 2026-10-20 16:46 UTC, load 1.4–2.2): the extraction job only marks the course's relation state
+stale and enqueues ONE `brain.recompute_relations` background job per state; the job reads through per-lecture caches
+(regions, token n-grams, stated mentions) and an exact n-gram prefilter, and yields the event loop every ≈ 20 ms.
+
+| measured | before | after | notes |
+|---|---|---|---|
+| `extract_knowledge` per lecture (first / last / max) | 44 / **1 100** / 1 136 ms | 61 / **67** / 67 ms | before: the last ones included the inline whole-course recompute |
+| relation recompute, cold (no cache) | 766 ms, **one synchronous block** | 900 ms in the background job, **longest synchronous slice 172 ms** | an earlier after-run under load ≈ 4: 738 ms, longest slice 155 ms |
+| recompute, warm (nothing changed) | — | 372 ms (result identical — asserted) | the job itself returns at once when the stored signature is current |
+| one lecture re-extracted, then the incremental recompute | — | re-extract 60 ms; recompute **473 ms in 17 slices, longest 102 ms** | asserted equal to a cold recompute of the same state (earlier run: 349 ms, 14 slices, longest 65 ms) |
+| cold recompute after that change (sync, for comparison) | — | 640 ms | |
+| course page `GET /api/brain/courses/:id` | 103 ms | 120 ms | never recomputes in the request; enqueues the job when stale and says «تُحدَّث العلاقات» |
+| knowledge map, FIRST request `GET /api/brain/map` | 611 ms | **204 ms** (1 507 ms before fix #8 below) | |
+| coverage / student knowledge / concepts | 203 / 464 / 180 ms | 216 / 621 / 175 ms | a repeated run: coverage 164–256, knowledge 449–570, concepts 187–213 ms — load noise, no code change on these paths |
+
+Found and fixed while measuring (regression tests fail on the old code):
+
+| # | what was measured | cause | fix | before → after | test |
+|---|---|---|---|---|---|
+| 8 | first knowledge map after a restart (30 × 20 course) | `lectureQuestions()` compiled one Unicode regex per concept (`(?:^\|[^\p{L}\p{N}])(?:name…)(?:$\|…)`, flag `u`) — 4 800 distinct patterns ≈ 0.3 ms each, cached by V8 afterwards. The old inline recompute compiled the very same patterns and so had warmed that cache; once the recompute matched names with `occursAsWord` the first map paid the whole cost | `brain/lecture-questions.ts`: match concept names in question text with `occursAsWord` (≡ the regex, property-tested in `h4-extractors.test.ts`) | `lectureQuestions` over 30 lectures, cold: 1 343 → 5 ms; map 1 507 → 204 ms | `apps/server/test/brain/map-cold.h4.test.ts` (old code: 305 regexes for 305 concepts) + map budget in `test/perf/brain-course.perf.test.ts` |
+| 9 | extraction of the last lectures of a large course | whole-course relation recompute inline at the end of each extraction job | background job + incremental caches + yielding (above) | 1 100 ms blocking → 67 ms + slices ≤ 172 ms | `test/brain/h4-knowledge.test.ts` (job, idempotency, staleness) + `test/perf/brain-course.perf.test.ts` (slices < 500 ms, incremental ≡ cold) |
+
+Limits: one synthetic course shape (English TEST terms + a few Arabic headings); no questions or attempts in the perf
+course (the coverage/knowledge numbers do not include question matching at scale — see the question-bank row above);
+the background job shares the one Node process with requests, so a request arriving mid-recompute can wait up to one
+slice (≤ 172 ms measured).
+
 ## Resilience (§58)
 
 | scenario | result |

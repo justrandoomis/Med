@@ -6,7 +6,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffec
 import { cx } from '../../../design';
 import type { ReaderSheet } from '../model/sequence';
 import { clampZoom, fitWidthZoom } from '../model/zoom';
-import { ANCHOR_LINE, anchorAt, layoutContinuous, layoutSpread, pagesInRange, readingLineY, spreadOf, type Layout, type PageBox } from './geometry';
+import { ANCHOR_LINE, anchorAt, layoutContinuous, layoutSpread, pagesInRange, readingLineY, scrollTopForPlace, spreadOf, type Layout, type PageBox } from './geometry';
 import { NotePageView } from './NotePageView';
 import { PageView } from './PageView';
 import { SwipeTracker } from './swipe';
@@ -22,8 +22,12 @@ export interface BookLocation {
 }
 
 export interface BookCanvasHandle {
-  /** scroll to a page (and a fraction inside it) */
-  goTo(pageIndex: number, frac?: number): void;
+  /**
+   * scroll to a page (and a fraction inside it). `place: true` re-applies a saved place (a session, a back entry, a
+   * place from another device): the point goes under the reading line exactly as the reader computed it — near the end
+   * of the book that line slides down (H3 item 6). Without it the page top is put at the fixed quarter line (a jump).
+   */
+  goTo(pageIndex: number, frac?: number, opts?: { place?: boolean }): void;
   location(): BookLocation;
   /** scroll the viewport by a fraction of its height (keyboard) */
   scrollByViewport(fraction: number): void;
@@ -92,6 +96,8 @@ interface Anchor {
   /** where that point should sit in the viewport */
   vy: number;
   vx: number;
+  /** a held / saved place (continuous layout: put it under the sliding reading line, not at `vy`) — H3 item 6 */
+  place?: boolean;
 }
 
 export const BookCanvas = forwardRef<BookCanvasHandle, BookCanvasProps>(function BookCanvas(props, ref) {
@@ -140,7 +146,8 @@ export const BookCanvas = forwardRef<BookCanvasHandle, BookCanvasProps>(function
     const el = scrollerRef.current;
     const vh = el?.clientHeight ?? 0;
     const vw = el?.clientWidth ?? 0;
-    return { index: locRef.current.pageIndex, fy: locRef.current.frac, fx: 0.5, vy: vh * ANCHOR_LINE, vx: vw / 2 };
+    // the owner's place, held through layout changes and a reopen: back under the reading line it was taken from
+    return { index: locRef.current.pageIndex, fy: locRef.current.frac, fx: 0.5, vy: vh * ANCHOR_LINE, vx: vw / 2, place: true };
   }, []);
 
   const applyAnchor = useCallback(
@@ -158,11 +165,12 @@ export const BookCanvas = forwardRef<BookCanvasHandle, BookCanvasProps>(function
         el.scrollTop = 0;
         return;
       }
-      el.scrollTop = Math.max(0, Math.ceil(g.top + a.fy * g.viewH - a.vy));
+      // a held place in the continuous layout: the inverse of the place computation (readingLineY slides near the end)
+      el.scrollTop = a.place && layout === 'continuous' ? Math.ceil(scrollTopForPlace(geometry, a.index, a.fy, el.clientHeight)) : Math.max(0, Math.ceil(g.top + a.fy * g.viewH - a.vy));
       const left = g.left + a.fx * g.viewW - a.vx;
       el.scrollLeft = Math.max(0, Math.min(left, geometry.contentW - el.clientWidth));
     },
-    [geometry, flow],
+    [geometry, flow, layout],
   );
 
   // The place is an index in the SHEET sequence: when the sequence changes under it (note pages arriving from
@@ -282,10 +290,10 @@ export const BookCanvas = forwardRef<BookCanvasHandle, BookCanvasProps>(function
   useImperativeHandle(
     ref,
     () => ({
-      goTo(index, frac = 0) {
+      goTo(index, frac = 0, opts) {
         const el = scrollerRef.current;
         locRef.current = { pageIndex: index, frac };
-        const a: Anchor = { index, fy: frac, fx: 0.5, vy: (el?.clientHeight ?? 0) * ANCHOR_LINE, vx: (el?.clientWidth ?? 0) / 2 };
+        const a: Anchor = { index, fy: frac, fx: 0.5, vy: (el?.clientHeight ?? 0) * ANCHOR_LINE, vx: (el?.clientWidth ?? 0) / 2, place: opts?.place === true };
         if (layout !== 'continuous' && !spreadOf(index, layout, sheets.length).every((i) => spread.includes(i))) {
           // a different spread: the parent changes pageIndex, the layout effect restores the anchor
           pendingAnchor.current = a;

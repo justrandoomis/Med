@@ -3,6 +3,7 @@
 // generator can cite the aliases the server actually handed out. Golden Set sources are processed by the
 // REAL pipeline (evidence helpers).
 import type { AiTask } from '@medlevo/shared';
+import { streamFake } from '../helpers/fake-ai';
 import type { AiProvider, ProviderRequest, ProviderResponse, ProviderUsage } from '../../src/modules/ai/types';
 import { MODULES } from '../../src/modules';
 import { createProcessingModule } from '../../src/modules/processing';
@@ -17,6 +18,11 @@ export type Handler = (req: ProviderRequest) => unknown;
 /** Deterministic per-task provider. Generators are queued (`once`) or permanent (`always`). */
 export class ScriptedAi implements AiProvider {
   readonly name = 'fake';
+  /** (Round 7 H4) generation output is streamed to `onTextDelta` in chunks, like a real provider */
+  readonly streamsText = true;
+  /** hold the stream after N chunks until the promise resolves (or the request aborts) */
+  streamPause: { afterChunks: number; until: Promise<void> } | null = null;
+  streamChunk = 23;
   readonly calls: ProviderRequest[] = [];
   /** exceptions thrown by scripted handlers (assertions inside generators) */
   readonly errors: unknown[] = [];
@@ -88,7 +94,9 @@ export class ScriptedAi implements AiProvider {
       throw e;
     }
     if (out instanceof Error) throw out;
-    if (out && typeof out === 'object' && 'text' in (out as Record<string, unknown>) && Object.keys(out as object).length === 1) return { ...base, text: String((out as { text: string }).text) };
+    const isText = !!out && typeof out === 'object' && 'text' in (out as Record<string, unknown>) && Object.keys(out as object).length === 1;
+    await streamFake(req, isText ? String((out as { text: string }).text) : JSON.stringify(out), { chunk: this.streamChunk, pause: this.streamPause });
+    if (isText) return { ...base, text: String((out as { text: string }).text) };
     return { ...base, json: out };
   }
 }

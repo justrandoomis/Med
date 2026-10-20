@@ -265,3 +265,37 @@ export interface ExplanationRulesResponse {
 export type ExplanationRulesPatch = Partial<Pick<ExplanationRules, 'template' | 'level' | 'dialect' | 'keep_english_terms' | 'show_original_text' | 'socratic'>> & {
   include?: Partial<ExplanationRules['include']>;
 };
+
+// ───────── (Round 7 H4, §30) token streaming: an UNVERIFIED draft, then the verified result ─────────
+// «عند streaming، ميّز المسودة التي لم تجتز الفحص عن النتيجة المنشورة. لا تجعل ادعاءً طبيًا غير متحقق يظهر أولًا
+// بثقة ثم تختفي مشكلته بصمت.» POST /api/studybook/explain/stream and POST /api/studybook/threads/:id/messages/stream
+// answer with Server-Sent Events (same session + CSRF as any mutation). The draft is the model's text as it is written —
+// never stored, never cited, always labelled; the `final` event carries exactly what the non-streaming endpoint
+// returns, plus the sentences verification REMOVED from what the draft showed (shown as removed, never silently).
+export const STREAM_DRAFT_LABEL_AR = 'مسودة لم تُتحقق بعد';
+export const STREAM_DRAFT_NOTE_AR = 'نص يكتبه النموذج الآن ولم يُتحقق من أدلته بعد؛ قد تُحذف منه جمل أو تتغير. النتيجة المعتمدة تظهر بعد التحقق.';
+
+export type StudyStreamPhase = 'retrieving' | 'generating' | 'verifying';
+export const STUDY_STREAM_PHASE_LABELS_AR: Record<StudyStreamPhase, string> = {
+  retrieving: 'يُبحث عن الأدلة في مصادر النطاق…',
+  generating: 'يكتب النموذج مسودة…',
+  verifying: 'يُتحقق من كل جملة طبية مقابل أدلتها…',
+};
+
+/** One paragraph-like block of the draft: the sentences written so far (the last one may be unfinished). */
+export interface StudyDraftBlock {
+  kind: string | null;
+  sentences: string[];
+}
+
+export type StudyStreamEvent<TFinal> =
+  | { type: 'phase'; phase: StudyStreamPhase; label_ar: string }
+  /** the whole draft so far (replace, don't append); attempt 2 = the single repair attempt */
+  | { type: 'draft'; attempt: 1 | 2; blocks: StudyDraftBlock[]; label_ar: string; note_ar: string }
+  /** the first answer did not match the required structure: its draft is void, a repair attempt starts */
+  | { type: 'restart'; attempt: 2; reason_ar: string }
+  | { type: 'final'; result: TFinal; removed: Array<{ text: string; reason_ar: string }>; had_draft: boolean }
+  | { type: 'error'; error: { code: string; message: string } };
+
+export type ExplainStreamEvent = StudyStreamEvent<ExplainResponse>;
+export type ChatStreamEvent = StudyStreamEvent<ChatPostResponse>;

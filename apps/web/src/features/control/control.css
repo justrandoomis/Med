@@ -1168,3 +1168,54 @@ ul.cc-outcome {
     fill: CanvasText;
   }
 }
+
+/* (Round 7 H4, §32) المصادر البصرية المسموح بها */
+.cc-vs-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-3);
+  margin: 0;
+  padding: 0;
+}
+.cc-vs-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+  padding-top: var(--ml-space-3);
+  border-top: 1px solid var(--ml-color-line);
+  min-width: 0;
+}
+.cc-vs-item:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+.cc-vs-item p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.cc-vs-item__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-2);
+}
+.cc-vs-item__name {
+  margin: 0;
+  font-size: var(--ml-text-md);
+  overflow-wrap: anywhere;
+}
+.cc-vs-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-3);
+}
+.cc-vs-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ml-space-2);
+}
+.cc-vs-error {
+  margin: 0;
+  color: var(--ml-color-danger);
+  font-size: var(--ml-text-sm);
+}

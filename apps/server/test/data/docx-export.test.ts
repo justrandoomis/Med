@@ -3,11 +3,17 @@
 // values as their own LTR runs (no <w:rtl/>, en-US) — never invisible bidi control characters —, citations as numbered
 // TEXT (source — page — version + the evidence quote), the generated label, no hyperlinks, solutions only on request,
 // and the capability / formats endpoint saying DOCX is available.
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import JSZip from 'jszip';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ExportFormatsResponse, StudyArtifactView } from '@medlevo/shared';
 import { newId } from '../../src/lib/ids';
 import { buildDocx, para, textSegs } from '../../src/modules/data/docx';
+import { fixReversedLamAlef } from '../../src/modules/processing/text';
+import { detectTools } from '../../src/modules/processing/tools';
 import { dataLibrary, getJson, pageAnchor, push, writeOwnerData, type DataLib, type OwnerData } from './helpers';
 
 let lib: DataLib;
@@ -149,7 +155,8 @@ describe('notes, questions, source → DOCX', () => {
 describe('formats and capability', () => {
   it('DOCX is a listed format and the capability is available', async () => {
     const f = (await getJson<ExportFormatsResponse>(lib, '/api/data/export/formats')).body;
-    expect(f.formats.map((x) => x.format)).toEqual(['md', 'html', 'json', 'docx']);
+    // (Round 7 H4) PDF is listed only when this server has LibreOffice to convert the DOCX
+    expect(f.formats.map((x) => x.format)).toEqual(['md', 'html', 'json', 'docx', ...(detectTools().soffice ? ['pdf'] : [])]);
     expect(f.formats.find((x) => x.format === 'docx')!.note_ar).toContain('دون روابط');
     expect(f.other.some((o) => o.key === 'export.docx')).toBe(false);
     const caps = (await lib.t.app.inject({ method: 'GET', url: '/api/capabilities', headers: lib.h })).json().features;
@@ -164,4 +171,57 @@ describe('formats and capability', () => {
     expect(balanced(xml)).toBe(true);
     expect(textSegs('الجرعة 5 mg IV مهمة').map((s) => `${s.dir}:${s.t}`)).toEqual(['rtl:الجرعة ', 'ltr:5 mg IV', 'rtl: مهمة']);
   });
+});
+
+// Round 7 H4 item 8(b): Study Book / notes / questions as PDF = the DOCX export converted by LibreOffice on the server
+// (before H4 «PDF» meant printing the HTML export from the browser; format=pdf was rejected). Checked with pdftotext:
+// the generated label, the citations as TEXT (source — page — version), the owner's Arabic sentence with its LTR value,
+// no link annotations. pdftotext reads LibreOffice's lam-alef ligatures back reversed («اإلصدار») — the known text-layer
+// defect the processing module repairs (processing/text.ts); the same repair is applied before comparing, and the
+// limit is stated in the PDF format note.
+describe.skipIf(!detectTools().soffice)('Study Book / notes → PDF (LibreOffice)', () => {
+  let tmp: string;
+  beforeAll(() => {
+    tmp = mkdtempSync(join(tmpdir(), 'medlevo-pdf-'));
+  });
+  afterAll(() => rmSync(tmp, { recursive: true, force: true }));
+  const pdfText = (pdf: Buffer) => {
+    const f = join(tmp, `${newId()}.pdf`);
+    writeFileSync(f, pdf);
+    const raw = execFileSync('pdftotext', ['-enc', 'UTF-8', f, '-'], { encoding: 'utf8' });
+    return fixReversedLamAlef(raw.replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '')).text.replace(/\s+/g, ' ');
+  };
+
+  it('Study Book: a real PDF with the generated label and the citations as text', async () => {
+    const id = owner.book!.artifact.id;
+    const res = await lib.t.app.inject({ method: 'GET', url: `/api/data/export/artifact/${id}?format=pdf`, headers: lib.h });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(String(res.headers['content-type'])).toContain('application/pdf');
+    expect(String(res.headers['content-disposition'])).toMatch(/\.pdf"/);
+    const pdf = res.rawPayload;
+    expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
+    const text = pdfText(pdf);
+    expect(text).toContain('MedLevo');
+    expect(text).toContain('بواسطة');
+    expect(text).toContain('الأدلة المستشهد بها');
+    expect(text).toContain('Acute Appendicitis (TEST FIXTURE)');
+    const view = (await getJson<{ artifact: StudyArtifactView }>(lib, `/api/studybook/artifacts/${id}`)).body.artifact;
+    const ev = Object.values(view.claims).flatMap((c) => c.citations)[0]!.evidence;
+    expect(text).toMatch(new RegExp(`الإصدار\\s*${ev.version_no}`));
+    // the page reference is text: «ص N (الصفحة M في الملف)» (pdftotext lays the digits out visually, so only the words)
+    expect(text).toContain('الصفحة');
+    expect(text).toContain('في الملف');
+    // no clickable links in the file (citations are text)
+    expect(pdf.toString('latin1')).not.toMatch(/\/URI\s*\(/);
+  }, 120_000);
+
+  it('notes: the owner’s Arabic sentence and its LTR value and term survive the conversion', async () => {
+    const res = await lib.t.app.inject({ method: 'GET', url: `/api/data/export/notes?format=pdf&source_id=${lib.lecture.sourceId}`, headers: lib.h });
+    expect(res.statusCode, res.body).toBe(200);
+    const text = pdfText(res.rawPayload);
+    expect(text).toContain('تعداد الكريات البيض');
+    expect(text).toContain('×10⁹/L');
+    expect(text).toContain('abdomen');
+    expect(text).toContain('Acute Appendicitis');
+  }, 120_000);
 });

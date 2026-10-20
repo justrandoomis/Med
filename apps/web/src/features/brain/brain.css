@@ -433,3 +433,99 @@ details.lw-sheet summary {
   margin: 0;
   font-size: var(--ml-text-sm);
 }
+
+/* Round 7 H4 — «الموضوعات» on a case, an explanation or an attempt (TopicLinksControl) */
+.kb-topic-control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-2) var(--ml-space-3);
+  padding-block: var(--ml-space-2);
+}
+.kb-topic-control__title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ml-space-1);
+  margin: 0;
+  font-size: inherit;
+  font-weight: 600;
+}
+.kb-topic-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ml-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.kb-topic-chip {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-2);
+  padding-inline: var(--ml-space-3);
+  border: 1px solid var(--ml-color-line);
+  border-radius: var(--ml-radius-lg);
+}
+.kb-attempts {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.kb-attempt {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-1);
+  padding-block: var(--ml-space-3);
+}
+.kb-attempt + .kb-attempt {
+  border-top: 1px solid var(--ml-color-line);
+}
+
+/* Round 7 H4 — algorithms / flowcharts read from the lectures (AlgorithmList) */
+.kb-algo {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+  padding-block: var(--ml-space-3);
+}
+.kb-algo + .kb-algo {
+  border-top: 1px solid var(--ml-color-line);
+}
+.kb-algo__title {
+  display: flex;
+  align-items: center;
+  gap: var(--ml-space-2);
+  margin: 0;
+  font-size: inherit;
+  font-weight: 600;
+}
+.kb-algo__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-2);
+}
+.kb-algo__steps,
+.kb-algo__rules,
+.kb-algo__labels,
+.kb-algo__branches {
+  margin: 0;
+  padding-inline-start: var(--ml-space-5);
+}
+.kb-algo__steps li,
+.kb-algo__rules > li,
+.kb-algo__labels li {
+  padding-block: var(--ml-space-1);
+}
+.kb-algo__branches {
+  list-style: none;
+}
+.kb-algo__labels {
+  list-style: square;
+}
+.kb-reason__quote {
+  margin: var(--ml-space-1) 0;
+  padding-inline-start: var(--ml-space-3);
+  border-inline-start: 2px solid var(--ml-color-line);
+}

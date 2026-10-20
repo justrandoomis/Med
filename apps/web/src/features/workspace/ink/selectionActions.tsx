@@ -26,6 +26,10 @@ export interface InkSelectionAction {
 export interface InkSelectionActions {
   convert?: InkSelectionAction;
   ask?: InkSelectionAction;
+  /** (H3 item 4) «اصنع بطاقة من المحدد…»: a flashcard (front from the reading of the strokes, or a picture of the page) */
+  card?: InkSelectionAction;
+  /** (H3 item 4) «اكتب سؤالًا من المحدد…»: an owner-written question saved in the Question Vault */
+  question?: InkSelectionAction;
   /** play the recording at the stroke's moment */
   playAudio?(link: InkAudioLink): void;
   /** change (→ manual) or remove a stroke's time link; the host asks the owner for the moment */
@@ -44,3 +48,4 @@ export function useInkSelectionActions(): InkSelectionActions | null {
 
 export const NO_RECOGNITION_HOST_AR = 'قراءة الخط متاحة في صفحات المحاضرات المفتوحة في مساحة الدراسة.';
 export const NO_ASK_HOST_AR = 'السؤال عن الكتابة يحتاج لوحة الدراسة السياقية بجانب صفحة من محاضرة.';
+export const NO_CARD_HOST_AR = 'صنع البطاقات والأسئلة من المحدد متاح في صفحات المصادر والدفاتر المفتوحة في مساحة الدراسة.';

@@ -67,7 +67,8 @@ export function conceptRoleLabelAr(role: string | null | undefined): string {
   return role;
 }
 
-export const RELATION_KINDS = ['prerequisite', 'part_of', 'differential_of', 'causes', 'treats', 'related'] as const;
+// Round 7 H4: 'complication_of' («X is a complication of Y» — stated in prose, or made by the owner)
+export const RELATION_KINDS = ['prerequisite', 'part_of', 'differential_of', 'causes', 'treats', 'related', 'complication_of'] as const;
 export type RelationKind = (typeof RELATION_KINDS)[number];
 export const RELATION_LABELS_AR: Record<RelationKind, string> = {
   prerequisite: 'متطلب سابق لـ',
@@ -76,6 +77,7 @@ export const RELATION_LABELS_AR: Record<RelationKind, string> = {
   causes: 'يسبب',
   treats: 'يعالج',
   related: 'مرتبط بـ',
+  complication_of: 'مضاعفة لـ',
 };
 
 export type ConceptStatus = 'suggested' | 'accepted' | 'rejected';
@@ -156,8 +158,16 @@ export interface BrainConceptResponse {
 
 // ───────── relations ─────────
 export interface RelationReason {
-  /** 'basis_removed': the source the suggestion was built from was deleted for good (its text is not kept) */
-  kind: 'defined_earlier_used_later' | 'listed_under_section' | 'owner' | 'basis_removed';
+  /**
+   * 'basis_removed': the source the suggestion was built from was deleted for good (its text is not kept).
+   * 'stated_in_text' (Round 7 H4): a sentence of the lecture states the relation («X causes Y», «يُعالَج X بـ Y») —
+   * `from` is that sentence's place and its exact quote; `uncertain` when the sentence was read by OCR.
+   */
+  kind: 'defined_earlier_used_later' | 'listed_under_section' | 'owner' | 'basis_removed' | 'stated_in_text';
+  /** stated_in_text: the rule that matched (e.g. «en.x_causes_y») */
+  pattern?: string;
+  /** stated_in_text: the sentence came from OCR text and may be misread */
+  uncertain?: boolean;
   text_ar: string;
   /** where the prerequisite / source side is stated */
   from?: BrainLocation & { quote: string | null };
@@ -230,6 +240,76 @@ export interface CourseBrainResponse {
   course: { id: string; title: string; kind: string };
   lectures: BrainLectureStatus[];
   totals: { lectures: number; extracted: number; concepts: number; relations: { suggested: number; accepted: number; rejected: number } };
+  notes_ar: string[];
+  /**
+   * Round 7 H4: the suggested relations are recomputed by a background job (`brain.recompute_relations`), never inside
+   * this request. 'current' = computed for the course as it is now; 'refreshing' = a recompute is queued / running
+   * (the relations shown are the previous ones).
+   */
+  relations_state?: { status: 'current' | 'refreshing'; computed_at: number | null; job_id: string | null };
+}
+
+/** Job kind (Round 7 H4): recompute one course group's suggested relations in the background, incrementally. */
+export const RECOMPUTE_RELATIONS_JOB_KIND = 'brain.recompute_relations';
+export interface RecomputeRelationsJobInput {
+  course_key: string;
+}
+
+// ───────── algorithms / flowcharts as knowledge structure (§16, §31 — Round 7 H4) ─────────
+export const ALGORITHM_KINDS = ['numbered_steps', 'conditional', 'arrow_chain', 'decision_list', 'flowchart_figure'] as const;
+export type AlgorithmKind = (typeof ALGORITHM_KINDS)[number];
+export const ALGORITHM_KIND_LABELS_AR: Record<AlgorithmKind, string> = {
+  numbered_steps: 'خطوات مرقّمة',
+  conditional: 'قواعد «إذا … فـ…»',
+  arrow_chain: 'سلسلة أسهم',
+  decision_list: 'قائمة قرار',
+  flowchart_figure: 'مخطط في شكل',
+};
+/** 'stated' = read from the lecture's digital text as printed; 'uncertain' = OCR text, or figure labels without arrows;
+ * 'owner_reviewed' = figure labels + the edges of a figure reading the owner confirmed */
+export type AlgorithmCertainty = 'stated' | 'uncertain' | 'owner_reviewed';
+export const ALGORITHM_CERTAINTY_LABELS_AR: Record<AlgorithmCertainty, string> = {
+  stated: 'مذكورة في نص المحاضرة كما طُبعت',
+  uncertain: 'غير مؤكدة — مقروءة آليًا (OCR) وقد تكون فيها أخطاء',
+  owner_reviewed: 'الأسهم من قراءة للشكل راجعتها وأكدتها',
+};
+export interface AlgorithmNodeView {
+  key: string;
+  /** exact printed text */
+  text: string;
+  kind: 'step' | 'condition' | 'action' | 'label';
+  region_id: string;
+  /** reader link to the region (null when the page was re-processed and the region no longer exists) */
+  href: string | null;
+}
+export interface AlgorithmEdgeView {
+  from: string;
+  to: string;
+  /** printed branch word («Yes», «لا», «Otherwise»), null when the text gives none */
+  label: string | null;
+}
+export interface KnowledgeAlgorithmView {
+  id: string;
+  source_id: string;
+  source_title: string;
+  version_id: string;
+  kind: AlgorithmKind;
+  kind_label_ar: string;
+  title: string | null;
+  section: string | null;
+  concept: { id: string; name: string } | null;
+  certainty: AlgorithmCertainty;
+  certainty_label_ar: string;
+  /** the printed order is meaningful (numbered steps, arrow chains) */
+  ordered: boolean;
+  nodes: AlgorithmNodeView[];
+  edges: AlgorithmEdgeView[];
+  /** where it starts (page label + region) */
+  location: BrainLocation | null;
+  notes_ar: string[];
+}
+export interface KnowledgeAlgorithmListResponse {
+  items: KnowledgeAlgorithmView[];
   notes_ar: string[];
 }
 
@@ -379,7 +459,22 @@ export interface StudentKnowledgeResponse {
 }
 
 // ───────── topics (§05) ─────────
-export const TOPIC_ENTITY_TYPES = ['source', 'source_region', 'question', 'library_node', 'concept', 'image_asset', 'flashcard', 'note'] as const;
+// Round 7 H4: clinical cases (case / OSCE / viva), generated explanations (artifacts) and past attempts (an exam
+// attempt or a case attempt) can be linked to a topic too (§05 «الحالات … الشرح … ومحاولاتي السابقة»).
+export const TOPIC_ENTITY_TYPES = [
+  'source',
+  'source_region',
+  'question',
+  'library_node',
+  'concept',
+  'image_asset',
+  'flashcard',
+  'note',
+  'clinical_case',
+  'artifact',
+  'exam_attempt',
+  'case_attempt',
+] as const;
 export type TopicEntityType = (typeof TOPIC_ENTITY_TYPES)[number];
 export const TOPIC_ENTITY_LABELS_AR: Record<TopicEntityType, string> = {
   source: 'مصدر',
@@ -390,6 +485,22 @@ export const TOPIC_ENTITY_LABELS_AR: Record<TopicEntityType, string> = {
   image_asset: 'صورة',
   flashcard: 'بطاقة',
   note: 'ملاحظة',
+  clinical_case: 'حالة سريرية / OSCE / شفهي',
+  artifact: 'شرح أو ملخص مولّد',
+  exam_attempt: 'محاولة امتحان أو تدريب',
+  case_attempt: 'محاولة حالة',
+};
+/** Kind of a generated study artifact, in words (labels say it is generated — never a lecture text). */
+export const ARTIFACT_KIND_LABELS_AR: Record<string, string> = {
+  study_book: 'كتاب دراسة مولّد',
+  summary: 'ملخص مولّد',
+  explanation: 'شرح مولّد',
+  chat_answer: 'إجابة محادثة مولّدة',
+  comparison: 'مقارنة مولّدة',
+  mind_map: 'خريطة ذهنية مولّدة',
+  flowchart: 'مخطط مولّد',
+  figure_explanation: 'شرح شكل مولّد',
+  case_explanation: 'شرح حالة مولّد',
 };
 
 export interface TopicLinkDetail {
@@ -408,11 +519,27 @@ export interface TopicLinkDetail {
   /** why the system suggested it (auto links) */
   reason_ar: string | null;
 }
+/**
+ * A past attempt reachable from a topic (Round 7 H4): linked by the owner (`via 'linked'`), or an attempt on a
+ * question / case the topic links to (`via 'question' | 'case'` — read from the attempt history, never stored).
+ */
+export interface TopicAttemptView {
+  kind: 'exam_attempt' | 'case_attempt' | 'question_attempt';
+  id: string;
+  label: string;
+  sublabel: string | null;
+  href: string | null;
+  at: number;
+  via: 'linked' | 'question' | 'case';
+  via_ar: string;
+}
 export interface TopicDetailResponse {
   topic: { id: string; title: string; title_ar: string | null; parent_topic_id: string | null; created_at: number; updated_at: number };
   links: TopicLinkDetail[];
   children: Array<{ id: string; title: string; title_ar: string | null }>;
   counts: { accepted: number; suggested: number; rejected: number };
+  /** Round 7 H4: past attempts of this topic (newest first, capped — `total` is the full count) */
+  attempts?: { items: TopicAttemptView[]; total: number };
 }
 export interface TopicSuggestResponse {
   created: number;

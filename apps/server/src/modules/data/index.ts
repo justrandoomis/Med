@@ -8,8 +8,10 @@ import { z } from 'zod';
 import {
   EXPORT_FORMATS,
   OFFLINE_MANIFEST_FORMAT,
+  type AnnotatedPdfSummary,
   type BackupCreateResponse,
   type BackupsListResponse,
+  type ExportFormat,
   type ExportFormatsResponse,
   type OfflineBundleResponse,
   type OfflineLearningResponse,
@@ -33,6 +35,7 @@ import {
 } from './backups';
 import { currentEpoch, ensureEpoch } from './epoch';
 import { exportAll, exportArtifact, exportNotes, exportNotesDocx, exportQuestions, exportSource, type ExportFile } from './export';
+import { annotatedPdfSummary, docxToPdf, exportAnnotatedPdf, pdfConverterAvailable } from './pdf-export';
 import { buildOfflinePackage, learningForSource, resolveOfflineTarget, type Forward } from './offline';
 
 export { currentEpoch, ensureEpoch, startRestoreEpoch, syncHeadSeq, type ServerEpoch } from './epoch';
@@ -46,6 +49,7 @@ const idParams = z.object({ id: ID });
 const offlineQuery = z.object({ version: ID.optional(), include_solutions: flag });
 const formatQuery = z.object({ format: z.enum(EXPORT_FORMATS).default('md') });
 const sourceExportQuery = formatQuery.extend({ version: ID.optional() });
+const annotatedQuery = z.object({ version: ID.optional() });
 const notesExportQuery = formatQuery.extend({ source_id: ID.optional(), node_id: ID.optional() });
 const questionsExportQuery = formatQuery.extend({
   source_id: ID.optional(),
@@ -72,7 +76,13 @@ function sendFile(reply: FastifyReply, f: ExportFile) {
   return reply.send(f.body);
 }
 
-export const EXPORT_PDF_LIMIT_AR = 'PDF عبر «نسخة الطباعة» (تصدير HTML) ثم الطباعة إلى PDF من المتصفح؛ لا يوجد مُصدِّر PDF على الخادم، ولا تُطبع الكتابة بالقلم في هذا الملف (هي في تصدير JSON والنسخة الاحتياطية).';
+// Round 7 H4: a server PDF exporter exists — (a) the original PDF with the owner's writing drawn on a copy (pdf-lib,
+// vector paths), (b) Study Book / notes / questions = the DOCX export converted by LibreOffice. The capability says
+// exactly which parts work on THIS server (LibreOffice may be missing) and what a flattened PDF is not.
+export const EXPORT_PDF_NOTE_AR =
+  'PDF من الخادم: «الأصل مع كتابتي» نسخة مسطحة تحفظ المظهر (كتابتك مرسومة فوق الملف الأصلي، لا حبر قابل للتحرير)، وكتاب الدراسة والملاحظات والأسئلة PDF محوَّلة من Word مع الاستشهادات نصًّا.';
+export const EXPORT_PDF_NO_CONVERTER_AR =
+  'PDF «الأصل مع كتابتي» يعمل (نسخة مسطحة تحفظ المظهر). تحويل كتاب الدراسة والملاحظات والأسئلة إلى PDF يحتاج LibreOffice على الخادم وهو غير مثبّت هنا — صدّرها Word أو اطبع نسخة HTML.';
 
 export default async function register(app: FastifyInstance, { ctx }: ModuleOptions): Promise<void> {
   ensureEpoch(ctx.db, ctx.clock.now());
@@ -82,9 +92,9 @@ export default async function register(app: FastifyInstance, { ctx }: ModuleOpti
   ctx.capabilities.set('offline', 'available');
   ctx.capabilities.set('backup', 'available');
   ctx.capabilities.set('export.markdown', 'available');
-  // PDF = print the HTML export from the browser (the UI says so); no server-side PDF renderer exists — the
-  // capability says so too, so the Control Center never shows a bare «تعمل» for it (critic round)
-  ctx.capabilities.set('export.pdf', 'available', EXPORT_PDF_LIMIT_AR);
+  // the capability states its limits (flattened copy, not editable ink; Word → PDF only with LibreOffice), so the
+  // Control Center never shows a bare «تعمل» for it (critic round; server exporter since Round 7 H4)
+  ctx.capabilities.set('export.pdf', 'available', pdfConverterAvailable() ? EXPORT_PDF_NOTE_AR : EXPORT_PDF_NO_CONVERTER_AR);
   // (track F5) Word export built on the server: RTL paragraphs, isolated LTR runs, citations as text, generated content labelled
   ctx.capabilities.set('export.docx', 'available');
 
@@ -112,6 +122,8 @@ export default async function register(app: FastifyInstance, { ctx }: ModuleOpti
       source_id: built.manifest.source.id,
       version_id: built.manifest.version.id,
       content_hash: built.manifest.content_hash,
+      source_hash: built.manifest.source_hash,
+      owner_hash: built.manifest.owner_hash,
       generated_at: built.manifest.generated_at,
       entries: built.bundle,
     };
@@ -179,8 +191,19 @@ export default async function register(app: FastifyInstance, { ctx }: ModuleOpti
           label_ar: 'Word (DOCX)',
           note_ar: 'مستند Word من اليمين لليسار: المصطلحات والقيم الإنجليزية مقاطع مستقلة باتجاهها، الاستشهادات نصًّا (المصدر — الصفحة — الإصدار + الاقتباس) دون روابط، والمحتوى المولَّد معلَّم. الكتابة بالقلم ليست فيه.',
         },
+        ...(pdfConverterAvailable()
+          ? [
+              {
+                format: 'pdf' as const,
+                label_ar: 'PDF (من Word على الخادم)',
+                note_ar: 'نسخة Word نفسها محوَّلة إلى PDF على الخادم (LibreOffice): من اليمين لليسار، الاستشهادات نصًّا، المحتوى المولَّد معلَّم. الكتابة بالقلم ليست فيه — لها «الأصل مع كتابتي». نسخ النص من هذا الملف قد يقلب «لا» في بعض الكلمات (عيب معروف في LibreOffice)؛ شكله المطبوع صحيح.',
+              },
+            ]
+          : []),
       ],
-      pdf_note_ar: 'PDF عبر الطباعة من المتصفح: افتح تصدير HTML ثم «طباعة» ← «حفظ بصيغة PDF». لا يوجد مولّد PDF على الخادم.',
+      pdf_note_ar: pdfConverterAvailable()
+        ? 'PDF على الخادم: اختر «PDF» لكتاب الدراسة والملاحظات والأسئلة، أو «الأصل مع كتابتي» لملف المحاضرة الأصلي وفوقه كتابتك (نسخة مسطحة تحفظ المظهر). ويمكن أيضًا طباعة تصدير HTML إلى PDF من المتصفح.'
+        : 'PDF «الأصل مع كتابتي» متاح على الخادم. أما كتاب الدراسة والملاحظات والأسئلة فـ PDF عبر الطباعة من المتصفح (تصدير HTML ← «طباعة» ← «حفظ بصيغة PDF») لأن LibreOffice غير مثبّت على هذا الخادم.',
       other: [
         { key: 'export.anki_tsv', label_ar: 'بطاقات Anki (TSV)', available: anki.state === 'available', reason_ar: anki.state === 'available' ? 'من شاشة المراجعة (البطاقات).' : (anki.reason_ar ?? null) },
       ],
@@ -190,27 +213,41 @@ export default async function register(app: FastifyInstance, { ctx }: ModuleOpti
   app.get('/export/source/:sourceId', { config: { rateLimit: LIMITS.exportRoute } }, async (req, reply) => {
     const { sourceId } = parseParams(sourceParams, req);
     const q = parseQuery(sourceExportQuery, req);
+    if (q.format === 'pdf') return sendFile(reply, await docxToPdf(ctx, await exportSource(ctx, forwardFor(req), sourceId, q.version ?? null, 'docx')));
     return sendFile(reply, await exportSource(ctx, forwardFor(req), sourceId, q.version ?? null, q.format));
+  });
+
+  // Round 7 H4: the original PDF with the owner's writing drawn on a copy — what it will contain first, then the file
+  app.get('/export/source/:sourceId/annotated-pdf/summary', { config: { rateLimit: LIMITS.exportRoute } }, async (req): Promise<AnnotatedPdfSummary> => {
+    const { sourceId } = parseParams(sourceParams, req);
+    return annotatedPdfSummary(ctx, sourceId, parseQuery(annotatedQuery, req).version ?? null);
+  });
+  app.get('/export/source/:sourceId/annotated-pdf', { config: { rateLimit: LIMITS.exportRoute } }, async (req, reply) => {
+    const { sourceId } = parseParams(sourceParams, req);
+    const { file } = await exportAnnotatedPdf(ctx, sourceId, parseQuery(annotatedQuery, req).version ?? null);
+    ctx.audit.record({ entityType: 'source', entityId: sourceId, action: 'export', summary: 'تصدير الملف الأصلي مع كتابتك (PDF مسطح)' });
+    return sendFile(reply, file);
   });
 
   app.get('/export/artifact/:id', { config: { rateLimit: LIMITS.exportRoute } }, async (req, reply) => {
     const { id } = parseParams(idParams, req);
     const q = parseQuery(formatQuery, req);
+    if (q.format === 'pdf') return sendFile(reply, await docxToPdf(ctx, await exportArtifact(ctx, forwardFor(req), id, 'docx')));
     return sendFile(reply, await exportArtifact(ctx, forwardFor(req), id, q.format));
   });
 
   app.get('/export/notes', { config: { rateLimit: LIMITS.exportRoute } }, async (req, reply) => {
     const q = parseQuery(notesExportQuery, req);
     const filter = { sourceId: q.source_id, nodeId: q.node_id };
+    if (q.format === 'pdf') return sendFile(reply, await docxToPdf(ctx, await exportNotesDocx(ctx, filter)));
     return sendFile(reply, q.format === 'docx' ? await exportNotesDocx(ctx, filter) : exportNotes(ctx, filter, q.format));
   });
 
   app.get('/export/questions', { config: { rateLimit: LIMITS.exportRoute } }, async (req, reply) => {
     const q = parseQuery(questionsExportQuery, req);
-    return sendFile(
-      reply,
-      await exportQuestions(ctx, forwardFor(req), { sourceId: q.source_id, lectureSourceId: q.lecture_source_id }, q.format, isOn(q.include_solutions, true)),
-    );
+    const make = (format: Exclude<ExportFormat, 'pdf'>) =>
+      exportQuestions(ctx, forwardFor(req), { sourceId: q.source_id, lectureSourceId: q.lecture_source_id }, format, isOn(q.include_solutions, true));
+    return sendFile(reply, q.format === 'pdf' ? await docxToPdf(ctx, await make('docx')) : await make(q.format));
   });
 
   app.get('/export/all', { config: { rateLimit: { max: 6, timeWindow: 60_000 } } }, async (_req, reply) => sendFile(reply, exportAll(ctx)));

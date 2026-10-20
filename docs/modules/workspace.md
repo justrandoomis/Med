@@ -103,8 +103,9 @@ scrollTop); a selection's end boundary quoting the whole page; canvases sharing 
 * ~~**AI actions, Study Book, Question Vault panels**: disabled with reasons (later rounds).~~ Built: the «الشرح
   والسؤال» tab and the Study Book view (track C2, `panels/ExplainTab.tsx`, `studybook/`), the questions tab (track C3);
   without an AI key the AI actions report `requires_configuration` with the reason. *(reconciled, track F5)*
-* **Manual re-anchoring** UI: the «إعادة ربط» list shows items and their previous place («اذهب إلى الصفحة»); moving
-  them is still not built.
+* ~~**Manual re-anchoring** UI: the «إعادة ربط» list shows items and their previous place («اذهب إلى الصفحة»); moving
+  them is still not built.~~ Built in Round 7 H3 (item 2): the owner picks a page / paragraph or keeps the item detached
+  — see «Round 7 — H3» below.
 * ~~**Download Manager**: nothing writes the `blobs` yet.~~ Track D1's download manager writes them (`lib/offline.ts`);
   the reader opens downloaded sources offline (AC-23, `e2e/g7-ac23-offline.spec.ts`). *(reconciled, track F5)*
 * Search hits are not drawn inside DOCX/slide-text sections (navigation to the section works); search over large
@@ -221,9 +222,10 @@ Measured in headless Chromium against the real server (`e2e/perf.spec.ts`, `MEDL
   order), and a space item is placed where the producer left a visual gap without one. Item strings and positions are
   never changed; English-only lines and lines already in order keep their exact items. Tests:
   `reader/textOrder.g6.test.ts` (real pdf.js items of the fixture), `e2e/g6-ac20-mixed-text.spec.ts`.
-* Known limit (unchanged): the raw PDF text layer of the Golden Set lecture carries the reversed lam-alef «األلم»; the
+* ~~Known limit (unchanged): the raw PDF text layer of the Golden Set lecture carries the reversed lam-alef «األلم»; the
   server repairs it in the stored text (search, Study Book, export), the reader's selectable layer still shows the raw
-  form when copied.
+  form when copied.~~ Fixed in Round 7 H3 (item 8): the reader's text layer applies the server's narrow repair (one
+  shared function) — see «Round 7 — H3» below.
 
 ## Acceptance round G7 — AC-24 sync and conflicts (2026-10-10)
 
@@ -289,7 +291,8 @@ and `e2e/g7-ac24-two-devices.spec.ts` (two browser contexts = two devices):
   E2E since the F1 review (a generated PDF with real Link annotations — see «Review F1» below).
 * An offline download of a source does not include pictures inserted on **another** device (this device's own
   pictures are kept locally until uploaded); offline, a picture that is only on the server says so.
-* Undo / redo history is per open session (memory), as for the rest of the ink engine.
+* ~~Undo / redo history is per open session (memory), as for the rest of the ink engine.~~ Kept on the device since
+  Round 7 H3 (item 1; `docs/modules/ink.md`).
 * No real iPad / Apple Pencil run (pointer events in Chromium only); no screen-reader pass (labels, roles and
   keyboard paths are in place and asserted by the tests).
 * Covers: the notebook shows the folder's library cover (set in the library); there is no per-page cover type.
@@ -319,15 +322,17 @@ the rev bookkeeping of queued note-page edits, paper patterns as colour tokens w
 variant.
 
 Not fixed (reported):
-* **Pre-existing reader issue (B1, not F1):** near the end of a document the reading line slides down
+* *(Fixed in Round 7 H3, item 6.)* **Pre-existing reader issue (B1, not F1):** near the end of a document the reading line slides down
   (`readingLineY`), while a restored offset is re-applied at the fixed line; reopening a source at its second-to-last
   page on a phone lands one page later (reproduced without any note page). Changing it moves every jump near the end
   of a book, so it is left to the reader's owner.
-* A note page whose notebook was purged meanwhile and that follows no source is saved with neither (kept on the server
-  and in backups, but listed nowhere) — pre-existing B1 behaviour of `notePageFields`.
+* *(Fixed in Round 7 H3, item 7: listed in «صفحات بلا دفتر».)* A note page whose notebook was purged meanwhile and that
+  follows no source is saved with neither (kept on the server and in backups, but listed nowhere) — pre-existing B1
+  behaviour of `notePageFields`.
 * The full JSON export (data module) does not list `annotation_image` (key → file); the backup carries everything.
-* Prune right after a purge removes a picture whose only annotation on the server was purged, even if a copy (same
-  `image_key`) is still queued offline on another device; that copy then shows «لم تصل الصورة إلى الخادم بعد».
+* *(Fixed in Round 7 H3, item 10: a grace period from the release.)* Prune right after a purge removes a picture whose
+  only annotation on the server was purged, even if a copy (same `image_key`) is still queued offline on another device;
+  that copy then shows «لم تصل الصورة إلى الخادم بعد».
 * After a server restore (epoch reset), pictures this device had already uploaded are not re-uploaded if the restored
   backup predates them.
 * A pasted picture lands on the last page touched (`activeTargetKey`), which may not be the page on screen after a
@@ -435,3 +440,26 @@ Runs of the review (2026-10-10, this tree):
   ocrRunSegments`; tables are left to their cells). Regions without word boxes (stored before H2, digital text) keep the
   previous layer. Photos the server read after turning them are shown upright through the page rotation it stored.
   Test: `web:src/features/workspace/reader/PageView.ocrwords.test.tsx` (3).
+
+## Round 7 — H3: reader, writing & notes completeness (2026-10-20; §25, §26, §28, §29)
+Each item was reproduced with a failing test first (unit / jsdom / server, plus E2E where the real browser matters),
+then fixed minimally. Migrations (annotations range): `0280_annotation_image_release.sql`, `0290_reanchor.sql`.
+
+| # | what was wrong / missing | what is built now | tests |
+|---|---|---|---|
+| 1 | Undo / redo lived in memory: a reload or closing the app lost the history. | Per-document command log in IndexedDB (`ink/historyLog.ts`, `kv` key `ink.history.v1:<doc>`, newest steps kept under a 2 MB cap, debounced + flushed on `pagehide`). A step is checked against the CURRENT state first (memory for loaded pages, IndexedDB otherwise): steps already satisfied are skipped; a step that would bring back writing deleted since (e.g. tombstoned by the server / another device) or overwrite a newer edit is never applied silently — «التراجع عن «…»» asks (`ink/InkProvider.tsx` `PendingStepDialog`: apply / skip). Details in `docs/modules/ink.md`. | `web:test/ink/history-persist.h3.test.ts` (6), `web:test/ink/history-dialog.h3.test.tsx` (1) |
+| 2 | «تحتاج إعادة ربط» listed items with their previous place only. | `POST /api/annotations/reanchor` (`annotations/reanchor.ts`): the OWNER moves a note / highlight / ink group to a page of the source — at the same spot or AT a paragraph / block region of that page (the group's box corner on the region's, sizes kept, kept inside the page) — or keeps it detached («محفوظة دون ربط», `detached_at`). The previous anchor is kept (`previous_anchor_json`, also on notes now), the revision the device saw is checked (409, nothing changes), every write touches the sync feed, open review-queue items are closed with the decision, and each decision is in the change log. `GET /needs-reanchor` also lists notes whose page is gone and Study Book items flagged by the re-anchoring report, plus the detached list. Web: `panels/ReanchorSection.tsx` (ink from the same old page moves as one group; online only — the reason is shown offline). The API accepts a Study Book paragraph target (`type: 'block'`); the reader offers pages and their paragraphs. | `srv:annotations/h3-hardening.test.ts` (4), `web:panels/ReanchorSection.h3.test.tsx` (4), `e2e:h3-reader-notes.spec.ts` «H3 item 2» |
+| 3 | Split Study offered lecture ↔ lecture / Study Book only. | «بجانب المحاضرة: الأسئلة المرتبطة / الشرح والسؤال» (`split/SplitSidePane.tsx`, views `split_questions` / `split_explain` in the top bar): the lecture stays in the main canvas (its page, zoom and place untouched); both side kinds stay mounted once opened, so switching keeps each one's state; the choice is saved with the study session (`location.split.mode`); in «امتحن نفسك» the explanations are not offered (reason shown) and an open explain split switches to the questions. | `web:split/SplitSidePane.h3.test.tsx` (2) |
+| 4 | The lasso menu could not turn a selection into a card or a question. | «اصنع بطاقة من المحدد…» / «اكتب سؤالًا من المحدد…» (`handwriting/LassoCardDialog.tsx`, actions `card` / `question` in `ink/selectionActions.tsx`). Card «سؤال وجواب»: the front can be filled from an existing reading of exactly those strokes (labelled as derived); without a vision provider / offline / with no reading the control is disabled with its reason («اقرأها الآن…» opens «تحويل إلى نص»); saved on the device first (`createCardsLocal`, origin owner, source kept). Card «إخفاء في صورة»: `POST /api/annotations/page-crops` (`annotations/pageCrop.ts`) cuts the SOURCE page area under the selection out of the stored file on the server (pdftoppm for PDFs — a 409 with the reason when it is not installed; the stored picture for image sources; /Rotate handled) into an `image_asset` marked `owner_crop`; the owner draws and names masks → `POST /learning/cards/occlusion`. Re-processing the page keeps owner crops (`processing/persist.ts` deletes only figure pictures with a region) and the image explorer does not list them (`media/images.ts`). Question: owner-written text (+ the owner's key) → `POST /questions/quick-add` with the lecture link (origin owner). | `srv:annotations/h3-lasso-card.test.ts` (7), `web:handwriting/LassoCardDialog.h3.test.tsx` (7), `e2e:h3-reader-notes.spec.ts` «H3 item 4» |
+| 5 | The «انتقال» button of the go-to popover overflowed at 360–390 px. | `workspace.css` `.wk-goto` width follows the popover's own limit (`min(22rem, 100vw − 16px)` minus its padding). | `e2e:h3-reader-notes.spec.ts` «item 5» (phone 360/375/390; failed before: the button 3.5 px outside at 390) |
+| 6 | A restored place near the end landed one page later on phones (the place is saved under the sliding `readingLineY`, but was re-applied at the fixed quarter line). | `reader/geometry.ts` `scrollTopForLine` / `scrollTopForPlace` (the inverse of `readingLineY`); `BookCanvas` restores a saved PLACE with it (`goTo(…, {place: true})` from the session / back stack / another device), while jumps keep the fixed line. | `web:reader/restoreNearEnd.h3.test.tsx` (3); `reader/noteSheets.test.tsx` helper now reads the place with the reader's own line (assertions unchanged) |
+| 7 | A note page whose notebook was purged while a device wrote offline (and that follows no source) was kept but listed nowhere. | `GET /api/annotations/orphan-pages` (+ `?include_deleted=1`) and `note-pages?orphans=1`; the sync handler says where it went; «صفحات بلا دفتر» in the library (`notebook/OrphanNotePages.tsx`): what is written on each, «انقل إلى دفتر…», trash with undo, restore. Nothing is deleted automatically. | `srv:annotations/h3-hardening.test.ts` (2), `web:notebook/OrphanNotePages.h3.test.tsx` (3) |
+| 8 | The pdf.js text layer copied the reversed lam-alef «األلم». | The server's narrow rule is now one shared function (`packages/shared/src/lamAlef.ts` `fixReversedLamAlef` / `fixReversedLamAlefPieces`, used by `processing/text.ts`); the reader applies it to the text items (`reader/textOrder.ts` `readerTextContent`, used by `PageView` and `pdfDoc.text()`). Length-preserving, so search offsets and DOM text stay aligned. Words that are right as printed (الألم، ألم، إلى، الآن، آلة، إلا، ألا، الالتهاب، العلاج، السلام، ﻻ) are untouched. | `shared:test/lamAlef.h3.test.ts`, `web:reader/lamAlefTextLayer.h3.test.tsx` (2) |
+| 9 | A recording whose device save failed while the owner left the reader lived only in memory. | `audio/recorder.ts`: a failed save is retried with backoff (5 s → 10 min); when online the recording goes straight to the server (`uploadDirect`) and says «حُفظ على الخادم»; the shared recorder outlives the reader (`audio/sharedRecorder.ts`) and an app-wide notice «تسجيل لم يُحفظ» (retry / download / confirm discard; `beforeunload` guard) is shown on every screen while no recording bar is mounted (`audio/UnsavedRecordingNotice.tsx`, in `RootLayout`). | `web:audio/unsavedRecording.h3.test.tsx` (3, failing storage mock) |
+| 10 | Prune right after a purge removed a picture still queued offline on another device. | `annotation_image.released_at`: a picture whose last annotation went away is first released and kept for the grace period (`UNREFERENCED_GRACE_MS`) from the release; a copy that arrives meanwhile references it again. | `srv:annotations/h3-hardening.test.ts` (2); `notebook.test.ts` purge test now expects «released», then removed after the grace period |
+
+Limits (honest): re-anchoring is an online, audited server call (offline the list stays, the decision waits); the
+reader offers pages and their paragraphs (the Study Book paragraph target is API-only); the undo log is per device (two
+tabs: the last writer's log wins); the direct recording upload needs a connection (otherwise the device retries); an
+occlusion picture needs a connection and, for PDFs, poppler on the server; the card's picture is the source page area
+around the selected writing, not the writing itself.

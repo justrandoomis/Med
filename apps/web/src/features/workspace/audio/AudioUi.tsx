@@ -1,14 +1,16 @@
 // In-app recording UI (track F4, §29): the indicator + stop control shown the whole time a recording runs, the
 // player that plays a stroke's moment, and the dialog that edits a stroke's time link (→ «يدوي»).
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { Download, Mic, Pause, Play, RotateCcw, Square, Trash2, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Download, Mic, Pause, Play, RotateCcw, Square, X } from 'lucide-react';
 import type { InkAudioLink } from '@medlevo/shared';
 import { AUDIO_LINK_ORIGIN_LABELS_AR } from '@medlevo/shared';
-import { Button, ConfirmDialog, Dialog, IconButton, TextField } from '../../../design';
+import { Button, Dialog, IconButton, TextField } from '../../../design';
 import { errorMessage } from '../../../lib/api';
 import { getDb } from '../../../lib/localdb';
 import { formatOffset, parseOffset } from '../ink/audioLink';
-import { RecorderController, type RecorderState } from './recorder';
+import { RECORDER_SAVED_ON_SERVER_AR, RecorderController, type RecorderState } from './recorder';
+import { UnsavedRecordingControls, useRecorderState } from './unsavedControls';
+import { registerRecordingBar, setSharedRecorder } from './sharedRecorder';
 import {
   deviceRecordingsNeedingAttention,
   downloadRecording,
@@ -21,6 +23,7 @@ import {
   saveFinishedRecording,
   saveRecordingChunk,
   startRecordingUploader,
+  uploadRecordingDirect,
   type RecordingBlobRecord,
 } from './recordings';
 import '../handwriting/handwriting.css';
@@ -38,7 +41,10 @@ export function getRecorder(): RecorderController {
         void kickRecordingUploads(db);
       },
       holdLock: (id) => holdRecordingLock(id),
+      // (H3 item 9) the device could not store it: the owner's server is the other safe place
+      uploadDirect: (r) => uploadRecordingDirect(r),
     });
+    setSharedRecorder(shared);
     startRecordingUploader(db, () => {
       const s = shared?.getState();
       return s && (s.kind === 'recording' || s.kind === 'saving') ? s.recordingId : null;
@@ -50,11 +56,10 @@ export function getRecorder(): RecorderController {
 /** test hook */
 export function __setRecorderForTests(r: RecorderController | null): void {
   shared = r;
+  setSharedRecorder(r);
 }
 
-export function useRecorderState(rec: RecorderController): RecorderState {
-  return useSyncExternalStore(rec.subscribe, rec.getState, rec.getState);
-}
+export { useRecorderState, UnsavedRecordingControls } from './unsavedControls';
 
 /** Ticks every second while recording (the time shown on the indicator). */
 function useElapsed(rec: RecorderController, state: RecorderState): number {
@@ -75,12 +80,13 @@ export function RecordingBar({ recorder }: { recorder: RecorderController }) {
   const state = useRecorderState(recorder);
   const elapsed = useElapsed(recorder, state);
   const [announce, setAnnounce] = useState('');
-  const [confirmDiscard, setConfirmDiscard] = useState(false);
   const prev = useRef(state.kind);
+  // (H3 item 9) while this bar is on screen the app-wide notice stays hidden; it takes over when the reader closes
+  useEffect(() => registerRecordingBar(), []);
   useEffect(() => {
     if (prev.current !== state.kind) {
       if (state.kind === 'recording') setAnnounce('بدأ التسجيل. زر «إيقاف التسجيل» في أسفل الشاشة.');
-      if (state.kind === 'saved') setAnnounce('توقف التسجيل وحُفظ على هذا الجهاز.');
+      if (state.kind === 'saved') setAnnounce(state.where === 'server' ? RECORDER_SAVED_ON_SERVER_AR : 'توقف التسجيل وحُفظ على هذا الجهاز.');
       if (state.kind === 'error') setAnnounce(state.message);
       prev.current = state.kind;
     }
@@ -131,47 +137,22 @@ export function RecordingBar({ recorder }: { recorder: RecorderController }) {
           <>
             <Mic size={16} aria-hidden="true" />
             <span className="hw-recbar__msg">
-              حُفظ التسجيل (<bdi dir="ltr">{formatOffset(state.durationMs)}</bdi>) على هذا الجهاز، ويُرفع «ملاحظةً صوتية» عند الاتصال.
+              {state.where === 'server' ? (
+                <>
+                  التسجيل (<bdi dir="ltr">{formatOffset(state.durationMs)}</bdi>): {RECORDER_SAVED_ON_SERVER_AR}
+                </>
+              ) : (
+                <>
+                  حُفظ التسجيل (<bdi dir="ltr">{formatOffset(state.durationMs)}</bdi>) على هذا الجهاز، ويُرفع «ملاحظةً صوتية» عند الاتصال.
+                </>
+              )}
             </span>
             <IconButton label="إغلاق" icon={<X size={18} />} onClick={() => recorder.dismiss()} />
           </>
         )}
         {state.kind === 'error' && state.code === 'save_failed' && recorder.unsaved() && (
           // the recording exists only in this page's memory: it is never dropped by closing a message
-          <>
-            <span role="alert" className="hw-recbar__msg">
-              {state.message}
-            </span>
-            <Button size="sm" variant="primary" icon={<RotateCcw size={16} />} onClick={() => void recorder.retrySave()}>
-              أعد محاولة الحفظ
-            </Button>
-            <Button
-              size="sm"
-              variant="secondary"
-              icon={<Download size={16} />}
-              onClick={() => {
-                const r = recorder.unsaved();
-                if (r) downloadRecording(r.blob, recordingFileName(r.recordingId, r.mime));
-              }}
-            >
-              نزّل نسخة
-            </Button>
-            <Button size="sm" variant="plain" icon={<Trash2 size={16} />} onClick={() => setConfirmDiscard(true)}>
-              تخلَّ عنه
-            </Button>
-            <ConfirmDialog
-              open={confirmDiscard}
-              title="التخلي عن التسجيل"
-              impact="لم يُحفظ هذا التسجيل على الجهاز ولا على الخادم: سيُفقد نهائيًا إن لم تنزّل نسخة منه أولًا."
-              confirmLabel="تخلَّ عن التسجيل"
-              destructive
-              onConfirm={() => {
-                recorder.discardUnsaved();
-                setConfirmDiscard(false);
-              }}
-              onCancel={() => setConfirmDiscard(false)}
-            />
-          </>
+          <UnsavedRecordingControls recorder={recorder} message={state.message} />
         )}
         {state.kind === 'error' && !(state.code === 'save_failed' && recorder.unsaved()) && (
           <>

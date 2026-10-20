@@ -308,7 +308,8 @@ export function collectSignals(ctx: AppContext, resets: SignalResets = signalRes
   //    signal of its own type. Met → a correct answer weighted like a hesitant one (a checklist estimate is never a
   //    confident independent recall); missed → a mistake. Grouped by the case itself and by the sources its evidence
   //    cites — never by a similar name.
-  for (const c of caseSignals(ctx).signals) {
+  // Round 7 H4: attempts finished before the «case_attempts» reset are history, not signals
+  for (const c of caseSignals(ctx, { since: resets.case_attempts ?? 0 }).signals) {
     const caseRow = db.get<{ title: string }>('SELECT title FROM clinical_case WHERE id = ?', [c.case_id]);
     const caseTitle = caseRow?.title ?? 'حالة';
     const keys = [group(`case:${c.case_id}`, { kind: 'case', label: `${CASE_TYPE_AR[c.type]}: ${caseTitle}`, concept_id: null, topic_id: null })];

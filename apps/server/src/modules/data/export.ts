@@ -689,6 +689,13 @@ const FULL_TABLES: Array<{ table: string; type: string; where?: string; rev?: st
       'id, purpose, status, annotation_ids_json, strokes_json, anchor_json, bbox_json, source_id, version_id, page_id, note_page_id, question_id, lang_requested, lang, text, lines_json, uncertain_count, corrected_text, corrected_at, engine, created_at, updated_at, deleted_at',
   },
   { table: 'audio_recording', type: 'audio_recording' },
+  // Round 7 H4: the pictures the owner placed on pages (image_key → stored file; the manifest links each key to its
+  // file by id and sha256) and the figure readings — the model's derived reading AND the owner's reviewed structure,
+  // each with its status (an uncertain reading stays labelled uncertain)
+  { table: 'annotation_image', type: 'annotation_image' },
+  { table: 'figure_reading', type: 'figure_reading' },
+  // Round 7 H4 (§32): the owner's registry of allowed external visual sources
+  { table: 'visual_source', type: 'visual_source' },
 ];
 
 /** Everything the owner created or studied, as JSON (files referenced by sha256; never secrets). */
@@ -706,15 +713,23 @@ export function exportAll(ctx: AppContext): ExportFile {
     if (t.table === 'owner_setting') rows = rows.filter((r) => !SECRET_SETTING_KEY.test(String(r.key)) && !SECRET_VALUE.test(String(r.value_json ?? '')));
     data[t.table] = rows;
     for (const r of rows) {
-      const id = String(r.id ?? r.key ?? `${r.tag_id ?? ''}:${r.entity_type ?? ''}:${r.entity_id ?? ''}`);
+      const id = String(r.id ?? r.key ?? r.image_key ?? `${r.tag_id ?? ''}:${r.entity_type ?? ''}:${r.entity_id ?? ''}`);
       entities.push({ type: t.type, id, version: t.rev ? ((r[t.rev] as number | null) ?? null) : null, sha256: sha(r) });
     }
   }
   const files = ctx.db.all<{ id: string; sha256: string; size: number; mime: string }>('SELECT id, sha256, size, mime FROM stored_file ORDER BY id').map((f) => ({ file_id: f.id, sha256: f.sha256, size: f.size, mime: f.mime, role: 'stored_file' }));
+  const shaOf = new Map(files.map((f) => [f.file_id, f.sha256]));
+  const links: NonNullable<ExportManifest['links']> = [];
+  for (const r of (data.annotation_image ?? []) as Array<{ image_key: string; file_id: string }>) {
+    const s = shaOf.get(r.file_id);
+    if (s) links.push({ entity_type: 'annotation_image', entity_id: r.image_key, file_id: r.file_id, sha256: s, role: 'image' });
+  }
   const manifest = manifestOf(ctx, 'all', entities, files, [
     'تصدير كامل لبياناتك المنظمة (ليس نسخة احتياطية): الملفات نفسها غير مضمّنة بل مُعرّفة ببصمة sha256. للاستعادة الكاملة استخدم النسخ الاحتياطي.',
     'لا يتضمن أي سر: لا كلمة مرور ولا رموز استرداد ولا جلسات ولا مفاتيح API.',
     'المحتوى المولَّد (artifact / content_block / claim) مُعلَّم بنوعه ونموذجه وحالة التحقق من كل ادعاء.',
+    'الصور التي وضعتها على الصفحات (annotation_image) مربوطة بملفاتها في links (المفتاح ← الملف وبصمته). قراءات الأشكال (figure_reading) تُصدَّر بحالتها: القراءة الآلية مشتقة وغير مؤكدة، ومراجعتك محفوظة في reviewed_structure_json.',
   ]);
+  manifest.links = links;
   return fileFor('تصدير كامل', 'MedLevo', 'json', JSON.stringify({ manifest, data }, null, 2));
 }

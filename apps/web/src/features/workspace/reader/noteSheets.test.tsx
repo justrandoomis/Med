@@ -7,6 +7,7 @@ import type { SourcePageView } from '@medlevo/shared';
 import type { WorkspaceNotePageRow } from '../data/local';
 import { buildSequence } from '../model/sequence';
 import { BookCanvas, boxesFor } from './BookCanvas';
+import { readingLineY } from './geometry';
 import { ReaderPageContext, type NotePageActions, type ReaderPageContextValue } from './readerContext';
 import { ExternalLinkDialog } from '../notes/NotePageDialogs';
 
@@ -51,6 +52,9 @@ const note = (o: Partial<WorkspaceNotePageRow>): WorkspaceNotePageRow =>
     syncState: 'synced',
     ...o,
   }) as WorkspaceNotePageRow;
+
+/** height of the laid-out content (what the scroller's scrollHeight is in a browser; jsdom lays nothing out) */
+const contentHeight = (container: HTMLElement) => parseFloat(container.querySelector<HTMLElement>('#book > div')!.style.height);
 
 const sizeProps = ['clientWidth', 'clientHeight'] as const;
 const saved = sizeProps.map((p) => [p, Object.getOwnPropertyDescriptor(HTMLElement.prototype, p)] as const);
@@ -185,10 +189,11 @@ describe('note pages in the Book Canvas', () => {
         />
       </ReaderPageContext.Provider>
     );
-    // the page under the reading line (a quarter down the viewport, ANCHOR_LINE)
+    // the page under the reading line as the reader computes it (a quarter down the viewport, sliding down over the
+    // last stretch of the book — readingLineY; H3 item 6 restores a place under that same line)
     const pageAtLine = (container: HTMLElement) => {
       const scroller = container.querySelector<HTMLElement>('#book')!;
-      const line = scroller.scrollTop + 800 * 0.25;
+      const line = readingLineY(scroller.scrollTop, 800, contentHeight(container));
       const els = Array.from(container.querySelectorAll<HTMLElement>('[data-seq]')).sort((a, b) => parseFloat(a.style.top) - parseFloat(b.style.top));
       let hit: HTMLElement | undefined;
       for (const e of els) if (parseFloat(e.style.top) <= line) hit = e;
@@ -221,14 +226,14 @@ describe('note pages in the Book Canvas', () => {
     );
     const scroller = r.container.querySelector<HTMLElement>('#book')!;
     const topOf = (sel: string) => parseFloat(r.container.querySelector<HTMLElement>(sel)!.style.top);
-    expect(scroller.scrollTop + 200).toBeGreaterThanOrEqual(topOf('[data-note-page-id="N9"]'));
+    expect(readingLineY(scroller.scrollTop, 800, contentHeight(r.container))).toBeGreaterThanOrEqual(topOf('[data-note-page-id="N9"]'));
     r.rerender(
       <ReaderPageContext.Provider value={ctx}>
         <BookCanvas {...props} sheets={buildSequence(pages, [])} pageIndex={2} />
       </ReaderPageContext.Provider>,
     );
-    // the third page (the one that followed the trashed note page) is under the reading line
-    const line = scroller.scrollTop + 200;
+    // the third page (the one that followed the trashed note page) is under the reading line (readingLineY, as the reader)
+    const line = readingLineY(scroller.scrollTop, 800, contentHeight(r.container));
     expect(line).toBeGreaterThanOrEqual(topOf('[data-page-index="2"]'));
     expect(line).toBeLessThan(topOf('[data-page-index="3"]'));
   });

@@ -358,3 +358,12 @@ Sec-Fetch-Site / setup token), DOCX isolates and citations (mirrors the Markdown
 other modules (regex classes reordered or unescaped with the same meaning, unused code removed, hook dependencies read
 through refs — their unit tests pass).
 
+
+## Round 7 H4 — «المصادر البصرية المسموح بها» (§32, 2026-10-20)
+
+A new Control Center section (`/control/visual-sources`, `VisualSourcesScreen.tsx`, index icon «Images») for the
+registry of allowed external visual sources. The data and API belong to the media module (`/api/media/visual-sources`,
+`docs/modules/cases-media.md` → «Round 7 H4»); this screen only shows and edits them: the fetch status in plain words
+(«معطّل على الخادم» / «لا يوجد مزود صور» + the server's reason — never implying a search runs), the list (name, kind,
+domain + atlas path LTR-isolated, the owner's licence note, «يُقبل منه» switch, edit, delete after a stated impact), and
+an add / edit form whose server field errors appear on their fields. Test: `web:features/control/visual-sources.h4.test.tsx`.

@@ -235,7 +235,7 @@ passed.
 ## 5. Not done / limits
 
 - **Voice mode, automatic transcription, automatic segment-to-page linking and external image search are not
-  built.** (In-app recording: track F4 below.) Each is reported with its reason. No automatic linker exists, so the auto-link label and
+  built** (the registry of allowed external visual sources IS built since Round 7 H4 — below; nothing is fetched). (In-app recording: track F4 below.) Each is reported with its reason. No automatic linker exists, so the auto-link label and
   its controls are only exercised with a test fixture.
 - **Weakness Center integration**: case signals are published at `GET /api/cases/signals` in the `WeaknessSignal`
   shape (with `case_id`, `item_id`, `source_ids`, `owner_judged`). Since track F2 the learning Weakness Center reads
@@ -437,3 +437,57 @@ Confirmed and fixed (regression tests fail on the code before the fix):
 - Tests: `srv:media/quiz-jpeg.test.ts` (4: a real JPEG masked on the server with the label area covered in the served
   bytes and the original unchanged; EXIF 6 — the mask follows the displayed picture; cache hit / new copy on a changed
   mask; an undecodable JPEG stays `client`, never «masked» by pretence). Existing quiz tests unchanged and passing.
+- **H2 review**: the «24 MP» JPEG budget did not hold — the decoder's memory cap (8 bytes per budget pixel) refused a
+  12 MP 4:4:4 JPEG (and a 4:2:0 photo above ≈ 17 MP), so such a quiz fell back to browser-drawn masks (said in the
+  payload, but not the server-masked copy H2 promised). The working memory is now read from the JPEG header and checked
+  against 15 bytes per budget pixel (`processing.md` «Round 7 — H2 independent review»; `srv:processing/image.test.ts`).
+  Not fixed: decoding / re-encoding runs on the request thread (≈ 3 s + 2.5 s for a 12 MP photo here), so creating a
+  quiz on a large JPEG and serving its first masked copy block the server for a few seconds; later requests hit the cache.
+
+## Round 7 H4 — registry of allowed external visual sources (§32, 2026-10-20)
+
+«أنشئ سجلًا للمصادر البصرية التي أسمح بها»: an owner-managed list, owned by the media module.
+
+* Data: `visual_source` (migration `0670_visual_source_registry.sql`, media range): name, `domain` (lowercase host;
+  sub-domains included), optional `path_prefix` (one atlas / collection on that domain), `kind` (atlas / open repository /
+  journal / institution / other), the owner's `licence_note` (MedLevo does not verify licences), `enabled`, note. Unique
+  per domain + path. Owner data: in the full JSON export and the backup; every create / edit / enable / disable / delete
+  is in the change log.
+* API (`/api/media`, owner session + CSRF): `GET /visual-sources` (items + `fetch` state + notes), `POST`, `PATCH /:id`,
+  `DELETE /:id`. The domain is normalized from a host or a URL (`https://www.Atlas.org/cases/` → `atlas.org` + `/cases/`);
+  IP addresses, `localhost`, single-label and local suffixes (`.local`, `.internal`, …), ports and credentials are
+  refused with an Arabic reason; a duplicate is 409.
+* `validateImageCandidate` gains the check **`allowed_source`** for EXTERNAL candidates: the candidate's original URL
+  (`ImageCandidate.source_url`, `image_asset.original_url`) must belong to an ENABLED entry (http/https, host = domain or a
+  sub-domain — never a look-alike such as `domain.evil.com` —, path under the atlas prefix). No URL, an empty registry,
+  an unlisted or disabled site → excluded with the reason. The owner's own source images need no entry.
+  `POST /images/match` passes the enabled entries.
+* Fetching stays disabled: `assertExternalFetchAllowed(ctx, url)` is the gate any future fetch must pass — the server
+  switch `MEDLEVO_ALLOW_EXTERNAL_FETCH` AND an enabled entry (then the SSRF guard). No image provider exists, so nothing
+  calls it to fetch; the list's `fetch.state` is `disabled` (switch off) or `not_implemented` (switch on, no provider), and
+  `external.images` stays `not_implemented` with a reason that names the registry.
+* Web: Control Center → «المصادر البصرية المسموح بها» (`features/control/VisualSourcesScreen.tsx`): the fetch status in
+  plain words, the list (place LTR-isolated, kind, licence note, enable switch, edit, delete after a stated impact), an
+  add / edit form with the server's field errors.
+* Tests: `srv:media/visual-sources.h4.test.ts` (pure check + URL matching incl. look-alike hosts and atlas paths,
+  normalization refusals, API + CSRF + 401, `/images/match` accept → disable → exclude → narrow path → exclude, the fetch
+  gate with the switch off and on, export + change log), `web:features/control/visual-sources.h4.test.tsx`,
+  `e2e:h4-exports-sources.spec.ts` (Control Center screen on phone + desktop: add from a URL, disable, delete).
+* Limits: an entry is a host + path prefix, not a per-image licence; the licence note is the owner's text, unchecked.
+
+## Round 7 — H3: a recording that could not be saved on the device is never only in memory (§29, 2026-10-20)
+* Before: when IndexedDB refused the finished recording (quota, private mode) and the owner then left the reader, the
+  recording stayed only in the recorder's memory with no visible way back.
+* Now (`apps/web/src/features/workspace/audio/`): `recorder.ts` serialises saves and, after a failed device save,
+  (1) uploads it straight to the server when online (`uploadDirect` → `recordings.ts uploadRecordingDirect`, the same
+  idempotent upload as the device queue; the bar then says «حُفظ التسجيل على الخادم») or (2) keeps `save_failed` and
+  retries by itself with backoff (`AUTO_RETRY_DELAYS_MS` 5 s, 30 s, 2 min, 10 min; the bar says so). The recorder is
+  shared by the app (`sharedRecorder.ts`), so leaving the reader does not drop it, and `UnsavedRecordingNotice.tsx`
+  (mounted in `RootLayout`) shows «تسجيل لم يُحفظ» on any screen while no recording bar is mounted — with «أعد محاولة
+  الحفظ», «نزّل نسخة» and a confirmed «تخلَّ عنه» — and asks before the tab closes (`beforeunload`).
+* Test: `web:src/features/workspace/audio/unsavedRecording.h3.test.tsx` (3, with a storage mock that fails: online it is
+  uploaded straight to the server and the owner is told where it is; offline the device save is retried on a backoff
+  until storage works again; after leaving the reader an app-wide notice shows it (retry / download / give up) and
+  guards closing the page).
+* Limit: without a connection and with a device that keeps refusing the write, the recording can only be downloaded
+  as a file (the notice says so); it survives a reload only if one of the retries succeeded.

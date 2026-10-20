@@ -19,6 +19,7 @@ import type { AppContext } from '../../context';
 import { toJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
 import { newId } from '../../lib/ids';
+import type { AiTextEvent } from '../ai';
 import type { ProviderImage, UntrustedBlock } from '../ai/types';
 import {
   abstainFor,
@@ -188,6 +189,8 @@ export interface ModelCallSpec {
   signal?: AbortSignal;
   jobId?: string;
   terms?: Array<{ term_en: string; preferred_ar: string | null; abbreviation: string | null }>;
+  /** (Round 7 H4, §30) the model's raw text as it streams — an unverified draft for a streaming endpoint */
+  onText?: (e: AiTextEvent) => void;
 }
 
 /** One model call with the GeneratedContent contract. */
@@ -216,6 +219,7 @@ export async function callModel(ctx: AppContext, scope: ScopeReport, rules: Expl
     rulesVersion: rules.rules_version,
     signal: m.signal,
     timeoutMs: m.timeoutMs ?? 240_000,
+    ...(m.onText ? { onText: m.onText } : {}),
   });
   return { content: res.output, model: res.model };
 }

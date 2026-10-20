@@ -407,9 +407,11 @@ export interface ImageCandidate {
   age_group?: string | null;
   image_kind?: string | null;
   origin?: 'source' | 'external' | 'generated' | 'reorganized' | null;
+  /** (Round 7 H4) where an EXTERNAL candidate came from (its page / original URL) — checked against the registry */
+  source_url?: string | null;
 }
 
-export type ImageCheckName = 'modality' | 'anatomic_region' | 'caption_match' | 'age_group' | 'origin';
+export type ImageCheckName = 'modality' | 'anatomic_region' | 'caption_match' | 'age_group' | 'origin' | 'allowed_source';
 export interface ImageCheck {
   check: ImageCheckName;
   passed: boolean;
@@ -430,3 +432,67 @@ export interface ImageMatchResponse {
   external: MediaCapability;
   note_ar: string;
 }
+
+// ───────── (Round 7 H4, §32) registry of the external visual sources the owner allows ─────────
+// «أنشئ سجلًا للمصادر البصرية التي أسمح بها»: an owner-managed list (name, domain + optional atlas path, licence
+// note, enabled). An EXTERNAL image candidate is accepted only when its original URL belongs to an ENABLED entry
+// (validateImageCandidate check `allowed_source`); any future fetch must pass the same registry AND the server switch
+// MEDLEVO_ALLOW_EXTERNAL_FETCH — fetching stays disabled unless both are configured (no image provider exists yet).
+export const VISUAL_SOURCE_KINDS = ['atlas', 'open_repository', 'journal', 'institution', 'other'] as const;
+export type VisualSourceKind = (typeof VISUAL_SOURCE_KINDS)[number];
+export const VISUAL_SOURCE_KIND_LABELS_AR: Record<VisualSourceKind, string> = {
+  atlas: 'أطلس صور',
+  open_repository: 'مستودع مفتوح',
+  journal: 'مجلة علمية',
+  institution: 'جهة تعليمية أو صحية',
+  other: 'غير ذلك',
+};
+
+export interface VisualSourceView {
+  id: string;
+  name: string;
+  /** host name, lowercase, no scheme / port / path (sub-domains of it are included) */
+  domain: string;
+  /** optional path prefix that narrows the entry to one atlas / collection on that domain, e.g. «/cases/» */
+  path_prefix: string | null;
+  kind: VisualSourceKind;
+  kind_label_ar: string;
+  /** the owner's note on the licence / terms of use (MedLevo does not verify licences) */
+  licence_note: string | null;
+  enabled: boolean;
+  note: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface VisualSourceListResponse {
+  items: VisualSourceView[];
+  /** whether anything would actually be fetched: the server switch + a provider (none in this version) */
+  fetch: { server_allows: boolean; provider_available: boolean; state: 'disabled' | 'not_implemented'; reason_ar: string };
+  notes_ar: string[];
+}
+
+const visualSourceFields = {
+  name: z.string().trim().min(1, 'اكتب اسم المصدر.').max(120),
+  /** a host name or a URL; the server keeps only the host (and the path, when path_prefix is not given) */
+  domain: z.string().trim().min(3, 'اكتب نطاق المصدر مثل example.org.').max(300),
+  path_prefix: z.string().trim().max(200).nullable().optional(),
+  kind: z.enum(VISUAL_SOURCE_KINDS).default('atlas'),
+  licence_note: z.string().trim().max(1000).nullable().optional(),
+  enabled: z.boolean().default(true),
+  note: z.string().trim().max(1000).nullable().optional(),
+};
+export const visualSourceCreateSchema = z.object(visualSourceFields).strict();
+export type VisualSourceCreateRequest = z.input<typeof visualSourceCreateSchema>;
+export const visualSourcePatchSchema = z
+  .object({
+    name: visualSourceFields.name.optional(),
+    domain: visualSourceFields.domain.optional(),
+    path_prefix: visualSourceFields.path_prefix,
+    kind: z.enum(VISUAL_SOURCE_KINDS).optional(),
+    licence_note: visualSourceFields.licence_note,
+    enabled: z.boolean().optional(),
+    note: visualSourceFields.note,
+  })
+  .strict();
+export type VisualSourcePatchRequest = z.input<typeof visualSourcePatchSchema>;

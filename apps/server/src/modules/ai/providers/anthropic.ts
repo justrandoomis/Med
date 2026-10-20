@@ -7,6 +7,8 @@
 //    schema (unsupported constraints are moved into descriptions; the orchestrator re-validates with zod)
 //  * streaming + finalMessage() (long Study Book sections must not hit HTTP timeouts), bounded SDK retries
 //    (429 / 5xx / connection), per-call timeout and abort via the orchestrator's signal
+//  * (Round 7 H4, §30) the visible text deltas of that stream are forwarded to `req.onTextDelta` as they arrive
+//    (stream.on('text')) — an UNVERIFIED draft for the caller to label; only finalMessage() is ever validated
 //  * vision: PNG/JPEG crops from the file store as base64 image blocks (task 'vision_figure')
 //  * refusal (stop_reason "refusal") / truncation ("max_tokens") are ProviderErrors: partial output is NEVER
 //    returned. Server-side refusal fallback (`fallbacks: "default"`) is enabled where the model supports it;
@@ -190,6 +192,7 @@ const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp
 
 export class AnthropicProvider implements AiProvider {
   readonly name = 'anthropic';
+  readonly streamsText = true;
   readonly #client: Anthropic;
   readonly #models: Record<ModelRole, string>;
   readonly #maxRetries: number;
@@ -288,6 +291,16 @@ export class AnthropicProvider implements AiProvider {
     let requestRef: string | null = null;
     try {
       const stream = this.#client.beta.messages.stream(params, { signal: req.signal, timeout: this.#timeoutMs, maxRetries: this.#maxRetries });
+      const onDelta = req.onTextDelta;
+      if (onDelta) {
+        stream.on('text', (delta) => {
+          try {
+            onDelta(delta);
+          } catch {
+            // a draft listener never breaks the call (e.g. the owner's connection went away)
+          }
+        });
+      }
       message = await stream.finalMessage();
       requestRef = stream.request_id ?? null;
     } catch (e) {

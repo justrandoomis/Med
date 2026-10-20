@@ -1,8 +1,9 @@
 // Undo / redo per document (spec §26). A command is a list of item state changes (before → after;
 // null = absent/tombstoned), so create, delete, move, recolor, resize, split (point eraser) and
-// shape enhancement all undo the same way. History lives in memory for the lifetime of the open
-// app: it survives switching tabs/panels while the app is open, but NOT a reload — after a reload
-// the strokes are all still there (IndexedDB) and the history starts fresh. The toolbar says so.
+// shape enhancement all undo the same way. The stacks live in memory while the document is open and
+// (Round 7 — H3 item 1) are also kept as a size-capped command log in IndexedDB (historyLog.ts), so the
+// history survives a reload or closing the app. Applying a step is the store's job (store.ts): it
+// checks first that the step's items are still as the step left them.
 import type { InkItem } from './model';
 
 export interface ItemChange {
@@ -103,6 +104,37 @@ export class InkHistory {
   clear(): void {
     this.undoStack = [];
     this.redoStack = [];
+    this.emit();
+  }
+
+  /** The step `undo()` / `redo()` would apply next (not removed). */
+  peekUndo(): Command | null {
+    return this.undoStack[this.undoStack.length - 1] ?? null;
+  }
+  peekRedo(): Command | null {
+    return this.redoStack[this.redoStack.length - 1] ?? null;
+  }
+
+  /** (H3) Removes the next undo / redo step WITHOUT applying it (the owner chose to skip it). */
+  drop(dir: 'undo' | 'redo'): void {
+    const stack = dir === 'undo' ? this.undoStack : this.redoStack;
+    if (stack.pop()) this.emit();
+  }
+
+  /** (H3) Both stacks, oldest first (for the command log). */
+  snapshot(): { undo: Command[]; redo: Command[] } {
+    return { undo: this.undoStack.slice(), redo: this.redoStack.slice() };
+  }
+
+  /**
+   * (H3) The command log restored after a reload. Steps made in this session before the log arrived stay on top of
+   * the restored ones; a new step clears redo, so the restored redo steps are kept only if none was made.
+   */
+  restore(undo: readonly Command[], redo: readonly Command[]): void {
+    if (undo.length === 0 && redo.length === 0) return;
+    const fresh = this.undoStack.length === 0 && this.redoStack.length === 0;
+    this.undoStack = [...undo, ...this.undoStack].slice(-this.limit);
+    if (fresh) this.redoStack = redo.slice(-this.limit);
     this.emit();
   }
 }

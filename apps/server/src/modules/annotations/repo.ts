@@ -35,6 +35,8 @@ export interface AnnotationRow {
   updated_at: number;
   deleted_at: number | null;
   conflict_of_id: string | null;
+  /** migration 0290 (H3): kept detached by the owner */
+  detached_at?: number | null;
 }
 
 export interface NoteRow {
@@ -54,6 +56,9 @@ export interface NoteRow {
   deleted_at: number | null;
   source_id: string | null;
   anchor_target_key: string | null;
+  /** migration 0290 (H3): the anchor before the owner re-anchored it; kept detached by the owner */
+  previous_anchor_json?: string | null;
+  detached_at?: number | null;
 }
 
 export interface NotePageRow {
@@ -113,6 +118,7 @@ export function toAnnotationDTO(r: AnnotationRow): AnnotationDTO {
     created_at: r.created_at,
     updated_at: r.updated_at,
     deleted_at: r.deleted_at,
+    detached_at: r.detached_at ?? null,
   };
 }
 
@@ -131,6 +137,8 @@ export function toNoteDTO(r: NoteRow): NoteDTO {
     created_at: r.created_at,
     updated_at: r.updated_at,
     deleted_at: r.deleted_at,
+    previous_anchor: r.previous_anchor_json ? j<AnnotationAnchor>(r.previous_anchor_json) : null,
+    detached_at: r.detached_at ?? null,
   };
 }
 

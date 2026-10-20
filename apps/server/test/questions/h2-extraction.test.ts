@@ -68,6 +68,19 @@ describe('b. a trailing unlabelled key block after the last section', () => {
     const two = bindings(['Part 1', ...QA, 'Answers', '1. B 2. C', 'Part 2', ...QB, 'Answers', '1. B 2. B 3. A', 'Key', '1. C 2. B 3. A']);
     expect(two.keys.slice(2).every((k) => k.binding === 'ambiguous_section')).toBe(true);
   });
+
+  it('(H2 review) never when an earlier part still lacks keys for numbers the trailing block lists', () => {
+    // Part 1 has three questions; only its question 1 is keyed (inline, or in a short block between the parts). The
+    // trailing «1. B 2. B 3. A» may be the key of Part 1's questions 2–3 as much as of Part 2: it was bound to Part 2
+    const QA3 = [...QA, '3. Which gland makes thyroxine?', 'A. Thyroid', 'B. Adrenal', 'C. Pituitary'];
+    const inline = bindings(['Part 1', ...QA3.slice(0, 4), 'Answer: B', ...QA3.slice(4), 'Part 2', ...QB, 'Answers', '1. B 2. B 3. A']);
+    expect(inline.keys.filter((k) => !k.n || k.sectionKey !== '1').map((k) => `${k.n}:${k.binding}`)).toEqual(['1:ambiguous_section', '2:ambiguous_section', '3:ambiguous_section']);
+    const between = bindings(['Part 1', ...QA3, 'Answers', '1. B', 'Part 2', ...QB, 'Answers', '1. B 2. B 3. A']);
+    expect(between.keys.map((k) => `${k.sectionKey}${k.n}:${k.binding}`)).toEqual(['11:bound', 'null1:ambiguous_section', 'null2:ambiguous_section', 'null3:ambiguous_section']);
+    // Part 1 fully keyed: the trailing block is Part 2's (unchanged)
+    const full = bindings(['Part 1', ...QA3, 'Answers', '1. B 2. C 3. A', 'Part 2', ...QB, 'Answers', '1. B 2. B 3. A']);
+    expect(full.keys.slice(3).map((k) => `${k.sectionKey}${k.n}:${k.binding}`)).toEqual(['21:bound', '22:bound', '23:bound']);
+  });
 });
 
 describe('c. «38.4 ° C» in the structured text only', () => {
@@ -112,6 +125,18 @@ describe('e. a circle read together with the option label by OCR', () => {
     expect(r.questions[0]!.options.map((o) => o.label)).toEqual(['A', 'B', 'C']);
     const digital = parseQuestions(['4. Which test?', 'A. Plain film', '(8 Ditrasound', 'C. CT'].map((t) => line(t)));
     expect(digital.questions[0]!.options.map((o) => o.label)).toEqual(['A', 'C']);
+  });
+
+  it('(H2 review) a wrapped option line that starts «(8 …» is not a circled «B» when the real «B.» follows', () => {
+    // «A. Metronidazole 500 mg IV» wraps to «(8 hourly) for 5 days»: it was read as a circled option B (a phantom option
+    // and a phantom «circled» mark), then the real «B.» came as a second B
+    const ocr = { textOrigin: 'ocr', confidence: 0.85 } as const;
+    const r = parseQuestions(['1. Which regimen treats the abscess?', 'A. Metronidazole 500 mg IV', '(8 hourly) for 5 days', 'B. Amoxicillin orally', 'C. Ceftriaxone IV'].map((t) => line(t, ocr)));
+    expect(r.questions[0]!.options.map((o) => [o.label, o.text, o.mark])).toEqual([
+      ['A', 'Metronidazole 500 mg IV (8 hourly) for 5 days', null],
+      ['B', 'Amoxicillin orally', null],
+      ['C', 'Ceftriaxone IV', null],
+    ]);
   });
 
   it('a printed circled «©» read by OCR for a circled C is that option, marked', () => {

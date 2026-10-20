@@ -8,7 +8,9 @@
 //    in the question's own text, or (generated) when its evidence regions mention the concept — the basis is kept.
 import { stemPreview, type RichText } from '@medlevo/shared';
 import type { AppContext } from '../../context';
+import { signalResets } from '../learning/profile';
 import { fromJson } from '../../db/db';
+import { occursAsWord } from './relations';
 import { nameNorm, resolveConceptId } from './resolve';
 import { inList, type StudySource } from './store';
 
@@ -30,10 +32,6 @@ export interface LectureConceptRef {
   id: string;
   names: string[];
   page_ids: string[];
-}
-
-function escapeRe(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 export function conceptNamesNorm(ctx: AppContext, conceptId: string): string[] {
@@ -58,9 +56,12 @@ export function lectureQuestions(ctx: AppContext, lecture: StudySource, concepts
   if (!lecture.version_id) return [];
   const pageIds = new Set(ctx.db.all<{ id: string }>('SELECT id FROM source_page WHERE version_id = ?', [lecture.version_id]).map((p) => p.id));
   const out = new Map<string, LectureQuestion>();
+  // Round 7 H4: «attempted» is a signal — attempts older than the owner's profile reset (MCQ / written parts) do not count
+  // (they stay in the attempt history)
+  const resets = signalResets(ctx.db);
   const attemptsOf = (qid: string) =>
-    (ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM question_attempt WHERE question_id = ?', [qid])?.n ?? 0) +
-    (ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM written_attempt WHERE question_id = ?', [qid])?.n ?? 0);
+    (ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM question_attempt WHERE question_id = ? AND answered_at >= ?', [qid, resets.mcq_attempts ?? 0])?.n ?? 0) +
+    (ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM written_attempt WHERE question_id = ? AND answered_at >= ?', [qid, resets.written_attempts ?? 0])?.n ?? 0);
 
   // 1) matcher / owner links
   const links = ctx.db.all<{ question_id: string; relation: string; reason_json: string | null; origin_type: string }>(
@@ -110,14 +111,13 @@ export function lectureQuestions(ctx: AppContext, lecture: StudySource, concepts
     out.set(q.id, q);
   }
 
-  // 3) concept names in the question's own text
-  const matchers = concepts
-    .filter((c) => c.names.length)
-    .map((c) => ({ id: c.id, re: new RegExp(`(?:^|[^\\p{L}\\p{N}])(?:${c.names.map(escapeRe).join('|')})(?:$|[^\\p{L}\\p{N}])`, 'u') }));
+  // 3) concept names in the question's own text — whole words (occursAsWord ≡ the Unicode word-boundary regex). Round 7
+  // H4: no regex is compiled per concept; ~4,800 distinct patterns cost ~1.4 s on the first map of a large course.
+  const matchers = concepts.filter((c) => c.names.length);
   for (const q of out.values()) {
     const t = questionText(ctx, q.id);
     q.stem = t.stem;
-    for (const m of matchers) if (!q.concepts.has(m.id) && m.re.test(t.norm)) q.concepts.set(m.id, 'text');
+    for (const m of matchers) if (!q.concepts.has(m.id) && m.names.some((n) => occursAsWord(t.norm, n))) q.concepts.set(m.id, 'text');
   }
   // only concepts of this lecture count here
   const inLecture = new Set(concepts.map((c) => c.id));

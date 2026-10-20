@@ -15,8 +15,30 @@ export interface FakeAiOptions {
   pricePerMOutput?: number;
 }
 
+/**
+ * (Round 7 H4) Streams `text` to `req.onTextDelta` in small chunks (one event-loop turn apart, like a real stream),
+ * stops with an AbortError when the request's signal aborts, and can hold mid-stream (`pause`) so a test can cancel
+ * while the draft is on screen.
+ */
+export async function streamFake(req: ProviderRequest, text: string, opts: { chunk?: number; pause?: { afterChunks: number; until: Promise<void> } | null } = {}): Promise<void> {
+  if (!req.onTextDelta) return;
+  const size = Math.max(1, opts.chunk ?? 23);
+  let n = 0;
+  for (let i = 0; i < text.length; i += size) {
+    if (req.signal.aborted) throw req.signal.reason ?? new DOMException('aborted', 'AbortError');
+    req.onTextDelta(text.slice(i, i + size));
+    n++;
+    if (opts.pause && n === opts.pause.afterChunks) {
+      await Promise.race([opts.pause.until, new Promise<void>((resolve) => req.signal.addEventListener('abort', () => resolve(), { once: true }))]);
+    }
+    await new Promise<void>((r) => setImmediate(r));
+  }
+  if (req.signal.aborted) throw req.signal.reason ?? new DOMException('aborted', 'AbortError');
+}
+
 export class FakeAiProvider implements AiProvider {
   readonly name = 'fake';
+  readonly streamsText = true;
   readonly calls: ProviderRequest[] = [];
   private readonly steps: FakeStep[];
   private readonly supported: AiTask[] | 'all';
@@ -57,6 +79,7 @@ export class FakeAiProvider implements AiProvider {
     if (!step) throw new Error('FakeAiProvider: no scripted response left');
     if ('error' in step) throw step.error;
     const base = { model: this.model, usage: this.usage, requestRef: `fake-${this.calls.length}` };
+    await streamFake(req, 'json' in step ? JSON.stringify(step.json) : step.text);
     return 'json' in step ? { ...base, json: step.json } : { ...base, text: step.text };
   }
 }

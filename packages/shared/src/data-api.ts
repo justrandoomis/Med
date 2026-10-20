@@ -89,6 +89,13 @@ export interface OfflineManifestResponse {
   generated_at: number;
   /** sha256 over every entry (path/file + content hash): a different value later means the server content changed */
   content_hash: string;
+  /**
+   * Round 7 H4: the same, over the SOURCE content only (source detail, pages, regions, Study Book, questions, files) —
+   * «تغيّر المحتوى» compares this one, so the owner's own writing never reads as a content change.
+   */
+  source_hash?: string;
+  /** Round 7 H4: over the owner's writing / reading only (annotations, notes, session, reading progress, cards) */
+  owner_hash?: string;
   entries: OfflineEntry[];
   /** real byte counts (no estimates) */
   totals: { bytes: number; file_bytes: number; data_bytes: number; files: number; data: number; solution_bytes: number };
@@ -122,6 +129,9 @@ export interface OfflineBundleResponse {
   source_id: string;
   version_id: string;
   content_hash: string;
+  /** Round 7 H4 (see OfflineManifestResponse) */
+  source_hash?: string;
+  owner_hash?: string;
   generated_at: number;
   entries: OfflineBundleEntry[];
 }
@@ -249,7 +259,8 @@ export interface RestoreReport {
 
 // ───────────────────────────── export (§46) ─────────────────────────────
 // 'docx' (track F5): Word document built on the server (Study Book, notes, questions, a source's text)
-export const EXPORT_FORMATS = ['md', 'json', 'html', 'docx'] as const;
+// Round 7 H4: 'pdf' — the DOCX export converted on the server by LibreOffice (RTL kept, citations as text)
+export const EXPORT_FORMATS = ['md', 'json', 'html', 'docx', 'pdf'] as const;
 export type ExportFormat = (typeof EXPORT_FORMATS)[number];
 export const EXPORT_FORMAT_FORMAT = 'medlevo-export-1' as const;
 
@@ -264,6 +275,11 @@ export interface ExportManifest {
   entities: Array<{ type: string; id: string; version: number | string | null; sha256: string }>;
   /** files referenced (not embedded): identify them by content hash */
   files: Array<{ file_id: string; sha256: string; size: number; mime: string; role: string }>;
+  /**
+   * Round 7 H4: which exported entity points at which file — e.g. an `annotation_image` (the picture the owner placed on
+   * a page, keyed by its `image_key`) → its stored file, by id and content hash.
+   */
+  links?: Array<{ entity_type: string; entity_id: string; file_id: string; sha256: string; role: string }>;
   notes_ar: string[];
 }
 
@@ -274,4 +290,24 @@ export interface ExportFormatsResponse {
   pdf_note_ar: string;
   /** other formats with their honest state */
   other: Array<{ key: string; label_ar: string; available: boolean; reason_ar: string | null }>;
+}
+
+// ───────── Round 7 H4: the original PDF with the owner's writing drawn on it (§46 «PDF مسطح يحفظ المظهر») ─────────
+/**
+ * What GET /api/data/export/source/:sourceId/annotated-pdf will draw — computed before downloading, so nothing is
+ * left out silently. The writing is drawn as VECTOR paths onto a copy of the original PDF (the original file is never
+ * changed); it is a flattened picture of the writing, not re-editable ink (that lives in the app, the JSON export and
+ * the backup).
+ */
+export interface AnnotatedPdfSummary {
+  source_id: string;
+  version_id: string;
+  title: string;
+  /** false when this source has no original PDF to draw on (with the reason) */
+  available: boolean;
+  reason_ar: string | null;
+  pages: number | null;
+  drawn: { strokes: number; highlighter_strokes: number; shapes: number; text_highlights: number; images: number; pages_with_writing: number };
+  skipped: Array<{ kind: string; count: number; reason_ar: string }>;
+  notes_ar: string[];
 }

@@ -3,7 +3,20 @@
 import { parseRichText, richTextToPlain, type ControlOverviewResponse } from '@medlevo/shared';
 import type { OutboxRecord } from '../../lib/localdb';
 
-export type SectionKey = 'review' | 'alerts' | 'sync' | 'processing' | 'sources' | 'intelligence' | 'storage' | 'profile' | 'capabilities' | 'health' | 'evaluation' | 'history';
+export type SectionKey =
+  | 'review'
+  | 'alerts'
+  | 'sync'
+  | 'processing'
+  | 'sources'
+  | 'visual_sources'
+  | 'intelligence'
+  | 'storage'
+  | 'profile'
+  | 'capabilities'
+  | 'health'
+  | 'evaluation'
+  | 'history';
 
 export interface SectionDef {
   key: SectionKey;
@@ -22,6 +35,8 @@ export const SECTIONS: SectionDef[] = [
   { key: 'sync', label: 'التعارضات والمزامنة', href: '/control/sync', purpose: 'تغييرات هذا الجهاز التي لم تصل كما هي.' },
   { key: 'processing', label: 'المعالجة', href: '/control/processing', purpose: 'المهام الجارية والصفحات المتعثرة وأسبابها.' },
   { key: 'sources', label: 'المصادر والأولويات', href: '/control/sources', purpose: 'من أين يبدأ البحث عن الأدلة لكل مهمة.' },
+  // (Round 7 H4, §32)
+  { key: 'visual_sources', label: 'المصادر البصرية المسموح بها', href: '/control/visual-sources', purpose: 'المواقع التي تقبل منها صورًا خارجية، وملاحظة ترخيص كل منها.' },
   { key: 'intelligence', label: 'الذكاء الاصطناعي', href: '/control/intelligence', purpose: 'النماذج والميزانية والاستخدام وقواعد الشرح.' },
   { key: 'storage', label: 'التخزين ودون اتصال', href: '/control/storage', purpose: 'مساحة الخادم وهذا الجهاز والتنزيلات.' },
   { key: 'profile', label: 'ملف التعلّم', href: '/review/profile', purpose: 'ما تستخدمه المنصة لتخصيص تعلمك، وتعديله.', external: true },

@@ -119,7 +119,8 @@ function server() {
       return json({ thread: view, messages: [] });
     }
     if (url.startsWith('/api/studybook/threads?') || url === '/api/studybook/threads') return json({ threads: [...threads.values()].map((t) => t.view) });
-    const msg = /^\/api\/studybook\/threads\/([^/]+)\/messages$/.exec(url);
+    // (Round 7 H4) the panel asks through the streaming endpoint: the JSON answer is served as its SSE `final` event
+    const msg = /^\/api\/studybook\/threads\/([^/]+)\/messages\/stream$/.exec(url);
     if (msg && method === 'POST') {
       const t = threads.get(msg[1]!)!;
       const narrow = t.scope.mode === 'lecture_only';
@@ -127,7 +128,8 @@ function server() {
       const art = artifactFor(t.scope, narrow);
       const answer: ChatMessageView = { id: `${msg[1]}-a${t.messages.length}`, thread_id: t.view.id, role: 'assistant', status: narrow ? 'abstained' : 'final', style: 'detailed', content: { v: 1, paragraphs: [] }, artifact: art, abstain: art.abstain, reply_to_id: owner.id, created_at: 2 } as unknown as ChatMessageView;
       t.messages.push(owner, answer);
-      return json({ owner_message: owner, answer });
+      const final = { type: 'final', result: { owner_message: owner, answer }, removed: [], had_draft: false };
+      return new Response(`event: final\ndata: ${JSON.stringify(final)}\n\n`, { status: 200, headers: { 'content-type': 'text/event-stream' } });
     }
     const one = /^\/api\/studybook\/threads\/([^/?]+)$/.exec(url);
     if (one) {
@@ -140,7 +142,7 @@ function server() {
 }
 
 const railLock = () => document.querySelector('.sb-scope .ev-scope-badge')!.textContent ?? '';
-const asks = (calls: Call[]) => calls.filter((c) => c.method === 'POST' && /\/messages$/.test(c.url));
+const asks = (calls: Call[]) => calls.filter((c) => c.method === 'POST' && /\/messages\/stream$/.test(c.url));
 const created = (calls: Call[]) => calls.filter((c) => c.method === 'POST' && c.url === '/api/studybook/threads').map((c) => (c.body!.scope as SourceScope).mode);
 
 async function askQuestion(text: string) {
@@ -195,7 +197,7 @@ describe('G2 AC-05 — the rail chat follows the visible Source Lock', () => {
     await askQuestion("And how is Murphy's sign elicited?");
     await waitFor(() => expect(asks(calls).length).toBe(asked + 1));
     expect(created(calls)).toEqual(['lecture_only', 'lecture_plus_references', 'lecture_only']);
-    expect(asks(calls).at(-1)!.url).toBe('/api/studybook/threads/T3/messages');
+    expect(asks(calls).at(-1)!.url).toBe('/api/studybook/threads/T3/messages/stream');
   });
 
   it('threadMatchesScope: mode, lecture, chosen references and «ملاحظاتي» must all match', () => {

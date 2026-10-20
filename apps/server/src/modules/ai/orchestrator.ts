@@ -36,7 +36,15 @@ export interface GenerateStructuredRequest<T> {
   /** e.g. the job's AbortSignal */
   signal?: AbortSignal;
   timeoutMs?: number;
+  /**
+   * (Round 7 H4, §30) the provider's raw text as it streams: `delta` events per attempt, and `restart` when the
+   * first answer failed the schema and the single repair attempt begins (the earlier draft is void). Unverified —
+   * the caller labels it «مسودة لم تُتحقق بعد» and replaces it with the validated, verified result.
+   */
+  onText?: (e: AiTextEvent) => void;
 }
+
+export type AiTextEvent = { type: 'delta'; attempt: 1 | 2; text: string } | { type: 'restart'; attempt: 2 };
 
 export interface GenerateStructuredResult<T> {
   output: T;
@@ -233,7 +241,7 @@ export class AiOrchestrator {
       });
     }
 
-    const call = async (prompt: string): Promise<{ res: ProviderResponse; latency: number; cost: number }> => {
+    const call = async (prompt: string, attempt: 1 | 2): Promise<{ res: ProviderResponse; latency: number; cost: number }> => {
       const signals = [AbortSignal.timeout(req.timeoutMs ?? 120_000)];
       if (req.signal) signals.push(req.signal);
       const signal = AbortSignal.any(signals);
@@ -248,6 +256,7 @@ export class AiOrchestrator {
           images: req.images,
           maxOutputTokens,
           signal,
+          ...(req.onText ? { onTextDelta: (text: string) => req.onText!({ type: 'delta', attempt, text }) } : {}),
         });
         const latency = Date.now() - started;
         return { res, latency, cost: provider.estimateCostUsd(res.model, res.usage) };
@@ -286,7 +295,7 @@ export class AiOrchestrator {
     };
 
     // attempt 1
-    const first = await call(built.prompt);
+    const first = await call(built.prompt, 1);
     const v1 = validate(first.res);
     if (v1.ok) {
       const usageId = this.recordUsage({
@@ -326,7 +335,8 @@ export class AiOrchestrator {
       v1.raw.slice(0, 8000),
       'Return ONLY corrected JSON matching the schema. Do not add claims that are not supported by the provided evidence.',
     ].join('\n\n');
-    const second = await call(repairPrompt);
+    req.onText?.({ type: 'restart', attempt: 2 });
+    const second = await call(repairPrompt, 2);
     const v2 = validate(second.res);
     const usage2 = {
       ...base,

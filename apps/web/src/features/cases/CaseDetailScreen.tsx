@@ -17,6 +17,7 @@ import { Breadcrumbs, Button, ConfirmDialog, ErrorState, LoadingState, Segmented
 import { errorMessage } from '../../lib/api';
 import { formatDateTime } from '../../lib/time';
 import { usePageTitle } from '../../lib/usePageTitle';
+import { TopicLinksControl } from '../brain/TopicLinksControl';
 import { BidiText } from '../evidence';
 import { casesApi } from './api';
 import { AppropriatenessPill, AuthoredLabel, CaseSentences, HonestyNotes } from './components';
@@ -168,6 +169,7 @@ export function CaseDetailScreen() {
             {c.kind !== 'viva' && <AuthoredLabel note={c.authored_note_ar} />}
           </div>
           {c.scope_describe_ar && <p className="cs-muted">نطاق الأدلة: {c.scope_describe_ar}</p>}
+          <TopicLinksControl entityType="clinical_case" entityId={c.id} itemLabel={`الحالة «${c.title}»`} />
         </div>
         <div className="ml-cluster">
           {c.version_no >= 1 && (

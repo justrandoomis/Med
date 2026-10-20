@@ -390,7 +390,9 @@ are rendered by the real `pdftoppm` and read by the real tesseract.js). Question
 * **Item 4 — JPEG** (`image.ts`, dependency **`jpeg-js` 0.4.4**, BSD-3-Clause, pure JavaScript: chosen because the
   server has no image library and native modules (sharp / canvas) need a platform build; it decodes baseline and
   progressive JPEG and encodes). Decoding is bounded: pixel budget checked from the frame header BEFORE allocating
-  (24 MP for metrics), `maxResolutionInMP` / `maxMemoryUsageInMB` passed to the decoder; errors are typed
+  (24 MP for metrics) and — H2 review — jpeg-js's working memory computed from the same header (components, chroma
+  subsampling) and checked against 15 bytes per budget pixel (≈ 360 MB at 24 MP: a 24 MP 4:2:0 photo fits, a 4:4:4
+  picture up to ≈ 16 MP), with the same cap passed to the decoder as a backstop; errors are typed
   (`NOT_IMAGE` / `UNSUPPORTED` / `CORRUPT` / `TOO_LARGE`). The EXIF Orientation tag is read in both TIFF byte orders
   («II» Android, «MM» iPhone — tesseract.js honours only big-endian) and all eight orientations are applied as a browser
   displays them (`decodeDisplayed`); OCR reads the displayed picture, the page has the displayed size, `image_orientation`
@@ -417,8 +419,9 @@ are rendered by the real `pdftoppm` and read by the real tesseract.js). Question
   إعادة المعالجة لن تفيد: …» (`OCR_FAILED`); a transient engine failure on a sound picture keeps «أعد المعالجة». Tests in
   `orientation.test.ts`; AC-03's partial image set still gives `partial` with the failed page listed.
 * **Item 8 — LibreOffice and linked files** (`office-safety.ts sanitizeOoxmlForConversion`, called by `tools.ts
-  convertToPdf` for every zip input). Every `.rels` part loses its relationships with `TargetMode="External"` or a
-  target outside the package (`scheme:`, `//`, `\\`) before LibreOffice sees the file; the original upload is never
+  convertToPdf` for every zip input and every DOCX / PPTX). Every `.rels` part loses its relationships with a TargetMode
+  other than «Internal» or a target outside the package (`scheme:`, `//`, `\\`) before LibreOffice sees the file, and is
+  written back canonically (H2 review, see below); the original upload is never
   changed; an unreadable zip is refused (`TOOL_INPUT_REJECTED`). Reproduced: with LibreOffice's DEFAULT profile a PPTX
   picture linked to `file:///<server file>` is embedded into the PDF (1 image); the G8 hardened profile already blocked
   it, so this is a second, independent layer. Test `srv:processing/office-links.test.ts` (4: sanitizer, the default-profile
@@ -429,8 +432,9 @@ are rendered by the real `pdftoppm` and read by the real tesseract.js). Question
   reverses with the RTL run. Words drawn with a lam-alef glyph (U+0644 + alef forms, also the presentation forms) are
   rebuilt from the glyph order; a word drawn with separate alef and lam glyphs (a real «العالم») is never touched and is
   recorded as verified, so the `ambiguous_lam_alef` flag no longer fires for it; a form that is both a repaired word and
-  a real word of the document is not mapped (stays flagged). Only lam-alef glyphs are rebuilt (a letter + harakah glyph
-  keeps pdf.js text, so the orphan-mark check still flags the `.doc` damma case). Search and lecture ↔ question
+  a real word of the document is not mapped and (H2 review) not «verified» either, so it stays flagged. Since the H2
+  review every LETTER ligature glyph (two or more Arabic letters, e.g. «ير» in «غيرها») is rebuilt like lam-alef; a
+  letter + harakah glyph keeps pdf.js text, so the orphan-mark check still flags the `.doc` damma case. Search and lecture ↔ question
   matching read the repaired text. Tests `srv:processing/lam-alef-glyphs.test.ts` (7 incl. a real Word → LibreOffice
   PDF); `review.test.ts` «LibreOffice Arabic export» now expects the repaired «العلاج», no flags, page `ready`.
 
@@ -438,7 +442,70 @@ Known limits after H2: the vector-figure rule is a heuristic (a drawing of one o
 diagram meaning still needs the vision step); OCR tables have no header detection and are always `uncertain`; the
 orientation trials cost one or two extra OCR passes on sideways / poor pages; TIFF is not decoded.
 
-Commands (real results, 2026-10-20, shared tree with the parallel H1 review): `npm test` (root) → shared 58 passed;
-server 126 files, 1389 passed, 7 skipped; web 109 files, 727 passed, 1 skipped. `npm run typecheck`, `npm run lint`,
-`npm run build` → exit 0. `npm run eval` → regression 80 / 80 after the reviewed catalogue bump for H2 item 10b
-(`docs/EVALUATION.md` §3).
+Commands (real results, 2026-10-20, shared tree with the parallel H1 review): `npm test -w` shared → 58 passed; server
+→ 126 files, 1404 passed, 7 skipped; web → 109 files, 727 passed, 1 skipped (one earlier web run had 2 failures that did
+not recur in two re-runs; one earlier server run failed 2 H1-review `textcite` tests while that file was being edited —
+both green on re-run). `npm run typecheck`, `npm run lint`, `npm run build` → exit 0. `npm run eval` → regression
+80 / 80 after the reviewed catalogue bump for H2 item 10b (`docs/EVALUATION.md` §3). E2E (real server, phone + desktop):
+`smoke`, `g1-ac02`, `g1-ac03`, `g3-ac08`, `g3-ac09`, `g3-ac13`, `g4-ac10-ac11`, `g4-ac12-ac14-ac15`, `g5-ac17-ac19`,
+`g6-ac21`, `g6-ac22`, `g8-security`, `f5-quality-ops` → 46 / 48 passed on the first run; the 2 failures were
+`g1-ac03` asserting the old OCR-failure wording for its truncated PNG (item 7 changed it on purpose) — spec updated,
+re-run with `g4-ac12-ac14-ac15` → 4 / 4 passed.
+
+## Round 7 — H2 independent review (2026-10-20)
+
+An adversarial review of the H2 work above. Each finding was reproduced first (a probe, then a test that failed), fixed
+minimally, and the test then passed. Question-extraction findings are in `questions.md` «Round 7 — H2 review».
+
+* **LibreOffice link stripping could be bypassed (item 8).** The sanitizer matched `<Relationship …>` with a regex that
+  stopped at the first «>» and read attributes with a first-match search. Three spellings that LibreOffice accepts kept
+  a link to a SERVER file in the «sanitized» copy: a «>» inside an attribute value, `TargetMode="&#69;xternal"` with an
+  absolute-path target, and a decoy « TargetMode='Internal'» inside another attribute's value. With LibreOffice's DEFAULT
+  profile the sanitized copy still embedded the server picture (reproduced; the G8 hardened profile blocked it — the
+  second layer was the one bypassed). Now (`office-safety.ts`): a quote-aware tag scanner, entity references decoded (an
+  unknown entity — a DTD trick — is never trusted), any TargetMode other than «Internal» (any prefix / case) is
+  external, an attribute list that cannot be read exactly drops the relationship, every `.rels` part is written back in
+  canonical form (Id / Type / Target of the kept relationships only), and the package is always re-zipped from what was
+  read (no byte of the upload reaches LibreOffice unchecked). `tools.ts` also checks every DOCX / PPTX whatever its first
+  bytes. Probed and NOT a bypass (LibreOffice 24.2 refuses the file or ignores the link): a prefixed relationships root,
+  a DOCTYPE entity, duplicate zip entries, a `PK\x07\x08` prefix, backslash / percent-encoded part names, relative
+  `../` external targets, INCLUDEPICTURE / INCLUDETEXT field codes. Tests `srv:processing/office-links.test.ts` (+3: the
+  three spellings, fail-closed cases, and a default-profile LibreOffice run of the sanitized copies → 0 images).
+* **A reversed ligature word was silently «verified» (item 9).** A form that is both the reversed spelling of a ligature
+  word and a real word of the page («العالمة» drawn letter by letter + «العلامة» drawn with the lam-alef glyph, both shown
+  «العالمة») was correctly left unmapped but recorded as verified, so its `ambiguous_lam_alef` flag was dropped: the
+  wrong word was stored with no review (reproduced through Word → LibreOffice → the real pipeline: region `extracted`,
+  page `ready`). It is now not verified, so it stays flagged (`needs_review`).
+* **Other two-letter ligature glyphs were still reversed (item 9).** LibreOffice's default Arabic font draws «ير» as one
+  glyph: «غيرها» was stored «غريها» with no flag, and search missed it. Every glyph that maps to two or more Arabic
+  LETTERS is now rebuilt like lam-alef (a glyph with a harakah still keeps pdf.js text). Tests
+  `srv:processing/lam-alef-glyphs.test.ts` (+3: unit «ير», the ambiguous form not verified, a real LibreOffice PDF).
+* **The JPEG budget did not hold what it said (item 4).** The decoder's memory cap was 8 bytes per budget pixel, but
+  jpeg-js counts ≈ 14.5 bytes per pixel for a 4:2:0 photo and ≈ 22 for 4:4:4: a 12 MP 4:4:4 JPEG (and a 4:2:0 photo
+  above ≈ 17 MP) was TOO_LARGE under a «24 MP» budget — no scan metrics, and its Image Quiz fell back to browser-drawn
+  masks. The working memory is now computed from the frame header and checked before decoding (see item 4 above).
+* **A valid JPEG this decoder cannot read was called damaged (item 7).** Arithmetic-coded / lossless / hierarchical
+  JPEGs (frame markers other than C0–C2) made jpeg-js throw «unknown JPEG marker» → `CORRUPT` → an OCR failure on them
+  said «الصورة نفسها تالفة — إعادة المعالجة لن تفيد». They are now `UNSUPPORTED` (read from the frame header).
+  Tests `srv:processing/image.test.ts` (+3).
+* Reviewed and not changed: vector figures and OCR tables keep honest certainty (`uncertain` unless arrows / connectors;
+  `ocr_aligned` always uncertain, no invented cell); EXIF orientations 1–8 and their word-box mapping are correct in
+  both byte orders; the quiz never falls back to the unmasked original for a «server» quiz; migrations 0220 / 0530 are
+  additive and the boot re-fingerprint recomputes from the stored stem / options exactly as a new extraction does
+  (`normPhrase` makes the structured «°C» join irrelevant); no new route was added (the quiz image route keeps its auth).
+
+Known limits found by the review (not fixed): a resumed job whose OCR checkpoint was written before H2 (no `rotation`
+field) records `content_rotation = 0` with origin `ocr_trials` though no trial ran (only across the upgrade); a group of
+three or more separate small framed boxes holding short text (< 50 characters per line, ≤ 300 in all) is taken as an
+`uncertain` vector figure and its text becomes figure labels; jpeg-js runs on the request thread (measured here: a 12 MP
+4:4:4 photo ≈ 2.9 s to decode, ≈ 2.5 s to re-encode) — creating an Image Quiz on a large JPEG and serving its first
+masked copy block the server for several seconds (later requests hit the cache); a reversed ligature form that
+is also a real word is flagged only through the lam-alef rule (a non-lam-alef ambiguous form is unmapped but unflagged).
+
+Commands of the review (real results, 2026-10-20, shared tree with the parallel H4 track): `npm test` (root) → shared 7
+files / 58 passed; server 131 files, 1443 passed, 7 skipped; web 112 files, 740 passed, 1 skipped (exit 0). An earlier
+full server run during the review failed only in files another track was editing (`brain/h4-extractors`, a vanished
+`perf/zz-probe`) and in two image tests picked up while being written — all green afterwards. `npm run typecheck`,
+`npm run lint`, `npm run build` → exit 0. `npm run eval -- --set=regression --compare=docs/eval/baseline.json
+--no-record` → 80 / 80, `no_regressions`, exit 0 (no catalogue change). E2E (real server, phone + desktop):
+`g1-ac02`, `g1-ac03`, `g3-ac09`, `g3-ac13`, `g4-ac10-ac11`, `g4-ac12-ac14-ac15`, `g8-security`, `smoke` → 24 / 24 passed.

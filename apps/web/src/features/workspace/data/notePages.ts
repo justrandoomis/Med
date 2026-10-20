@@ -3,7 +3,7 @@
 // transaction (writeAndEnqueue) and never waits for the network. Deleting moves a page to the trash (a tombstone that
 // keeps its ink); restoring is an upsert of the tombstoned page (the server restores it, «merged»).
 import { useMemo } from 'react';
-import { newId, type AnnotationsByTargetsResponse, type NotebookContentResponse, type NotePagesResponse, type NotePageTemplate, type NotePageView } from '@medlevo/shared';
+import { newId, type AnnotationsByTargetsResponse, type NotebookContentResponse, type NotePagesResponse, type NotePageTemplate, type NotePageView, type OrphanNotePagesResponse } from '@medlevo/shared';
 import { api } from '../../../lib/api';
 import type { MedLevoDB, OutboxRecord } from '../../../lib/localdb';
 import { getDb } from '../../../lib/localdb';
@@ -197,6 +197,71 @@ export async function seedNotebook(nodeId: string, db: MedLevoDB = getDb()): Pro
   const [content, all] = await Promise.all([fetchNotebook(nodeId), fetchNotePages({ nodeId, includeDeleted: true })]);
   await mergeServerNotePages(db, all.note_pages);
   await mergeServerAnnotations(db, content.annotations);
+}
+
+// ───────── «صفحات بلا دفتر» (Round 7 — H3 item 7) ─────────
+/**
+ * A page that belongs to neither a notebook / folder nor a source: its notebook (or source) was purged while a device
+ * that still wrote on it was offline, and the server kept it with neither link. It is listed in the library under
+ * «صفحات بلا دفتر» — never dropped — so the owner can move it into a notebook or trash it.
+ */
+export function isOrphanNotePage(r: Pick<WorkspaceNotePageRow, 'nodeId' | 'sourceId'>): boolean {
+  return !r.nodeId && !r.sourceId;
+}
+
+export function fetchOrphanNotePages(includeDeleted = true): Promise<OrphanNotePagesResponse> {
+  return api.get<OrphanNotePagesResponse>('/annotations/orphan-pages', { query: includeDeleted ? { include_deleted: '1' } : {}, timeoutMs: 30_000, skipAuthRedirect: true });
+}
+
+/**
+ * Seed this device with the orphan pages and their writing. The server's word on the PLACE wins over a local row
+ * that still files the page under the purged notebook at the same revision (the change feed would correct it later
+ * too) — never over a row with unsynced local changes.
+ */
+export async function seedOrphanNotePages(db: MedLevoDB = getDb(), fetcher: () => Promise<OrphanNotePagesResponse> = () => fetchOrphanNotePages(true)): Promise<number> {
+  const r = await fetcher();
+  let written = 0;
+  await db.transaction('rw', [db.notePages, db.outbox], async () => {
+    for (const p of r.note_pages) {
+      const ops = await db.outbox.where('[entity_type+entity_id]').equals([NOTE_PAGE_ENTITY, p.id]).filter((o) => o.status !== 'synced').toArray();
+      if (blockingOps(ops).length > 0) continue;
+      const cur = (await db.notePages.get(p.id)) as WorkspaceNotePageRow | undefined;
+      if (cur && ((cur.rev ?? 0) > p.rev || ((cur.rev ?? 0) === p.rev && isOrphanNotePage(cur) && !!cur.deletedAt === (p.deleted_at !== null)))) continue;
+      await db.notePages.put(notePageRowFromDTO(p));
+      written++;
+    }
+  });
+  await mergeServerAnnotations(db, r.annotations);
+  return written;
+}
+
+/** Move a page into a notebook / folder (one rev-checked upsert; its ink follows the page id, nothing is copied). */
+export async function moveNotePageToNode(db: MedLevoDB, row: WorkspaceNotePageRow, nodeId: string, sortOrder: number): Promise<WorkspaceNotePageRow> {
+  return db.transaction('rw', [db.notePages, db.outbox], async () => {
+    const cur = ((await db.notePages.get(row.id)) as WorkspaceNotePageRow | undefined) ?? row;
+    const next: WorkspaceNotePageRow = { ...cur, nodeId, sourceId: null, afterPageIndex: null, afterPageId: null, sortOrder, updatedAt: Date.now(), deletedAt: null };
+    const base = await expectedRev(db, NOTE_PAGE_ENTITY, row.id, cur.rev);
+    await writeAndEnqueue(db, db.notePages, next, { entity_type: NOTE_PAGE_ENTITY, op: 'upsert', base_rev: base, payload: notePagePayload(next) });
+    return next;
+  });
+}
+
+export function useOrphanNotePages(): WorkspaceNotePageRow[] {
+  return useLive(async () => ((await getDb().notePages.filter((r) => isOrphanNotePage(r as WorkspaceNotePageRow)).toArray()) as WorkspaceNotePageRow[]).sort(byOrder), [], []);
+}
+
+/** How many live items are written on each page (ink, text, pictures …), from this device's copy. */
+export function useWritingCounts(pageIds: readonly string[]): Map<string, number> {
+  const key = pageIds.join(',');
+  return useLive(
+    async () => {
+      const m = new Map<string, number>();
+      for (const id of pageIds) m.set(id, await getDb().annotations.where('targetKey').equals(`note_page:${id}`).filter((a) => !a.deletedAt).count());
+      return m;
+    },
+    [key],
+    new Map<string, number>(),
+  );
 }
 
 // ───────── live views ─────────

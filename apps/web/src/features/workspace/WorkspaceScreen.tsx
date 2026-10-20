@@ -46,6 +46,7 @@ import { RemoteMoveBanner, SessionConflictDialog } from './session/SessionPrompt
 import { useReadingProgress } from './session/useReadingProgress';
 import { useStudySession, type StudySessionApi } from './session/useStudySession';
 import { SecondaryPane, SplitPicker } from './split/SplitPane';
+import { SplitSidePane, type SplitSideKind } from './split/SplitSidePane';
 import { StudyBookPane } from './studybook/StudyBookPane';
 import { useStudyBookAvailability } from './studybook/useStudyBook';
 import { useOfflineDownloadAction } from '../offline/OnDevice';
@@ -265,6 +266,8 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
   // an explicit place in the URL (citation jump) opens the original, where that place is visible
   const [bookView, setBookView] = useState(() => !explicitPlace && readPref(VIEW_PREF_KEY(sourceId)) === 'study_book');
   const [splitBook, setSplitBook] = useState(() => !split && loc0.split?.mode === 'study_book');
+  // (H3 item 3) the lecture next to its questions or the explanations (restored from the session like the other splits)
+  const [splitSide, setSplitSide] = useState<SplitSideKind | null>(() => (!split && (loc0.split?.mode === 'questions' || loc0.split?.mode === 'explain') ? loc0.split.mode : null));
   const [bookSync, setBookSync] = useState(() => readPref(BOOK_SYNC_KEY) !== 'off');
   const [bookJump, setBookJump] = useState(0);
   /** the lecture page (index into pages) of the Study Book block on top — where switching back lands */
@@ -273,11 +276,12 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
   const movedByBook = useRef(0);
   const splitActive = !!split && !splitReason;
   const splitBookActive = !split && splitBook && !splitReason;
-  const bookOnly = bookView && !splitActive && !splitBookActive;
-  const view: WorkspaceView = splitActive ? 'split' : splitBookActive ? 'split_book' : bookOnly ? 'study_book' : 'original';
+  const splitSideActive = !split && !splitBook && !!splitSide && !splitReason;
+  const bookOnly = bookView && !splitActive && !splitBookActive && !splitSideActive;
+  const view: WorkspaceView = splitActive ? 'split' : splitBookActive ? 'split_book' : splitSideActive ? (splitSide === 'explain' ? 'split_explain' : 'split_questions') : bookOnly ? 'study_book' : 'original';
   // the canvas start position when it (re)mounts after the Study Book view
   const [canvasStart, setCanvasStart] = useState<{ frac: number }>({ frac: initial.frac });
-  const canvasWidth = splitActive || splitBookActive ? panels.canvasWidth / 2 : panels.canvasWidth;
+  const canvasWidth = splitActive || splitBookActive || splitSideActive ? panels.canvasWidth / 2 : panels.canvasWidth;
   const layout = effectiveLayout(layoutPref, canvasWidth, panels.phone);
   const spreadReason = canShowSpread(canvasWidth, panels.phone) ? null : 'لا تتسع الشاشة لصفحتين متقابلتين؛ تُعرض صفحة واحدة.';
 
@@ -354,8 +358,8 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
   const { markViewed } = useReadingProgress(sourceId, versionId, online);
 
   // ── autosave the place (debounced in the session hook) ──
-  const stateRef = useRef({ zoom, fit, effectiveZoom, viewRotation, layoutPref, railOpen, railWidth: rail.width, railTab, leftOpen, leftTab, split, splitBook });
-  stateRef.current = { zoom, fit, effectiveZoom, viewRotation, layoutPref, railOpen, railWidth: rail.width, railTab, leftOpen, leftTab, split, splitBook };
+  const stateRef = useRef({ zoom, fit, effectiveZoom, viewRotation, layoutPref, railOpen, railWidth: rail.width, railTab, leftOpen, leftTab, split, splitBook, splitSide });
+  stateRef.current = { zoom, fit, effectiveZoom, viewRotation, layoutPref, railOpen, railWidth: rail.width, railTab, leftOpen, leftTab, split, splitBook, splitSide };
   const buildLocation = useCallback((): ReaderLocation => {
     const s = stateRef.current;
     const l = locRef.current;
@@ -369,14 +373,14 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
       layout: s.layoutPref,
       rail: { open: s.railOpen, width: s.railWidth, tab: s.railTab },
       left_panel: { open: s.leftOpen, tab: s.leftTab },
-      split: s.split ? { mode: 'source', secondary_source_id: s.split.sourceId, secondary_page_index: s.split.pageIndex } : s.splitBook ? { mode: 'study_book' } : null,
+      split: s.split ? { mode: 'source', secondary_source_id: s.split.sourceId, secondary_page_index: s.split.pageIndex } : s.splitBook ? { mode: 'study_book' } : s.splitSide ? { mode: s.splitSide } : null,
       ...(noteRef.current ? { note_page_id: noteRef.current, note_page_offset: Math.round(Math.min(1, Math.max(0, noteFracRef.current)) * 1000) / 1000 } : {}),
     };
   }, [pages]);
-  const save = useCallback(() => session.save(buildLocation(), versionId, stateRef.current.split || stateRef.current.splitBook ? 'split' : 'original'), [session, buildLocation, versionId]);
+  const save = useCallback(() => session.save(buildLocation(), versionId, stateRef.current.split || stateRef.current.splitBook || stateRef.current.splitSide ? 'split' : 'original'), [session, buildLocation, versionId]);
   useEffect(() => {
     save();
-  }, [save, zoom, fit, viewRotation, layoutPref, railOpen, rail.width, railTab, leftOpen, leftTab, split, splitBook]);
+  }, [save, zoom, fit, viewRotation, layoutPref, railOpen, rail.width, railTab, leftOpen, leftTab, split, splitBook, splitSide]);
 
   const onLocation = useCallback(
     (l: BookLocation) => {
@@ -416,13 +420,14 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
   const blockFlip = (gesture: 'key' | 'swipe' = 'key') =>
     flipBlocked({ strokeActive: strokeActive.current, lastStrokeEndAt: lastStrokeEndAt.current, now: performance.now(), hasSelection: hasBookSelection(canvasRef.current?.element() ?? null), gesture });
   const goToPage = useCallback(
-    (index: number, frac = 0) => {
+    (index: number, frac = 0, opts?: { place?: boolean }) => {
       const i = Math.min(Math.max(0, index), pages.length - 1);
       noteRef.current = null;
       setNotePageId(null);
       setPageIndex(i);
       locRef.current = { pageIndex: i, frac };
-      canvasRef.current?.goTo(seqRef.current.ofSource(i), frac);
+      // a saved place (session, back entry, another device) comes back exactly where it was taken (H3 item 6)
+      canvasRef.current?.goTo(seqRef.current.ofSource(i), frac, opts);
       save();
     },
     [pages.length, save],
@@ -580,6 +585,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
           locRef.current = { pageIndex: p.pageIndex, frac: p.pageOffset };
           setSplit(null);
           setSplitBook(false);
+          setSplitSide(null);
           setBookView(true);
           writePref(VIEW_PREF_KEY(sourceId), 'study_book');
           setBookJump((n) => n + 1);
@@ -592,7 +598,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
         setLayoutPref(p.layout);
         // after the layout settles at the restored zoom
         requestAnimationFrame(() => {
-          if (!(p.notePageId && goToNote(p.notePageId, p.pageOffset))) goToPage(p.pageIndex, p.pageOffset);
+          if (!(p.notePageId && goToNote(p.notePageId, p.pageOffset))) goToPage(p.pageIndex, p.pageOffset, { place: true });
         });
         setAnnouncement(`عدت إلى ${entry.label}.`);
         return true;
@@ -746,7 +752,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
     (m: StudyMode) => {
       if (m === session.mode) return;
       // the current view is saved with the switch (F3 review: a split view was saved as «original»)
-      session.setMode(m, { location: buildLocation(), versionId, view: stateRef.current.split || stateRef.current.splitBook ? 'split' : 'original' });
+      session.setMode(m, { location: buildLocation(), versionId, view: stateRef.current.split || stateRef.current.splitBook || stateRef.current.splitSide ? 'split' : 'original' });
       const a = arrangementFor(m);
       setRailTab(a.defaultTab);
       if (!panels.phone) {
@@ -781,6 +787,17 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
   // ── views ──
   const changeView = useCallback(
     (v: WorkspaceView) => {
+      if (v === 'split_questions' || v === 'split_explain') {
+        // (H3 item 3) the lecture stays where it is (same canvas); the second pane shows its questions / explanations
+        if (bookOnlyRef.current && bookTop.current != null) showOriginalAt(bookTop.current);
+        setSplit(null);
+        setSplitBook(false);
+        setBookView(false);
+        writePref(VIEW_PREF_KEY(sourceId), null);
+        setSplitSide(v === 'split_explain' ? 'explain' : 'questions');
+        return;
+      }
+      setSplitSide(null);
       if (v === 'split') {
         setSplitBook(false);
         setBookView(false);
@@ -827,6 +844,10 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
   useEffect(() => {
     if (studyMode === 'exam' && (bookOnly || splitBookActive)) changeView('original');
   }, [studyMode, bookOnly, splitBookActive, changeView]);
+  // (H3 item 3) the explanations beside the lecture are hidden in «امتحن نفسك» too: the pane switches to the questions
+  useEffect(() => {
+    if (studyMode === 'exam' && splitSide === 'explain') setSplitSide('questions');
+  }, [studyMode, splitSide]);
 
   /** «افتح في المحاضرة» from the full Study Book: the original lecture at that page */
   const changeViewToPage = useCallback(
@@ -991,7 +1012,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
     const server = await session.resolveConflict(choice, { location: buildLocation(), versionId });
     if (choice === 'theirs' && server) {
       if (server.version_id && server.version_id !== versionId) navigate(studyUrl({ sourceId, versionId: server.version_id, pageIndex: server.location.page_index ?? 0, offset: server.location.page_offset ?? 0 }));
-      else goToPage(server.location.page_index ?? 0, server.location.page_offset ?? 0);
+      else goToPage(server.location.page_index ?? 0, server.location.page_offset ?? 0, { place: true });
     }
   };
 
@@ -1077,6 +1098,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
               }}
               view={view}
               onView={changeView}
+              explainSplitReason={studyMode === 'exam' ? EXAM_MODE_HIDDEN_AR : null}
               modeSwitch={<StudyModeSwitch mode={studyMode} onChange={changeMode} compact={panels.phone} />}
               splitReason={splitReason}
               studyBookReason={studyMode === 'exam' ? EXAM_MODE_HIDDEN_AR : studyBook.reason}
@@ -1150,7 +1172,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
               onGo={() => {
                 session.dismissRemote();
                 if (remote.versionId && remote.versionId !== versionId) navigate(studyUrl({ sourceId, versionId: remote.versionId, pageIndex: remote.location.page_index ?? 0 }));
-                else goToPage(remote.location.page_index ?? 0, remote.location.page_offset ?? 0);
+                else goToPage(remote.location.page_index ?? 0, remote.location.page_offset ?? 0, { place: true });
               }}
               onDismiss={session.dismissRemote}
             />
@@ -1174,7 +1196,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
             </div>
           )}
 
-          <div className={cx('wk-body', panels.rail === 'docked' && 'wk-body--rail', panels.left === 'docked' && 'wk-body--left', (splitActive || splitBookActive) && 'wk-body--split', bookOnly && 'wk-body--book')}>
+          <div className={cx('wk-body', panels.rail === 'docked' && 'wk-body--rail', panels.left === 'docked' && 'wk-body--left', (splitActive || splitBookActive || splitSideActive) && 'wk-body--split', bookOnly && 'wk-body--book')}>
             <main className="wk-main" aria-label="الكتاب">
               {searchOpen && (
                 <SearchPanel
@@ -1261,6 +1283,20 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
                         <IconButton size="sm" label="أغلق كتاب الدراسة الجانبي" icon={<X size={16} />} onClick={() => changeView('original')} />
                       </>
                     }
+                  />
+                )}
+                {splitSideActive && splitSide && (
+                  <SplitSidePane
+                    kind={splitSide}
+                    onKind={setSplitSide}
+                    doc={doc}
+                    page={pages[pageIndex] ?? null}
+                    pageIndex={pageIndex}
+                    online={online}
+                    onGoToPage={(i) => goToPage(i)}
+                    arrangement={arrangementFor(studyMode)}
+                    explainHiddenReason={studyMode === 'exam' ? EXAM_MODE_HIDDEN_AR : null}
+                    onClose={() => changeView('original')}
                   />
                 )}
                 {splitActive && split && (

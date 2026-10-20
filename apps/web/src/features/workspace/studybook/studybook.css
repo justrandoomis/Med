@@ -439,3 +439,65 @@ span.sb-quote {
 :root[dir='ltr'] .sb-reanchor[open] > summary::before {
   transform: rotate(90deg);
 }
+
+/* (Round 7 H4, §30) the streamed draft: visibly unverified — dashed edge, muted ink, no citation chips */
+.sb-draft {
+  display: grid;
+  gap: var(--ml-space-2);
+  padding: var(--ml-space-3);
+  border: 1px dashed var(--ml-color-line-strong, var(--ml-color-line));
+  border-radius: var(--ml-radius-md);
+  min-width: 0;
+}
+.sb-draft__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-2);
+}
+.sb-draft__phase,
+.sb-draft__note,
+.sb-draft__restart {
+  margin: 0;
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-sm);
+  line-height: var(--ml-leading-sm);
+}
+.sb-draft__body {
+  display: grid;
+  gap: var(--ml-space-2);
+  color: var(--ml-color-ink-2);
+  overflow-wrap: anywhere;
+}
+.sb-draft__body p {
+  margin: 0;
+  line-height: var(--ml-leading-md);
+}
+.sb-draft__heading {
+  font-weight: var(--ml-weight-semibold);
+}
+.sb-draft-outcome {
+  display: grid;
+  gap: var(--ml-space-1);
+  padding-inline-start: var(--ml-space-3);
+  border-inline-start: 2px solid var(--ml-color-line);
+}
+.sb-draft-outcome__lede {
+  margin: 0;
+  font-size: var(--ml-text-sm);
+  color: var(--ml-color-ink-2);
+}
+.sb-draft-outcome__list {
+  display: grid;
+  gap: var(--ml-space-1);
+  margin: 0;
+  padding-inline-start: var(--ml-space-4);
+  font-size: var(--ml-text-sm);
+}
+.sb-draft-outcome__list del {
+  color: var(--ml-color-ink-2);
+}
+.sb-draft-outcome__reason {
+  display: block;
+  color: var(--ml-color-ink-2);
+}

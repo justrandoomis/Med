@@ -35,6 +35,46 @@ export interface NeedsReanchorItem {
 }
 export interface NeedsReanchorResponse {
   items: NeedsReanchorItem[];
+  /**
+   * (H3 item 2) notes whose place is gone: a page anchor whose page no longer exists in its version, or a Study Book
+   * paragraph the re-anchoring report lists as `needs_reanchor` (AC-22)
+   */
+  notes?: NeedsReanchorNoteItem[];
+  /** (H3 item 2) items the owner chose to keep detached («محفوظة دون ربط») — still listed, can be re-anchored */
+  detached?: { annotations: NeedsReanchorItem[]; notes: NeedsReanchorNoteItem[] };
+}
+
+/** (H3 item 2) A note that needs the owner to choose a new place. */
+export interface NeedsReanchorNoteItem {
+  note: NoteDTO;
+  source_id: string | null;
+  source_title: string | null;
+  previous_location_ar: string | null;
+  /** why it is listed («صفحتها لم تعد موجودة في هذا الإصدار» …) */
+  reason_ar: string;
+}
+
+/**
+ * (H3 item 2) Where the owner re-anchors an item: a page of the source (optionally ON a paragraph / block region of
+ * that page — the item group is placed at the region; without a region the group keeps its place on the page), or a
+ * paragraph of the Study Book (notes).
+ */
+export type ReanchorTarget =
+  | { type: 'page'; version_id: string; page_id: string; region_id?: string | null }
+  | { type: 'block'; lineage_id: string; artifact_version: number; block_key: string };
+
+/** POST /api/annotations/reanchor — one owner decision for a note / highlight / ink group (audited). */
+export interface ReanchorRequest {
+  /** the group, with the revision this device saw (a newer edit elsewhere → 409, nothing changes) */
+  items: Array<{ kind: 'annotation' | 'note'; id: string; rev: number }>;
+  action: 'move' | 'keep_detached';
+  target?: ReanchorTarget;
+}
+
+export interface ReanchorResponse {
+  annotations: AnnotationDTO[];
+  notes: NoteDTO[];
+  summary_ar: string;
 }
 
 /** GET /api/annotations/sessions/latest?source_id= */
@@ -90,6 +130,17 @@ export interface NotePagesResponse {
 /** GET /api/annotations/notebook/:nodeId — a notebook's live pages and everything written on them (seeding / offline). */
 export interface NotebookContentResponse {
   node_id: string;
+  note_pages: NotePageView[];
+  annotations: AnnotationDTO[];
+}
+
+/**
+ * (Round 7 — H3) GET /api/annotations/orphan-pages[?include_deleted=1] — «صفحات بلا دفتر»: note pages that belong to
+ * neither a notebook / folder nor a source (their notebook or source was purged while a device that still wrote on
+ * them was offline). Kept, never deleted by the server; listed with the writing on the live ones so the owner can move
+ * them into a notebook or trash them. Trashed orphans only with include_deleted (the restore list).
+ */
+export interface OrphanNotePagesResponse {
   note_pages: NotePageView[];
   annotations: AnnotationDTO[];
 }

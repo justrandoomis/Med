@@ -9,6 +9,7 @@ import {
   displayedImageSize,
   encodeJpeg,
   ImageDecodeError,
+  jpegDecodeBytes,
   jpegOrientation,
   rotateImage,
 } from '../../src/modules/processing/image';
@@ -113,5 +114,42 @@ describe('JPEG decoding and EXIF orientation (H2 item 4)', () => {
     lie.writeUInt16BE(60000, sof + 5);
     lie.writeUInt16BE(60000, sof + 7);
     expect(decodeError(() => decodeImage(lie))).toBe('TOO_LARGE');
+  });
+
+  it('(H2 review) the decode budget holds what it says: a 12 MP photo without chroma subsampling decodes (it was TOO_LARGE)', () => {
+    // jpeg-js counts ≈ 14.5 bytes per pixel for a 4:2:0 photo and ≈ 22 for 4:4:4; the old memory cap (8 bytes per budget
+    // pixel) refused 4:4:4 JPEGs above ≈ 11 MP and 4:2:0 photos above ≈ 17 MP — below the 24 MP budget it stated, so
+    // such a picture got no scan metrics and its Image Quiz was served with browser-drawn masks only
+    const big = jpeg(solid(4000, 3000, [180, 180, 180]), 80);
+    const img = decodeImage(big);
+    expect([img.width, img.height]).toEqual([4000, 3000]);
+  }, 60_000);
+
+  it('(H2 review) the working memory is read from the frame header and checked BEFORE decoding', () => {
+    const header = (w: number, h: number, sampling: number[]) => {
+      // SOI + SOF0 (8-bit, h × w, one component per sampling byte) + EOI — enough for the header readers
+      const comps = sampling.flatMap((hv, i) => [i + 1, hv, 0]);
+      const len = 8 + comps.length;
+      return Buffer.from([0xff, 0xd8, 0xff, 0xc0, len >> 8, len & 255, 8, h >> 8, h & 255, w >> 8, w & 255, sampling.length, ...comps, 0xff, 0xd9]);
+    };
+    const p420 = header(6000, 4000, [0x22, 0x11, 0x11]); // a 24 MP phone photo
+    const p444 = header(6000, 4000, [0x11, 0x11, 0x11]);
+    expect(jpegDecodeBytes(p420)! / 24e6).toBeGreaterThan(14);
+    expect(jpegDecodeBytes(p420)! / 24e6).toBeLessThan(15);
+    expect(jpegDecodeBytes(p444)! / 24e6).toBeGreaterThan(21);
+    // 4:4:4 at the full 24 MP budget needs more than the cap: refused from the header, nothing allocated
+    expect(decodeError(() => decodeImage(p444))).toBe('TOO_LARGE');
+    // the same frame within the budget is not refused for its size (it fails as what it is: a frame without data)
+    expect(decodeError(() => decodeImage(header(1200, 800, [0x22, 0x11, 0x11])))).toBe('CORRUPT');
+  });
+
+  it('(H2 review) a VALID JPEG in an encoding this decoder does not read (arithmetic / lossless / hierarchical) is UNSUPPORTED, never «damaged»', () => {
+    // it was CORRUPT, and an OCR failure on it then said «the picture itself is damaged — reprocessing will not help»
+    const good = jpeg(solid(64, 64, [128, 128, 128]));
+    for (const marker of [0xc3, 0xc9, 0xca, 0xcb, 0xcd]) {
+      const other = Buffer.from(good);
+      other[other.indexOf(Buffer.from([0xff, 0xc0])) + 1] = marker;
+      expect(decodeError(() => decodeImage(other)), marker.toString(16)).toBe('UNSUPPORTED');
+    }
   });
 });

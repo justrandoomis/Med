@@ -31,6 +31,7 @@ import { newId } from '../../lib/ids';
 import { resolveScope, VERIFIER_VERSION } from '../evidence/services';
 import { artifactView, storedScope, type AbstainView, type StoredScope } from './artifacts';
 import { anchorRegions, isRealPatientRequest, realPatientAbstain } from './explain';
+import type { AiTextEvent } from '../ai';
 import { assertAnchorInScope, generateSingleShot, pinnedScope, publishAbstention, requireAi, type ArtifactBase, type SingleShotInput } from './generate';
 import { GENERATOR_VERSION, resolveRules } from './rules';
 import type { messageCreateSchema, saveNoteSchema, threadCreateSchema } from './schema';
@@ -248,7 +249,16 @@ function answerRichText(a: StudyArtifactView): RichText {
 const CHAT_TASK =
   'Answer the OWNER QUESTION about the selected passage (if any) using only the evidence excerpts. Previous turns of THIS conversation are given as generated, non-evidence context: do not treat earlier answers as evidence, and do not carry assumptions from other lectures.';
 
-export async function postMessage(ctx: AppContext, threadId: string, body: z.infer<typeof messageCreateSchema>, opts: { signal?: AbortSignal } = {}): Promise<ChatPostResponse> {
+export interface PostMessageOptions {
+  signal?: AbortSignal;
+  /** (Round 7 H4, §30) streaming endpoint hooks: the unverified draft text and the pipeline phase */
+  onText?: (e: AiTextEvent) => void;
+  onPhase?: (phase: 'generating' | 'verifying') => void;
+}
+
+const CANCELLED_AR = 'أوقفتَ الإجابة قبل اكتمالها؛ لم يُحفظ منها شيء ولم يُعرض منها ما لم يُتحقق منه.';
+
+export async function postMessage(ctx: AppContext, threadId: string, body: z.infer<typeof messageCreateSchema>, opts: PostMessageOptions = {}): Promise<ChatPostResponse> {
   const t = threadRow(ctx, threadId);
   if (t.archived_at) throw new AppError('CONFLICT', MSG.archived, 409);
   const scope = resolveScope(ctx, fromJson<SourceScope>(t.scope_json));
@@ -315,17 +325,21 @@ export async function postMessage(ctx: AppContext, threadId: string, body: z.inf
           leading,
           terms: termsForTexts(ctx, [body.text, selection]),
           signal: opts.signal,
+          onText: opts.onText,
         },
         defaultRegionIds: anchor?.region_ids ?? [],
         onPhase: (phase) => {
           if (phase === 'verifying') setMessage(ctx, answerId, { status: 'verifying' });
+          opts.onPhase?.(phase);
         },
       };
       artifact = await generateSingleShot(ctx, input);
     }
   } catch (e) {
     const err = e as { code?: string; messageAr?: string };
-    setMessage(ctx, answerId, { status: 'rejected', detail_json: toJson({ error: { code: err.code ?? 'INTERNAL', message: err.messageAr ?? 'تعذر إكمال الإجابة.' } }) });
+    // (Round 7 H4) the owner stopped a streaming answer: said as such, never as a server failure
+    const error = opts.signal?.aborted ? { code: 'CANCELLED', message: CANCELLED_AR } : { code: err.code ?? 'INTERNAL', message: err.messageAr ?? 'تعذر إكمال الإجابة.' };
+    setMessage(ctx, answerId, { status: 'rejected', detail_json: toJson({ error }) });
     throw e;
   }
 

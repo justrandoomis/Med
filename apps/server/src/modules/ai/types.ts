@@ -22,6 +22,12 @@ export interface ProviderRequest {
   images?: ProviderImage[];
   maxOutputTokens: number;
   signal: AbortSignal;
+  /**
+   * (Round 7 H4, §30) called with each visible text delta as the provider streams it, in order. The text is the
+   * model's RAW output (for structured tasks: partial JSON) — an unverified draft that callers must label as such;
+   * the result returned by generateStructured is still the only thing that may be validated / published.
+   */
+  onTextDelta?: (text: string) => void;
 }
 
 export interface ProviderUsage {
@@ -97,6 +103,8 @@ export interface AiProvider {
    */
   outputTokenCeiling?(task: AiTask, requested: number): number;
   generateStructured(req: ProviderRequest): Promise<ProviderResponse>;
+  /** (Round 7 H4) whether `onTextDelta` receives real incremental deltas (else it is never called) */
+  readonly streamsText?: boolean;
 }
 
 /** Untrusted content block (uploaded files, OCR, web pages, owner notes…). */

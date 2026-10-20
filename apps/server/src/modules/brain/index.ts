@@ -19,11 +19,16 @@
 //   GET    /coverage?course_node_id= | source_id=   Question Coverage Map
 //   GET    /knowledge?course_node_id=               Student Knowledge Map
 //   GET    /topics · GET /topics/:id · POST /topics/suggest {topic_id?}
+//   GET    /algorithms?source_id= | concept_id= | course_node_id=   algorithms / flowcharts read from lectures (H4)
+// Jobs: extract_knowledge (one version) · brain.recompute_relations (one course group, background, incremental — H4)
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
   EXTRACT_KNOWLEDGE_JOB_KIND,
+  RECOMPUTE_RELATIONS_JOB_KIND,
   RELATION_KINDS,
+  type KnowledgeAlgorithmListResponse,
+  type RecomputeRelationsJobInput,
   type BrainConceptListResponse,
   type BrainConceptResponse,
   type BrainExtractResponse,
@@ -39,7 +44,8 @@ import {
 import type { ModuleOptions } from '../../context';
 import { parseBody, parseParams, parseQuery } from '../../lib/http';
 import { createConcept, getConcept, listConcepts, mergeConcept, patchConcept } from './concepts';
-import { courseBrain, enqueueExtraction } from './course';
+import { listAlgorithms } from './algorithm-views';
+import { courseBrain, enqueueExtraction, runRelationRecompute } from './course';
 import { coverage, versionConcepts } from './coverage';
 import { EXTRACTOR_VERSION } from './extract';
 import { knowledgeMap } from './map';
@@ -82,6 +88,10 @@ const coverageQuery = z
   .refine((q) => !!q.course_node_id !== !!q.source_id, 'course_node_id أو source_id (أحدهما فقط)');
 const knowledgeQuery = z.object({ course_node_id: id.optional() });
 const suggestBody = z.object({ topic_id: id.optional() }).strict();
+const recomputeInput = z.object({ course_key: z.string().trim().min(1).max(200) }).strict();
+const algorithmsQuery = z
+  .object({ source_id: id.optional(), concept_id: id.optional(), course_node_id: id.optional() })
+  .refine((q) => [q.source_id, q.concept_id, q.course_node_id].filter(Boolean).length === 1, 'source_id أو concept_id أو course_node_id (أحدها فقط)');
 
 export default async function register(app: FastifyInstance, { ctx }: ModuleOptions): Promise<void> {
   ctx.capabilities.set('course_brain', 'available');
@@ -97,6 +107,19 @@ export default async function register(app: FastifyInstance, { ctx }: ModuleOpti
     handler: async (run) => {
       run.progress({ stage: 'extract' });
       return runKnowledgeExtraction(ctx, run.input.version_id, run.id);
+    },
+  });
+
+  // Round 7 H4: the course's suggested relations, recomputed in the background (incremental, yielding the event loop)
+  ctx.jobs.register<RecomputeRelationsJobInput, unknown>(RECOMPUTE_RELATIONS_JOB_KIND, {
+    version: 'relations-2',
+    maxAttempts: 2,
+    timeoutMs: 10 * 60 * 1000,
+    concurrency: 1,
+    inputSchema: recomputeInput as unknown as z.ZodType<RecomputeRelationsJobInput>,
+    handler: async (run) => {
+      run.progress({ stage: 'relations' });
+      return runRelationRecompute(ctx, run.input.course_key, { id: run.id, signal: run.signal });
     },
   });
 
@@ -152,6 +175,14 @@ export default async function register(app: FastifyInstance, { ctx }: ModuleOpti
     return coverage(ctx, { courseNodeId: q.course_node_id ?? null, sourceId: q.source_id ?? null });
   });
   app.get('/knowledge', async (req): Promise<StudentKnowledgeResponse> => studentKnowledge(ctx, { courseNodeId: parseQuery(knowledgeQuery, req).course_node_id ?? null }));
+
+  // ── algorithms / flowcharts (Round 7 H4) ──
+  app.get('/algorithms', async (req): Promise<KnowledgeAlgorithmListResponse> => {
+    const q = parseQuery(algorithmsQuery, req);
+    if (q.source_id) return listAlgorithms(ctx, { sourceIds: [q.source_id] });
+    if (q.course_node_id) return listAlgorithms(ctx, { sourceIds: courseSources(ctx, q.course_node_id).map((s) => s.id) });
+    return listAlgorithms(ctx, { conceptId: q.concept_id! });
+  });
 
   // ── topics ──
   app.get('/topics', async () => topicList(ctx));

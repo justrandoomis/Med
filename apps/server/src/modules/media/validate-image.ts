@@ -8,6 +8,9 @@
 //   age_group       when the request names one: the candidate's age group (metadata or caption) must match
 //   origin          a real example was requested → generated illustrations / re-organized diagrams / educational
 //                   drawings are excluded
+//   allowed_source  (Round 7 H4) an EXTERNAL candidate must come from a source the owner allows: its original URL
+//                   belongs to an ENABLED entry of the visual-source registry (domain or a sub-domain of it, and the
+//                   entry's atlas path when it has one). No URL, no registry, or not listed → excluded with the reason.
 // Unknown is never accepted: a candidate whose modality / region / caption cannot be checked is excluded with the
 // reason (a nearby but misleading image is worse than none). Nothing here writes explanations.
 import type { ImageCandidate, ImageCheck, ImageRequest, ImageValidation } from '@medlevo/shared';
@@ -143,7 +146,54 @@ const DRAWING_KINDS = new Set(['educational_drawing', 'diagram', 'table_image'])
 
 const label = (k: string | null) => (k ? (MODALITY_LABEL_AR[k] ?? k) : 'غير معروف');
 
-export function validateImageCandidate(candidate: ImageCandidate, request: ImageRequest): ImageValidation {
+/** An enabled entry of the owner's visual-source registry (media/visual-sources.ts). */
+export interface AllowedVisualSource {
+  id: string;
+  name: string;
+  domain: string;
+  path_prefix: string | null;
+}
+
+/** The registry entry an external URL belongs to (http/https only; host = domain or a sub-domain; path prefix). */
+export function matchAllowedSource(url: string | null | undefined, registry: readonly AllowedVisualSource[]): AllowedVisualSource | null {
+  if (!url) return null;
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
+  if (u.username || u.password) return null;
+  const host = u.hostname.toLowerCase().replace(/\.$/, '');
+  let path: string;
+  try {
+    path = decodeURIComponent(u.pathname);
+  } catch {
+    return null;
+  }
+  for (const e of registry) {
+    if (host !== e.domain && !host.endsWith(`.${e.domain}`)) continue;
+    if (e.path_prefix && !path.startsWith(e.path_prefix)) continue;
+    return e;
+  }
+  return null;
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url.slice(0, 80);
+  }
+}
+
+export interface ValidateImageOptions {
+  /** the ENABLED entries of the owner's registry; an external candidate without a match is never accepted */
+  allowedSources?: readonly AllowedVisualSource[];
+}
+
+export function validateImageCandidate(candidate: ImageCandidate, request: ImageRequest, opts: ValidateImageOptions = {}): ImageValidation {
   const checks: ImageCheck[] = [];
   const wantModality = normalizeModality(request.modality);
   const wantRegion = normalizeRegion(request.anatomic_region);
@@ -203,6 +253,16 @@ export function validateImageCandidate(candidate: ImageCandidate, request: Image
           : 'رسم تعليمي أو مخطط من المصدر، وليس صورة حقيقية من نوع التصوير المطلوب.',
     });
   } else checks.push({ check: 'origin', passed: true, reason_ar: 'المصدر مناسب لمثال حقيقي.' });
+
+  // (Round 7 H4, §32) an external picture only from a source the owner allows
+  if (candidate.origin === 'external') {
+    const registry = opts.allowedSources ?? [];
+    const hit = matchAllowedSource(candidate.source_url, registry);
+    if (!candidate.source_url) checks.push({ check: 'allowed_source', passed: false, reason_ar: 'صورة خارجية بلا رابط لمصدرها الأصلي؛ لا يمكن التحقق أنها من مصدر سمحت به.' });
+    else if (registry.length === 0) checks.push({ check: 'allowed_source', passed: false, reason_ar: 'لا توجد مصادر بصرية مسموح بها في سجلك (مركز التحكم ← المصادر البصرية)، فلا تُقبل صورة خارجية.' });
+    else if (!hit) checks.push({ check: 'allowed_source', passed: false, reason_ar: `«${hostOf(candidate.source_url)}» ليس ضمن المصادر البصرية التي سمحت بها (أو أن مصدره معطّل).` });
+    else checks.push({ check: 'allowed_source', passed: true, reason_ar: `من مصدر سمحت به: ${hit.name}.` });
+  }
 
   const failed = checks.filter((c) => !c.passed);
   return { accepted: failed.length === 0, checks, reasons_ar: failed.map((c) => c.reason_ar) };

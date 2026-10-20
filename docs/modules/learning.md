@@ -172,6 +172,10 @@ Self level, explanation level, dialect, Socratic default go through `ctx.setting
 and pace in `learning_profile`. `signals` lists each part (MCQ, card reviews, written, mistake types, confidence,
 pace) with what it is used for, its count and reset time; `used_signals_ar` in words; measured pace (median, ≥ 5
 samples, estimate). A reset is a cut-off time — the data is kept. «تفضيلاتك … لا يغيّران الحقائق الطبية ولا مصادرها».
+Round 7 H4: a part `case_attempts` («محاولات الحالات وOSCE والـ viva») resets the case / OSCE / viva signals of the
+Weakness Center (`caseSignals(ctx, {since})` reads only completed attempts finished after the cut-off); and the brain's
+coverage «attempted» counts respect the `mcq_attempts` / `written_attempts` cut-offs (`signalResets`). Attempts are
+never deleted; history (topic pages, results) still lists them. Test: `srv:learning/h4-resets.test.ts`.
 
 ## 8. Planner (`planner.ts`) — §45
 `StudyPlanConfig` → deterministic owner days (plan timezone stored; device and later setting changes never shift its
@@ -292,8 +296,8 @@ create card with duplicate check 0.1 s.
 * **No AI generation** in this track: no generated cards, the reasoning-replay completion and the simplified
   explanation are AI-gated pointers to the evidence-checked explain flow (studybook). Nothing here produces medical text.
 * Case / OSCE / viva attempts are collected by the Weakness Center since track F2 (see §6). The Student Knowledge Map
-  and the prerequisite graph (§44) live in the `brain` module (`docs/modules/course-brain.md`), not here. A case
-  attempt has no per-part reset yet (profile resets apply to MCQ confidence / mistake types only).
+  and the prerequisite graph (§44) live in the `brain` module (`docs/modules/course-brain.md`), not here. ~~A case
+  attempt has no per-part reset yet~~ — `case_attempts` reset since Round 7 H4 (§7).
 * Image occlusion export draws masks only on non-interlaced PNG images (others are skipped and listed); native Anki
   Image Occlusion notes are not produced; media must be copied into `collection.media` by hand (Anki's text import
   does not copy media) — the README says so. Anki notetype names may be localized in the owner's Anki; the README says

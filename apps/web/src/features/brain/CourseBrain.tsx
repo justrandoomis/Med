@@ -9,6 +9,7 @@ import { Button, ErrorState, LoadingState, StatusPill, Tab, TabList, TabPanel, T
 import { errorMessage } from '../../lib/api';
 import { useQuery } from '../library/data';
 import { BRAIN_PATHS, brainApi, conceptsUrl, knowledgeUrl } from './api';
+import { AlgorithmList } from './AlgorithmList';
 import { CoverageView } from './CoverageView';
 import { KnowledgeGraph } from './KnowledgeGraph';
 import { extractionCut } from './model';
@@ -55,7 +56,8 @@ function CourseMapPanel({ courseNodeId, readOnly }: { courseNodeId: string; read
   const status = useQuery<CourseBrainResponse>(BRAIN_PATHS.course(courseNodeId), { cache: true });
   const map = useQuery<KnowledgeMapResponse>(BRAIN_PATHS.map(courseNodeId), { cache: true });
   const toast = useToast();
-  const running = (status.data?.lectures ?? []).some((l) => l.job && (l.job.status === 'queued' || l.job.status === 'running'));
+  const running =
+    (status.data?.lectures ?? []).some((l) => l.job && (l.job.status === 'queued' || l.job.status === 'running')) || status.data?.relations_state?.status === 'refreshing';
   // while extraction jobs run, re-read the status (real job states — never a fake percentage)
   const polls = useRef(0);
   useEffect(() => {
@@ -143,6 +145,11 @@ function CourseMapPanel({ courseNodeId, readOnly }: { courseNodeId: string; read
             </li>
           ))}
         </ul>
+        {s.relations_state?.status === 'refreshing' && (
+          <p className="lw-note" role="status">
+            تُحدَّث العلاقات المقترحة في الخلفية بعد آخر تغيير في الكورس؛ المعروض الآن هو آخر ما حُسب، ويتحدث تلقائيًا.
+          </p>
+        )}
         <ul className="kb-notes">
           {s.notes_ar.map((n) => (
             <li key={n} className="lw-muted">
@@ -150,6 +157,12 @@ function CourseMapPanel({ courseNodeId, readOnly }: { courseNodeId: string; read
             </li>
           ))}
         </ul>
+      </section>
+      <section className="lw-sheet" aria-labelledby="cb-algo">
+        <h3 id="cb-algo" className="lw-sheet__title">
+          خوارزميات ومخططات مقروءة من المحاضرات
+        </h3>
+        <AlgorithmList filter={{ courseNodeId }} showSource headingLevel={4} emptyText="لم يُعثر في محاضرات هذا الكورس على خطوات مرقّمة تحت عنوان إجراء، ولا قواعد «إذا … فـ…»، ولا أسهم، ولا مخطط بعنوان مسار أو خوارزمية." />
       </section>
       <section className="lw-sheet" aria-labelledby="cb-map">
         <h3 id="cb-map" className="lw-sheet__title">

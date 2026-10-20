@@ -19,6 +19,8 @@
 //   POST   /recordings (multipart: recording_id, started_at, duration_ms?, node_id?, linked_source_id?, title?; file)
 //          in-app recording → my_audio_note source (idempotent by recording_id) · GET /recordings/:id (+ linked strokes)
 //          · GET /recordings?source_id=  (track F4)
+//   GET    /visual-sources · POST /visual-sources · PATCH /visual-sources/:id · DELETE /visual-sources/:id
+//          (Round 7 H4, §32) the owner's registry of allowed external visual sources (Control Center)
 // Capabilities: workspace.audio → available (playback, manual transcript, subtitle import, manual links, in-app
 // recording when the browser supports MediaRecorder — automatic transcription is not available, said in /status); external.images → not implemented with the
 // reason (no image provider; external fetch is off by default) — the validation gate exists for a future provider.
@@ -39,6 +41,7 @@ import { createSegment, deleteSegment, importSubtitles, patchSegment, restoreSeg
 import { getImageRow } from './images';
 import { validateImageCandidate } from './validate-image';
 import { getRecordingRow, recordingsForSource, recordingView, uploadRecording } from './recordings';
+import { createVisualSource, deleteVisualSource, enabledVisualSources, listVisualSources, patchVisualSource } from './visual-sources';
 
 const id = z.string().trim().min(1).max(64);
 const idParams = z.object({ id });
@@ -50,8 +53,8 @@ const AUTOLINK_AR = 'الربط التلقائي بين الصوت والصفح�
 
 function externalImagesReason(ctx: AppContext): string {
   return ctx.config.allowExternalFetch
-    ? 'البحث الخارجي عن الصور غير مبني في هذا الإصدار (لا يوجد مزود صور). أي نتيجة خارجية مستقبلًا تمر ببوابة التحقق (نوع التصوير، المنطقة، التعليق، العمر) وتُستبعد غير المطابقة مع السبب.'
-    : 'البحث الخارجي عن الصور غير متاح: الجلب من الإنترنت معطّل على الخادم (MEDLEVO_ALLOW_EXTERNAL_FETCH) ولا يوجد مزود صور. ابحث في صور مصادرك؛ بوابة التحقق من المطابقة جاهزة لأي مزود مستقبلي.';
+    ? 'البحث الخارجي عن الصور غير مبني في هذا الإصدار (لا يوجد مزود صور). أي نتيجة خارجية مستقبلًا تمر ببوابة التحقق (نوع التصوير، المنطقة، التعليق، العمر، ومصدر من سجل المصادر البصرية التي سمحت بها) وتُستبعد غير المطابقة مع السبب.'
+    : 'البحث الخارجي عن الصور غير متاح: الجلب من الإنترنت معطّل على الخادم (MEDLEVO_ALLOW_EXTERNAL_FETCH) ولا يوجد مزود صور. ابحث في صور مصادرك؛ بوابة التحقق من المطابقة وسجل المصادر البصرية المسموح بها (مركز التحكم) جاهزان لأي مزود مستقبلي.';
 }
 
 export function mediaStatus(ctx: AppContext): MediaStatusResponse {
@@ -141,10 +144,21 @@ export default async function register(app: FastifyInstance, { ctx }: ModuleOpti
     const body = parseBody(z.object({ request: imageRequestSchema }).strict(), req);
     const accepted: ImageMatchResponse['accepted'] = [];
     const excluded: ImageMatchResponse['excluded'] = [];
+    // (Round 7 H4) an external picture is accepted only from a source the owner allows (enabled registry entry)
+    const allowedSources = enabledVisualSources(ctx);
     for (const r of allImageRows(ctx)) {
       const v = validateImageCandidate(
-        { modality: r.m_modality ?? r.modality, anatomic_region: r.m_region ?? r.anatomic_region, caption: r.caption, age_group: r.m_age, image_kind: r.m_kind ?? r.image_kind, origin: r.origin },
+        {
+          modality: r.m_modality ?? r.modality,
+          anatomic_region: r.m_region ?? r.anatomic_region,
+          caption: r.caption,
+          age_group: r.m_age,
+          image_kind: r.m_kind ?? r.image_kind,
+          origin: r.origin,
+          source_url: r.original_url,
+        },
         body.request,
+        { allowedSources },
       );
       (v.accepted ? accepted : excluded).push({ image: summary(ctx, r), validation: v });
     }
@@ -170,6 +184,18 @@ export default async function register(app: FastifyInstance, { ctx }: ModuleOpti
   });
   app.delete('/overlays/:id', async (req) => {
     deleteOverlay(ctx, parseParams(idParams, req).id);
+    return { ok: true };
+  });
+
+  // ── (Round 7 H4, §32) the registry of allowed external visual sources ──
+  app.get('/visual-sources', async () => listVisualSources(ctx));
+  app.post('/visual-sources', async (req, reply) => {
+    reply.code(201);
+    return { item: createVisualSource(ctx, req.body ?? {}) };
+  });
+  app.patch('/visual-sources/:id', async (req) => ({ item: patchVisualSource(ctx, parseParams(idParams, req).id, req.body ?? {}) }));
+  app.delete('/visual-sources/:id', async (req) => {
+    deleteVisualSource(ctx, parseParams(idParams, req).id);
     return { ok: true };
   });
 

@@ -127,7 +127,8 @@ Presets (colour + width per tool, last pen/eraser/shape, pen-only, shape recogni
 Per document, command stack of `{before, after}` item states (create, delete, move, resize, rotate,
 recolour, width, split, restack, lock, paste, enhancement, text edits), 200 steps. It survives
 switching tabs / remounting `InkProvider` while the app is open (module registry by `documentKey`).
-**After a reload the ink is all there but the history starts fresh** — the undo tooltip says so.
+~~**After a reload the ink is all there but the history starts fresh** — the undo tooltip says so.~~ Since Round 7 H3
+the history is kept on the device and survives a reload or closing the app — see «Round 7 — H3» below.
 
 ## 2. Integration notes for the reader (features/workspace)
 * `InkLayer` positions itself at the top-left of the page box (`position:absolute; top:0; left:0`,
@@ -183,15 +184,16 @@ including the IndexedDB flush ≈ 250 ms (mostly the scripted mouse movement).
   Pressure, tilt, hover, palm rejection, latency and predicted points are implemented from the specs
   and tested with synthetic events only. See `docs/CAPABILITY_MATRIX.md`.
 * Only Chromium was available; Firefox and Safari are untested.
-* Handwriting recognition (§28) is not implemented (the lasso menu shows «تحويل إلى نص» disabled with
-  the reason; the capability panel says «غير منفّذ بعد»).
+* ~~Handwriting recognition (§28) is not implemented (the lasso menu shows «تحويل إلى نص» disabled with
+  the reason; the capability panel says «غير منفّذ بعد»).~~ Built in track F4 (below); requires a vision provider.
 * Double tap, squeeze, Scribble on the canvas and PencilKit latency need a native iPad layer; not built.
 * Text boxes do not rotate (rotation moves their centre); the shape tool has no Shift constraints;
   «bring forward / backward» are implemented as bring to front / send to back (one step at a time is
   not); ~~no image insertion tool~~ (built in track F1, below); no multi-page selection.
 * The text-box editor uses the box's font size, so on an iPhone a small font may make Safari zoom into
   the field while typing.
-* Undo history is memory-only (by design): it does not survive a reload or a crash; the ink does.
+* ~~Undo history is memory-only (by design): it does not survive a reload or a crash; the ink does.~~ Kept in IndexedDB
+  since Round 7 H3 (size-capped; per device).
 * Pasting / seeding thousands of items at once writes one IndexedDB request pair per item inside one
   transaction (several seconds for 3 000); normal writing is one stroke per transaction.
 * Canvas backing stores are capped at 16 M pixels: at extreme zoom on a large page the effective DPR is
@@ -403,3 +405,28 @@ every new route sits behind the global session + CSRF guard, the PNG is magic-ch
   failed one is shown as «<status label>: <reason>» in the error state with «أعد المحاولة» (`RecognitionDialog.tsx`).
 * Tests: `srv:annotations/recognition.test.ts` «H1 hardening — recognition requests» (5, FakeAiProvider),
   `web:src/features/workspace/handwriting/handwriting.test.tsx` «H1 — a FAILED earlier reading».
+
+## Round 7 — H3 (2026-10-20): undo that survives a reload; lasso → card / question
+* **Persistent undo / redo (§26 «سجل تراجع حتى بعد إغلاق التطبيق»).** `history.ts` gained `peekUndo` / `peekRedo` /
+  `drop` / `snapshot` / `restore`; `historyLog.ts` stores the per-document stacks in the `kv` table (key
+  `ink.history.v1:<document>`), newest steps first under `HISTORY_MAX_CHARS` (2 MB; an older step that does not fit is
+  dropped with everything older), saved 400 ms after a change and on `pagehide` / dispose, loaded when the document
+  opens (`store.historyReady`). A step is checked against what is there NOW before it runs (`store.undoStep()` /
+  `redoStep()` → `done | empty | confirm | checking`): pages not loaded are read from IndexedDB; changes already in
+  place are skipped; a step that would bring back writing deleted since (the server's tombstone pulled from another
+  device, the trash) or overwrite a newer edit is not applied silently — `InkProvider` asks «التراجع عن «…»» with
+  «نفّذها وأعِد الكتابة» / «نفّذها» or «تخطَّ هذه الخطوة» (`PendingStepDialog`). The toolbar's history note says the
+  history is kept on this device and size-capped. Limits: per device; two tabs on one document → the last writer's log
+  wins. Tests: `test/ink/history-persist.h3.test.ts` (6 — write + move, close, reopen: both undo and redo; writing erased
+  on another device (server tombstone) → the step asks and «skip» keeps it erased; «bring it back» restores it on
+  purpose; an item edited elsewhere is not overwritten without a question; a step on a page not on screen is checked
+  against this device's copy; the size cap keeps the newest steps),
+  `test/ink/history-dialog.h3.test.tsx` (1).
+* **Lasso → card / question (§28/§29).** `selectionActions.tsx` gained `card` / `question`; `SelectionOverlay` shows
+  «اصنع بطاقة من المحدد…» and «اكتب سؤالًا من المحدد…» under «المزيد» (disabled with a reason where no host provides
+  them). The host (`handwriting/HandwritingHost.tsx` → `LassoCardDialog.tsx`) does the rest: a basic card whose front can
+  come from the reading of exactly those strokes (gated honestly on the vision provider), an image-occlusion card from
+  the source-page area the server cuts under the selection, or an owner-written question saved in the vault and linked
+  to the lecture. See `docs/modules/workspace.md` «Round 7 — H3» item 4. Tests:
+  `src/features/workspace/handwriting/LassoCardDialog.h3.test.tsx` (7), `srv:annotations/h3-lasso-card.test.ts` (7),
+  `e2e/h3-reader-notes.spec.ts`.

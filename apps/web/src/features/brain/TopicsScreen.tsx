@@ -6,7 +6,9 @@ import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Check, Filter, Plus, RotateCcw, Sparkles, Tag, Trash2, X } from 'lucide-react';
 import {
+  CASE_KIND_LABELS_AR,
   TOPIC_ENTITY_LABELS_AR,
+  type CaseListResponse,
   pageDisplayLabel,
   withNumberedVersion,
   type LibraryTreeResponse,
@@ -146,7 +148,7 @@ function TopicDialog({ topics, initial, onClose, onSaved }: { topics: TopicListI
   );
 }
 
-const TYPE_ORDER: TopicEntityType[] = ['source', 'source_region', 'question', 'concept', 'library_node', 'image_asset', 'flashcard', 'note'];
+const TYPE_ORDER: TopicEntityType[] = ['source', 'source_region', 'question', 'clinical_case', 'artifact', 'concept', 'library_node', 'image_asset', 'flashcard', 'note', 'exam_attempt', 'case_attempt'];
 
 export function TopicScreen() {
   const { topicId = '' } = useParams();
@@ -154,7 +156,7 @@ export function TopicScreen() {
   const all = useQuery<{ topics: TopicListItem[] }>(BRAIN_PATHS.topics);
   const toast = useToast();
   const navigate = useNavigate();
-  const [dialog, setDialog] = useState<null | 'edit' | 'delete' | 'link-source' | 'link-region' | 'link-question'>(null);
+  const [dialog, setDialog] = useState<null | 'edit' | 'delete' | 'link-source' | 'link-region' | 'link-question' | 'link-case'>(null);
   usePageTitle(q.data?.topic.title ?? 'موضوع');
   if (q.loading && !q.data) return <LoadingState stage="جارٍ تحميل الموضوع…" />;
   if (q.error && !q.data) {
@@ -202,6 +204,9 @@ export function TopicScreen() {
           <Button size="sm" icon={<Plus size={16} />} onClick={() => setDialog('link-question')}>
             اربط سؤالًا
           </Button>
+          <Button size="sm" icon={<Plus size={16} />} onClick={() => setDialog('link-case')}>
+            اربط حالة
+          </Button>
           <Button size="sm" variant="plain" onClick={() => setDialog('edit')}>
             تعديل
           </Button>
@@ -226,6 +231,7 @@ export function TopicScreen() {
         )}
         <LinkSection title="روابط مقترحة — راجعها" empty="لا اقتراحات تنتظر قرارك." links={suggested} />
         <LinkSection title="مرتبط بالموضوع" empty="لا روابط مقبولة بعد." links={accepted} grouped />
+        <AttemptsSection attempts={d.attempts} />
         {rejected.length > 0 && (
           <details className="lw-sheet">
             <summary>المرفوضة ({rejected.length}) — لن تُقترح مجددًا</summary>
@@ -253,6 +259,7 @@ export function TopicScreen() {
       {dialog === 'link-source' && <LinkSourceDialog topicId={d.topic.id} onClose={() => setDialog(null)} />}
       {dialog === 'link-region' && <LinkRegionDialog topicId={d.topic.id} onClose={() => setDialog(null)} />}
       {dialog === 'link-question' && <LinkQuestionDialog topicId={d.topic.id} onClose={() => setDialog(null)} />}
+      {dialog === 'link-case' && <LinkCaseDialog topicId={d.topic.id} onClose={() => setDialog(null)} />}
     </div>
   );
 }
@@ -278,6 +285,47 @@ function LinkSection({ title, empty, links, grouped }: { title: string; empty: s
             </ul>
           </div>
         ))
+      )}
+    </section>
+  );
+}
+
+/**
+ * «محاولاتي السابقة» (Round 7 H4, §05): attempts linked to the topic, and attempts on the questions / cases it links to —
+ * each says how it belongs to the topic; the count is the full count even when the list is capped.
+ */
+function AttemptsSection({ attempts }: { attempts: TopicDetailResponse['attempts'] }) {
+  if (!attempts) return null;
+  return (
+    <section className="lw-sheet" aria-labelledby="kb-topic-attempts">
+      <h2 id="kb-topic-attempts" className="lw-sheet__title">
+        محاولاتي السابقة {attempts.total > 0 ? `(${attempts.total})` : ''}
+      </h2>
+      {attempts.items.length === 0 ? (
+        <p className="lw-muted">لا محاولات بعد على أسئلة هذا الموضوع أو حالاته، ولا محاولات ربطتها به.</p>
+      ) : (
+        <>
+          {attempts.total > attempts.items.length && <p className="lw-muted">{`تُعرض أحدث ${attempts.items.length} من ${attempts.total}.`}</p>}
+          <ul className="kb-attempts">
+            {attempts.items.map((a) => (
+              <li key={`${a.kind}:${a.id}`} className="kb-attempt">
+                {a.href ? (
+                  <Link className="lw-link" to={a.href}>
+                    <bdi>{a.label}</bdi>
+                  </Link>
+                ) : (
+                  <bdi>{a.label}</bdi>
+                )}
+                {a.sublabel && (
+                  <span className="lw-muted">
+                    <bdi>{a.sublabel}</bdi>
+                  </span>
+                )}
+                <span className="kb-role">{a.via_ar}</span>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </section>
   );
@@ -521,6 +569,50 @@ function LinkQuestionDialog({ topicId, onClose }: { topicId: string; onClose: ()
                 <bdi>{r.stem_preview}</bdi> <span className="lw-muted">({r.origin_label_ar})</span>
               </span>
               <Button size="sm" variant="secondary" onClick={() => void link(r.id)} aria-label={`اربط السؤال: ${r.stem_preview}`}>
+                اربط
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Dialog>
+  );
+}
+
+/** Link a clinical case / OSCE station / viva (not in the trash) to the topic (Round 7 H4). */
+function LinkCaseDialog({ topicId, onClose }: { topicId: string; onClose: () => void }) {
+  const toast = useToast();
+  const cases = useQuery<CaseListResponse>('/cases');
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const link = async (caseId: string) => {
+    setBusyId(caseId);
+    try {
+      await brainApi.linkTopic(topicId, 'clinical_case', caseId);
+      toast.show({ title: 'رُبطت الحالة بالموضوع', tone: 'success' });
+      onClose();
+    } catch (e) {
+      toast.show({ title: errorMessage(e), tone: 'danger' });
+    } finally {
+      setBusyId(null);
+    }
+  };
+  const list = cases.data?.cases ?? [];
+  return (
+    <Dialog open onClose={onClose} title="اربط حالة بالموضوع" description="الربط لا يغيّر الحالة ولا محاولاتها." footer={<Button onClick={onClose}>إغلاق</Button>}>
+      {cases.loading && !cases.data ? (
+        <LoadingState stage="جارٍ تحميل الحالات…" inline />
+      ) : cases.error && !cases.data ? (
+        <ErrorState inline message={cases.error.message} onRetry={() => void cases.refresh()} />
+      ) : list.length === 0 ? (
+        <p className="lw-muted">لا حالات بعد.</p>
+      ) : (
+        <ul className="kb-topic-links">
+          {list.map((c) => (
+            <li key={c.id} className="kb-topic-link">
+              <span>
+                <bdi>{c.title}</bdi> <span className="lw-muted">({CASE_KIND_LABELS_AR[c.kind]})</span>
+              </span>
+              <Button size="sm" variant="secondary" loading={busyId === c.id} onClick={() => void link(c.id)} aria-label={`اربط الحالة: ${c.title}`}>
                 اربط
               </Button>
             </li>

@@ -244,7 +244,8 @@ with exit 2 → server started on the restored directory: old cookie 401, login 
   and «بياناتك» linked from Settings (the Control Center storage section already linked it). Global nav unchanged.
 * ~~`.env.example` lacks `MEDLEVO_SETUP_TOKEN`~~ — **fixed in I1** (with a test that every variable the server reads
   is documented).
-* ~~No DOCX export.~~ DOCX export since track F5 (below). PDF only via browser printing. No server-side PDF.
+* ~~No DOCX export.~~ DOCX export since track F5 (below). ~~PDF only via browser printing. No server-side PDF.~~ Server
+  PDF since Round 7 H4 (below): the original PDF with the owner's writing (flattened) and Word → PDF via LibreOffice.
 * Question-source files (the PDF a question was extracted from) are not part of a lecture download. Download the
   question source itself.
 * Re-send after a restore covers only writes still in the outbox history (7 days) and acknowledged by a client with
@@ -347,3 +348,52 @@ Not changed (noted):
   export panel, phone + desktop; the downloaded file is a DOCX with `<w:bidi/>`).
 * Not verified: opening the files in Microsoft Word itself (rendering checked with LibreOffice only); Word may lay out
   isolates slightly differently. Images are not embedded (figures are cited by page).
+
+## Round 7 H4 — full export, offline hashes, server PDF (2026-10-20)
+
+**Full JSON export (item 6).** `exportAll` now carries `annotation_image` (the pictures placed on pages: `image_key` →
+stored file) and `figure_reading` (the model's reading AND the owner's reviewed structure, each with its status and note),
+plus the owner's visual-source registry (`visual_source`, item 9). `ExportManifest.links` maps each picture's key to its
+file id **and** sha256 (`role: 'image'`); a note says what the readings are. Before H4 neither table was exported: a
+picture's key pointed at nothing and an owner's figure review was lost. Test: `srv:data/h4-export.test.ts`.
+
+**Offline «تغيّر المحتوى» (item 7).** The manifest / bundle carry `source_hash` (pages, regions, Study Book, questions,
+files) apart from `owner_hash` (annotations, notes, session, reading progress, learning); `content_hash` is unchanged.
+`checkForUpdate` compares the source hash → `changed` only when the SOURCE changed, `owner_changed` when only the
+owner's own writing / reading did (the Downloads panel says «كتابتك تغيّرت على الخادم» calmly; nothing to re-download
+for the source); a download stored before H4 keeps the old single-hash comparison. Tests: `srv:data/offline.test.ts`
+(hash split), `web:features/offline/update-check.h4.test.ts`.
+
+**Server PDF (item 8)** — `modules/data/pdf-export.ts`, dependency `pdf-lib` 1.17.1 (MIT, pure JS: pdfjs-dist cannot
+write, and a vector copy of the original needs a PDF writer; nothing native).
+* (a) `GET /api/data/export/source/:id/annotated-pdf[?version=]` — a COPY of the original PDF (the stored file is never
+  changed) with the owner's writing drawn as vector paths: pen / fountain / ball strokes, highlighter strokes (multiply
+  blend), shapes (line, arrow with its head, rectangle, ellipse — with rotation; the reader's outline geometry), text
+  highlights / underlines, and pictures the owner placed (PNG / JPEG embedded). Geometry: a normalized point (unrotated
+  page box, top-left origin) → the crop box's user space, the box pdf.js shows — so the page's own `/Rotate` turns the
+  writing with the page, exactly as in the reader; the original content is wrapped in `q … Q` (pdf-lib normalize) so a
+  graphics state it leaves behind cannot move the writing. `GET …/annotated-pdf/summary` says first what will be drawn
+  and what will NOT, with the reason: writing that needs re-anchoring (place uncertain), text boxes and sticky notes
+  (Arabic shaping not done — they are in the notes export), bookmarks / links, a page the file lacks, a picture not yet
+  uploaded. A source without an original PDF → `available: false` + reason; the download → 409 with it. Encrypted PDF →
+  409. It is a flattened picture of the writing («PDF مسطح يحفظ المظهر»), not editable ink; stroke width is constant
+  (no pressure). Change-log entry per download.
+* (b) `?format=pdf` on the source / Study Book / notes / questions exports = the DOCX export converted by LibreOffice
+  (`convertToPdf`, isolated profile, no network): RTL, citations as text, generated label. Listed by
+  `GET /export/formats` only when LibreOffice is installed; otherwise 409 `FEATURE_DISABLED` with the reason. Known
+  limit: copying text out of that PDF can reverse «لا» in some words (LibreOffice's ligature text layer; the printed
+  shape is right) — said in the format note.
+* Capability `export.pdf` (available) now states exactly this: flattened copy, not editable ink; Word → PDF only with
+  LibreOffice on this server.
+* Web «بياناتك» → «التصدير»: «الملف الأصلي مع كتابتي (PDF مسطح)» shows the summary (drawn counts, what is not drawn and
+  why, the notes) before «نزّل الملف»; «PDF (من Word على الخادم)» is a format only when the server lists it.
+* Tests: `srv:data/h4-pdf-export.test.ts` — renders the exported pages with `pdftoppm -r 72 -cropbox` and checks the
+  ink's colour at the pixel `normToView` (the reader's function) predicts: plain page whose content ends with an
+  unbalanced half-scale CTM, a `/Rotate 90` page, a crop box ≠ media box; highlighter, rectangle edge / inside,
+  text highlight, the picture, and the re-anchoring stroke NOT drawn; summary, stored original unchanged, 409 / 404 /
+  401. Mutation-checked: dropping the `q … Q` isolation or using the media box fails it.
+  `srv:data/docx-export.test.ts` (Study Book and notes → PDF read back with `pdftotext`), `srv:data/export.test.ts`,
+  `srv:control/critic-capabilities.test.ts`, `web:features/offline/export-pdf.h4.test.tsx`, `e2e:h4-exports-sources.spec.ts`
+  (real server, phone + desktop: the summary before the file, then a downloaded file starting `%PDF-`).
+* Not verified: Acrobat / Preview rendering (pdftoppm / poppler only); PDF/A; very large PDFs (the whole file is held in
+  memory while drawn).

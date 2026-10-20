@@ -21,6 +21,7 @@ import type { AppContext } from '../../context';
 import { fromJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
 import { newId } from '../../lib/ids';
+import type { AiTextEvent } from '../ai';
 import type { ProviderImage, UntrustedBlock } from '../ai/types';
 import { pageLabelAr } from '../sources/pagelabel';
 import { cacheKey, resolveScope, VERIFIER_VERSION, type ScopeReport } from '../evidence/services';
@@ -152,6 +153,9 @@ const KIND_TITLE: Record<ExplainBody['action'], string> = { explain: 'شرح', s
 export interface ExplainOptions {
   jobId?: string;
   signal?: AbortSignal;
+  /** (Round 7 H4, §30) streaming endpoint hooks: the unverified draft text and the pipeline phase */
+  onText?: (e: AiTextEvent) => void;
+  onPhase?: (phase: 'generating' | 'verifying') => void;
 }
 
 export async function explainSelection(ctx: AppContext, body: ExplainBody, opts: ExplainOptions = {}): Promise<ExplainResponse> {
@@ -249,8 +253,10 @@ export async function explainSelection(ctx: AppContext, body: ExplainBody, opts:
       terms: termsForTexts(ctx, [selection]),
       jobId: opts.jobId,
       signal: opts.signal,
+      onText: opts.onText,
     },
     defaultRegionIds: regions.map((r) => r.id),
+    onPhase: opts.onPhase,
   };
   return { artifact: await generateSingleShot(ctx, input), cached: false };
 }
@@ -449,19 +455,23 @@ async function explainFigure(
       jobId: opts.jobId,
       signal: opts.signal,
       terms: termsForTexts(ctx, [selection]),
+      onText: opts.onText,
     },
     defaultRegionIds: [fc.figure.id, ...textRegions.map((x) => x.id)],
+    onPhase: opts.onPhase,
   };
   base.params.vision_used = visionAvailable;
 
   if (!visionAvailable) {
     // text-only: caption / OCR labels, clearly marked as such
+    opts.onPhase?.('generating');
     const why = !image ? 'لا توجد صورة مقتطعة لهذا الشكل' : 'خدمة الرؤية (vision) غير متاحة على الخادم';
     input.appendBlocks = (res: ProcessResult) => [warningBlock(ctx, `شُرح الشكل من تعليقه ونصوصه المقروءة آليًا فقط (${why})؛ لم يُحلَّل بصريًا، فلا تُستنتج منه أسهم أو مواضع.`, res.blocks.length, fc)];
     const { content, model } = await callModel(ctx, scope, base.rules, r.packed, input.call);
     return publishGenerated(ctx, input, r.packed, content, model);
   }
 
+  opts.onPhase?.('generating');
   const prompt = buildExplanationPrompt({ rules: base.rules, style: body.style, task: ACTION_TEXT.explain_image, ownerInstruction: body.instruction ?? null, extra: FIGURE_RULES });
   const res = await ctx.ai.generateStructured({
     task: 'vision_figure',
@@ -477,6 +487,7 @@ async function explainFigure(
     jobId: opts.jobId,
     signal: opts.signal,
     timeoutMs: 240_000,
+    ...(opts.onText ? { onText: opts.onText } : {}),
   });
   base.params.figure_kind = res.output.figure_kind;
   input.appendBlocks = (pr: ProcessResult) => {

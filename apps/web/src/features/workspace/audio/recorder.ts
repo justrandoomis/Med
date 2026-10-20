@@ -13,7 +13,8 @@ export type RecorderState =
   | { kind: 'requesting' }
   | { kind: 'recording'; recordingId: string; startedAt: number; paused: boolean; mime: string }
   | { kind: 'saving'; recordingId: string }
-  | { kind: 'saved'; recordingId: string; durationMs: number; sizeBytes: number }
+  /** stored on this device (then uploaded); `where: 'server'` — the device could not store it, so it was uploaded directly (H3) */
+  | { kind: 'saved'; recordingId: string; durationMs: number; sizeBytes: number; where?: 'server' }
   | { kind: 'error'; code: RecorderErrorCode; message: string };
 
 export const RECORDER_ERRORS_AR: Record<RecorderErrorCode, string> = {
@@ -27,6 +28,14 @@ export const RECORDER_ERRORS_AR: Record<RecorderErrorCode, string> = {
   save_failed:
     'تعذّر حفظ التسجيل على هذا الجهاز (مساحة التخزين ممتلئة أو محجوبة). التسجيل ما زال في ذاكرة هذه الصفحة: أعد محاولة الحفظ، أو نزّل نسخة منه، ولا تغلق الصفحة قبل ذلك.',
 };
+
+/** (H3 item 9) said under the save-failed message: the recorder keeps trying by itself */
+export const RECORDER_AUTO_RETRY_AR = 'يُعاد الحفظ تلقائيًا كل فترة، ويُرفع التسجيل إلى خادمك مباشرة عند الاتصال.';
+/** (H3 item 9) the device refused it, the server has it */
+export const RECORDER_SAVED_ON_SERVER_AR = 'لم يتسع هذا الجهاز للتسجيل، فرُفع إلى خادمك مباشرة «ملاحظةً صوتية» ولم يُفقد منه شيء.';
+
+/** backoff of the automatic retries after a failed device save (ms) */
+export const AUTO_RETRY_DELAYS_MS = [5_000, 30_000, 120_000, 600_000];
 
 /** Audio formats in the order we prefer them (all are content-sniffed by the server). */
 export const PREFERRED_MIMES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4;codecs=mp4a.40.2', 'audio/mp4'];
@@ -108,6 +117,15 @@ export interface RecorderDeps {
    * release); without it another tab could «recover» its chunks while it still runs
    */
   holdLock?: (recordingId: string) => () => void;
+  /**
+   * (H3 item 9) the retry path when the device cannot store a finished recording: upload it straight to the owner's
+   * server (idempotent by the recording id). Tried at once and on every automatic retry while online.
+   */
+  uploadDirect?: (r: FinishedRecording) => Promise<void>;
+  /** whether the device is online (direct uploads are not attempted offline) */
+  online?: () => boolean;
+  /** delays of the automatic retries after a failed device save (the last one repeats) */
+  retryDelaysMs?: readonly number[];
 }
 
 export class RecorderController {
@@ -125,6 +143,10 @@ export class RecorderController {
   /** a finished recording that could not be stored on this device (kept in memory until saved, downloaded or discarded) */
   private unsavedRec: FinishedRecording | null = null;
   private releaseLock: (() => void) | null = null;
+  /** (H3 item 9) the next automatic retry of an unsaved recording */
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private retryCount = 0;
+  private persisting: Promise<void> | null = null;
 
   constructor(private readonly deps: RecorderDeps = {}) {}
 
@@ -319,18 +341,66 @@ export class RecorderController {
     return this.stopping;
   }
 
-  /** Stores the finished recording on this device; on failure it stays in memory (retry / download / discard). */
-  private async persist(reason: 'owner' | 'failed' | 'interrupted'): Promise<void> {
+  /**
+   * Stores the finished recording on this device; on failure it stays in memory and the recorder keeps a retry path of
+   * its own (H3 item 9 — the owner may already have left the reader): it is uploaded straight to the server when online,
+   * and the device save is retried on a backoff. Retry / download / discard stay available to the owner meanwhile.
+   */
+  private persist(reason: 'owner' | 'failed' | 'interrupted'): Promise<void> {
+    if (this.persisting) return this.persisting;
+    this.persisting = this.persistNow(reason).finally(() => {
+      this.persisting = null;
+    });
+    return this.persisting;
+  }
+
+  private async persistNow(reason: 'owner' | 'failed' | 'interrupted'): Promise<void> {
     const r = this.unsavedRec;
     if (!r) return;
+    this.clearRetry();
     try {
       await this.deps.saveFinished?.(r);
       this.unsavedRec = null;
+      this.retryCount = 0;
       this.unlock();
       this.set(reason === 'owner' ? { kind: 'saved', recordingId: r.recordingId, durationMs: r.durationMs, sizeBytes: r.blob.size } : { kind: 'error', code: reason, message: RECORDER_ERRORS_AR[reason] });
+      return;
     } catch {
-      this.set({ kind: 'error', code: 'save_failed', message: RECORDER_ERRORS_AR.save_failed });
+      // the device refused it: the server is the other safe place
     }
+    if (this.deps.uploadDirect && (this.deps.online?.() ?? (typeof navigator === 'undefined' || navigator.onLine !== false))) {
+      try {
+        await this.deps.uploadDirect(r);
+        if (this.unsavedRec === r) {
+          this.unsavedRec = null;
+          this.retryCount = 0;
+          this.unlock();
+          this.set({ kind: 'saved', recordingId: r.recordingId, durationMs: r.durationMs, sizeBytes: r.blob.size, where: 'server' });
+        }
+        return;
+      } catch {
+        // offline after all, or the server refused / failed: keep it and retry later
+      }
+    }
+    if (this.unsavedRec !== r) return; // discarded meanwhile
+    this.set({ kind: 'error', code: 'save_failed', message: RECORDER_ERRORS_AR.save_failed });
+    this.scheduleRetry();
+  }
+
+  private scheduleRetry(): void {
+    const delays = this.deps.retryDelaysMs ?? AUTO_RETRY_DELAYS_MS;
+    if (!delays.length) return;
+    const delay = delays[Math.min(this.retryCount, delays.length - 1)]!;
+    this.retryCount++;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      if (this.unsavedRec && this.state.kind === 'error' && this.state.code === 'save_failed') void this.persist('owner');
+    }, delay);
+  }
+
+  private clearRetry(): void {
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
   }
 
   private unlock(): void {
@@ -352,6 +422,8 @@ export class RecorderController {
 
   /** The owner explicitly gave up the recording that could not be stored (after downloading it, or on purpose). */
   discardUnsaved(): void {
+    this.clearRetry();
+    this.retryCount = 0;
     this.unsavedRec = null;
     this.unlock();
     if (this.state.kind === 'error') this.set({ kind: 'idle' });

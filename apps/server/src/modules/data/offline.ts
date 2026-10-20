@@ -26,6 +26,9 @@ import { fromJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
 
 /** GET the given path in-process as the owner (status + raw body). */
+
+/** Data roles that hold the owner's own writing / reading (Round 7 H4: hashed apart from the source content). */
+const OWNER_DATA_ROLES = new Set<string>(['annotations', 'notes', 'needs_reanchor', 'latest_session', 'reading_progress', 'learning']);
 export type Forward = (path: string) => Promise<{ status: number; body: string }>;
 
 interface SourceRow {
@@ -235,12 +238,18 @@ export async function buildOfflinePackage(
   const entries = [...files, ...data.map(({ body: _b, ...e }) => e)];
   const fileBytes = files.reduce((a, f) => a + f.size, 0);
   const dataBytes = data.reduce((a, d) => a + d.size, 0);
-  const contentHash = sha(
-    entries
-      .map((e) => (e.kind === 'file' ? `file:${e.role}:${e.file_id}:${e.sha256}` : `data:${e.path}:${e.sha256}`))
-      .sort()
-      .join('\n'),
-  );
+  const hashOf = (list: typeof entries) =>
+    sha(
+      list
+        .map((e) => (e.kind === 'file' ? `file:${e.role}:${e.file_id}:${e.sha256}` : `data:${e.path}:${e.sha256}`))
+        .sort()
+        .join('\n'),
+    );
+  const contentHash = hashOf(entries);
+  // Round 7 H4: the owner's own writing / reading apart from the source content («تغيّر المحتوى» = the source changed)
+  const isOwner = (e: (typeof entries)[number]) => e.kind === 'data' && OWNER_DATA_ROLES.has(e.role);
+  const sourceHash = hashOf(entries.filter((e) => !isOwner(e)));
+  const ownerHash = hashOf(entries.filter(isOwner));
 
   const not_included_ar = [
     'الشرح والأسئلة والملخصات الجديدة بالذكاء الاصطناعي تحتاج اتصالًا (لا تعمل دون اتصال ولا تُعرض أي «معالجة» وهمية).',
@@ -257,6 +266,8 @@ export async function buildOfflinePackage(
     include_solutions: opts.includeSolutions,
     generated_at: ctx.clock.now(),
     content_hash: contentHash,
+    source_hash: sourceHash,
+    owner_hash: ownerHash,
     entries,
     totals: {
       bytes: fileBytes + dataBytes,

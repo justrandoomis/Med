@@ -101,7 +101,9 @@ function clearPage(ctx: AppContext, versionId: string, pageId: string): void {
       WHERE caption_region_id IN (SELECT id FROM source_region WHERE page_id = ?) AND (page_id IS NULL OR page_id <> ?) AND origin = 'source'`,
     [pageId, pageId],
   );
-  ctx.db.run(`DELETE FROM image_asset WHERE page_id = ? AND origin = 'source'`, [pageId]);
+  // (H3 item 4) only the figure pictures processing made (they have a region); an owner's page crop (no region — an
+  // image-occlusion card may use it) is the owner's and stays
+  ctx.db.run(`DELETE FROM image_asset WHERE page_id = ? AND origin = 'source' AND region_id IS NOT NULL`, [pageId]);
   ctx.db.run('DELETE FROM source_region WHERE page_id = ? AND parent_region_id IS NOT NULL', [pageId]);
   ctx.db.run('DELETE FROM source_region WHERE page_id = ?', [pageId]);
 }

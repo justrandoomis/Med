@@ -200,3 +200,11 @@
 .dl-formats .ml-segmented__option {
   flex: 1 1 auto;
 }
+
+/* (Round 7 H4) what «الأصل مع كتابتي» will contain, shown before the file is built */
+.dl-annotated {
+  display: grid;
+  gap: var(--ml-space-2);
+  padding-inline-start: var(--ml-space-3);
+  border-inline-start: 2px solid var(--ml-color-line);
+}

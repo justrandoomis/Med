@@ -5,7 +5,7 @@ import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import { getDb } from '../../../lib/localdb';
 import { openPdf } from '../../../lib/pdf';
 import { fileUrl } from '../data/api';
-import { logicalTextContent } from './textOrder';
+import { readerTextContent } from './textOrder';
 
 export interface PageText {
   /** concatenation of the text items exactly as the text layer puts them in the DOM (logical order, textOrder.ts) */
@@ -87,7 +87,7 @@ export function pdfHandleFor(doc: PDFDocumentProxy, fileId: string): PdfHandle {
       if (!t) {
         t = handle.page(index).then(async (page) => {
           // the same logical order as the text layer (textOrder.ts), so search offsets match the DOM text nodes
-          const content = logicalTextContent(await page.getTextContent());
+          const content = readerTextContent(await page.getTextContent());
           let text = '';
           const breaks: number[] = [];
           for (const item of content.items) {

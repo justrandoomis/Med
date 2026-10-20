@@ -87,8 +87,9 @@ function labelledSection(label: string, parsed: ParseResult): { sectionKey: stri
 /**
  * H2 item 10b: an UNLABELLED key block printed after the LAST section binds to that section only when that is the
  * only reading: the file keys its sections one by one (every earlier section already has its own key — printed between
- * the sections, labelled, or inline), it is the only such trailing block, and every number it lists is a question of
- * the last section. Otherwise it could be the key of the whole file (or of another section) → null (review item).
+ * the sections, labelled, or inline — and, H2 review, a key for EVERY number of the block that is one of its questions),
+ * it is the only such trailing block, and every number it lists is a question of the last section. Otherwise it could
+ * be the key of the whole file (or of another section) → null (review item).
  */
 function trailingBlockSection(k: ParsedKey, parsed: ParseResult): string | null {
   const sections = parsed.sections.map((s) => s.key);
@@ -106,16 +107,28 @@ function trailingBlockSection(k: ParsedKey, parsed: ParseResult): string | null 
       .map((b) => b!.ordinal),
   );
   if (trailingBlocks.size !== 1) return null;
-  const keyedElsewhere = (sec: string) =>
-    parsed.keys.some((x) => {
-      if (!official(x)) return false;
-      if (x.inlineFor) return x.inlineFor.sectionKey === sec;
-      if (x.sectionLabel !== null) return labelledSection(x.sectionLabel, parsed).sectionKey === sec;
-      const b = parsed.keyBlocks.find((y) => y.ordinal === x.keyBlock);
-      return !!b && b.followedBySection && x.afterSectionKey === sec;
-    });
-  if (!sections.slice(0, -1).every(keyedElsewhere)) return null;
-  const items = new Set(parsed.questions.filter((q) => q.sectionKey === last).map((q) => q.itemKey));
+  // the question numbers each earlier section already has an official key for (inline, labelled, between the sections)
+  const keyedNumbers = (sec: string) =>
+    new Set(
+      parsed.keys
+        .filter((x) => {
+          if (!official(x) || x.keyBlock === k.keyBlock) return false;
+          if (x.inlineFor) return x.inlineFor.sectionKey === sec;
+          if (x.sectionLabel !== null) return labelledSection(x.sectionLabel, parsed).sectionKey === sec;
+          const b = parsed.keyBlocks.find((y) => y.ordinal === x.keyBlock);
+          return !!b && b.followedBySection && x.afterSectionKey === sec;
+        })
+        .map((x) => x.inlineFor?.itemKey ?? x.printedNumber),
+    );
+  const itemsOf = (sec: string) => new Set(parsed.questions.filter((q) => q.sectionKey === sec).map((q) => q.itemKey));
+  for (const sec of sections.slice(0, -1)) {
+    const keyed = keyedNumbers(sec);
+    if (keyed.size === 0) return null;
+    // (H2 review) an earlier section still WITHOUT a key for a number this block lists: the block may be its key
+    const items = itemsOf(sec);
+    if (blockKeys.some((x) => items.has(x.printedNumber) && !keyed.has(x.printedNumber))) return null;
+  }
+  const items = itemsOf(last);
   return blockKeys.every((x) => items.has(x.printedNumber)) ? last : null;
 }
 

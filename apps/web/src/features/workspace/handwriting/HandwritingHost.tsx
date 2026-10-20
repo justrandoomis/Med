@@ -1,6 +1,7 @@
 // The reader's side of track F4: provides the lasso actions «تحويل إلى نص» / «اسأل عن المحدد» (handwriting
 // recognition + the contextual chat) and the recording features (start from the «المزيد» menu, the indicator, playing
 // a stroke's moment, editing its time link) to the ink engine through InkSelectionActionsProvider.
+// (Round 7 — H3 item 4) also «اصنع بطاقة من المحدد…» / «اكتب سؤالًا من المحدد…» (LassoCardDialog).
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Mic } from 'lucide-react';
 import type { AnnotationAnchor, InkAudioLink } from '@medlevo/shared';
@@ -15,6 +16,7 @@ import { aiRequestStore } from '../model/aiActions';
 import { AudioLinkDialog, DeviceRecordingsNotice, getRecorder, RecordingBar, RecordingPlayer, useRecorderState, type PlayRequest } from '../audio/AudioUi';
 import { recordingSupport, type RecorderController } from '../audio/recorder';
 import { RecognitionDialog, writingIds, type AskHandoff, type RecognitionDialogDeps, type RecognitionTarget } from './RecognitionDialog';
+import { LassoCardDialog, QUESTION_NEEDS_SERVER_AR, type LassoCardDeps, type LassoTarget } from './LassoCardDialog';
 
 interface HostCtx {
   recorder: RecorderController;
@@ -33,6 +35,7 @@ export function HandwritingHost({
   recorder: recorderProp,
   dialogDeps,
   askHiddenReason = null,
+  lassoDeps,
 }: {
   sourceId: string;
   nodeId: string | null;
@@ -45,6 +48,8 @@ export function HandwritingHost({
    * hidden — the same reason the selection toolbar shows for its explain actions); null = allowed.
    */
   askHiddenReason?: string | null;
+  /** (H3 item 4) test seams of the card / question dialog */
+  lassoDeps?: LassoCardDeps;
 }) {
   const caps = useCapabilities();
   const recognition = caps.feature('workspace.handwriting_recognition');
@@ -54,6 +59,7 @@ export function HandwritingHost({
   const [target, setTarget] = useState<RecognitionTarget | null>(null);
   const [play, setPlay] = useState<PlayRequest | null>(null);
   const [linkEdit, setLinkEdit] = useState<{ item: InkItem; targetKey: string } | null>(null);
+  const [lasso, setLasso] = useState<LassoTarget | null>(null);
   const support = useMemo(() => recordingSupport(), []);
 
   const open = useCallback(
@@ -64,6 +70,10 @@ export function HandwritingHost({
     },
     [askHiddenReason, announce],
   );
+
+  const openLasso = useCallback((mode: LassoTarget['mode'], sel: InkSelectionInfo) => {
+    if (sel.anchor) setLasso({ mode, targetKey: sel.targetKey, anchor: sel.anchor as AnnotationAnchor, items: sel.items, bbox: sel.bbox, ar: sel.ar });
+  }, []);
 
   const actions = useMemo<InkSelectionActions>(
     () => ({
@@ -76,10 +86,13 @@ export function HandwritingHost({
         // on a note page the dialog says why (no paragraph to ask about) instead of doing nothing
         run: (sel) => open('ask', sel),
       },
+      // (H3 item 4) the dialog says what needs a reading, a source page or the server
+      card: { reason: null, run: (sel) => openLasso('card', sel) },
+      question: { reason: !online ? QUESTION_NEEDS_SERVER_AR : null, run: (sel) => openLasso('question', sel) },
       playAudio: (link) => setPlay((p) => ({ link, nonce: (p?.nonce ?? 0) + 1 })),
       editAudioLink: (item, targetKey) => setLinkEdit({ item, targetKey }),
     }),
-    [recognition.available, recognition.reason, online, open, askHiddenReason],
+    [recognition.available, recognition.reason, online, open, openLasso, askHiddenReason],
   );
 
   const onAsk = useCallback(
@@ -131,6 +144,18 @@ export function HandwritingHost({
           online={online}
           onAsk={onAsk}
           deps={{ syncNow: () => getSyncEngine().syncNow(), ...dialogDeps }}
+        />
+        <LassoCardDialog
+          target={lasso}
+          onClose={() => setLasso(null)}
+          recognition={{ available: recognition.available, reason: recognition.reason }}
+          online={online}
+          onReadFirst={() => {
+            if (!lasso) return;
+            setLasso(null);
+            setTarget({ mode: 'convert', targetKey: lasso.targetKey, anchor: lasso.anchor, items: lasso.items, bbox: lasso.bbox, ar: lasso.ar });
+          }}
+          deps={lassoDeps}
         />
         <div className="hw-dock">
           <RecordingPlayer request={play} onClose={() => setPlay(null)} />

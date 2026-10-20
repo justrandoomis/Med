@@ -2,7 +2,7 @@
 // bidi control characters, NFC-normalized. Known extraction defects are either repaired by narrow,
 // tested rules or FLAGGED for the owner — never silently stored (fixtures/golden/expected.json
 // known_extraction_defects).
-import { normalizeForSearch, stripBidiControls } from '@medlevo/shared';
+import { fixReversedLamAlef, normalizeForSearch, showsReversedLamAlef, stripBidiControls } from '@medlevo/shared';
 
 /** Arabic letters (hamza … yeh, plus extended letters); excludes tatweel U+0640, harakat and digits. */
 const AR_LETTER = '\\u0621-\\u063A\\u0641-\\u064A\\u066E-\\u06D3\\u06FA-\\u06FF\\u0750-\\u077F\\u08A0-\\u08C9';
@@ -63,48 +63,16 @@ export function squashSpaces(text: string): string {
 }
 
 // ───────── reversed lam-alef ligature (known PDF text-layer defect) ─────────
-// Some fonts map the lam-alef ligature glyphs (ل + ا/أ/إ/آ) back to Unicode in the WRONG order, so «الألم»
-// is extracted as «األلم» (alef, hamza-alef, lam …), «الإنجاب» as «اإلنجاب», and — with the plain «لا»
-// ligature after the article — «الالتهاب» as «االلتهاب», «الانسداد» as «االنسداد» (LibreOffice PDF export
-// does this for every lam-alef). A word that starts with a bare alef immediately followed by ANOTHER alef
-// (bare, hamzated or madda) does not occur in Arabic orthography, so the rule only fires there: at a word
-// start, optionally after up to two one-letter proclitics (و ف ب ك). It never touches «ألم», «أل…», «إلى»,
-// «الآن», «آلة», «الا…» or already-correct «الألم».
-// A reversed «لا» INSIDE a word («العلاج» → «العالج», «السلام» → «السالم») cannot be repaired: «ال» is
-// also correct there in many words. Documents that show the defect get those words FLAGGED instead
+// The narrow repair lives in @medlevo/shared (lamAlef.ts) since Round 7 — H3 item 8: the reader applies the SAME rule
+// to its selectable pdf.js text layer, so what the owner copies matches what the server stores. It repairs the
+// word-start forms («األلم» → «الألم», «اإلنجاب» → «الإنجاب», «االلتهاب» → «الالتهاب») and the negation words («ال يعد» →
+// «لا يعد», «إال» → «إلا»); a reversed «لا» INSIDE a word («العلاج» → «العالج») cannot be repaired and is FLAGGED instead
 // (see detectSuspicious(…, { reversedLigatures: true })).
-const REVERSED_LAM_ALEF = new RegExp(`(?<![${AR_LETTER}\\u0640])([وفبك]{0,2})ا([اأإآ])ل`, 'g');
-const REVERSED_LAM_ALEF_TEST = new RegExp(REVERSED_LAM_ALEF.source);
-// The negation words themselves (G4 / AC-11): the stand-alone «لا» is extracted as «ال» and «إلا» / «ألا» as «إال» /
-// «أال» — the negation silently disappeared from the text («أي مما يلي ال يعد …»), so the NOT/EXCEPT check and the
-// emphasis never saw it. A bare article «ال» never stands alone before a word, and «إال» / «أال» are not words, so
-// these whole-word forms are repaired: «ال» / «وال» only when another Arabic word follows; «إال» / «أال» anywhere.
-const AR_MARKS = '\\u064B-\\u0652\\u0670';
-const REVERSED_LA_WORD = new RegExp(`(?<![${AR_MARKS}${AR_LETTER}\\u0640])(و?)ال(?=\\s+[${AR_MARKS}]*[${AR_LETTER}])`, 'g');
-const REVERSED_ILLA_WORD = new RegExp(`(?<![${AR_MARKS}${AR_LETTER}\\u0640])([إأ])ال(?![${AR_MARKS}${AR_LETTER}\\u0640])`, 'g');
-
-export function fixReversedLamAlef(text: string): { text: string; fixes: number } {
-  let fixes = 0;
-  const out = text
-    .replace(REVERSED_LAM_ALEF, (_m, proclitics: string, alef: string) => {
-      fixes++;
-      return `${proclitics}ال${alef}`;
-    })
-    .replace(REVERSED_LA_WORD, (_m, waw: string) => {
-      fixes++;
-      return `${waw}لا`;
-    })
-    .replace(REVERSED_ILLA_WORD, (_m, hamza: string) => {
-      fixes++;
-      return `${hamza}لا`;
-    });
-  return { text: out, fixes };
-}
+export { fixReversedLamAlef };
 
 /** Whether raw extracted text shows the reversed lam-alef defect (the font reverses its ligatures). */
 export function hasReversedLamAlef(text: string): boolean {
-  const t = cleanRun(text);
-  return REVERSED_LAM_ALEF_TEST.test(t) || new RegExp(REVERSED_LA_WORD.source).test(t) || new RegExp(REVERSED_ILLA_WORD.source).test(t);
+  return showsReversedLamAlef(cleanRun(text));
 }
 
 const AR_WORD = new RegExp(`[${AR_LETTER}]+`, 'g');

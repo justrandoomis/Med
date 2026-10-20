@@ -2,10 +2,11 @@
 // Holds the document's ink store (memory + IndexedDB write-through + undo history), the tool
 // state with per-tool presets, keyboard shortcuts and the sync applier registration.
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type MutableRefObject } from 'react';
+import { ConfirmDialog } from '../../../design';
 import { getSyncEngine } from '../../../lib/sync';
 import { registerAnnotationApplier } from './persistence';
 import { loadLastTool, loadPrefs, presetKeyFor, saveLastTool, savePrefs, clampPresetWidth, type InkPrefs } from './prefs';
-import { getDocumentStore, getClipboard, type InkDocumentStore } from './store';
+import { getDocumentStore, getClipboard, type InkDocumentStore, type PendingStep, type StepOutcome } from './store';
 import type { InkController, InkProviderProps, InkToolId, InkToolState } from './types';
 
 /** A text box / sticky note being written (draft = not saved yet; empty drafts are discarded). */
@@ -148,12 +149,9 @@ export function InkProvider({ documentKey, children }: InkProviderProps) {
       },
       setPenOnly: (v: boolean) => updatePrefs((p) => ({ ...p, penOnly: v })),
       setShapeRecognition: (v: boolean) => updatePrefs((p) => ({ ...p, shapeRecognition: v })),
-      undo: () => {
-        if (store.undo()) announce('تراجع');
-      },
-      redo: () => {
-        if (store.redo()) announce('إعادة');
-      },
+      // (H3 item 1) a step whose writing changed since it was recorded waits for the owner (dialog below)
+      undo: () => announce(stepAnnouncement(store.undoStep(), 'تراجع')),
+      redo: () => announce(stepAnnouncement(store.redoStep(), 'إعادة')),
       canUndo: store.history.canUndo,
       canRedo: store.history.canRedo,
       isWritingTool: isWritingToolId(toolState.tool),
@@ -243,6 +241,8 @@ export function InkProvider({ documentKey, children }: InkProviderProps) {
     return () => document.removeEventListener('keydown', onKey);
   }, [store, announce]);
 
+  const pending = useSyncExternalStore(store.subscribePending, store.getPendingSnapshot, store.getPendingSnapshot);
+
   return (
     <InkContext.Provider value={controller}>
       <InkInternalContext.Provider value={internal}>
@@ -250,8 +250,54 @@ export function InkProvider({ documentKey, children }: InkProviderProps) {
         <span className="ml-visually-hidden" role="status" aria-live="polite">
           {announcement}
         </span>
+        <PendingStepDialog
+          pending={pending}
+          onApply={() => {
+            if (store.confirmPendingStep()) announce(pending?.dir === 'redo' ? 'إعادة' : 'تراجع');
+          }}
+          onSkip={() => {
+            store.skipPendingStep();
+            announce('تُركت هذه الخطوة؛ لم يتغير شيء من الكتابة.');
+          }}
+        />
       </InkInternalContext.Provider>
     </InkContext.Provider>
+  );
+}
+
+function stepAnnouncement(o: StepOutcome, done: string): string {
+  if (o === 'done') return done;
+  if (o === 'empty') return done === 'تراجع' ? 'لا يوجد ما يُتراجع عنه.' : 'لا يوجد ما يُعاد.';
+  if (o === 'checking') return 'يُتحقق من الكتابة على هذا الجهاز قبل تنفيذ الخطوة…';
+  return 'هذه الخطوة تحتاج تأكيدك قبل تنفيذها.';
+}
+
+/** Number of items in Arabic («عنصر واحد», «عنصران», «3 عناصر», «11 عنصرًا»). */
+function itemsAr(n: number): string {
+  if (n === 1) return 'عنصر واحد';
+  if (n === 2) return 'عنصران';
+  return n <= 10 ? `${n} عناصر` : `${n} عنصرًا`;
+}
+
+/**
+ * (H3 item 1) An undo / redo step whose writing changed since it was recorded — erased on another device (a server
+ * tombstone) or edited there — is never applied silently: the owner brings it back on purpose or skips the step.
+ */
+function PendingStepDialog({ pending, onApply, onSkip }: { pending: PendingStep | null; onApply: () => void; onSkip: () => void }) {
+  const what = pending?.dir === 'redo' ? 'إعادة' : 'التراجع عن';
+  const parts: string[] = [];
+  if (pending?.revive) parts.push(`يعيد ${itemsAr(pending.revive)} من كتابتك حُذف بعد هذه الخطوة (على جهاز آخر أو على الخادم).`);
+  if (pending?.changed) parts.push(`${itemsAr(pending.changed)} عُدّل بعد هذه الخطوة على جهاز آخر؛ تنفيذها يعيده إلى ما كان عليه قبل التعديل.`);
+  return (
+    <ConfirmDialog
+      open={!!pending}
+      title={pending ? `${what} «${pending.label_ar || 'خطوة'}»` : ''}
+      impact={parts.join(' ')}
+      confirmLabel={pending?.revive ? 'نفّذها وأعِد الكتابة' : 'نفّذها'}
+      cancelLabel="تخطَّ هذه الخطوة"
+      onConfirm={onApply}
+      onCancel={onSkip}
+    />
   );
 }
 

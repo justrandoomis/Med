@@ -3,13 +3,19 @@
 // the OCR coverage check, orientation before OCR) and by the Image Quiz (masks burned into a served copy).
 //
 // Memory is bounded: nothing is decoded above a pixel budget (callers pass one; MAX_DECODE_PIXELS by default), and
-// jpeg-js is given the same limits so a file that lies about its size cannot allocate more.
+// jpeg-js is given the same limits so a file that lies about its size cannot allocate more. (H2 review) For a JPEG the
+// working memory jpeg-js needs is read from the frame header (components and chroma subsampling) and checked against
+// JPEG_BYTES_PER_BUDGET_PIXEL × the budget BEFORE decoding: a 24 MP 4:2:0 phone photo needs ≈ 14.5 bytes per pixel, a
+// 4:4:4 picture ≈ 22 (so ≈ 16 MP fit the 24 MP budget). The old cap (8 bytes per budget pixel) refused 4:4:4 JPEGs
+// above ≈ 11 MP and 4:2:0 above ≈ 17 MP although the budget said 24 MP.
 // The stored original file is never modified — every function here returns a NEW image or buffer.
 import { decode as decodeJpegJs, encode as encodeJpegJs } from 'jpeg-js';
 import { decodePng, encodePng, isPng, jpegSize, PngError, pngSize, type RgbaImage } from './png';
 
 /** default decode budget: a 24 MP RGBA raster is ≈ 96 MB (phone photos are 12 MP) */
 export const MAX_DECODE_PIXELS = 24_000_000;
+/** jpeg-js working memory allowed per pixel of the budget (24 MP → ≈ 360 MB): a 24 MP 4:2:0 photo fits */
+const JPEG_BYTES_PER_BUDGET_PIXEL = 15;
 
 export class ImageDecodeError extends Error {
   constructor(
@@ -63,6 +69,64 @@ export function jpegOrientation(buf: Uint8Array): number {
   return 1;
 }
 
+/** The marker of a JPEG's first frame header (0xc0 baseline, 0xc2 progressive, 0xc3 lossless, 0xc9 arithmetic…), or null. */
+function jpegFrameMarker(buf: Uint8Array): number | null {
+  return jpegFrame(buf)?.marker ?? null;
+}
+
+/**
+ * (H2 review) The bytes jpeg-js allocates to decode this JPEG into RGBA, from its frame header — the same arithmetic
+ * jpeg-js uses for its own memory check: coefficient blocks per component (MCU-padded, 256 bytes per 8×8 block),
+ * component sample planes, the colour-converted data and the RGBA output. Null when the header cannot be read.
+ */
+export function jpegDecodeBytes(buf: Uint8Array): number | null {
+  const f = jpegFrame(buf);
+  if (!f) return null;
+  const i = f.at;
+  if (i + 10 > buf.length) return null;
+  const height = (buf[i + 5]! << 8) | buf[i + 6]!;
+  const width = (buf[i + 7]! << 8) | buf[i + 8]!;
+  const n = buf[i + 9]!;
+  if (!width || !height || !n || i + 10 + 3 * n > buf.length) return null;
+  const comps: Array<{ h: number; v: number }> = [];
+  for (let k = 0; k < n; k++) {
+    const hv = buf[i + 10 + 3 * k + 1]!;
+    if (hv >> 4 === 0 || (hv & 15) === 0) return null;
+    comps.push({ h: hv >> 4, v: hv & 15 });
+  }
+  const maxH = Math.max(...comps.map((c) => c.h));
+  const maxV = Math.max(...comps.map((c) => c.v));
+  const mcusPerLine = Math.ceil(width / 8 / maxH);
+  const mcusPerColumn = Math.ceil(height / 8 / maxV);
+  let bytes = width * height * (n + 4);
+  for (const c of comps) {
+    bytes += mcusPerLine * c.h * mcusPerColumn * c.v * 256;
+    bytes += Math.ceil(Math.ceil((width * c.h) / maxH) / 8) * 8 * Math.ceil(Math.ceil((height * c.v) / maxV) / 8) * 8;
+  }
+  return bytes;
+}
+
+function jpegFrame(buf: Uint8Array): { marker: number; at: number } | null {
+  let i = 2;
+  while (i + 4 < buf.length) {
+    if (buf[i] !== 0xff) {
+      i++;
+      continue;
+    }
+    const marker = buf[i + 1]!;
+    if (marker === 0xff || marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+      i += marker === 0xff ? 1 : 2;
+      continue;
+    }
+    if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) return { marker, at: i };
+    if (marker === 0xda || marker === 0xd9) return null;
+    const len = (buf[i + 2]! << 8) | buf[i + 3]!;
+    if (len < 2) return null;
+    i += 2 + len;
+  }
+  return null;
+}
+
 /** Pixel size of the image as stored (no EXIF applied), PNG or JPEG. */
 export function rawImageSize(buf: Uint8Array): { width: number; height: number } | null {
   return pngSize(buf) ?? jpegSize(buf);
@@ -92,7 +156,14 @@ export function decodeImage(buf: Uint8Array, maxPixels = MAX_DECODE_PIXELS): Rgb
   if (isJpeg(buf)) {
     const s = jpegSize(buf);
     if (!s) throw new ImageDecodeError('CORRUPT', 'JPEG without a frame header');
+    // (H2 review) a valid JPEG in an encoding jpeg-js does not read (lossless, arithmetic, hierarchical) is UNSUPPORTED —
+    // never «damaged» (an OCR failure on a CORRUPT picture tells the owner that reprocessing will not help)
+    const sof = jpegFrameMarker(buf);
+    if (sof !== null && sof !== 0xc0 && sof !== 0xc1 && sof !== 0xc2) throw new ImageDecodeError('UNSUPPORTED', `JPEG frame type ${sof.toString(16)} is not read by this decoder`);
     if (s.width * s.height > maxPixels) throw new ImageDecodeError('TOO_LARGE', 'image above the decode budget');
+    const memoryBudget = maxPixels * JPEG_BYTES_PER_BUDGET_PIXEL;
+    const need = jpegDecodeBytes(buf);
+    if (need !== null && need > memoryBudget) throw new ImageDecodeError('TOO_LARGE', 'JPEG working memory above the decode budget');
     let out: { width: number; height: number; data: Uint8Array };
     try {
       out = decodeJpegJs(buf, {
@@ -100,13 +171,14 @@ export function decodeImage(buf: Uint8Array, maxPixels = MAX_DECODE_PIXELS): Rgb
         formatAsRGBA: true,
         tolerantDecoding: false,
         maxResolutionInMP: Math.ceil(maxPixels / 1_000_000),
-        // RGBA output + jpeg-js component planes (≈ 3 bytes per pixel) + headroom
-        maxMemoryUsageInMB: Math.ceil((maxPixels * 8) / 1_048_576) + 64,
+        // the same budget as a backstop (Huffman / quantization tables are a few KB): a file that lies cannot allocate more
+        maxMemoryUsageInMB: Math.ceil(memoryBudget / 1_048_576) + 4,
       });
     } catch (e) {
       const msg = (e as Error).message ?? String(e);
       if (/progressive|arithmetic|unsupported|not supported/i.test(msg)) throw new ImageDecodeError('UNSUPPORTED', msg);
-      if (/maxResolutionInMP|maxMemoryUsageInMB|exceeded/i.test(msg)) throw new ImageDecodeError('TOO_LARGE', msg);
+      if (/maxResolutionInMP|maxMemoryUsageInMB|exceeded|Could not allocate/i.test(msg)) throw new ImageDecodeError('TOO_LARGE', msg);
+      if (/single frame/i.test(msg)) throw new ImageDecodeError('UNSUPPORTED', msg);
       throw new ImageDecodeError('CORRUPT', msg);
     }
     if (!out || out.width <= 0 || out.height <= 0 || out.data.length < out.width * out.height * 4) throw new ImageDecodeError('CORRUPT', 'empty JPEG frame');

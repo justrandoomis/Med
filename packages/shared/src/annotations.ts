@@ -131,6 +131,8 @@ export interface AnnotationDTO {
   created_at: number;
   updated_at: number;
   deleted_at: number | null;
+  /** (H3 item 2) the owner chose to keep this item detached from any place (it stays listed, never deleted) */
+  detached_at?: number | null;
 }
 
 export interface NoteDTO {
@@ -147,6 +149,10 @@ export interface NoteDTO {
   created_at: number;
   updated_at: number;
   deleted_at: number | null;
+  /** (H3 item 2) where the note was anchored before the owner re-anchored it */
+  previous_anchor?: AnnotationAnchor | null;
+  /** (H3 item 2) the owner chose to keep this note detached from any place */
+  detached_at?: number | null;
 }
 
 export interface NotePageDTO {
@@ -281,3 +287,33 @@ export type AnnotationImageMime = (typeof ANNOTATION_IMAGE_MIMES)[number];
 export const ANNOTATION_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 /** Largest side accepted (pixels) — larger pictures are refused with a reason, never silently scaled. */
 export const ANNOTATION_IMAGE_MAX_SIDE = 12_000;
+
+/**
+ * (Round 7 — H3 item 4) «بطاقة إخفاء في صورة» from a lasso selection: POST /api/annotations/page-crops cuts the area of
+ * the SOURCE page under the selection box out of the stored source file (server-side; never the owner's ink, never a
+ * picture sent by the client) and keeps it as a picture of that source (`image_asset`) an image-occlusion card can use.
+ * `id` is a client ULID: sending the same request again returns the same picture.
+ */
+export interface PageCropRequest {
+  id: string;
+  page_id: string;
+  /** the selection box, normalized to the page as the reader shows it */
+  bbox: NormBox;
+}
+export interface PageCropView {
+  image_asset_id: string;
+  file_id: string;
+  /** the picture's URL (owner session) */
+  url: string;
+  width: number;
+  height: number;
+  source_id: string;
+  version_id: string;
+  page_id: string;
+  page_index: number;
+  bbox: NormBox;
+}
+export interface PageCropResponse {
+  crop: PageCropView;
+  created: boolean;
+}

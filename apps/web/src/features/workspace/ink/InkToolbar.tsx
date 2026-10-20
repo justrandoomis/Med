@@ -171,7 +171,7 @@ export function InkToolbar() {
                 <span>
                   تراجع <Kbd>{`${MOD} Z`}</Kbd>
                 </span>
-                <span className="ml-ink-tip__note">يبقى السجل ما دام التطبيق مفتوحًا، ويبدأ من جديد بعد إعادة التحميل (الكتابة نفسها محفوظة).</span>
+                <span className="ml-ink-tip__note">سجل التراجع محفوظ على هذا الجهاز ويبقى بعد إعادة التحميل أو إغلاق التطبيق (آخر الخطوات ضمن حد للحجم).</span>
               </span>
             }
           >
@@ -229,7 +229,7 @@ export function InkToolbar() {
           </span>
         )}
       </Toolbar>
-      <p id={historyNoteId} className="ml-visually-hidden">سجل التراجع يبقى ما دام التطبيق مفتوحًا؛ بعد إعادة التحميل تبقى الكتابة محفوظة ويبدأ السجل من جديد.</p>
+      <p id={historyNoteId} className="ml-visually-hidden">سجل التراجع محفوظ على هذا الجهاز ويبقى بعد إعادة التحميل أو إغلاق التطبيق، ضمن حد للحجم تسقط بعده أقدم الخطوات. خطوة تغيّرت كتابتها بعدها على جهاز آخر لا تُنفّذ قبل سؤالك.</p>
       <CapabilityDialog open={capabilitiesOpen} onClose={() => setCapabilitiesOpen(false)} />
     </div>
   );

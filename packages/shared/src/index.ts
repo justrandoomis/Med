@@ -31,3 +31,4 @@ export * from './brain-api';
 export * from './handwriting-api';
 export * from './study-api';
 export * from './quality-api';
+export * from './lamAlef';

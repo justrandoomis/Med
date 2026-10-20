@@ -1,18 +1,22 @@
 // Export (§46): a source, a Study Book, notes, questions or everything — Markdown, print-ready HTML (PDF via the
 // browser's print dialog, said plainly) or JSON with a manifest. Citations are text (source, page, version + quote);
 // generated content is labelled; an internal location never becomes a fake link.
+// (Round 7 H4) «الملف الأصلي مع كتابتي»: the original PDF with the owner's writing drawn on a copy on the server — a
+// FLATTENED PDF that keeps the appearance (not editable ink). What will and will not be drawn is shown first.
+// PDF as a format (Study Book / notes / questions / source text) appears when the server lists it (LibreOffice).
 import { useEffect, useMemo, useState } from 'react';
 import { FileDown, Printer } from 'lucide-react';
-import type { ExportFormat, ExportFormatsResponse, SourceSummary } from '@medlevo/shared';
+import type { AnnotatedPdfSummary, ExportFormat, ExportFormatsResponse, SourceSummary } from '@medlevo/shared';
 import { Button, Checkbox, EmptyState, ErrorState, LoadingState, SegmentedControl, Select, useToast } from '../../design';
 import { Mixed } from './Mixed';
 import { errorMessage } from '../../lib/api';
 import { useOnline } from '../../lib/useOnline';
 import { dataApi, exportUrl, fetchExport, saveBlob, type ExportTarget } from './api';
 
-type Kind = 'source' | 'book' | 'notes' | 'questions' | 'all';
+type Kind = 'source' | 'annotated' | 'book' | 'notes' | 'questions' | 'all';
 const KIND_OPTIONS: Array<{ value: Kind; label: string }> = [
   { value: 'source', label: 'مصدر: نصه صفحة صفحة مع كتاباتك عليه' },
+  { value: 'annotated', label: 'الملف الأصلي مع كتابتي (PDF مسطح)' },
   { value: 'book', label: 'كتاب الدراسة لمصدر (محتوى مولَّد مع أدلته)' },
   { value: 'notes', label: 'ملاحظاتي' },
   { value: 'questions', label: 'الأسئلة' },
@@ -50,20 +54,28 @@ export function ExportPanel() {
     const all = sources ?? [];
     if (kind === 'questions') return all.filter((s) => ['question_source', 'previous_exam', 'lecture'].includes(s.source_type));
     if (kind === 'book') return all.filter((s) => s.source_type === 'lecture' || s.source_type === 'course_reference' || s.source_type === 'textbook');
+    // a PDF, or Word / PowerPoint shown through its PDF copy; a source without one says so in the summary
+    if (kind === 'annotated') return all.filter((s) => s.format === null || s.format === 'pdf' || s.format === 'docx' || s.format === 'pptx');
     return all;
   }, [sources, kind]);
   useEffect(() => {
     if (sourceId && !pickable.some((s) => s.id === sourceId)) setSourceId('');
   }, [pickable, sourceId]);
 
-  const needsSource = kind === 'source' || kind === 'book';
+  const needsSource = kind === 'source' || kind === 'book' || kind === 'annotated';
   const effectiveFormat: ExportFormat = kind === 'all' ? 'json' : format;
+  // a format the server no longer lists (e.g. «PDF» without LibreOffice) falls back to the first listed one
+  useEffect(() => {
+    if (formats && !formats.formats.some((f) => f.format === format)) setFormat(formats.formats[0]?.format ?? 'md');
+  }, [formats, format]);
 
   const resolveTarget = async (): Promise<ExportTarget | null> => {
     const src = sources?.find((s) => s.id === sourceId) ?? null;
     switch (kind) {
       case 'source':
         return src ? { kind: 'source', sourceId: src.id } : null;
+      case 'annotated':
+        return src ? { kind: 'annotated', sourceId: src.id } : null;
       case 'book': {
         if (!src) return null;
         const st = await dataApi.bookForSource(src.id);
@@ -136,7 +148,8 @@ export function ExportPanel() {
           hint={kind === 'questions' ? 'محاضرة: الأسئلة المرتبطة بها. مصدر أسئلة: أسئلته كما في الملف.' : undefined}
         />
       )}
-      {kind !== 'all' && (
+      {kind === 'annotated' && sourceId && <AnnotatedSummary sourceId={sourceId} />}
+      {kind !== 'all' && kind !== 'annotated' && (
         <SegmentedControl
           label="الصيغة"
           showLabel
@@ -146,7 +159,9 @@ export function ExportPanel() {
           onValueChange={(v) => setFormat(v as ExportFormat)}
         />
       )}
-      <p className="dl-meta">{kind === 'all' ? 'JSON كامل مع manifest للمعرّفات والإصدارات وبصمات المحتوى. الملفات نفسها في النسخة الاحتياطية.' : formats.formats.find((f) => f.format === format)?.note_ar}</p>
+      {kind !== 'annotated' && (
+        <p className="dl-meta">{kind === 'all' ? 'JSON كامل مع manifest للمعرّفات والإصدارات وبصمات المحتوى. الملفات نفسها في النسخة الاحتياطية.' : formats.formats.find((f) => f.format === format)?.note_ar}</p>
+      )}
       {kind === 'questions' && (
         <Checkbox checked={solutions} onCheckedChange={setSolutions} label="مع الحلول ومفاتيح الإجابة" description="يذكر لكل سؤال من يقف خلف مفتاحه: مفتاح المصدر، أو مفتاحك، أو حل مولَّد (ليس مفتاحًا رسميًا)." />
       )}
@@ -154,7 +169,7 @@ export function ExportPanel() {
         <Button variant="primary" icon={<FileDown size={16} />} loading={busy === 'file'} disabled={!canRun || busy !== null} onClick={() => void run('file')}>
           نزّل الملف
         </Button>
-        {kind !== 'all' && (
+        {kind !== 'all' && kind !== 'annotated' && (
           <Button variant="secondary" icon={<Printer size={16} />} loading={busy === 'print'} disabled={!canRun || busy !== null} onClick={() => void run('print')}>
             افتح نسخة الطباعة (PDF)
           </Button>
@@ -169,5 +184,61 @@ export function ExportPanel() {
         ))}
       </ul>
     </div>
+  );
+}
+
+const DRAWN_LABELS: Array<[keyof AnnotatedPdfSummary['drawn'], string]> = [
+  ['strokes', 'ضربة قلم'],
+  ['highlighter_strokes', 'ضربة قلم تظليل'],
+  ['shapes', 'شكل'],
+  ['text_highlights', 'تظليل أو خط تحت نص'],
+  ['images', 'صورة وضعتها'],
+];
+
+/** What «الأصل مع كتابتي» will contain — and what it will not, with the reason — before the file is built. */
+function AnnotatedSummary({ sourceId }: { sourceId: string }) {
+  const [summary, setSummary] = useState<AnnotatedPdfSummary | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    setSummary(null);
+    setError(null);
+    dataApi
+      .annotatedPdfSummary(sourceId)
+      .then((s) => alive && setSummary(s))
+      .catch((e: unknown) => alive && setError(errorMessage(e, 'تعذّر معرفة ما سيُرسم.')));
+    return () => {
+      alive = false;
+    };
+  }, [sourceId]);
+  if (error) return <ErrorState inline message={error} />;
+  if (!summary) return <LoadingState inline stage="جارٍ عدّ كتابتك على هذا الملف…" />;
+  if (!summary.available) return <p className="dl-meta" role="status">{summary.reason_ar}</p>;
+  const drawn = DRAWN_LABELS.filter(([k]) => summary.drawn[k] > 0);
+  return (
+    <section className="dl-annotated" aria-label="ما سيحتويه الملف">
+      <p className="dl-meta">
+        {drawn.length === 0
+          ? 'لا كتابة لك على هذا الملف بعد — سيكون الملف الأصلي كما هو.'
+          : `سيُرسم على ${summary.drawn.pages_with_writing} ${summary.drawn.pages_with_writing === 1 ? 'صفحة' : 'صفحات'}: ${drawn.map(([k, label]) => `${summary.drawn[k]} ${label}`).join('، ')}.`}
+      </p>
+      {summary.skipped.length > 0 && (
+        <>
+          <p className="dl-meta">لن يُرسم:</p>
+          <ul className="dl-notes">
+            {summary.skipped.map((s) => (
+              <li key={s.kind}>
+                {s.count} — {s.reason_ar}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      <ul className="dl-notes">
+        {summary.notes_ar.map((n) => (
+          <li key={n}>{n}</li>
+        ))}
+      </ul>
+    </section>
   );
 }

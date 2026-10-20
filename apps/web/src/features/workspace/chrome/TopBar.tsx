@@ -35,6 +35,8 @@ export interface TopBarProps {
   onGoToPage: (i: number) => void;
   view: WorkspaceView;
   onView: (v: WorkspaceView) => void;
+  /** (H3 item 3) why «المحاضرة + الشرح» is not offered (e.g. «امتحن نفسك» hides explanations) */
+  explainSplitReason?: string | null;
   splitReason: string | null;
   /** null → the Study Book can be opened (a version exists or one can be generated); else the reason */
   studyBookReason: string | null;
@@ -73,13 +75,16 @@ export interface TopBarProps {
 const ZOOM_PRESETS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
 
 /** Original lecture · MedLevo Study Book · lecture + another source · lecture + its Study Book (§23, §24, §26). */
-export type WorkspaceView = 'original' | 'study_book' | 'split' | 'split_book';
+export type WorkspaceView = 'original' | 'study_book' | 'split' | 'split_book' | 'split_questions' | 'split_explain';
 
 export const VIEW_LABELS_AR: Record<WorkspaceView, string> = {
   original: 'المحاضرة الأصلية',
   study_book: 'كتاب الدراسة',
   split: 'جنبًا إلى جنب',
   split_book: 'المحاضرة + كتاب الدراسة',
+  // (H3 item 3) the lecture next to its questions or the explanations
+  split_questions: 'المحاضرة + الأسئلة',
+  split_explain: 'المحاضرة + الشرح',
 };
 
 function Hint({ label, children }: { label: string; children: Parameters<typeof Tooltip>[0]['children'] }) {
@@ -113,6 +118,17 @@ export function TopBar(p: TopBarProps) {
       </MenuItem>
       <MenuItem icon={check(p.view === 'split_book')} onSelect={() => p.onView('split_book')} disabled={!!splitBookReason && p.view !== 'split_book'} disabledReason={splitBookReason ?? undefined}>
         {VIEW_LABELS_AR.split_book}
+      </MenuItem>
+      <MenuItem icon={check(p.view === 'split_questions')} onSelect={() => p.onView('split_questions')} disabled={!!p.splitReason && p.view !== 'split_questions'} disabledReason={p.splitReason ?? undefined}>
+        {VIEW_LABELS_AR.split_questions}
+      </MenuItem>
+      <MenuItem
+        icon={check(p.view === 'split_explain')}
+        onSelect={() => p.onView('split_explain')}
+        disabled={!!(p.splitReason ?? p.explainSplitReason) && p.view !== 'split_explain'}
+        disabledReason={(p.splitReason ?? p.explainSplitReason) ?? undefined}
+      >
+        {VIEW_LABELS_AR.split_explain}
       </MenuItem>
       <MenuItem icon={check(p.view === 'split')} onSelect={() => p.onView('split')} disabled={!!p.splitReason && p.view !== 'split'} disabledReason={p.splitReason ?? undefined}>
         جنبًا إلى جنب مع مصدر آخر

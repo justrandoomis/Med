@@ -1,5 +1,5 @@
 // Server calls for backups and exports (/api/data/…, shapes in packages/shared/src/data-api.ts).
-import type { BackupCreateResponse, BackupsListResponse, ExportFormat, ExportFormatsResponse, LibraryTreeResponse, StudyBookStatusResponse } from '@medlevo/shared';
+import type { AnnotatedPdfSummary, BackupCreateResponse, BackupsListResponse, ExportFormat, ExportFormatsResponse, LibraryTreeResponse, StudyBookStatusResponse } from '@medlevo/shared';
 import { api, ApiError, OFFLINE_MESSAGE_AR } from '../../lib/api';
 import { fileNameFrom } from './model';
 
@@ -14,10 +14,14 @@ export const dataApi = {
   exportFormats: () => api.get<ExportFormatsResponse>('/data/export/formats', { timeoutMs: 15_000 }),
   libraryTree: () => api.get<LibraryTreeResponse>('/library/tree', { timeoutMs: 30_000 }),
   bookForSource: (sourceId: string) => api.get<StudyBookStatusResponse>('/studybook/books', { query: { source_id: sourceId }, timeoutMs: 30_000 }),
+  /** (Round 7 H4) what «الأصل مع كتابتي» would draw and what it cannot, before any file is built */
+  annotatedPdfSummary: (sourceId: string) => api.get<AnnotatedPdfSummary>(`/data/export/source/${enc(sourceId)}/annotated-pdf/summary`, { timeoutMs: 30_000 }),
 };
 
 export type ExportTarget =
   | { kind: 'source'; sourceId: string }
+  /** (Round 7 H4) the original PDF with the owner's writing drawn on a copy — a flattened PDF, always PDF */
+  | { kind: 'annotated'; sourceId: string }
   | { kind: 'artifact'; artifactId: string }
   | { kind: 'notes'; sourceId?: string | null }
   | { kind: 'questions'; sourceId?: string | null; lectureSourceId?: string | null; includeSolutions: boolean }
@@ -28,6 +32,8 @@ export function exportUrl(target: ExportTarget, format: ExportFormat): string {
   switch (target.kind) {
     case 'source':
       return `/api/data/export/source/${enc(target.sourceId)}?${q}`;
+    case 'annotated':
+      return `/api/data/export/source/${enc(target.sourceId)}/annotated-pdf`;
     case 'artifact':
       return `/api/data/export/artifact/${enc(target.artifactId)}?${q}`;
     case 'notes':

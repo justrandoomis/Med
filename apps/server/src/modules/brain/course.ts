@@ -2,18 +2,18 @@
 import { createHash } from 'node:crypto';
 import {
   EXTRACT_KNOWLEDGE_JOB_KIND,
+  RECOMPUTE_RELATIONS_JOB_KIND,
   type BrainExtractResponse,
   type BrainLectureStatus,
   type CourseBrainResponse,
 } from '@medlevo/shared';
 import type { AppContext } from '../../context';
-import type { Db } from '../../db/db';
 import { fromJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
 import { newId } from '../../lib/ids';
 import { versionConcepts } from './coverage';
 import { EXTRACTOR_VERSION } from './extract';
-import { recomputeInferredRelations, relationsCount, type RecomputeStats } from './relations';
+import { recomputeInferredRelations, recomputeInferredRelationsAsync, relationsCount, type RecomputeStats } from './relations';
 import type { ExtractionSummary } from './run';
 import { courseKey, courseSources, locationOfRegion, nodeTitle, PROCESSED, sourcesOfCourseKey, studySource, type StudySource } from './store';
 
@@ -57,51 +57,116 @@ function lectureStatus(ctx: AppContext, s: StudySource): BrainLectureStatus {
   };
 }
 
-// inferred relations follow the course's order, moves and owner merges: recompute when any of those changed
-const relationMemo = new WeakMap<Db, Map<string, string>>();
-
+// Suggested relations follow the course's order, moves, owner merges and extractions. Round 7 H4: they are recomputed by
+// a BACKGROUND job (`brain.recompute_relations`), never inside a request; the state each course was last computed for
+// is persisted (`brain_relation_state`), so the course page can say whether what it shows is current.
 function relationSignature(ctx: AppContext, key: string): string {
   const parts = [
     // the same lectures the recompute reads (every source of the course group, in course order)
     sourcesOfCourseKey(ctx, key).map((s) => [s.id, s.version_id, s.sort_order]),
     ctx.db.get('SELECT COUNT(*) AS c, MAX(updated_at) AS u FROM concept_extraction'),
-    ctx.db.get('SELECT COUNT(*) AS c, MAX(updated_at) AS u, SUM(CASE WHEN merged_into_id IS NOT NULL THEN 1 ELSE 0 END) AS m FROM concept'),
+    ctx.db.get(
+      `SELECT COUNT(*) AS c, MAX(updated_at) AS u, SUM(CASE WHEN merged_into_id IS NOT NULL THEN 1 ELSE 0 END) AS m, SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) AS r FROM concept`,
+    ),
     ctx.db.get('SELECT COUNT(*) AS c FROM concept_alias'),
   ];
   return createHash('sha256').update(JSON.stringify(parts)).digest('hex');
 }
 
-export function refreshCourseRelations(ctx: AppContext, sources: StudySource[]): void {
-  let memo = relationMemo.get(ctx.db);
-  if (!memo) {
-    memo = new Map();
-    relationMemo.set(ctx.db, memo);
-  }
-  for (const key of new Set(sources.map(courseKey))) {
+/** An extraction of one of the course's lectures finished: whatever the clock says, the stored state is no longer current. */
+export function invalidateRelationState(ctx: AppContext, key: string): void {
+  ctx.db.run(`UPDATE brain_relation_state SET signature = 'stale' WHERE course_key = ?`, [key]);
+}
+
+interface RelationStateRow {
+  course_key: string;
+  signature: string;
+  stats_json: string | null;
+  job_id: string | null;
+  computed_at: number;
+}
+
+function relationState(ctx: AppContext, key: string): RelationStateRow | null {
+  return ctx.db.get<RelationStateRow>('SELECT * FROM brain_relation_state WHERE course_key = ?', [key]) ?? null;
+}
+
+function saveRelationState(ctx: AppContext, key: string, signature: string, stats: RecomputeStats | null, jobId: string | null): void {
+  ctx.db.run(
+    `INSERT INTO brain_relation_state (course_key, signature, stats_json, job_id, computed_at) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(course_key) DO UPDATE SET signature = excluded.signature, stats_json = excluded.stats_json, job_id = excluded.job_id, computed_at = excluded.computed_at`,
+    [key, signature, stats ? JSON.stringify(stats) : null, jobId, ctx.clock.now()],
+  );
+}
+
+/**
+ * Enqueue a background recompute of one course group when its state changed since the last one (one job per state:
+ * the idempotency key carries the signature, so 30 extraction jobs of one course queue at most one recompute per
+ * distinct state, and a recompute that finds the state already computed returns at once). Returns the job id, or
+ * null when the relations are already current.
+ */
+export function enqueueRelationRecompute(ctx: AppContext, key: string): string | null {
+  const sig = relationSignature(ctx, key);
+  const st = relationState(ctx, key);
+  if (st?.signature === sig) return null;
+  // a state invalidated by an extraction gets its own job (the signature alone may not move within one clock tick)
+  const nonce = st?.signature === 'stale' ? `:${st.computed_at}:${newId(ctx.clock.now())}` : '';
+  const job = ctx.jobs.enqueue(RECOMPUTE_RELATIONS_JOB_KIND, { course_key: key }, { idempotencyKey: `${RECOMPUTE_RELATIONS_JOB_KIND}:${key}:${sig}${nonce}` });
+  return job.id;
+}
+
+/** One recompute at a time per course group in this process (a second one waits, then finds the state current). */
+const running = new Map<string, Promise<unknown>>();
+
+/** The job body: recompute (incremental caches, yielding the event loop) unless this state was already computed. */
+export async function runRelationRecompute(ctx: AppContext, key: string, job: { id: string | null; signal?: AbortSignal } = { id: null }): Promise<{ skipped: boolean; stats: RecomputeStats | null }> {
+  for (let guard = 0; guard < 5 && running.has(key); guard++) await running.get(key)!.catch(() => undefined);
+  const work = (async () => {
     const sig = relationSignature(ctx, key);
-    if (memo.get(key) === sig) continue;
-    recomputeInferredRelations(ctx, key);
-    memo.set(key, relationSignature(ctx, key));
+    if (relationState(ctx, key)?.signature === sig) return { skipped: true, stats: null };
+    const stats = await recomputeInferredRelationsAsync(ctx, key, { signal: job.signal });
+    // the state the recompute STARTED from: a change that landed meanwhile has another signature → another job
+    saveRelationState(ctx, key, sig, stats, job.id);
+    return { skipped: false, stats };
+  })();
+  running.set(key, work);
+  try {
+    return await work;
+  } finally {
+    if (running.get(key) === work) running.delete(key);
   }
 }
 
-/** Recompute one course group's inferred relations now (extraction job) and remember the state it was computed for,
- * so the next course page does not redo the same work (review F2: large courses). */
+/** Synchronous recompute (no job runner: a module subset, tests of the recompute itself). */
 export function recomputeCourseRelations(ctx: AppContext, key: string): RecomputeStats {
+  const sig = relationSignature(ctx, key);
   const stats = recomputeInferredRelations(ctx, key);
-  let memo = relationMemo.get(ctx.db);
-  if (!memo) {
-    memo = new Map();
-    relationMemo.set(ctx.db, memo);
-  }
-  memo.set(key, relationSignature(ctx, key));
+  saveRelationState(ctx, key, sig, stats, null);
   return stats;
+}
+
+/** Course page: relations current, or a background recompute queued (enqueued here when the state changed). */
+export function refreshCourseRelations(ctx: AppContext, sources: StudySource[]): NonNullable<CourseBrainResponse['relations_state']> {
+  const keys = [...new Set(sources.map(courseKey))];
+  let jobId: string | null = null;
+  let computedAt: number | null = null;
+  for (const key of keys) {
+    if (ctx.jobs.isRegistered(RECOMPUTE_RELATIONS_JOB_KIND)) {
+      const id = enqueueRelationRecompute(ctx, key);
+      if (id) {
+        const j = ctx.jobs.get(id);
+        if (j && !['completed', 'failed', 'cancelled', 'partial'].includes(j.status)) jobId ??= id;
+      }
+    } else if (relationState(ctx, key)?.signature !== relationSignature(ctx, key)) recomputeCourseRelations(ctx, key);
+    const st = relationState(ctx, key);
+    if (st) computedAt = Math.max(computedAt ?? 0, st.computed_at);
+  }
+  return { status: jobId ? 'refreshing' : 'current', computed_at: computedAt, job_id: jobId };
 }
 
 export function courseBrain(ctx: AppContext, nodeId: string): CourseBrainResponse {
   const course = nodeTitle(ctx, nodeId);
   const sources = courseSources(ctx, nodeId);
-  refreshCourseRelations(ctx, sources);
+  const relationsState = refreshCourseRelations(ctx, sources);
   // sources processed before the Course Brain existed (or re-typed into study material) are extracted once
   if (ctx.jobs.isRegistered(EXTRACT_KNOWLEDGE_JOB_KIND)) {
     for (const s of sources) {
@@ -137,6 +202,7 @@ export function courseBrain(ctx: AppContext, nodeId: string): CourseBrainRespons
       relations: relationsCount(ctx, [...conceptIds]),
     },
     notes_ar: notes,
+    relations_state: relationsState,
   };
 }
 

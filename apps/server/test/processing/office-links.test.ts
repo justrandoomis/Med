@@ -44,8 +44,11 @@ async function pptxLinkingTo(target: string): Promise<Buffer> {
   return Buffer.from(await z.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }));
 }
 
-/** A minimal DOCX whose only picture is a LINK (`r:link`) to `target`, plus a hyperlink to it. */
-async function docxLinkingTo(target: string): Promise<Buffer> {
+/**
+ * A minimal DOCX whose only picture is a LINK (`r:link`) to `target`, plus a hyperlink to it. `relationships` replaces
+ * the relationship elements of word/_rels/document.xml.rels (the picture must stay `rId5`).
+ */
+async function docxLinkingTo(target: string, relationships?: string): Promise<Buffer> {
   const z = new JSZip();
   z.file(
     '[Content_Types].xml',
@@ -57,7 +60,7 @@ async function docxLinkingTo(target: string): Promise<Buffer> {
   );
   z.file(
     'word/_rels/document.xml.rels',
-    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="${target}" TargetMode="External"/><Relationship Id="rId6" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${target}" TargetMode="External"/></Relationships>`,
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${relationships ?? `<Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="${target}" TargetMode="External"/><Relationship Id="rId6" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${target}" TargetMode="External"/>`}</Relationships>`,
   );
   const pic = `<w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="2286000" cy="1143000"/><wp:docPr id="1" name="Picture 1"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="0" name="linked.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:link="rId5"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2286000" cy="1143000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>`;
   z.file(
@@ -133,4 +136,59 @@ describe('OOXML external relationships are stripped before LibreOffice converts 
     await convert(await pptxLinkingTo(`http://127.0.0.1:${trap.port}/h2-pptx.png`), 'pptx');
     expect(trap.hits).toEqual([]);
   }, 400_000);
+});
+
+// H2 review: the first sanitizer matched relationships with a regex that stopped at the first «>» and read attributes
+// with a first-match search — three spellings LibreOffice accepts kept a link to a SERVER file in the «sanitized» copy
+// (reproduced: with LibreOffice's default profile the sanitized copy still embedded the server picture). Every
+// relationship part is now read with a quote-aware scanner, entity references are decoded, any TargetMode other than
+// «Internal» counts as external, and the parts are written back in canonical form (what LibreOffice reads is exactly
+// what was checked).
+describe('relationship spellings that must not survive the sanitizer (H2 review)', () => {
+  const IMG = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image';
+  const variants = (path: string): Record<string, string> => ({
+    'a «>» inside an attribute value': `<Relationship Id="rId5" Type="${IMG}" Target="file://${path}" TargetMode="External" Note="a>b"/>`,
+    'TargetMode written with a character reference, absolute path target': `<Relationship Id="rId5" Type="${IMG}" Target="${path}" TargetMode="&#69;xternal"/>`,
+    'a decoy «TargetMode» inside another attribute value': `<Relationship Id="rId5" Note=" TargetMode='Internal'" Type="${IMG}" Target="${path}" TargetMode="External"/>`,
+  });
+
+  it('none of them keeps a relationship that leaves the package; internal relationships stay', async () => {
+    for (const [what, rel] of Object.entries(variants('/srv/secret.png'))) {
+      const internal = `<Relationship Id="rId7" Type="${IMG}" Target="media/image1.png"/>`;
+      const { data, removed } = await sanitizeOoxmlForConversion(await docxLinkingTo('', rel + internal));
+      expect(removed.map((r) => r.id), what).toEqual(['rId5']);
+      const rels = await (await JSZip.loadAsync(data)).file('word/_rels/document.xml.rels')!.async('string');
+      expect(rels, what).not.toMatch(/secret|TargetMode|External/i);
+      expect(rels, what).toContain('Target="media/image1.png"');
+    }
+  });
+
+  it('an unknown entity or an unreadable attribute list is never kept (fail closed)', async () => {
+    const odd = [
+      `<Relationship Id="rId5" Type="${IMG}" Target="file:///srv/x.png" TargetMode="&ext;"/>`,
+      `<Relationship Id="rId5" Type="${IMG}" Target="&path;"/>`,
+      `<Relationship Id="rId5" Type="${IMG}" Target=/srv/x.png TargetMode="External"/>`,
+    ];
+    for (const rel of odd) {
+      const { removed } = await sanitizeOoxmlForConversion(await docxLinkingTo('', rel));
+      expect(removed.map((r) => r.id), rel).toEqual(['rId5']);
+    }
+  });
+
+  it.skipIf(!SOFFICE)('even with LibreOffice\'s default profile, the sanitized copies embed nothing from the server disk', async () => {
+    const plain = async (input: Buffer) => {
+      const work = mkdtempSync(join(dir, 'plain-'));
+      writeFileSync(join(work, 'in.docx'), input);
+      await runCommand(SOFFICE!, [`-env:UserInstallation=${pathToFileURL(join(work, 'profile')).href}`, '--headless', '--norestore', '--convert-to', 'pdf', '--outdir', work, join(work, 'in.docx')], {
+        timeoutMs: 170_000,
+        cwd: work,
+        env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: work, LANG: 'C.UTF-8', TMPDIR: work },
+      });
+      return readFileSync(join(work, 'in.pdf'));
+    };
+    for (const [what, rel] of Object.entries(variants(secret))) {
+      const sanitized = (await sanitizeOoxmlForConversion(await docxLinkingTo('', rel))).data;
+      expect(await imagesInPdf(await plain(sanitized)), what).toBe(0);
+    }
+  }, 600_000);
 });

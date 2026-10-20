@@ -226,3 +226,14 @@
   gap: var(--ml-space-2);
   margin-inline-start: auto;
 }
+
+/* «صفحات بلا دفتر» (Round 7 — H3 item 7): a calm notice above the list, never an alarm */
+.nb-orphans__why {
+  margin: 0 0 var(--ml-space-3);
+  max-width: 70ch;
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-sm);
+}
+.nb-orphans__row {
+  flex-wrap: wrap;
+}

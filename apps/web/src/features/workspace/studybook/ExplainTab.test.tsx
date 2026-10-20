@@ -116,6 +116,16 @@ interface Call {
   body: unknown;
 }
 
+/** (Round 7 H4) the tab explains through the streaming endpoint: a JSON answer is served as its SSE `final` event */
+const EXPLAIN = '/api/studybook/explain/stream';
+async function asStream(res: Response): Promise<Response> {
+  if (!res.ok) return res;
+  const result = await res.json();
+  const ev = (e: unknown) => `event: ${(e as { type: string }).type}\ndata: ${JSON.stringify(e)}\n\n`;
+  const body = ev({ type: 'phase', phase: 'retrieving', label_ar: 'يُبحث…' }) + ev({ type: 'final', result, removed: [], had_draft: false });
+  return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+}
+
 function server(explain: (body: Record<string, unknown>, n: number) => Response | Promise<Response>): Call[] {
   const calls: Call[] = [];
   let n = 0;
@@ -125,7 +135,7 @@ function server(explain: (body: Record<string, unknown>, n: number) => Response 
     calls.push({ method, url, body });
     if (url.startsWith('/api/studybook/artifacts')) return json({ artifacts: [] });
     if (url.startsWith('/api/studybook/threads')) return json({ threads: [] });
-    if (url === '/api/studybook/explain' && method === 'POST') return explain(body as Record<string, unknown>, ++n);
+    if (url === EXPLAIN && method === 'POST') return asStream(await explain(body as Record<string, unknown>, ++n));
     return json({ error: { code: 'NOT_FOUND', message: 'غير موجود' } }, 404);
   });
   return calls;
@@ -166,7 +176,7 @@ describe('ExplainTab', () => {
     expect(screen.getByText(new RegExp(`شرح الشكل: ${AI_REASON.slice(0, 20)}`))).toBeTruthy();
     // the page context and the Source Lock are visible before anything runs
     expect(screen.getByText(/لا يوجد تحديد؛ يُشرح ما في/)).toBeTruthy();
-    expect(calls.some((c) => c.url === '/api/studybook/explain')).toBe(false);
+    expect(calls.some((c) => c.url === EXPLAIN)).toBe(false);
   });
 
   it('explains the page under the visible lock and renders the verified result with its evidence chip', async () => {
@@ -175,7 +185,7 @@ describe('ExplainTab', () => {
     renderTab(doc, page);
     fireEvent.click(screen.getByRole('button', { name: 'اشرح' }));
     expect(await screen.findByRole('heading', { name: /شرح: Ultrasound/ })).toBeTruthy();
-    const req = calls.find((c) => c.url === '/api/studybook/explain')!.body as Record<string, unknown>;
+    const req = calls.find((c) => c.url === EXPLAIN)!.body as Record<string, unknown>;
     expect(req).toMatchObject({ action: 'explain', anchor: { source_id: doc.detail.id, page_id: page.id, version_id: page.version_id }, scope: { mode: 'lecture_only', lecture_source_id: doc.detail.id } });
     expect(req.level).toBeTruthy();
     expect(req.style).toBeTruthy();
@@ -205,10 +215,10 @@ describe('ExplainTab', () => {
     fireEvent.click(screen.getByRole('button', { name: 'اشرح' }));
     expect(await screen.findByText('لم أجد هذه المعلومة في المصادر المسموحة ضمن النطاق الحالي.')).toBeTruthy();
     expect(screen.getByText('بُحث في 4 صفحات من المحاضرة.')).toBeTruthy();
-    expect(calls.filter((c) => c.url === '/api/studybook/explain')).toHaveLength(1); // nothing widened by itself
+    expect(calls.filter((c) => c.url === EXPLAIN)).toHaveLength(1); // nothing widened by itself
     fireEvent.click(screen.getByRole('button', { name: 'وسّع النطاق' }));
     await screen.findByRole('heading', { name: /شرح: Ultrasound/ });
-    const second = calls.filter((c) => c.url === '/api/studybook/explain')[1]!.body as { scope: unknown };
+    const second = calls.filter((c) => c.url === EXPLAIN)[1]!.body as { scope: unknown };
     expect(second.scope).toEqual(wider);
   });
 
@@ -235,7 +245,7 @@ describe('ExplainTab', () => {
     });
     renderTab(doc, page);
     await screen.findByRole('heading', { name: 'تبسيط: التحديد' });
-    const req = calls.find((c) => c.url === '/api/studybook/explain')!.body as { action: string; anchor: { quote: { exact: string } } };
+    const req = calls.find((c) => c.url === EXPLAIN)!.body as { action: string; anchor: { quote: { exact: string } } };
     expect(req.action).toBe('simplify');
     expect(req.anchor.quote.exact).toBe('Ultrasound is the first-line imaging test in children.');
     expect(screen.getByText('التحديد')).toBeTruthy();
@@ -256,7 +266,7 @@ describe('ExplainTab', () => {
     fireEvent.click(screen.getByRole('button', { name: 'لم أفهم — اشرح بطريقة أخرى' }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'تشبيه' }));
     await screen.findByRole('heading', { name: 'تبسيط: Pain starts (2)' });
-    const retry = calls.filter((c) => c.url === '/api/studybook/explain')[1]!.body as Record<string, unknown>;
+    const retry = calls.filter((c) => c.url === EXPLAIN)[1]!.body as Record<string, unknown>;
     expect(retry).toMatchObject({ action: 'simplify', anchor: passage, retry_of: { artifact_id: 'A1', strategy: 'analogy' } });
   });
 
@@ -272,5 +282,123 @@ describe('ExplainTab', () => {
     expect(composer).toHaveProperty('disabled', true);
     await waitFor(() => expect(screen.getByRole('button', { name: 'اسأل' })).toHaveProperty('disabled', true));
     expect(screen.getAllByText(AI_REASON).length).toBeGreaterThan(0);
+  });
+});
+
+// ───────── Round 7 H4 item 10 (§30): the streamed draft is labelled unverified, then REPLACED by the verified result ─────────
+/** a stream the test writes into, event by event; `aborted` tells whether the tab cancelled the request */
+function controlledStream() {
+  const enc = new TextEncoder();
+  let ctrl!: ReadableStreamDefaultController<Uint8Array>;
+  const body = new ReadableStream<Uint8Array>({ start: (c) => void (ctrl = c) });
+  const state = { aborted: false };
+  return {
+    state,
+    response: new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } }),
+    push: (e: Record<string, unknown>) => ctrl.enqueue(enc.encode(`event: ${String(e.type)}\ndata: ${JSON.stringify(e)}\n\n`)),
+    close: () => ctrl.close(),
+    fail: (err: unknown) => ctrl.error(err),
+  };
+}
+
+describe('ExplainTab — streaming (H4)', () => {
+  it('shows the draft labelled «مسودة لم تُتحقق بعد» without chips, then the verified result and the removed sentence as removed', async () => {
+    const s = controlledStream();
+    let headers: Record<string, string> = {};
+    setFetchImpl(async (url, init) => {
+      if (url.startsWith('/api/studybook/artifacts')) return json({ artifacts: [] });
+      if (url.startsWith('/api/studybook/threads')) return json({ threads: [] });
+      if (url === EXPLAIN) {
+        headers = init.headers as Record<string, string>;
+        return s.response;
+      }
+      return json({ error: { code: 'NOT_FOUND', message: 'غير موجود' } }, 404);
+    });
+    const { doc, page } = makeDoc();
+    renderTab(doc, page);
+    fireEvent.click(screen.getByRole('button', { name: 'اشرح' }));
+    await waitFor(() => expect(headers['x-medlevo-csrf']).toBe('1'));
+    await act(async () => {
+      s.push({ type: 'phase', phase: 'generating', label_ar: 'يكتب النموذج مسودة…' });
+      s.push({ type: 'draft', attempt: 1, blocks: [{ kind: 'paragraph', sentences: ['Ultrasound is the first-line imaging test.', 'Ultrasound replaces CT in adults (TEST-UNSUPPORTED).'] }], label_ar: 'مسودة لم تُتحقق بعد', note_ar: 'نص لم يُتحقق من أدلته بعد.' });
+    });
+    const draft = await screen.findByRole('region', { name: 'مسودة لم تُتحقق بعد' });
+    expect(draft.getAttribute('aria-busy')).toBe('true');
+    expect(draft.textContent).toContain('TEST-UNSUPPORTED');
+    expect(draft.textContent).toContain('مسودة لم تُتحقق بعد');
+    expect(draft.querySelectorAll('button.ev-chip, [data-claim]').length).toBe(0); // a draft cites nothing
+    await act(async () => {
+      s.push({ type: 'phase', phase: 'verifying', label_ar: 'يُتحقق من كل جملة طبية مقابل أدلتها…' });
+      s.push({
+        type: 'final',
+        result: { artifact: artifact({ removed: [{ text: 'Ultrasound replaces CT in adults (TEST-UNSUPPORTED).', reason_ar: 'لا يدعمها أي دليل من النطاق.' }] }), cached: false },
+        removed: [{ text: 'Ultrasound replaces CT in adults (TEST-UNSUPPORTED).', reason_ar: 'لا يدعمها أي دليل من النطاق.' }],
+        had_draft: true,
+      });
+      s.close();
+    });
+    expect(await screen.findByRole('heading', { name: /شرح: Ultrasound/ })).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'مسودة لم تُتحقق بعد' })).toBeNull();
+    const outcome = screen.getByRole('region', { name: 'ما تغيّر عن المسودة' });
+    expect(outcome.textContent).toContain('حُذفت منها جملة واحدة');
+    const del = outcome.querySelector('del')!;
+    expect(del.textContent).toContain('TEST-UNSUPPORTED');
+    expect(outcome.textContent).toContain('لا يدعمها أي دليل من النطاق.');
+  });
+
+  it('«أوقف» cancels the request; nothing of the draft stays on screen', async () => {
+    const s = controlledStream();
+    let signal: AbortSignal | undefined;
+    setFetchImpl(async (url, init) => {
+      if (url.startsWith('/api/studybook/artifacts')) return json({ artifacts: [] });
+      if (url.startsWith('/api/studybook/threads')) return json({ threads: [] });
+      if (url === EXPLAIN) {
+        signal = init.signal ?? undefined;
+        signal?.addEventListener('abort', () => s.fail(new DOMException('aborted', 'AbortError')));
+        return s.response;
+      }
+      return json({ error: { code: 'NOT_FOUND', message: 'غير موجود' } }, 404);
+    });
+    const { doc, page } = makeDoc();
+    renderTab(doc, page);
+    fireEvent.click(screen.getByRole('button', { name: 'اشرح' }));
+    await waitFor(() => expect(signal).toBeTruthy());
+    await act(async () => {
+      s.push({ type: 'draft', attempt: 1, blocks: [{ kind: 'paragraph', sentences: ['Draft sentence (TEST).'] }], label_ar: 'مسودة لم تُتحقق بعد', note_ar: 'نص لم يُتحقق منه.' });
+    });
+    expect(await screen.findByText('Draft sentence (TEST).')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'أوقف' }));
+    expect(signal!.aborted).toBe(true);
+    await waitFor(() => expect(screen.queryByText('Draft sentence (TEST).')).toBeNull());
+    // stopping is not an error
+    expect(screen.queryByText('تعذّر إكمال الطلب')).toBeNull();
+    expect(screen.queryByText(/تعذّر إكمال الشرح/)).toBeNull();
+  });
+
+  it('a restart (the first answer failed the structure) clears the draft and says why', async () => {
+    const s = controlledStream();
+    setFetchImpl(async (url) => {
+      if (url.startsWith('/api/studybook/artifacts')) return json({ artifacts: [] });
+      if (url.startsWith('/api/studybook/threads')) return json({ threads: [] });
+      if (url === EXPLAIN) return s.response;
+      return json({ error: { code: 'NOT_FOUND', message: 'غير موجود' } }, 404);
+    });
+    const { doc, page } = makeDoc();
+    renderTab(doc, page);
+    fireEvent.click(screen.getByRole('button', { name: 'اشرح' }));
+    await act(async () => {
+      s.push({ type: 'draft', attempt: 1, blocks: [{ kind: 'paragraph', sentences: ['First attempt (TEST).'] }], label_ar: 'مسودة لم تُتحقق بعد', note_ar: 'x' });
+    });
+    expect(await screen.findByText('First attempt (TEST).')).toBeTruthy();
+    await act(async () => {
+      s.push({ type: 'restart', attempt: 2, reason_ar: 'لم تطابق المسودة البنية المطلوبة، فأُلغيت وتُعاد كتابتها مرة واحدة.' });
+    });
+    await waitFor(() => expect(screen.queryByText('First attempt (TEST).')).toBeNull());
+    expect(screen.getByText(/فأُلغيت وتُعاد كتابتها/)).toBeTruthy();
+    await act(async () => {
+      s.push({ type: 'error', error: { code: 'SCHEMA_REJECTED', message: 'رُفضت نتيجة الذكاء الاصطناعي لأنها لم تطابق البنية المطلوبة.' } });
+      s.close();
+    });
+    expect(await screen.findByText(/رُفضت نتيجة الذكاء الاصطناعي/)).toBeTruthy();
   });
 });

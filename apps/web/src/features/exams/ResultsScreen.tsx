@@ -17,6 +17,7 @@ import { errorMessage, isApiError } from '../../lib/api';
 import { getDb } from '../../lib/localdb';
 import { getSyncEngine } from '../../lib/sync';
 import { usePageTitle } from '../../lib/usePageTitle';
+import { TopicLinksControl } from '../brain/TopicLinksControl';
 import { examsApi } from './api';
 import { FeedbackPanel } from './FeedbackPanel';
 import { localAttempt, registerExamAppliers, saveMistakeType } from './local';
@@ -155,6 +156,7 @@ export function ResultsScreen() {
             <MixedLine text={r.title} />
           </h1>
           <p className="ml-page__lede">النتيجة والتصحيح — الأدلة والحلول متاحة كاملة الآن.</p>
+          <TopicLinksControl entityType="exam_attempt" entityId={attemptId} itemLabel={`محاولة «${r.title}»`} />
         </div>
         <div className="ml-cluster">
           <Link to="/exams/new" className={buttonClass({ variant: 'primary' })}>

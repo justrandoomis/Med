@@ -15,7 +15,7 @@
 // never rewritten, positions are untouched (spans are absolutely positioned), lines that are already in a valid order
 // and lines without right-to-left text keep their exact items. The reader uses the result for BOTH the text layer
 // and the in-document search text, so search offsets and DOM text nodes keep agreeing.
-import { detectDir } from '@medlevo/shared';
+import { detectDir, fixReversedLamAlefPieces } from '@medlevo/shared';
 
 /** The parts of a pdf.js TextItem this module reads (structural, so tests can build items by hand). */
 export interface PdfTextItemLike {
@@ -213,4 +213,37 @@ export function logicalTextContent<C extends PdfTextContentLike>(content: C): C 
   }
   flush();
   return changed ? { ...content, items: out } : content;
+}
+
+/**
+ * (Round 7 — H3 item 8) The PDF's reversed lam-alef («األلم» for «الألم», «ال يعد» for «لا يعد») repaired in the text
+ * items with the server's own narrow rule (shared `fixReversedLamAlef`), so the selectable layer shows — and copies —
+ * what the server stores and what search finds. The items are read as one text in their (logical) order, with a line
+ * break after an item that ends a line, so a word split over two items is repaired too; every item keeps its exact
+ * length, so its position on the page, the search offsets and the hit rectangles do not move. Copies the changed items
+ * only; the original objects are not mutated.
+ */
+export function repairReversedLamAlef<C extends PdfTextContentLike>(content: C): C {
+  const items = content.items as unknown[];
+  const textIdx: number[] = [];
+  const pieces: string[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (it && typeof (it as PdfTextItemLike).str === 'string') {
+      textIdx.push(i);
+      pieces.push((it as PdfTextItemLike).str);
+    }
+  }
+  const { pieces: fixed, fixes } = fixReversedLamAlefPieces(pieces, (k) => ((items[textIdx[k]!] as PdfTextItemLike).hasEOL ? '\n' : ''));
+  if (fixes === 0) return content;
+  const out = items.slice();
+  textIdx.forEach((at, k) => {
+    if (fixed[k] !== pieces[k]) out[at] = { ...(items[at] as PdfTextItemLike), str: fixed[k]! };
+  });
+  return { ...content, items: out };
+}
+
+/** What the reader shows as a PDF page's text (text layer AND in-document search): logical order, lam-alef repaired. */
+export function readerTextContent<C extends PdfTextContentLike>(content: C): C {
+  return repairReversedLamAlef(logicalTextContent(content));
 }

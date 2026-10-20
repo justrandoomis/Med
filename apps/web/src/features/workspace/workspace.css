@@ -134,8 +134,10 @@
   display: flex;
   flex-direction: column;
   gap: var(--ml-space-2);
-  width: min(22rem, calc(100vw - 32px));
-  padding: var(--ml-space-3);
+  /* H3 item 5: exactly the popover's content box (its max-width minus its own padding). The form used to add its own
+     width and padding on top of the popover's, so on a 360–390 px phone «انتقال» stuck out of the popover. */
+  width: calc(min(22rem, 100vw - 16px) - 2 * var(--ml-space-4));
+  padding: 0;
 }
 .wk-goto__row {
   display: flex;
@@ -1305,4 +1307,71 @@
   color: var(--ml-color-accent-soft-ink);
   font-size: var(--ml-text-xs);
   white-space: nowrap;
+}
+
+/* ── «تحتاج إعادة ربط»: the owner's choice of a new place (H3 item 2) ── */
+.wk-reanchor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-3);
+}
+.wk-reanchor__places {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-1);
+  max-height: 40vh;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  border: 0;
+}
+.wk-reanchor__places > legend {
+  margin-bottom: var(--ml-space-2);
+  padding: 0;
+  font-weight: var(--ml-weight-semibold);
+}
+.wk-reanchor__option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ml-space-2);
+  min-height: var(--ml-touch-target);
+  padding: var(--ml-space-2) var(--ml-space-3);
+  border: 1px solid var(--ml-color-line);
+  border-radius: var(--ml-radius-md);
+  cursor: pointer;
+}
+.wk-reanchor__option:has(input:checked) {
+  border-color: var(--ml-color-accent);
+  background: var(--ml-color-accent-soft);
+}
+.wk-reanchor__option input {
+  margin-top: 0.3em;
+}
+.wk-reanchor__preview {
+  margin: 0;
+  font-family: var(--ml-font-reading);
+  unicode-bidi: plaintext;
+}
+.wk-reanchor__detached > summary {
+  cursor: pointer;
+  padding: var(--ml-space-2) 0;
+  color: var(--ml-color-ink-2);
+}
+
+/* ── the lecture next to its questions / explanations (H3 item 3) ── */
+.wk-split-side__spacer {
+  flex: 1;
+}
+.wk-split-side__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--ml-space-3);
+  background: var(--ml-color-canvas);
+}
+.wk-split-side__body[hidden] {
+  display: none;
+}
+.wk-split-side__note {
+  margin: var(--ml-space-2) var(--ml-space-3) 0;
 }

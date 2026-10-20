@@ -208,6 +208,11 @@ const TOPIC_ENTITY_TABLES: Record<TopicEntityType, string> = {
   image_asset: 'image_asset',
   flashcard: 'flashcard',
   note: 'note',
+  // Round 7 H4: cases, generated explanations and past attempts
+  clinical_case: 'clinical_case',
+  artifact: 'artifact',
+  exam_attempt: 'exam_attempt',
+  case_attempt: 'case_attempt',
 };
 
 /** A topic link must point at something real (known entity type, existing row) — track F2. */

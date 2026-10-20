@@ -1,5 +1,7 @@
 // Contextual chat in the rail (§30): threads per page, each bound to its selection, version and Source Lock.
-// Answers appear only after verification (drafts show a status, never content); abstentions say why and offer an
+// (Round 7 H4) While the model writes, its text streams as a draft labelled «مسودة لم تُتحقق بعد» (never stored, never
+// cited, «أوقف» cancels it); the answer that is kept is only the verified one, and sentences verification removed
+// from the draft are listed as removed. Abstentions say why and offer an
 // explicit wider scope (a NEW thread — a thread never carries assumptions into another scope or lecture).
 // A verified answer can be saved as a note: it stays labelled generated (§28).
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -22,6 +24,7 @@ import { getSyncEngine } from '../../../lib/sync';
 import { ArtifactContent, BidiText, ScopeBadge } from '../../evidence';
 import { studybookApi } from '../../studybook/api';
 import { shortQuote, threadMatchesScope } from '../../studybook/model';
+import { DraftOutcome, EMPTY_STREAM, reduceStream, StreamDraft, type StreamView } from '../../studybook/streaming';
 
 export interface ChatPanelProps {
   sourceId: string;
@@ -42,7 +45,7 @@ export interface ChatPanelProps {
 }
 
 const DRAFT_LABEL: Partial<Record<ChatMessageView['status'], string>> = {
-  draft: 'تُكتب الإجابة — لا تُعرض قبل التحقق',
+  draft: 'تُكتب الإجابة — لا يُعتمد منها إلا ما يجتاز التحقق',
   verifying: 'يُتحقق من الإجابة جملةً جملة',
   rejected: 'تعذّر إكمال هذه الإجابة؛ لم يُعرض أي جزء منها',
 };
@@ -56,6 +59,10 @@ export function ChatPanel({ sourceId, page, anchor, anchorText, scope, style, ga
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<Record<string, boolean>>({});
+  // (Round 7 H4) the live draft of the answer being written, and what verification removed from it
+  const [stream, setStream] = useState<StreamView | null>(null);
+  const [outcome, setOutcome] = useState<{ messageId: string; hadDraft: boolean; removed: Array<{ text: string; reason_ar: string }> } | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
   const pageId = page?.id ?? null;
   const anchorKey = anchor ? `${anchor.page_id}|${anchor.quote?.exact ?? ''}|${(anchor.region_ids ?? []).join(',')}` : `page:${pageId}`;
@@ -110,6 +117,10 @@ export function ChatPanel({ sourceId, page, anchor, anchorText, scope, style, ga
     if (!q) return;
     setSending(true);
     setError(null);
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
+    let threadId: string | null = null;
     try {
       let thread = active?.thread ?? null;
       const lock = opts.scope ?? scope;
@@ -120,19 +131,36 @@ export function ChatPanel({ sourceId, page, anchor, anchorText, scope, style, ga
         thread = created.thread;
         setActive(created);
       }
-      // show the owner's question at once; the answer arrives only when verified
-      const res = await studybookApi.ask(thread.id, q, style);
+      threadId = thread.id;
+      // the draft streams labelled as unverified; the answer that is kept arrives only when verified
+      setStream(EMPTY_STREAM);
+      setOutcome(null);
+      const { result: res, removed, hadDraft } = await studybookApi.askStream(thread.id, q, style, {
+        signal: ac.signal,
+        onEvent: (e) => {
+          if (!ac.signal.aborted) setStream((v) => reduceStream(v ?? EMPTY_STREAM, e));
+        },
+      });
+      setStream(null);
+      setOutcome({ messageId: res.answer.id, hadDraft, removed });
       setText('');
       setActive(await studybookApi.thread(thread.id));
       void loadThreads();
       if (res.answer.status === 'abstained') toast.show({ title: 'لم تُكتب إجابة: السبب معروض تحت السؤال.', tone: 'info' });
     } catch (e) {
+      setStream(null);
+      if (ac.signal.aborted) {
+        toast.show({ title: 'أوقفتَ الإجابة؛ لم يُحفظ منها شيء.', tone: 'info' });
+        if (threadId) void open(threadId);
+        return;
+      }
       setError(errorMessage(e, 'تعذّر إرسال السؤال.'));
-      if (active?.thread) void open(active.thread.id);
+      if (threadId ?? active?.thread) void open((threadId ?? active?.thread.id)!);
     } finally {
       setSending(false);
     }
   };
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   const saveNote = async (m: ChatMessageView) => {
     try {
@@ -202,6 +230,7 @@ export function ChatPanel({ sourceId, page, anchor, anchorText, scope, style, ga
               </div>
             ) : (
               <div key={m.id} className="sb-msg sb-msg--assistant">
+                {outcome?.messageId === m.id && <DraftOutcome hadDraft={outcome.hadDraft} removed={outcome.removed} />}
                 {m.status === 'final' || m.status === 'abstained' ? (
                   m.artifact ? (
                     <ArtifactContent
@@ -228,6 +257,17 @@ export function ChatPanel({ sourceId, page, anchor, anchorText, scope, style, ga
             ),
           )}
         </div>
+      )}
+
+      {stream && (
+        <StreamDraft
+          view={stream}
+          actions={
+            <Button size="sm" variant="plain" onClick={() => abortRef.current?.abort()}>
+              أوقف
+            </Button>
+          }
+        />
       )}
 
       <form

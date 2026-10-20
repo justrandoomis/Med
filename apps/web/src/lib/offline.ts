@@ -33,6 +33,9 @@ export interface OfflineDownload extends OfflineSourceRecord {
   sourceType: string;
   format: string;
   contentHash: string;
+  /** Round 7 H4: source content only / the owner's writing only (absent on downloads made before H4) */
+  sourceHash?: string;
+  ownerHash?: string;
   includeSolutions: boolean;
   fileIds: string[];
   apiKeys: string[];
@@ -279,6 +282,7 @@ export async function downloadSource(sourceId: string, opts: DownloadOptions = {
       downloadedAt: storedAt,
       parts: partsOf(manifest),
       contentHash: bundle.content_hash,
+      ...(bundle.source_hash ? { sourceHash: bundle.source_hash, ownerHash: bundle.owner_hash } : {}),
       includeSolutions,
       fileIds: files.map((f) => f.file_id),
       apiKeys: bundle.entries.map((e) => apiKeyFor(e.path)),
@@ -405,9 +409,18 @@ export function useDownloadRecord(sourceId: string): OfflineDownload | null | un
 }
 
 /** Compares a download with the server's current content (needs a connection). */
-export async function checkForUpdate(rec: OfflineDownload): Promise<'current' | 'changed' | 'version_changed'> {
+/**
+ * Is the downloaded copy still what the server has? «changed» = the SOURCE content changed (Round 7 H4: the owner's own
+ * writing / reading progress is compared apart — «owner_changed» — it reaches the device through sync, and never reads
+ * as a content change). A download stored before H4 has only the combined hash and keeps the old comparison.
+ */
+export async function checkForUpdate(rec: OfflineDownload): Promise<'current' | 'changed' | 'version_changed' | 'owner_changed'> {
   const m = await fetchOfflineManifest(rec.sourceId, { includeSolutions: rec.includeSolutions });
   if (m.version.id !== rec.versionId) return 'version_changed';
+  if (rec.sourceHash && m.source_hash) {
+    if (m.source_hash !== rec.sourceHash) return 'changed';
+    return rec.ownerHash && m.owner_hash && m.owner_hash !== rec.ownerHash ? 'owner_changed' : 'current';
+  }
   return m.content_hash === rec.contentHash ? 'current' : 'changed';
 }
 

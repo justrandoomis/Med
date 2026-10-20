@@ -22,6 +22,10 @@ import type {
   SourceDetail,
   SourcesPrioritiesResponse,
   StorageResponse,
+  VisualSourceCreateRequest,
+  VisualSourceListResponse,
+  VisualSourcePatchRequest,
+  VisualSourceView,
 } from '@medlevo/shared';
 import { api } from '../../lib/api';
 
@@ -37,6 +41,11 @@ export interface ReviewFilter {
 
 export const controlApi = {
   overview: () => api.get<ControlOverviewResponse>('/control/overview', T),
+  // (Round 7 H4, §32) the owner's registry of allowed external visual sources (owned by the media module)
+  visualSources: () => api.get<VisualSourceListResponse>('/media/visual-sources', T),
+  addVisualSource: (body: VisualSourceCreateRequest) => api.post<{ item: VisualSourceView }>('/media/visual-sources', body, T),
+  patchVisualSource: (id: string, body: VisualSourcePatchRequest) => api.patch<{ item: VisualSourceView }>(`/media/visual-sources/${enc(id)}`, body, T),
+  deleteVisualSource: (id: string) => api.del<{ ok: true }>(`/media/visual-sources/${enc(id)}`, T),
   review: (f: ReviewFilter) =>
     api.get<ReviewQueueListResponse>('/control/review', { ...T, query: { status: f.status, kind: f.kind || undefined, source_id: f.source_id || undefined, cursor: f.cursor ?? undefined, limit: 50 } }),
   reviewItem: (id: string) => api.get<ReviewItemDetail>(`/control/review/${enc(id)}`, T),

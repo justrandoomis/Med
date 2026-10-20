@@ -23,6 +23,8 @@ const PART_LABELS: Record<ProfileSignalPart, { label: string; used: string }> = 
   mistake_types: { label: 'تصنيفات أخطائك (Mistake Genome)', used: 'توزيع أنواع الأخطاء وأسباب الضعف' },
   confidence: { label: 'مستوى الثقة الذي تختاره بعد الإجابة', used: 'وزن الإجابة الصحيحة في الإتقان (التخمين لا يُعد إتقانًا)' },
   pace: { label: 'سرعتك (الوقت لكل سؤال وبطاقة)', used: 'تقدير أوقات جلسة المراجعة السريعة وخطة الدراسة' },
+  // Round 7 H4: the case / OSCE / viva checklist signals can be reset like the others
+  case_attempts: { label: 'محاولاتك المكتملة في الحالات وOSCE والامتحان الشفهي', used: 'مركز الضعف (بنود قوائم التقييم — تقدير لا درجة)' },
 };
 
 interface ProfileRow {
@@ -85,6 +87,7 @@ export function getProfile(ctx: AppContext): LearningProfileView {
     pace:
       count(ctx.db, 'SELECT COUNT(*) AS n FROM question_attempt WHERE time_ms IS NOT NULL AND answered_at >= ?', resets.pace) +
       count(ctx.db, 'SELECT COUNT(*) AS n FROM review_event WHERE duration_ms IS NOT NULL AND reviewed_at >= ?', resets.pace),
+    case_attempts: count(ctx.db, `SELECT COUNT(*) AS n FROM case_attempt WHERE status = 'completed' AND COALESCE(finished_at, 0) >= ?`, resets.case_attempts),
   };
   const signals = PROFILE_SIGNAL_PARTS.map((part) => ({ part, label_ar: PART_LABELS[part].label, used_for_ar: PART_LABELS[part].used, count: counts[part], reset_at: resets[part] }));
   const used = signals

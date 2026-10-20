@@ -43,7 +43,9 @@ import {
   type StudybookHooks,
 } from './book';
 import { archiveThread, createThread, getThread, listThreads, postMessage, saveAnswerAsNote } from './chat';
-import { compareItems, explainSelection } from './explain';
+import { compareItems, explainSelection, isRealPatientRequest } from './explain';
+import { requireAi } from './generate';
+import { sendStudyStream } from './stream';
 import { registerDiagramRoutes } from './diagrams';
 import { nodeChain, nodeChainForSource, readOverride, resolveRules, rulesPatchSchema, templateForNode } from './rules';
 import { compareBodySchema, explainBodySchema, messageCreateSchema, saveNoteSchema, studyBookBodySchema, summaryBodySchema, threadCreateSchema } from './schema';
@@ -152,6 +154,19 @@ export function createStudybookModule(opts: StudybookModuleOptions = {}) {
 
     // ───────── explanations ─────────
     app.post('/explain', ai, async (req) => explainSelection(ctx, parseBody(explainBodySchema, req)));
+    // (Round 7 H4, §30) the same explanation as Server-Sent Events: an UNVERIFIED draft while the model writes, then
+    // the verified result (stream.ts). Validation, the AI capability and the thread are checked BEFORE the stream
+    // opens, so those failures stay ordinary JSON errors.
+    app.post('/explain/stream', ai, async (req, reply) => {
+      const body = parseBody(explainBodySchema, req);
+      if (!isRealPatientRequest(body.instruction)) requireAi(ctx, 'explain');
+      return sendStudyStream(
+        req,
+        reply,
+        (h) => explainSelection(ctx, body, { signal: h.signal, onText: h.onText, onPhase: h.onPhase }),
+        (r) => r.artifact.removed,
+      );
+    });
     app.post('/compare', ai, async (req) => compareItems(ctx, parseBody(compareBodySchema, req)));
 
     app.get('/artifacts', async (req): Promise<{ artifacts: Array<Pick<StudyArtifactView, 'id' | 'kind' | 'title' | 'status' | 'version_no' | 'lineage_id' | 'created_at' | 'is_frozen'> & { anchor_page_id: string | null }> }> => {
@@ -214,6 +229,18 @@ export function createStudybookModule(opts: StudybookModuleOptions = {}) {
     app.get('/threads', async (req) => ({ threads: listThreads(ctx, parseQuery(threadsQuery, req)) }));
     app.get('/threads/:id', async (req) => getThread(ctx, parseParams(idParams, req).id));
     app.post('/threads/:id/messages', ai, async (req) => postMessage(ctx, parseParams(idParams, req).id, parseBody(messageCreateSchema, req)));
+    app.post('/threads/:id/messages/stream', ai, async (req, reply) => {
+      const threadId = parseParams(idParams, req).id;
+      const body = parseBody(messageCreateSchema, req);
+      getThread(ctx, threadId); // 404 before the stream opens
+      if (!isRealPatientRequest(body.text)) requireAi(ctx, 'chat');
+      return sendStudyStream(
+        req,
+        reply,
+        (h) => postMessage(ctx, threadId, body, { signal: h.signal, onText: h.onText, onPhase: h.onPhase }),
+        (r) => r.answer.artifact?.removed ?? [],
+      );
+    });
     app.post('/threads/:id/archive', async (req) => ({ thread: archiveThread(ctx, parseParams(idParams, req).id) }));
     app.post('/messages/:id/save-note', async (req) => saveAnswerAsNote(ctx, parseParams(idParams, req).id, parseBody(saveNoteSchema, req)));
 

@@ -1,6 +1,8 @@
 // Study Book module client (/api/studybook) — explanations, comparisons, Study Book, summaries, contextual chat,
 // explanation rules — plus the owner's term dictionary (/api/studybook/terms → evidence module, owner of the table).
 import type {
+  ChatStreamEvent,
+  ExplainStreamEvent,
   ChatPostResponse,
   ChatThreadResponse,
   ChatThreadsResponse,
@@ -23,6 +25,7 @@ import type {
   StudyBookRequest,
 } from '@medlevo/shared';
 import { api } from '../../lib/api';
+import { postStudyStream } from './streaming';
 
 const AI_TIMEOUT = 5 * 60_000;
 
@@ -49,6 +52,9 @@ export interface TermInput {
 
 export const studybookApi = {
   explain: (req: ExplainRequest & { rules?: ExplanationRulesPatch }, signal?: AbortSignal) => api.post<ExplainResponse>('/studybook/explain', req, { timeoutMs: AI_TIMEOUT, signal }),
+  /** (Round 7 H4) the same explanation streamed: an unverified draft, then the verified result */
+  explainStream: (req: ExplainRequest & { rules?: ExplanationRulesPatch }, opts: { signal?: AbortSignal; onEvent?: (e: ExplainStreamEvent) => void }) =>
+    postStudyStream<ExplainResponse>('/studybook/explain/stream', req, opts),
   compare: (req: CompareRequest, signal?: AbortSignal) => api.post<ExplainResponse>('/studybook/compare', req, { timeoutMs: AI_TIMEOUT, signal }),
   artifact: (id: string) => api.get<{ artifact: StudyArtifactView }>(`/studybook/artifacts/${encodeURIComponent(id)}`, { timeoutMs: 30_000 }),
   artifacts: (sourceId: string, kind?: StudyArtifactView['kind'], limit = 20) =>
@@ -71,6 +77,9 @@ export const studybookApi = {
   thread: (id: string) => api.get<ChatThreadResponse>(`/studybook/threads/${encodeURIComponent(id)}`, { timeoutMs: 30_000 }),
   ask: (threadId: string, text: string, style?: AnswerStyle, signal?: AbortSignal) =>
     api.post<ChatPostResponse>(`/studybook/threads/${encodeURIComponent(threadId)}/messages`, { text, style }, { timeoutMs: AI_TIMEOUT, signal }),
+  /** (Round 7 H4) the same answer streamed: an unverified draft, then the verified, stored answer */
+  askStream: (threadId: string, text: string, style: AnswerStyle | undefined, opts: { signal?: AbortSignal; onEvent?: (e: ChatStreamEvent) => void }) =>
+    postStudyStream<ChatPostResponse>(`/studybook/threads/${encodeURIComponent(threadId)}/messages/stream`, { text, style }, opts),
   archiveThread: (id: string) => api.post(`/studybook/threads/${encodeURIComponent(id)}/archive`),
   saveAsNote: (messageId: string, noteId: string) => api.post<{ note: NoteDTO; result: string }>(`/studybook/messages/${encodeURIComponent(messageId)}/save-note`, { note_id: noteId }),
 

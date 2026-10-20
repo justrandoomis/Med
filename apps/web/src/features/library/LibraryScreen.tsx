@@ -26,6 +26,7 @@ import { childrenOf, filterByTags, type LibraryIndex, searchLibrary } from './mo
 import { TrashView } from './TrashView';
 import { readRootSort, useLibrary, writeRootSort } from './useLibrary';
 import { TopicFilterSelect, TopicFilterView } from '../brain/TopicFilter';
+import { OrphanNotePages } from '../workspace/notebook/OrphanNotePages';
 import './library.css';
 
 const VIEWS = [
@@ -214,44 +215,53 @@ function ShelfView({
   onSort: (s: SortMode) => void;
 }) {
   const roots = filterByTags(childrenOf(index, null, sort), tagIds);
+  // (H3 item 7) note pages whose notebook / source was purged while a device wrote on them offline — shown even when
+  // the library itself is empty (every notebook gone)
+  const orphans = <OrphanNotePages index={index} readOnly={readOnly} />;
   if (index.nodes.size === 0) {
     return (
-      <EmptyState
-        icon={<Library size={28} />}
-        title="مكتبتك فارغة"
-        description="ابدأ بدفتر لمادة أو كورس، ثم ارفع محاضراتك ومراجعك ومصادر أسئلتك داخله. يمكنك أيضًا البدء من قالب دراسة جاهز وتعديله كما تريد."
-        actions={
-          <>
-            <Button variant="primary" icon={<NotebookPen size={18} />} onClick={onNew} disabled={readOnly}>
-              دفتر جديد
-            </Button>
-            <Button icon={<LayoutTemplate size={18} />} onClick={onTemplate} disabled={readOnly}>
-              ابدأ من قالب
-            </Button>
-          </>
-        }
-      />
+      <>
+        <EmptyState
+          icon={<Library size={28} />}
+          title="مكتبتك فارغة"
+          description="ابدأ بدفتر لمادة أو كورس، ثم ارفع محاضراتك ومراجعك ومصادر أسئلتك داخله. يمكنك أيضًا البدء من قالب دراسة جاهز وتعديله كما تريد."
+          actions={
+            <>
+              <Button variant="primary" icon={<NotebookPen size={18} />} onClick={onNew} disabled={readOnly}>
+                دفتر جديد
+              </Button>
+              <Button icon={<LayoutTemplate size={18} />} onClick={onTemplate} disabled={readOnly}>
+                ابدأ من قالب
+              </Button>
+            </>
+          }
+        />
+        {orphans}
+      </>
     );
   }
   return (
-    <section className="ml-library__section" aria-labelledby="shelf-title">
-      <div className="ml-library__section-head">
-        <h2 id="shelf-title" className="ml-library__section-title">
-          دفاتري
-        </h2>
-        <Select<SortMode> label="الترتيب" hideLabel options={SORT_MODES.map((m) => ({ value: m, label: SORT_MODE_LABELS_AR[m] }))} value={sort} onValueChange={onSort} />
-      </div>
-      {roots.length === 0 ? (
-        <p className="ml-library__section-note">لا توجد دفاتر تحمل الوسوم المختارة.</p>
-      ) : (
-        <ul className="ml-shelf" role="list">
-          {roots.map((n) => (
-            <ShelfItem key={n.id} node={n} index={index} dnd={dnd} readOnly={readOnly} />
-          ))}
-          {!readOnly && tagIds.length === 0 && <NewNotebookTile onClick={onNew} />}
-        </ul>
-      )}
-    </section>
+    <>
+      <section className="ml-library__section" aria-labelledby="shelf-title">
+        <div className="ml-library__section-head">
+          <h2 id="shelf-title" className="ml-library__section-title">
+            دفاتري
+          </h2>
+          <Select<SortMode> label="الترتيب" hideLabel options={SORT_MODES.map((m) => ({ value: m, label: SORT_MODE_LABELS_AR[m] }))} value={sort} onValueChange={onSort} />
+        </div>
+        {roots.length === 0 ? (
+          <p className="ml-library__section-note">لا توجد دفاتر تحمل الوسوم المختارة.</p>
+        ) : (
+          <ul className="ml-shelf" role="list">
+            {roots.map((n) => (
+              <ShelfItem key={n.id} node={n} index={index} dnd={dnd} readOnly={readOnly} />
+            ))}
+            {!readOnly && tagIds.length === 0 && <NewNotebookTile onClick={onNew} />}
+          </ul>
+        )}
+      </section>
+      {orphans}
+    </>
   );
 }
 

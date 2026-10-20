@@ -1,10 +1,11 @@
 // In-memory model of one open document's ink (all its pages), the write-through to IndexedDB and
 // the undo history. The UI updates synchronously from memory; persistence is queued (strictly in
 // order) and never awaited by input handling (§55: writing never waits for storage or network).
-import { newId, type AnnotationAnchor, type NormBox } from '@medlevo/shared';
+import { newId, stableStringify, type AnnotationAnchor, type NormBox } from '@medlevo/shared';
 import { getDb, type MedLevoDB } from '../../../lib/localdb';
 import { broadcast, onAnnotationRowsChanged, type AnnotationRowsChanged } from './events';
-import { InkHistory, type ItemChange } from './history';
+import { InkHistory, invertChanges, type Command, type ItemChange } from './history';
+import { loadHistory, saveHistory } from './historyLog';
 import { unionBox, type Mat } from './math';
 import {
   cloneItem,
@@ -50,6 +51,36 @@ export interface InkSelection {
 
 export type PersistStatus = { state: 'idle' | 'saving' } | { state: 'error'; message: string };
 
+/**
+ * (H3 item 1) What an undo / redo did: applied (`done`), nothing to do (`empty`), waiting for the owner because the
+ * step's items changed since it was recorded (`confirm` — see `getPendingStep`), or checking this device's copy of
+ * items on pages that are not open (`checking`, settles by itself).
+ */
+export type StepOutcome = 'done' | 'empty' | 'confirm' | 'checking';
+
+/**
+ * A step that is not applied silently: `revive` items were erased (by another device / the server) after the step and
+ * the step would bring them back; `changed` items were changed elsewhere since and the step would overwrite that.
+ */
+export interface PendingStep {
+  dir: 'undo' | 'redo';
+  label_ar: string;
+  revive: number;
+  changed: number;
+}
+
+/** null = absent or tombstoned */
+function aliveItem(it: InkItem | null | undefined): InkItem | null {
+  return it && !it.deleted_at ? it : null;
+}
+function itemState(it: InkItem): string {
+  return stableStringify({ kind: it.kind, tool: it.tool, anchor: it.anchor, data: it.data, layer: it.layer, z: it.z, locked: it.locked });
+}
+function sameState(a: InkItem | null, b: InkItem | null): boolean {
+  if (!a || !b) return a === b;
+  return a === b || itemState(a) === itemState(b);
+}
+
 const SAVE_ERROR_AR = 'تعذّر حفظ الكتابة على هذا الجهاز (مساحة التخزين ممتلئة أو محجوبة). ما زالت ظاهرة أمامك؛ ستُعاد محاولة الحفظ مع الكتابة التالية.';
 
 /** Copied items (shared by every open document → copy on one page, paste on another). */
@@ -78,20 +109,78 @@ export class InkDocumentStore {
   private selectionListeners = new Set<() => void>();
   private unsubscribeEvents: () => void;
   private selectionVersion = 0;
+  /** (H3 item 1) resolves once the command log of this document was read back from IndexedDB */
+  readonly historyReady: Promise<void>;
+  private historySave: Promise<void> = Promise.resolve();
+  private historyTimer: ReturnType<typeof setTimeout> | null = null;
+  private historyDirty = false;
+  private unsubscribeHistory: () => void = () => undefined;
+  private removePageHide: () => void = () => undefined;
+  private pending: (PendingStep & { cmd: Command; changes: ItemChange[] }) | null = null;
+  private checking: Promise<void> | null = null;
+  private pendingListeners = new Set<() => void>();
 
   constructor(
     readonly documentKey: string,
     private readonly db: MedLevoDB = getDb(),
     private readonly now: () => number = Date.now,
+    opts: { persistHistory?: boolean } = {},
   ) {
     this.unsubscribeEvents = onAnnotationRowsChanged((e) => {
       // a failed refresh must never surface as an unhandled rejection; the page keeps what it shows
       this.onExternalChange(e).catch(() => undefined);
     });
+    if (opts.persistHistory === false) {
+      this.historyReady = Promise.resolve();
+      return;
+    }
+    // the history survives a reload / closing the app (H3 item 1): read the log, then keep it written
+    this.historyReady = loadHistory(db, documentKey)
+      .then((saved) => {
+        if (saved) this.history.restore(saved.undo, saved.redo);
+      })
+      .catch(() => undefined);
+    this.unsubscribeHistory = this.history.subscribe(() => this.scheduleHistorySave());
+    if (typeof window !== 'undefined') {
+      const hide = () => void this.flushHistory();
+      window.addEventListener('pagehide', hide);
+      this.removePageHide = () => window.removeEventListener('pagehide', hide);
+    }
   }
 
   dispose(): void {
     this.unsubscribeEvents();
+    this.unsubscribeHistory();
+    this.removePageHide();
+    if (this.historyDirty) void this.flushHistory();
+  }
+
+  // ── the command log (H3 item 1) ──
+  private scheduleHistorySave(): void {
+    this.historyDirty = true;
+    if (this.historyTimer) clearTimeout(this.historyTimer);
+    this.historyTimer = setTimeout(() => {
+      this.historyTimer = null;
+      void this.flushHistory();
+    }, 400);
+  }
+
+  /** Writes the command log now (also on page hide; a failed write keeps the in-memory history as it is). */
+  flushHistory(): Promise<void> {
+    if (this.historyTimer) clearTimeout(this.historyTimer);
+    this.historyTimer = null;
+    this.historySave = this.historySave
+      .then(() => this.historyReady)
+      .then(async () => {
+        if (!this.historyDirty) return;
+        this.historyDirty = false;
+        const { undo, redo } = this.history.snapshot();
+        await saveHistory(this.db, this.documentKey, undo, redo, this.now());
+      })
+      .catch(() => {
+        this.historyDirty = true;
+      });
+    return this.historySave;
   }
 
   // ── pages ──
@@ -328,18 +417,121 @@ export class InkDocumentStore {
     this.statusListeners.forEach((l) => l());
   }
 
+  /** Undo the last step (see `undoStep`); false when there is nothing to undo. */
   undo(): boolean {
-    const changes = this.history.undo();
-    if (!changes) return false;
-    this.commit('', changes, { record: false });
-    return true;
+    return this.undoStep() !== 'empty';
   }
 
   redo(): boolean {
-    const changes = this.history.redo();
-    if (!changes) return false;
-    this.commit('', changes, { record: false });
+    return this.redoStep() !== 'empty';
+  }
+
+  /**
+   * (H3 item 1) Undo with a check: the step is applied only if its items are still as it left them. An item erased
+   * since (another device, a server tombstone) that the step would bring back, or an item changed elsewhere that it
+   * would overwrite, makes it wait for the owner (`getPendingStep` → `confirmPendingStep` / `skipPendingStep`). Items
+   * of pages that are not open are checked against this device's copy first (`checking`).
+   */
+  undoStep(): StepOutcome {
+    return this.step('undo');
+  }
+
+  redoStep(): StepOutcome {
+    return this.step('redo');
+  }
+
+  getPendingStep = (): PendingStep | null => (this.pending ? { dir: this.pending.dir, label_ar: this.pending.label_ar, revive: this.pending.revive, changed: this.pending.changed } : null);
+  private pendingSnapshot: PendingStep | null = null;
+  /** stable snapshot for useSyncExternalStore */
+  getPendingSnapshot = (): PendingStep | null => this.pendingSnapshot;
+  subscribePending = (l: () => void): (() => void) => {
+    this.pendingListeners.add(l);
+    return () => this.pendingListeners.delete(l);
+  };
+  private setPending(p: (PendingStep & { cmd: Command; changes: ItemChange[] }) | null): void {
+    this.pending = p;
+    this.pendingSnapshot = this.getPendingStep();
+    this.pendingListeners.forEach((l) => l());
+  }
+
+  /** Resolves when an asynchronous step check has finished (tests). */
+  stepSettled(): Promise<void> {
+    return this.checking ?? Promise.resolve();
+  }
+
+  /** The owner chose to apply the pending step anyway (bringing the erased writing back on purpose). */
+  confirmPendingStep(): boolean {
+    const p = this.pending;
+    if (!p) return false;
+    this.setPending(null);
+    const top = p.dir === 'undo' ? this.history.peekUndo() : this.history.peekRedo();
+    if (top !== p.cmd) return false; // the history moved on meanwhile
+    this.apply(p.dir, p.changes);
     return true;
+  }
+
+  /** The owner chose to skip the pending step: it leaves the history; nothing is changed. */
+  skipPendingStep(): void {
+    const p = this.pending;
+    if (!p) return;
+    this.setPending(null);
+    const top = p.dir === 'undo' ? this.history.peekUndo() : this.history.peekRedo();
+    if (top === p.cmd) this.history.drop(p.dir);
+  }
+
+  private step(dir: 'undo' | 'redo'): StepOutcome {
+    if (this.pending) return 'confirm';
+    if (this.checking) return 'checking';
+    const cmd = dir === 'undo' ? this.history.peekUndo() : this.history.peekRedo();
+    if (!cmd) return 'empty';
+    const changes = dir === 'undo' ? invertChanges(cmd.changes) : cmd.changes.map((c) => ({ ...c }));
+    const unloaded = changes.filter((c) => !this.pages.get(c.targetKey)?.loaded);
+    if (unloaded.length === 0) return this.decide(dir, cmd, changes, (c) => this.memoryState(c));
+    const ids = unloaded.map((c) => c.id);
+    this.checking = loadRows(this.db, ids)
+      .then((rows) => {
+        const stored = new Map(ids.map((id, i) => [id, aliveItem(rows[i] && !rows[i]!.deletedAt ? itemFromRow(rows[i]!) : null)]));
+        const top = dir === 'undo' ? this.history.peekUndo() : this.history.peekRedo();
+        if (top !== cmd) return;
+        this.decide(dir, cmd, changes, (c) => (this.pages.get(c.targetKey)?.loaded ? this.memoryState(c) : (stored.get(c.id) ?? null)));
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        this.checking = null;
+      });
+    return 'checking';
+  }
+
+  private memoryState(c: ItemChange): InkItem | null {
+    return aliveItem(this.pages.get(c.targetKey)?.items.get(c.id));
+  }
+
+  private decide(dir: 'undo' | 'redo', cmd: Command, changes: ItemChange[], current: (c: ItemChange) => InkItem | null): StepOutcome {
+    let revive = 0;
+    let changed = 0;
+    const effective: ItemChange[] = [];
+    for (const c of changes) {
+      const now = current(c);
+      const expected = aliveItem(c.before);
+      const target = aliveItem(c.after);
+      if (sameState(now, target)) continue; // already as the step wants it (e.g. removing what was erased elsewhere)
+      effective.push(c);
+      if (sameState(now, expected)) continue;
+      if (!now && expected) revive += target ? 1 : 0; // erased after the step (another device / server tombstone)
+      else changed++; // changed elsewhere since: the step would overwrite it
+    }
+    if (revive === 0 && changed === 0) {
+      this.apply(dir, effective);
+      return 'done';
+    }
+    this.setPending({ dir, label_ar: cmd.label_ar, revive, changed, cmd, changes: effective });
+    return 'confirm';
+  }
+
+  private apply(dir: 'undo' | 'redo', changes: ItemChange[]): void {
+    if (dir === 'undo') this.history.undo();
+    else this.history.redo();
+    if (changes.length) this.commit('', changes, { record: false });
   }
 
   private busy(id: string): boolean {

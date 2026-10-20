@@ -39,7 +39,7 @@ function partsText(d: OfflineDownload): string {
 
 function DownloadRow({ d, online }: { d: OfflineDownload; online: boolean }) {
   const toast = useToast();
-  const [check, setCheck] = useState<null | 'checking' | 'current' | 'changed' | 'version_changed' | 'error'>(null);
+  const [check, setCheck] = useState<null | 'checking' | 'current' | 'changed' | 'version_changed' | 'owner_changed' | 'error'>(null);
   const [removing, setRemoving] = useState(false);
   const [updating, setUpdating] = useState(false);
   return (
@@ -53,6 +53,7 @@ function DownloadRow({ d, online }: { d: OfflineDownload; online: boolean }) {
         </span>
         <span className="dl-row__meta">{partsText(d)}</span>
         {check === 'current' && <StatusPill tone="success">مطابق لما في الخادم الآن</StatusPill>}
+        {check === 'owner_changed' && <StatusPill tone="info">محتوى المصدر لم يتغيّر — تغيّرت كتابتك أو تقدّمك فيه، وتصل إلى هذا الجهاز بالمزامنة</StatusPill>}
         {check === 'changed' && <StatusPill tone="warning">تغيّر المحتوى على الخادم منذ التنزيل — حدّث التنزيل</StatusPill>}
         {check === 'version_changed' && <StatusPill tone="warning">صار للمصدر إصدار آخر تدرسه — نزّله من جديد</StatusPill>}
         {check === 'error' && <StatusPill tone="danger">تعذّر التحقق الآن</StatusPill>}

@@ -17,6 +17,9 @@ import type {
   NotebookContentResponse,
   NotePagesResponse,
   NotesResponse,
+  OrphanNotePagesResponse,
+  PageCropResponse,
+  ReanchorResponse,
   ReadingProgressView,
   RecentSessionsResponse,
   SourceAnnotationsResponse,
@@ -41,6 +44,9 @@ import {
   registerRecognitionJob,
   retryRecognition,
 } from './recognition';
+import { detectTools } from '../processing/tools';
+import { createPageCrop, pageCropBody } from './pageCrop';
+import { reanchor } from './reanchor';
 import { AnnotationsService, MAX_TARGET_KEYS } from './service';
 import { registerAnnotationSync } from './sync';
 
@@ -58,9 +64,12 @@ const notesQuery = z.object({
   page_id: ID.optional(),
   limit: z.coerce.number().int().min(1).max(1000).default(500),
 });
+const flag = z.enum(['0', '1', 'true', 'false']).optional();
+const isOn = (v: string | undefined) => v === '1' || v === 'true';
 const notePagesQuery = z
-  .object({ node_id: ID.optional(), source_id: ID.optional(), include_deleted: z.enum(['0', '1', 'true', 'false']).optional() })
-  .refine((q) => !!q.node_id || !!q.source_id, { message: 'حدّد الدفتر (node_id) أو المصدر (source_id).' });
+  .object({ node_id: ID.optional(), source_id: ID.optional(), orphans: flag, include_deleted: flag })
+  .refine((q) => !!q.node_id || !!q.source_id || isOn(q.orphans), { message: 'حدّد الدفتر (node_id) أو المصدر (source_id) أو اطلب الصفحات بلا دفتر (orphans=1).' });
+const orphanQuery = z.object({ include_deleted: flag });
 const nodeParams = z.object({ nodeId: ID });
 const imageParams = z.object({ key: ID });
 const reanchorQuery = z.object({ source_id: ID.optional(), limit: z.coerce.number().int().min(1).max(500).default(200) });
@@ -114,8 +123,12 @@ export default async function register(app: FastifyInstance, { ctx }: ModuleOpti
   // ── notebook pages (track F1): trashed pages are listed only for the restore list ──
   app.get('/note-pages', async (req): Promise<NotePagesResponse> => {
     const q = parseQuery(notePagesQuery, req);
-    return { note_pages: svc.notePages({ node_id: q.node_id, source_id: q.source_id, include_deleted: q.include_deleted === '1' || q.include_deleted === 'true' }) };
+    return { note_pages: svc.notePages({ node_id: q.node_id, source_id: q.source_id, orphans: isOn(q.orphans), include_deleted: isOn(q.include_deleted) }) };
   });
+
+  // (Round 7 — H3 item 7) «صفحات بلا دفتر»: pages whose notebook and source were purged while a device still wrote on
+  // them offline — kept, listed with their writing so the owner can move them into a notebook or trash them
+  app.get('/orphan-pages', async (req): Promise<OrphanNotePagesResponse> => svc.orphanPages(isOn(parseQuery(orphanQuery, req).include_deleted)));
 
   app.get('/notebook/:nodeId', async (req): Promise<NotebookContentResponse> => {
     const { nodeId } = parseParams(nodeParams, req);
@@ -168,7 +181,22 @@ export default async function register(app: FastifyInstance, { ctx }: ModuleOpti
 
   app.get('/needs-reanchor', async (req): Promise<NeedsReanchorResponse> => {
     const q = parseQuery(reanchorQuery, req);
-    return { items: svc.needsReanchor(q.source_id, q.limit) };
+    // (H3 item 2) annotations, notes, and what the owner kept detached («محفوظة دون ربط»)
+    const lists = svc.reanchorLists(q.source_id, q.limit);
+    return { items: lists.items, notes: lists.notes, detached: lists.detached };
+  });
+
+  // (H3 item 2) the owner's re-anchoring decision for a note / highlight / ink group: move it to a chosen place (a page,
+  // a paragraph on a page, a Study Book paragraph) or keep it detached — previous anchor kept, audited, synced
+  app.post('/reanchor', async (req): Promise<ReanchorResponse> => reanchor(ctx, req));
+
+  // (H3 item 4) «بطاقة إخفاء في صورة» from a lasso selection: the source page area under the box, cut by the server from
+  // the stored source file (pdftoppm for PDFs — refused with the reason when it is not installed)
+  let pdftoppm: string | null | undefined;
+  app.post('/page-crops', { config: { rateLimit: RATE_LIMITS.upload } }, async (req): Promise<PageCropResponse> => {
+    const body = parseBody(pageCropBody, req);
+    if (pdftoppm === undefined) pdftoppm = detectTools().pdftoppm;
+    return createPageCrop(ctx, body, { pdftoppm });
   });
 
   app.get('/sessions/latest', async (req): Promise<LatestSessionResponse> => {

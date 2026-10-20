@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ExportFormatsResponse, ExportManifest, StudyArtifactView } from '@medlevo/shared';
 import { newId } from '../../src/lib/ids';
 import { mdEscape, richTextToHtml } from '../../src/modules/data/render';
+import { detectTools } from '../../src/modules/processing/tools';
 import { dataLibrary, getJson, pageAnchor, push, writeOwnerData, type DataLib, type OwnerData } from './helpers';
 
 let lib: DataLib;
@@ -82,7 +83,8 @@ describe('export: Study Book (generated, cited)', () => {
 
   it('unknown artifact → 404; bad format → 400; no session → 401', async () => {
     expect((await getJson(lib, `/api/data/export/artifact/${newId()}?format=md`)).status).toBe(404);
-    expect((await getJson(lib, `/api/data/export/artifact/${owner.book!.artifact.id}?format=pdf`)).status).toBe(400);
+    // (Round 7 H4) format=pdf is a real server format now (test/data/docx-export.test.ts); an unknown one is still 400
+    expect((await getJson(lib, `/api/data/export/artifact/${owner.book!.artifact.id}?format=xlsx`)).status).toBe(400);
     expect((await lib.t.app.inject({ method: 'GET', url: `/api/data/export/artifact/${owner.book!.artifact.id}?format=md` })).statusCode).toBe(401);
   });
 });
@@ -155,11 +157,15 @@ describe('export: source, notes, questions, all', () => {
     lib.t.ctx.db.run(`DELETE FROM owner_setting WHERE key = 'integration.note'`);
   });
 
-  it('formats endpoint says PDF is via browser printing and names other formats honestly', async () => {
+  it('formats endpoint says how PDF is made on THIS server and names other formats honestly', async () => {
     const f = (await getJson<ExportFormatsResponse>(lib, '/api/data/export/formats')).body;
-    expect(f.pdf_note_ar).toContain('PDF عبر الطباعة من المتصفح');
+    // (Round 7 H4) a server PDF exporter exists: «الأصل مع كتابتي» always; Word → PDF only with LibreOffice installed
+    const soffice = !!detectTools().soffice;
+    expect(f.pdf_note_ar).toContain('الأصل مع كتابتي');
+    expect(f.pdf_note_ar).toContain(soffice ? 'على الخادم' : 'LibreOffice غير مثبّت');
+    expect(f.pdf_note_ar).toContain('المتصفح');
     // (track F5) DOCX is a real format now (test/data/docx-export.test.ts); no longer listed as «not built»
-    expect(f.formats.map((x) => x.format)).toEqual(['md', 'html', 'json', 'docx']);
+    expect(f.formats.map((x) => x.format)).toEqual(['md', 'html', 'json', 'docx', ...(soffice ? ['pdf'] : [])]);
     expect(f.other.some((o) => o.key === 'export.docx')).toBe(false);
   });
 

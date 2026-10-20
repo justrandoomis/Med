@@ -26,11 +26,17 @@ export interface AnnotationImageRow {
   referenced: number;
   device_id: string | null;
   created_at: number;
+  /** (H3) when the last annotation referring to this (once referenced) picture disappeared; null while one does */
+  released_at: number | null;
 }
 
 const KEY_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
-/** An uploaded picture nobody has pointed at for this long is considered abandoned (never synced). */
+/**
+ * An uploaded picture nobody has pointed at for this long is considered abandoned (never synced). The same period
+ * applies after a picture is RELEASED (the last annotation the server knew was purged): a copy with the same image_key
+ * may still be queued in an offline device's outbox (H3 item 10).
+ */
 export const UNREFERENCED_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export function getAnnotationImage(ctx: AppContext, key: string): AnnotationImageRow | undefined {
@@ -134,9 +140,14 @@ async function sameContent(ctx: AppContext, fileId: string, buf: Buffer): Promis
 
 /**
  * Remove pictures no annotation shows any more — neither live nor tombstoned (an undo or a sync «restore» brings a
- * tombstoned one back, so its picture stays). A picture that was never referenced is kept for a grace period: its
- * annotation may still be waiting in a device's outbox. Called after a permanent purge (sources module) and safe to
- * call any time. Returns the number of picture rows removed.
+ * tombstoned one back, so its picture stays). Nothing is removed at the moment it loses its last annotation:
+ *  * a picture that was never referenced is kept for a grace period after its upload (its annotation may still be
+ *    waiting in a device's outbox);
+ *  * (H3 item 10) a picture that WAS referenced is first marked released (`released_at`) and kept for the same grace
+ *    period after that — another device may hold a queued copy with the same image_key (copy / paste keeps the key),
+ *    which would otherwise reach the server pointing at bytes it had just deleted. A referring annotation arriving
+ *    meanwhile clears the mark (sync `markImageReferenced`); a picture referred to again is never removed.
+ * Called after a permanent purge (sources module) and safe to call any time. Returns the number of picture rows removed.
  */
 export function pruneAnnotationImages(ctx: AppContext): number {
   const now = ctx.clock.now();
@@ -144,8 +155,18 @@ export function pruneAnnotationImages(ctx: AppContext): number {
   let removed = 0;
   const files = new Set<string>();
   for (const r of rows) {
-    if (annotationsUsing(ctx, r.image_key, false) > 0) continue;
-    if (r.referenced === 0 && now - r.created_at < UNREFERENCED_GRACE_MS) continue;
+    if (annotationsUsing(ctx, r.image_key, false) > 0) {
+      if (r.released_at != null) ctx.db.run('UPDATE annotation_image SET released_at = NULL WHERE image_key = ?', [r.image_key]);
+      continue;
+    }
+    if (r.referenced === 0) {
+      if (now - r.created_at < UNREFERENCED_GRACE_MS) continue;
+    } else if (r.released_at == null) {
+      ctx.db.run('UPDATE annotation_image SET released_at = ? WHERE image_key = ?', [now, r.image_key]);
+      continue;
+    } else if (now - r.released_at < UNREFERENCED_GRACE_MS) {
+      continue;
+    }
     ctx.db.run('DELETE FROM annotation_image WHERE image_key = ?', [r.image_key]);
     files.add(r.file_id);
     removed++;

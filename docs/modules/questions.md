@@ -567,3 +567,22 @@ pipeline (upload → processing → extraction): `srv:questions/h2-extraction-pi
   module registration): fingerprints written before the G5 fix are marked `fingerprint_algo = 1` and recomputed from the
   stored stem and options (batches of 500 in transactions, idempotent), so a later «base excess 8» from another file is
   not attached to a stored «base excess −8». Derived versions keep a NULL fingerprint.
+
+## Round 7 — H2 independent review (2026-10-20)
+Reproduced with a failing test first, then fixed minimally (`srv:questions/h2-extraction.test.ts` +2):
+* **b. A trailing block could still bind across sections.** «Every earlier section is keyed» was checked with `some`:
+  one inline «Answer: B» (or a one-line «Answers 1. B» block) under Part 1 made the trailing «1. B 2. B 3. A» Part 2's
+  key, although Part 1's questions 2–3 had no key and carry the same numbers — the block may as well be theirs. The
+  trailing block now binds only when no earlier section still lacks an official key for a number the block lists that is
+  one of its questions; otherwise every key of the block stays `ambiguous_section` (review). A Part 1 keyed in full
+  (the `g4_sections_inline_keys.pdf` layout) still binds Part 2 — `npm run eval` regression stays 80 / 80.
+* **e. A wrapped option line read as a circled option.** «A. Metronidazole 500 mg IV» wrapping to «(8 hourly) for 5 days»
+  on an OCR page became a phantom option B with a phantom `circled_option` mark, followed by the real «B.». A line is now
+  taken as a circled option only when the next line is not itself the expected option («B. …»); otherwise it continues
+  the previous option.
+* Reviewed and not changed: roman ↔ digit canonicalisation never cross-binds (two sections with the same canonical
+  label are `ambiguous_section`); `stem_raw` / option `raw_text` stay verbatim (`structuredText` only touches the
+  structured version, and the content hash uses the parsed raw text); the re-fingerprint of migration 0530 recomputes
+  exactly what a new extraction computes (the «°C» join and the rich-text round trip disappear in `normPhrase`).
+  Not fixed: an earlier occurrence attached to the wrong question by a pre-fix fingerprint is not split automatically
+  (re-fingerprinting only stops new false merges).

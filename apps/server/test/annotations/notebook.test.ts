@@ -352,6 +352,12 @@ describe('pictures on pages (annotation kind image + /api/annotations/images)', 
     const nImpact = (await get(`/api/library/nodes/${nodeId}/impact?mode=purge`)).json() as ImpactReport;
     const nPurged = await t.app.inject({ method: 'DELETE', url: `/api/library/nodes/${nodeId}?confirm_token=${encodeURIComponent(nImpact.confirm_token!)}`, headers: h });
     expect(nPurged.statusCode).toBe(200);
+    // (H3 item 10) released, not removed at once: an offline device may still hold a queued copy with this key
+    expect(count('SELECT COUNT(*) AS n FROM annotation_image WHERE image_key = ? AND released_at IS NOT NULL', [key])).toBe(1);
+    expect(existsSync(blob)).toBe(true);
+    // nobody claimed it within the grace period → row and file removed
+    t.clock.advance(UNREFERENCED_GRACE_MS + 1000);
+    expect(pruneAnnotationImages(t.ctx)).toBe(1);
     expect(count('SELECT COUNT(*) AS n FROM annotation_image')).toBe(0);
     expect(count('SELECT COUNT(*) AS n FROM stored_file WHERE id = ?', [fileId])).toBe(0);
     expect(existsSync(blob)).toBe(false);

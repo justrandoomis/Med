@@ -10,6 +10,7 @@ import { errorMessage } from '../../lib/api';
 import { usePageTitle } from '../../lib/usePageTitle';
 import { useQuery } from '../library/data';
 import { BRAIN_PATHS, brainApi, conceptUrl } from './api';
+import { AlgorithmList } from './AlgorithmList';
 import { ConceptStatusPill, RelationRow } from './ConceptsScreen';
 import '../review/learning.css';
 import './brain.css';
@@ -170,6 +171,12 @@ export function ConceptScreen() {
             </ul>
           )}
           <p className="lw-muted">فتح موضع في محاضرة أخرى لا يغيّر نطاق المصدر (Source Lock) في جلسة دراستك.</p>
+        </section>
+        <section className="lw-sheet" aria-labelledby="cs-a">
+          <h2 id="cs-a" className="lw-sheet__title">
+            خوارزميات ومخططات من المحاضرات
+          </h2>
+          <AlgorithmList filter={{ conceptId: c.merged_into?.id ?? c.id }} showSource emptyText="لا خوارزمية ولا مخطط مقروء تحت عنوان هذا المفهوم." />
         </section>
       </div>
     </div>

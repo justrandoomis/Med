@@ -155,11 +155,16 @@ function rowContentKey(r: AnnotationRow): string {
   return annotationContentKey({ kind: d.kind, tool: d.tool, anchor: d.anchor, data: d.data as Record<string, unknown>, layer: d.layer, z: d.z, locked: d.locked });
 }
 
-/** An image annotation now points at its uploaded bytes (prune keeps them while any annotation does). */
+/**
+ * An image annotation now points at its uploaded bytes (prune keeps them while any annotation does). A picture a
+ * purge had released (H3 item 10: the copy was still queued on another device) is claimed again.
+ */
 function markImageReferenced(tx: SyncTx, f: AnnotationFields): void {
   if (f.kind !== 'image') return;
   const key = (f.data as { image_key?: unknown }).image_key;
-  if (typeof key === 'string') tx.db.run('UPDATE annotation_image SET referenced = 1 WHERE image_key = ? AND referenced = 0', [key]);
+  if (typeof key === 'string') {
+    tx.db.run('UPDATE annotation_image SET referenced = 1, released_at = NULL WHERE image_key = ? AND (referenced = 0 OR released_at IS NOT NULL)', [key]);
+  }
 }
 
 function insertAnnotation(tx: SyncTx, id: string, f: AnnotationFields, createdAt: number, conflictOf: string | null): void {
@@ -257,6 +262,10 @@ export function annotationHandler(db: Db): SyncEntityHandler {
         // append-only by id: the stroke already exists → counted once
         return { result: 'duplicate', entity: toAnnotationDTO(existing) };
       }
+      // (H3 item 2) an item the owner re-anchored keeps its previous anchor and its «reanchored» status through later
+      // edits from devices whose local copy does not carry them
+      if (!fields.previous_anchor && existing.previous_anchor_json) fields.previous_anchor = fromJson<AnnotationAnchor>(existing.previous_anchor_json);
+      if (fields.anchor_status === 'ok' && existing.anchor_status === 'reanchored') fields.anchor_status = 'reanchored';
       if (existing.deleted_at !== null) {
         // edit concurrent with a delete (or an undo of an erase): the edited stroke is kept
         updateAnnotation(tx, op.entity_id, fields, true);
@@ -499,6 +508,13 @@ function notePageFields(db: Db, p: NotePagePayload): { fields: NotePageFields; n
   };
 }
 
+/** (H3 item 7) A page that lost BOTH its notebook and its source is kept and listed in «صفحات بلا دفتر». */
+const ORPHAN_PAGE_AR = 'لم تعد الصفحة تتبع دفترًا ولا مصدرًا؛ حُفظت مع ما كُتب عليها في «صفحات بلا دفتر» في المكتبة، ومن هناك تنقلها إلى دفتر أو تحذفها.';
+function orphanNotes(f: NotePageFields, p: NotePagePayload, notes: string[]): string[] {
+  const lostLink = (p.node_id && !f.node_id) || (p.source_id && !f.source_id);
+  return !f.node_id && !f.source_id && lostLink ? [...notes, ORPHAN_PAGE_AR] : notes;
+}
+
 function notePageContentKey(f: {
   node_id: string | null;
   source_id: string | null;
@@ -566,7 +582,9 @@ export function notePageHandler(db: Db): SyncEntityHandler {
         return { result: 'applied', entity: serialize(op.entity_id) };
       }
       const p = parsePayload(notePagePayloadSchema, op);
-      const { fields, notes } = notePageFields(tx.db, p);
+      const placed = notePageFields(tx.db, p);
+      const fields = placed.fields;
+      const notes = orphanNotes(fields, p, placed.notes);
       const extra = notes.length ? { detail: notes.join(' ') } : {};
       if (!existing) {
         write(tx, op.entity_id, fields, undefined, clampCreated(p.created_at, tx.now));

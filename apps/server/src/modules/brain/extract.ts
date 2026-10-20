@@ -94,7 +94,7 @@ const NOT_DEFINITION_ADJ =
 const VALUE_CUT = /\s+(?:above|below|over|under|greater than|less than|more than|of at least|exceeding|>|<|≥|≤|>=|<=)\s*[0-9٠-٩]/i;
 
 // ───────── small text helpers ─────────
-function cleanName(s: string): string {
+export function cleanName(s: string): string {
   return stripBidiControls(s)
     .replace(/^[\s•▪◦●○■□\-–—*·]+/u, '')
     .replace(/\s*\([^)]*\)\s*/g, ' ')
@@ -103,11 +103,11 @@ function cleanName(s: string): string {
     .trim();
 }
 
-function scriptOf(s: string): 'en' | 'ar' {
+export function scriptOf(s: string): 'en' | 'ar' {
   return /[؀-ۿ]/.test(s) ? 'ar' : 'en';
 }
 
-function normLite(s: string): string {
+export function normLite(s: string): string {
   return stripBidiControls(s)
     .normalize('NFKC')
     .replace(/[ً-ٰٟـ]/g, '')
@@ -132,7 +132,7 @@ export function meaningfulName(name: string): boolean {
 }
 
 /** Strip structural / connective words at both ends («Alvarado score components» → «Alvarado score»). */
-function trimStructural(name: string): string {
+export function trimStructural(name: string): string {
   const words = name.split(/\s+/).filter(Boolean);
   const edge = (w: string) => {
     const n = normLite(w).replace(/[^\p{L}\p{N}]/gu, '');
@@ -163,7 +163,7 @@ const NUMBERED = /^\s*(?:[0-9٠-٩]+|[IVX]+)\b/;
  * new phrase made by cutting a word out of its middle («Cardiac drug toxicity» stays whole, «Type 2 diabetes mellitus»
  * keeps its «Type 2») (review F2: a stated mention's name must literally appear in its quote).
  */
-function headingConceptPart(part: string): string {
+export function headingConceptPart(part: string): string {
   let s = cleanName(part);
   for (let guard = 0; guard < 16; guard++) {
     const before = s;
@@ -192,7 +192,7 @@ export function sentencesOf(text: string): string[] {
   return out;
 }
 
-function splitList(list: string): string[] {
+export function splitList(list: string): string[] {
   return list
     .replace(/[.。]+$/u, '')
     .split(/\s*[,،]\s*|\s+(?:and|or|and\/or)\s+|\s+(?:او|أو|و)\s+/u)
@@ -201,7 +201,7 @@ function splitList(list: string): string[] {
 }
 
 /** Arabic text without harakat / tatweel + map from each kept char to its index in the original. */
-function arabicMatchable(text: string): { s: string; map: number[] } {
+export function arabicMatchable(text: string): { s: string; map: number[] } {
   let s = '';
   const map: number[] = [];
   for (let i = 0; i < text.length; i++) {
@@ -213,9 +213,12 @@ function arabicMatchable(text: string): { s: string; map: number[] } {
   return { s, map };
 }
 
-function originalSlice(text: string, map: number[], start: number, end: number): string {
+export function originalSlice(text: string, map: number[], start: number, end: number): string {
   if (start >= end) return '';
-  return text.slice(map[start]!, map[end - 1]! + 1);
+  // the harakat right after the last kept letter belong to it (Round 7 H4: «الزائدةِ», not «الزائدة» + a stray kasra)
+  let stop = map[end - 1]! + 1;
+  while (stop < text.length && /[ً-ٰٟـ]/.test(text[stop]!)) stop++;
+  return text.slice(map[start]!, stop);
 }
 
 // ───────── sentence patterns ─────────
@@ -237,7 +240,7 @@ const AR_CLASSIFIED = /^(?:و?[يت]صنف|و?[يت]قسم)\s+(.{2,50}?)\s+ال[
 const AR_COPULA = /^(.{2,40}?)\s+(?:هو|هي)\s+\S/u;
 const AR_ENUM = /(?:يشمل|تشمل|يتضمن|تتضمن|تضم|يضم|مثل)\s+(.+)$/u;
 
-function wordsCount(s: string): number {
+export function wordsCount(s: string): number {
   return s.split(/\s+/).filter(Boolean).length;
 }
 

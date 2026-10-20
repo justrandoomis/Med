@@ -14,7 +14,7 @@ as «مستنتجة — ليست نصًا من المحاضرة».
 | file | role |
 |---|---|
 | `extract.ts` | pure extractor (unit-tested): headings → concept + section; definition / classification sentences (EN «is defined as / refers to / is a … / is classified as», AR «يُعرَّف … بأنه», «تُصنَّف … إلى», «… هو / هي»); subjects of statements inside a section («Ultrasound is the first-line …» under «Investigations» → `investigation`); enumerations («includes A, B and C», «يشمل»); short list items in a section; first column of tables (`value` when the row has a number + unit / threshold, a table never inherits the section before it); captions → the concept they are about; learning objectives kept as **objectives** (never concepts); headers / footers / question regions / child cells are never read. Bilingual headings («Acute Appendicitis — التهاب الزائدة الدودية الحاد») name ONE concept with both names. |
-| `run.ts` | the `extract_knowledge` job body: replaces the version's stated mentions (idempotent), finds concepts by name / alias (merges followed), creates new suggestions, joins two undecided candidate halves of a bilingual heading, records `concept_extraction` (counts, roles, sections, objectives), then recomputes the course's inferred relations and the topic suggestions. |
+| `run.ts` | the `extract_knowledge` job body: replaces the version's stated mentions (idempotent), finds concepts by name / alias (merges followed), creates new suggestions, joins two undecided candidate halves of a bilingual heading, records `concept_extraction` (counts, roles, sections, objectives), then (Round 7 H4) marks the course's relation state stale and enqueues the background `brain.recompute_relations` job (synchronous recompute only when no job runner is registered), and refreshes the topic suggestions. |
 | `resolve.ts` | concept identity for BOTH extractors: aliases (old names after a rename, names of merged concepts) and `merged_into_id` chains. The questions module's candidate extractor uses `findConceptByName` too, so an owner rename / merge is never undone by a candidate run. |
 | `relations.ts` | inferred relations per course group (same grouping as question matching: course → subject → folder): «defined earlier, used later» (A has a definition / classification in an earlier lecture and appears — stated mention or by name in the text — in a later lecture that does not define it → A *prerequisite* of that lecture's title concept) and «listed under Differential diagnosis» (X *differential_of* the lecture's title concept). Each suggestion carries reasons with exact locations (source, page label, region, quote). Owner relations (`origin owner`, accepted), accept / reject / delete (a deleted suggestion becomes `rejected` and is never suggested again; undecided suggestions whose basis disappeared are removed; decided ones are never touched). Course order = the library's manual order, then upload order. |
 | `concepts.ts` | correction view: list (scope course / source / all, status filter, counts of rejected & merged — never hidden silently), detail with every mention, patch (status, rename — old names become aliases, a clashing rename is refused with a pointer to merge —, kind, note), owner-created concept, merge (mentions, relations, names and aliases move; the merged concept stays as a pointer). |
@@ -157,21 +157,80 @@ Not verified: a real screen reader (VoiceOver / NVDA) and 200 % zoom — no devi
   the keyboard, text twin, progress, coverage, a rejected concept surviving re-extraction, topics with suggestions /
   decisions / library filter, Student Knowledge Map, an OSCE attempt in the Weakness Center.
 
+## Round 7 H4 — knowledge links, algorithms, prose relations, background recompute, resets
+
+**1. Topic links for clinical cases, explanations and attempts.** `topic_link.entity_type` (validated in
+`library/tags.ts`, labels in `TOPIC_ENTITY_TYPE_LABELS_AR`) gains `clinical_case`, `artifact` (an explanation / chat
+answer / summary), `exam_attempt` and `case_attempt`. `brain/topics.ts` resolves each to a title, a kind label, a state
+(generated / owner, in the trash, «توجد نسخة أحدث» for a stale explanation, «صحيحة X من Y مُقيَّمة» for an exam attempt,
+«تقدير got من max» for a case attempt) and an href; a link to something deleted says so instead of disappearing. Cases
+are suggested when the topic's name is in the case title (reason «اسم الموضوع في عنوان الحالة.»), never linked
+automatically. `GET /api/brain/topics/:id` adds `attempts` — the owner's past attempts reached through the topic (linked
+directly, or through a linked question / case), newest first, capped at 50 with the total. Web: the topic screen shows
+«محاولاتي السابقة» and «اربط حالة»; a case page, a case report, an exam result and the new explanation page
+(`/explanations/:artifactId`, `features/studybook/ArtifactScreen.tsx`) carry `TopicLinksControl` (link / accept / remove).
+
+**2. Algorithms and flowcharts as knowledge structure** (`brain/algorithms.ts`, `ALGORITHM_EXTRACTOR_VERSION =
+'algo-1'`). From the processed regions of a lecture: numbered steps under a procedure heading, «If … then …» / «إذا …
+فـ…» rule lists with their printed «Otherwise / وإلا» branch, arrow chains («A → B → C»), decision lists, and flowchart
+FIGURES whose labels were read by OCR. Every node is the exact printed text with its region (a link to the place);
+certainty is `stated` for digital text, `uncertain` when OCR-only, `owner_reviewed` when the owner reviewed the figure
+reading (F3) — only then are the figure's arrows used. A flowchart figure without a reviewed reading lists its labels and
+draws NO arrows («الأسهم واتجاهها غير مقروءة»). Nothing is invented: no step, branch or arrow that is not printed.
+Stored in `knowledge_algorithm` (migration `0810_brain_algorithms_statements.sql`), shown by `GET /api/brain/algorithms`
+(exactly one of `source_id` / `concept_id` / `course_node_id`) on the concept page and the course page
+(`AlgorithmList.tsx`: an ordered list for steps, rules with their branch word, figure labels; certainty in words).
+
+**3. Relations stated in prose** (`brain/prose.ts`, `PROSE_EXTRACTOR_VERSION = 'prose-1'`): «X causes / can cause / is
+caused by / results from Y», «X is treated with Y», «Y is the treatment of X», «Y is used to treat X», «X is a
+complication of Y», «Complications of Y include X, Z», and the Arabic «يسبب / يؤدي … إلى / ينتج عن / يُعالج … بـ / علاج
+X هو Y / من مضاعفات / تشمل مضاعفات». Guards: negations and hedges («does not cause», «لا يسبب», «rarely»), objective
+sections («Describe …»), generic names («the patient», «this», «المريض») and names that are not exact substrings of the
+sentence are skipped. A match is stored in `concept_relation_statement` with the sentence quote, page, region, language
+and pattern (OCR text → `uncertain`), and becomes a suggested relation with support **`stated`** and a reason
+`stated_in_text` (the exact sentence, «موضع الجملة»). New relation kind `complication_of` («مضاعفة لـ»). Owner decisions
+are never overwritten. Tested on synthetic positives / negatives in both languages (negation, «rarely», pronouns,
+generic subjects, questions, objectives, clause boundaries, OCR) and on the Golden Set, whose lectures state no relation
+in these forms — nothing is extracted there (no false positive; the real pipeline is run in `golden.test.ts`).
+
+**4. Relation recompute as a background, incremental job.** Extraction no longer recomputes the course's inferred
+relations inside the request / job: it marks the course's relation state stale and enqueues `brain.recompute_relations`
+(idempotent per course + signature; one per course at a time). The recompute keeps per-database caches (facts keyed by the
+extraction's `updated_at` + mention ids, a token n-gram index of regions keyed by count / max id / text length /
+`updated_at`, usage counts) so a change to one lecture re-reads only that lecture, and runs in ≈ 20 ms slices that yield
+to the event loop (the write is one transaction). The course page shows «تُحدَّث العلاقات…» while `relations_state =
+refreshing`, and polls. Regex compilation per concept name was the cold-run bottleneck; `occursAsWord` replaces it
+exactly (equivalence test). The question ↔ concept name match of `lectureQuestions()` (map, coverage, student
+knowledge) compiled the same per-concept regexes: with the recompute no longer warming V8's regexp cache, the FIRST map
+after a restart took ≈ 1.5 s on the 30 × 20 course; it now uses `occursAsWord` too (≈ 0.2 s; `srv:brain/map-cold.h4.test.ts`).
+Numbers on a 30 × 20 course: `docs/PERFORMANCE.md` → «Course Brain recompute».
+
+**5. Resets reach every signal.** The coverage «attempted» count respects the `mcq_attempts` / `written_attempts`
+resets of the learning profile; a new profile part `case_attempts` resets the case / OSCE / viva signals of the
+Weakness Center (`caseSignals(..., {since})`). Attempts are never deleted; the topic history still lists them.
+
+Tests: `srv:brain/topic-links.h4.test.ts`, `srv:brain/h4-extractors.test.ts`, `srv:brain/h4-knowledge.test.ts`,
+`srv:brain/golden.test.ts` (flowchart figure → uncertain labels, no arrows, no statements), `srv:brain/map-cold.h4.test.ts`,
+`srv:learning/h4-resets.test.ts`,
+`srv:perf/brain-course.perf.test.ts` (`MEDLEVO_PERF=1`: cold / warm / incremental, slices, incremental = cold),
+`web:features/brain/{topics-h4,knowledge-h4}.test.tsx`.
+
 ## Not done / limits (honest)
 
 * Extraction is pattern-based: it finds what the text states with recognizable structure (headings, definitions,
-  section keywords, tables, enumerations). Mechanisms or relations written in free prose are not extracted; nothing is
-  guessed. Arabic subject extraction is limited to explicit definition / classification / copula patterns.
-* Inferred relations are only the two rules above; «causes / treats / part of» are owner-made only.
+  section keywords, tables, enumerations, numbered steps, if-then rules, arrows) and the prose patterns of H4 item 3.
+  Mechanisms written in any other prose form are not extracted; nothing is guessed. Arabic subject extraction is limited
+  to explicit definition / classification / copula patterns and the H4 relation verbs.
+* Inferred relations are the two rules above plus the prose-stated `causes` / `treats` / `complication_of`; «part of» and
+  every other relation are owner-made only.
+* Algorithms: a flowchart's arrows are used only after the owner reviews the figure reading (vision needs an AI key);
+  steps split across pages are two algorithms; nested decision trees are read as flat rule lists.
 * A merge cannot be undone from the UI (the dialog says so); the merged concept is kept as a pointer and its names as
   aliases.
 * Topic links to a region whose page was re-processed keep pointing at the old region id and show «لم يعد موجودًا».
-* The profile signal reset has no «case attempts» part: resetting MCQ / card signals does not reset case signals.
 * The knowledge map is capped (60 concepts / 40 questions) with the totals shown; the concepts page lists all.
-* Stated mentions are capped at 1 500 per source version (reported, see above). Concepts whose only mentions were in a
-  purged source keep their NAMES (shared concept rows, like the questions module's candidates); their mentions,
+* Stated mentions are capped at 1 500 per source version (reported, see above); prose statements at 300 per version.
+  Concepts whose only mentions were in a purged source keep their NAMES; their mentions, statements, algorithms,
   extraction records and relation reasons are removed.
-* The relation recompute is still in-process and synchronous: ≈ 0.9 s on a 30-lecture × 20-page synthetic course
-  (`docs/PERFORMANCE.md`-style numbers from `srv:perf/brain-course.perf.test.ts`); much larger courses block the server
-  proportionally while an extraction job finishes.
-* The coverage «attempted» count and the case / OSCE / viva signals ignore learning-profile resets.
+* The background recompute still runs in the server process (sliced, not in a worker thread); its write transaction
+  (≈ 3 500 relations) is one synchronous slice of ≈ 0.15 s on the 30 × 20 course.

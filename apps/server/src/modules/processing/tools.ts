@@ -247,7 +247,8 @@ export async function convertToPdf(o: ConvertOptions): Promise<Buffer> {
     // A package that cannot be read is refused rather than passed on unchecked. (Legacy OLE2 .doc / .ppt are binary
     // formats: they rely on the profile alone.)
     let input: Uint8Array = o.input;
-    if (looksLikeZip(input)) {
+    // (H2 review) a DOCX / PPTX is always checked, whatever its first bytes say
+    if (looksLikeZip(input) || o.inputExt === 'docx' || o.inputExt === 'pptx') {
       try {
         input = (await sanitizeOoxmlForConversion(input)).data;
       } catch {

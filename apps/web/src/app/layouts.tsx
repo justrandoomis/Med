@@ -13,6 +13,7 @@ import { reportError } from '../lib/errorReporter';
 import { recoverNoteDrafts } from '../features/workspace/data/noteDrafts';
 import { usePageTitle } from '../lib/usePageTitle';
 import { PwaUpdatePrompt } from './PwaUpdatePrompt';
+import { UnsavedRecordingNotice } from '../features/workspace/audio/UnsavedRecordingNotice';
 
 // Track D1: GET requests the server cannot answer are served from the explicitly downloaded copy (Download Manager,
 // lib/offline.ts). Installed before any route renders (child effects run before this layout's effects).
@@ -37,6 +38,8 @@ export function RootLayout() {
     <>
       <Outlet />
       <PwaUpdatePrompt />
+      {/* (H3 item 9) a recording the device could not store stays visible on every screen until it is safe */}
+      <UnsavedRecordingNotice />
     </>
   );
 }

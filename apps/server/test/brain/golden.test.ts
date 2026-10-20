@@ -333,3 +333,22 @@ describe('Weakness Center reads case / OSCE / viva signals with their own type',
     expect(new Set(sig.signals.map((s) => s.type))).toEqual(new Set(['osce', 'viva']));
   });
 });
+
+describe('Round 7 H4 on the Golden Set (real pipeline): algorithms and relations stated in prose', () => {
+  it('the appendicitis flowchart is a flowchart figure: its OCR labels as nodes, NO edges, uncertain, linked to the diagram region — nothing else invented', async () => {
+    const res = await ok<import('@medlevo/shared').KnowledgeAlgorithmListResponse>('GET', `/api/brain/algorithms?course_node_id=${course}`);
+    const diagram = t.ctx.db.get<{ id: string }>(`SELECT id FROM source_region WHERE version_id = ? AND kind = 'diagram'`, [lecture.versionId])!;
+    const figs = res.items.filter((a) => a.kind === 'flowchart_figure');
+    expect(figs).toHaveLength(1);
+    expect(figs[0]).toMatchObject({ source_id: lecture.sourceId, certainty: 'uncertain', edges: [], ordered: false });
+    expect(figs[0]!.title).toContain('Management pathway');
+    expect(figs[0]!.nodes.length).toBeGreaterThanOrEqual(6);
+    expect(figs[0]!.nodes.every((n) => n.region_id === diagram.id && !!n.href)).toBe(true);
+    expect(figs[0]!.notes_ar.join(' ')).toContain('الأسهم واتجاهها غير مقروءة');
+    expect(figs[0]!.concept?.name).toMatch(/Appendicitis|التهاب الزائدة/);
+    // the Golden Set lectures state no relation with these patterns, and print no numbered procedure / rule / arrow text
+    expect(res.items.filter((a) => a.kind !== 'flowchart_figure')).toEqual([]);
+    const statements = t.ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM concept_relation_statement WHERE version_id IN (?, ?, ?)', [lecture.versionId, chole.versionId, notes.versionId])!.n;
+    expect(statements).toBe(0);
+  });
+});

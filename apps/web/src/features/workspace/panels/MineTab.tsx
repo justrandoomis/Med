@@ -10,7 +10,6 @@ import {
   segmentRuns,
   stripBidiControls,
   type AnnotationAnchor,
-  type NeedsReanchorItem,
   type Paragraph,
   type RichText,
   type TextQuote,
@@ -18,12 +17,13 @@ import {
 import { Button, ConfirmDialog, EmptyState, IconButton, RichTextView, SaveStatus, SegmentedControl, StatusPill, TextArea, Tooltip, cx } from '../../../design';
 import { getDb, type AnnotationRow } from '../../../lib/localdb';
 import { useEntitySyncState } from '../../../lib/sync';
-import { fetchNeedsReanchor, fetchNotes } from '../data/api';
+import { fetchNotes } from '../data/api';
 import { useAnnotationsOfKind, useLocalNeedsReanchor, useNotes } from '../data/hooks';
 import { createAnnotation, deleteAnnotation, deleteNote, mergeServerNotes, saveNote, type WorkspaceNoteRow } from '../data/local';
 import { clearNoteDraft, writeNoteDraft } from '../data/noteDrafts';
 import type { SourceDocument } from '../data/useSourceDocument';
 import { fullPageLabel } from '../model/pages';
+import { ReanchorSection } from './ReanchorSection';
 
 export type MineTabValue = 'notes' | 'bookmarks' | 'reanchor' | 'pages';
 
@@ -74,7 +74,7 @@ export function MineTab(p: MineTabProps) {
       />
       {p.sub === 'notes' && <NotesSection {...p} pageKeys={pageKeys} />}
       {p.sub === 'bookmarks' && <BookmarksSection doc={p.doc} pageIndex={p.pageIndex} pageKeys={pageKeys} anchorFor={p.anchorFor} onGoToPage={p.onGoToPage} />}
-      {p.sub === 'reanchor' && <ReanchorSection doc={p.doc} local={reanchorLocal} online={p.online} onGoToPage={p.onGoToPage} />}
+      {p.sub === 'reanchor' && <ReanchorSection doc={p.doc} local={reanchorLocal} online={p.online} onGoToPage={p.onGoToPage} currentPageIndex={p.pageIndex} />}
       {p.sub === 'pages' && p.notePages && <NotePagesSection pages={p.notePages} />}
     </div>
   );
@@ -434,63 +434,4 @@ export function BookmarksSection({ doc, pageIndex, pageKeys, anchorFor, onGoToPa
   );
 }
 
-// ───────────────────────────── needs re-anchor ─────────────────────────────
-function ReanchorSection({ doc, local, online, onGoToPage }: { doc: SourceDocument; local: AnnotationRow[]; online: boolean; onGoToPage: (i: number) => void }) {
-  const [server, setServer] = useState<NeedsReanchorItem[] | null>(null);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    if (!online) return;
-    let cancelled = false;
-    fetchNeedsReanchor(doc.detail.id)
-      .then((r) => !cancelled && setServer(r.items))
-      .catch(() => !cancelled && setFailed(true));
-    return () => {
-      cancelled = true;
-    };
-  }, [doc.detail.id, online]);
-  const pageIdx = useMemo(() => new Map(doc.pages.map((p) => [p.id, p.page_index])), [doc.pages]);
-  const items = useMemo(() => {
-    const byId = new Map<string, { id: string; kind: string; where: string | null; pageIndex: number | null }>();
-    for (const it of server ?? []) {
-      const prev = it.annotation.previous_anchor ?? it.annotation.anchor;
-      byId.set(it.annotation.id, { id: it.annotation.id, kind: it.annotation.kind, where: it.previous_location_ar, pageIndex: prev.type === 'page' ? (pageIdx.get(prev.page_id) ?? null) : null });
-    }
-    for (const a of local) {
-      if (byId.has(a.id)) continue;
-      const anchor = a.anchor as AnnotationAnchor;
-      const i = anchor?.type === 'page' ? (pageIdx.get(anchor.page_id) ?? null) : null;
-      byId.set(a.id, { id: a.id, kind: a.kind, where: i != null && doc.pages[i] ? fullPageLabel(doc.pages[i]!) : null, pageIndex: i });
-    }
-    return [...byId.values()];
-  }, [server, local, pageIdx, doc.pages]);
-
-  return (
-    <>
-      <p className="wk-muted">
-        عندما يتغير المصدر أو تخطيطه ولا يمكن إعادة ربط كتابة أو ملاحظة بثقة، تظهر هنا مع مكانها السابق. لا يُحذف شيء ولا يوضع فوق فقرة أخرى. إعادة الربط اليدوي تصل في مرحلة لاحقة.
-      </p>
-      {!online && server === null && <p className="wk-muted">دون اتصال: تُعرض القائمة المحفوظة على هذا الجهاز فقط.</p>}
-      {failed && <p className="wk-muted">تعذّر جلب القائمة من الخادم؛ تُعرض العناصر المحفوظة على هذا الجهاز.</p>}
-      {items.length === 0 ? (
-        <EmptyState headingLevel={3} title="لا شيء يحتاج إعادة ربط" description="كل كتاباتك وملاحظاتك على هذا المصدر في مواضعها." />
-      ) : (
-        <ul className="wk-marks" role="list">
-          {items.map((it) => (
-            <li key={it.id} className="wk-region-row">
-              <div className="wk-region-row__head">
-                <span className="wk-region-row__kind">{it.kind === 'ink' ? 'كتابة بالقلم' : it.kind === 'text_highlight' ? 'تظليل نص' : it.kind === 'bookmark' ? 'علامة' : 'تعليق'}</span>
-                <StatusPill tone="warning">تحتاج إعادة ربط</StatusPill>
-              </div>
-              <p className="wk-muted">مكانها السابق: {it.where ?? 'غير معروف'}</p>
-              {it.pageIndex != null && (
-                <Button size="sm" variant="plain" icon={<MapPin size={16} />} onClick={() => onGoToPage(it.pageIndex!)}>
-                  فتح الصفحة السابقة
-                </Button>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-    </>
-  );
-}
+// ───────────────────────────── needs re-anchor: panels/ReanchorSection.tsx (H3 item 2) ─────────────────────────────

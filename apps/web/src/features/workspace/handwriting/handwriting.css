@@ -249,3 +249,14 @@
   outline: 2px solid var(--ml-color-focus);
   outline-offset: 2px;
 }
+
+/* (H3 item 9) the app-wide «تسجيل لم يُحفظ» notice: above the phone tab bar, like the update banner */
+.hw-dock--global {
+  bottom: calc(var(--ml-tabbar-h) + var(--ml-safe-bottom) + var(--ml-space-3));
+  z-index: var(--ml-z-toast);
+}
+@media (min-width: 48rem) {
+  .hw-dock--global {
+    bottom: calc(var(--ml-space-4) + var(--ml-safe-bottom));
+  }
+}

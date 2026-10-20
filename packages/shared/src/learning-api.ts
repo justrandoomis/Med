@@ -515,7 +515,8 @@ export interface ReasoningReplayView {
 }
 
 // ───────── learning profile (§44) ─────────
-export const PROFILE_SIGNAL_PARTS = ['mcq_attempts', 'card_reviews', 'written_attempts', 'mistake_types', 'confidence', 'pace'] as const;
+// Round 7 H4: 'case_attempts' — completed case / OSCE / viva attempts read as Weakness Center signals
+export const PROFILE_SIGNAL_PARTS = ['mcq_attempts', 'card_reviews', 'written_attempts', 'mistake_types', 'confidence', 'pace', 'case_attempts'] as const;
 export type ProfileSignalPart = (typeof PROFILE_SIGNAL_PARTS)[number];
 
 export interface LearningProfileView extends LearningProfile {

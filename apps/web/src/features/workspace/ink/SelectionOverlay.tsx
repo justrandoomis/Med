@@ -4,7 +4,7 @@
 // a CSS matrix on a ref, the selected items are drawn transformed on the live canvas, and the
 // change is committed once (one undo step) on release.
 import { useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
-import { ArrowDownToLine, ArrowUpToLine, Clock, Copy, CopyPlus, Ellipsis, Lock, LockOpen, MessageCircleQuestion, Palette, Play, RotateCw, ScanText, Trash2, Undo2, Minus } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpToLine, Clock, Copy, CopyPlus, Ellipsis, FileQuestion, Layers, Lock, LockOpen, MessageCircleQuestion, Palette, Play, RotateCw, ScanText, Trash2, Undo2, Minus } from 'lucide-react';
 import { normBoxToView, normToView, viewToNorm, type NormBox } from '@medlevo/shared';
 import { IconButton, Menu, MenuItem, MenuSeparator, Toolbar, Tooltip } from '../../../design';
 import { useInkInternal } from './InkProvider';
@@ -14,7 +14,7 @@ import { isInkStroke, isShape, limitScaleToRange, revertEnhancement, type InkIte
 import { HIGHLIGHTER_COLORS, PEN_COLORS, resolveInkColor } from './palette';
 import { pageMatrix, paperToneOf } from './render';
 import { audioLinkOf, formatOffset } from './audioLink';
-import { NO_ASK_HOST_AR, NO_RECOGNITION_HOST_AR, useInkSelectionActions } from './selectionActions';
+import { NO_ASK_HOST_AR, NO_CARD_HOST_AR, NO_RECOGNITION_HOST_AR, useInkSelectionActions } from './selectionActions';
 import type { InkPageView } from './types';
 
 type Mode = { kind: 'move' } | { kind: 'rotate' } | { kind: 'scale'; corner: 0 | 1 | 2 | 3 };
@@ -191,6 +191,10 @@ export function SelectionOverlay({
   const hasWriting = items.some((i) => isInkStroke(i) || isShape(i));
   const convertReason = !hasWriting ? 'حدّد كتابة بالقلم (لا نصًا مطبوعًا أو صورة).' : actions?.convert ? actions.convert.reason : NO_RECOGNITION_HOST_AR;
   const askReason = !hasWriting ? 'حدّد كتابة بالقلم بجانب فقرة.' : actions?.ask ? actions.ask.reason : NO_ASK_HOST_AR;
+  // (H3 item 4) a card / an owner question from the selection (the dialog says what needs a reading or the server)
+  const unloaded = !page?.anchor ? 'الصفحة لم تُحمَّل بعد.' : null;
+  const cardReason = unloaded ?? (actions?.card ? actions.card.reason : NO_CARD_HOST_AR);
+  const questionReason = unloaded ?? (actions?.question ? actions.question.reason : NO_CARD_HOST_AR);
   // time link of the earliest linked stroke in the selection (written during an in-app recording)
   const linked = items
     .map((i) => ({ item: i, link: audioLinkOf(i) }))
@@ -315,6 +319,12 @@ export function SelectionOverlay({
             </MenuItem>
             <MenuItem icon={<MessageCircleQuestion size={16} />} disabled={!!askReason} disabledReason={askReason ?? undefined} onSelect={() => actions?.ask?.run(selInfo())}>
               اسأل عن المحدد
+            </MenuItem>
+            <MenuItem icon={<Layers size={16} />} disabled={!!cardReason} disabledReason={cardReason ?? undefined} onSelect={() => actions?.card?.run(selInfo())}>
+              اصنع بطاقة من المحدد…
+            </MenuItem>
+            <MenuItem icon={<FileQuestion size={16} />} disabled={!!questionReason} disabledReason={questionReason ?? undefined} onSelect={() => actions?.question?.run(selInfo())}>
+              اكتب سؤالًا من المحدد…
             </MenuItem>
           </Menu>
         </Toolbar>

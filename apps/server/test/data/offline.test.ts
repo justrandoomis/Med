@@ -139,3 +139,26 @@ describe('offline manifest', () => {
     expect((await getJson(lib, `/api/data/offline/${lib.questions.sourceId}/manifest`)).status).toBe(409);
   });
 });
+
+describe('Round 7 H4: the source content hash is apart from the owner-writing hash', () => {
+  it('the owner writing a note changes owner_hash only; a change of the source text changes source_hash', async () => {
+    const m0 = (await getJson<OfflineManifestResponse>(lib, `/api/data/offline/${lib.lecture.sourceId}/manifest`)).body;
+    expect(m0.source_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(m0.owner_hash).toMatch(/^[0-9a-f]{64}$/);
+    await push(lib, [{ entity_type: 'note', entity_id: newId(), op: 'upsert', payload: { title: null, body: rt('ملاحظة H4'), anchor: null, origin: 'owner' } }]);
+    lib.t.ctx.db.run('UPDATE note SET source_id = ? WHERE source_id IS NULL', [lib.lecture.sourceId]);
+    const m1 = (await getJson<OfflineManifestResponse>(lib, `/api/data/offline/${lib.lecture.sourceId}/manifest`)).body;
+    expect(m1.source_hash).toBe(m0.source_hash);
+    expect(m1.owner_hash).not.toBe(m0.owner_hash);
+    expect(m1.content_hash).not.toBe(m0.content_hash); // the combined hash (pre-H4 downloads) still moves
+    // the bundle carries the same split
+    const b = (await getJson<OfflineBundleResponse>(lib, `/api/data/offline/${lib.lecture.sourceId}/bundle`)).body;
+    expect(b).toMatchObject({ source_hash: m1.source_hash, owner_hash: m1.owner_hash });
+    // the source itself changes (an owner region correction is source content): source_hash moves
+    const region = lib.t.ctx.db.get<{ id: string; text: string }>(`SELECT id, text FROM source_region WHERE version_id = ? AND kind = 'paragraph' AND text IS NOT NULL LIMIT 1`, [lib.lecture.versionId])!;
+    lib.t.ctx.db.run('UPDATE source_region SET text = ? WHERE id = ?', [`${region.text} (H4 TEST edit)`, region.id]);
+    const m2 = (await getJson<OfflineManifestResponse>(lib, `/api/data/offline/${lib.lecture.sourceId}/manifest`)).body;
+    expect(m2.source_hash).not.toBe(m1.source_hash);
+    lib.t.ctx.db.run('UPDATE source_region SET text = ? WHERE id = ?', [region.text, region.id]);
+  });
+});
