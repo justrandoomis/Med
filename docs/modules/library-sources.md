@@ -222,3 +222,14 @@ Reviewed adversarially (server + web), probed against the real modules, then fix
   `TopicFilter.tsx`); `LibraryScreen.tsx` was changed additively. Course pages (`NodeScreen.tsx`) render the course
   content inside `CourseBrainTabs` (المصادر / خريطة المعرفة / التقدم / تغطية الأسئلة); the sources tab is the existing
   course view unchanged.
+
+## Round 7 — H1: the one page label of the server (AC-04, 2026-10-20)
+* `apps/server/src/modules/sources/pagelabel.ts`: `pageLabelAr(db, page)` — the label every server module uses to name
+  a page («ص 12» / «ص 12 (الصفحة 14 في الملف)» / «الصفحة 1 في الملف» for an unnumbered page in a numbered version /
+  «شريحة 3»…). It derives `numbered_version` (some page of kind «page» in the version has a printed number — the same
+  rule as the pages endpoint) from the page's `version_id`, its id, or a flag the caller already has; the `LabelPage`
+  type requires one of them. `pageLabelKnown` + `versionNumberedSql(alias)` serve list queries. A guard test fails if any
+  server file other than this one calls `pageDisplayLabel(` or builds «ص ${…}» by hand.
+* Shared `withNumberedVersion(pages)` fills the flag on a version's page list on the web (cached / older answers).
+* Tests: `srv:sources/page-labels.h1.test.ts` (guard, helper, one test per producer family), `sh:page-label.test.ts`,
+  `web:test/learning/home-page-label.h1.test.tsx`. Details: `evidence-search.md` «Round 7».

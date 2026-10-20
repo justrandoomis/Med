@@ -434,3 +434,18 @@ Commands after the fixes (repo root, `NODE_OPTIONS='--disable-warning=Experiment
   builder leaves out a published question (e.g. a duplicate) the summary says so and counts what entered the exam;
   `origin` in a request accepts `builder | selection` only — `simulation` is set by the simulation job, never claimed by
   a request (400) (`srv:f3/review.test.ts`).
+
+## Round 7 — H1 (2026-10-20)
+* **A simulation retry regenerates exactly the missing items** (`simulation.ts`). When a part's inline generation run
+  hit a retryable provider error (`AI_PROVIDER_ERROR`, `retryable: true`), the simulation closed that run («failed»,
+  candidates rejected) before the job's retry — so the retry skipped the part and the exam came out short. Now, when
+  the job WILL retry (`willRetry`: same rule as the handler, `SIMULATION_MAX_ATTEMPTS = 2`), the run is left open with
+  its error recorded and the error is rethrown; the retry resumes the run from its checkpoints (the stored generation,
+  candidates already decided) — no new generation for a validation error, only the interrupted part for a generation
+  error, no duplicate questions. A non-retryable error, or the last attempt, still closes the part as before. Tests:
+  `srv:f3/review.test.ts` «H1 hardening — a retryable provider error during a simulation part…» (2; scripted
+  provider, `ProviderError` kind `overloaded`).
+* **AC-04 page labels** in hints, results (`resultPageLabelAr`), weakness (`pagesLabel`) and the generation pipeline
+  go through `sources/pagelabel.ts`; the web page picker of «توليد أسئلة صعبة» used its own «ص N» label and now uses the
+  shared `pageDisplayLabel` with `withNumberedVersion`. Tests: `srv:sources/page-labels.h1.test.ts` (exam results +
+  weakness).

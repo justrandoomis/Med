@@ -328,14 +328,16 @@ export async function extractPage(doc: PDFDocumentProxy, pageNumber: number): Pr
 export type GlyphRun = Array<number | { unicode?: string; isSpace?: boolean } | null>;
 
 const ARABIC_RE = /\p{Script=Arabic}/u;
+/** a lam-alef ligature glyph's text (presentation forms are NFKC-normalized by cleanRun first) */
+const LAM_ALEF_GLYPH = /^ل[اأإآ]$/u;
 const LATIN_RE = /[A-Za-z]/;
 
 /**
- * Words drawn with multi-letter glyphs in RTL runs (H2 item 9). pdf.js builds the text of an RTL run by reversing it
- * character by character, so a glyph mapped to TWO letters — the lam-alef ligature «لا» / «لأ» … — comes out reversed
+ * Words drawn with a lam-alef ligature glyph in RTL runs (H2 item 9). pdf.js builds the text of an RTL run by reversing
+ * it character by character, so a glyph mapped to TWO letters — the lam-alef ligature «لا» / «لأ» … — comes out reversed
  * («العلامة» → «العالمة»). Rebuilding the word glyph by glyph gives the real spelling. Returns:
  *  * `map`: reversed form → real word, for words that contain such a glyph — except when the reversed form is ALSO a
- *    real word drawn elsewhere in the same document page (ambiguous, left alone);
+ *    real word drawn elsewhere on the same page (ambiguous, left alone);
  *  * `verified`: every Arabic word whose spelling the glyphs settled (drawn letter by letter or rebuilt).
  */
 export function ligatureWordMap(runs: GlyphRun[]): { map: Map<string, string>; verified: Set<string> } {
@@ -364,7 +366,13 @@ export function ligatureWordMap(runs: GlyphRun[]): { map: Map<string, string>; v
     cut();
     for (const ch of chunks) {
       if (!ch.some((u) => ARABIC_RE.test(u)) || ch.some((u) => LATIN_RE.test(u))) continue;
-      const real = [...ch].reverse().join('');
+      // only a lam-alef ligature glyph is rebuilt; any other multi-letter glyph (a letter + its harakah drawn as one
+      // glyph by a converter) keeps the text pdf.js gives — such a word may be damaged in other ways too and must stay
+      // flagged (orphan mark), never silently «fixed»
+      const real = [...ch]
+        .reverse()
+        .map((u) => (LAM_ALEF_GLYPH.test(u) ? u : [...u].reverse().join('')))
+        .join('');
       const reversed = [...ch.join('')].reverse().join('');
       for (const m of real.matchAll(/[\p{L}\p{M}]+/gu)) {
         const word = m[0];

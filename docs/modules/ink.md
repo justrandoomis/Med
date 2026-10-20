@@ -387,3 +387,19 @@ Checked and found sound: the ink is never written by recognition (rows compared 
 machine text, search origin labels, the grading prompt carries only the confirmed text plus the no-deduction rule,
 every new route sits behind the global session + CSRF guard, the PNG is magic-checked and size-bounded and served with
 `nosniff`, recognized text is rendered as text (no HTML).
+
+## Round 7 — H1 (2026-10-20): recognition and «اسأل عن المحدد» hardening
+* **«اسأل عن المحدد» is disabled in «امتحن نفسك»** with the mode as its reason (`HandwritingHost.tsx` prop
+  `askHiddenReason`, passed by `WorkspaceScreen.tsx` in exam mode — the same reason text as the other hidden helpers);
+  the lasso action is disabled with that reason, and opening / sending the ask dialog is refused with an announcement.
+  «تحويل إلى نص» stays available. Test: `web:test/ink/ask-exam-mode.h1.test.tsx`.
+* **Server checks on a recognition request** (`annotations/recognition.ts`): every `annotation_ids` entry must be a
+  stroke anchored to the requested page / note page — not yet synced → 409 «لم تصل إلى الخادم بعد» (wait for sync),
+  deleted → 409 «…حُذفت…», on another page → 400 `VALIDATION_FAILED` «…على صفحة أخرى غير الصفحة المطلوبة…» with the
+  offending ids; nothing is stored. A retried
+  create with the id of a soft-deleted reading is a 409 «هذه القراءة حُذفت…» — it never resurrects or returns it — and a
+  same-id retry for another target is a 409 (never the other reading).
+* **A failed reading is labelled and retryable**: the dialog prefers a non-failed reading of the same strokes, and a
+  failed one is shown as «<status label>: <reason>» in the error state with «أعد المحاولة» (`RecognitionDialog.tsx`).
+* Tests: `srv:annotations/recognition.test.ts` «H1 hardening — recognition requests» (5, FakeAiProvider),
+  `web:src/features/workspace/handwriting/handwriting.test.tsx` «H1 — a FAILED earlier reading».

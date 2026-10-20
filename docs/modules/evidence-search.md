@@ -276,3 +276,73 @@ Remaining risks after the review (not fixed):
 * Tests: `srv:annotations/recognition.test.ts` («search in handwriting shows its origin; a correction keeps the machine
   reading and becomes the owner text»: hit + highlight + location; correction → `owner_typed`, old word no longer found,
   revert; erasing the strokes removes the hit; deleting a reading removes its FTS row).
+
+## Round 7 — H1 evidence & AI correctness (2026-10-20)
+
+Each item was first reproduced by a failing test, then fixed minimally; existing tests were not weakened.
+
+* **Over-abstention fixed (eval case `overabstain.pregnancy_test`).** Root cause: `groupCoverage` (`evidence/terms.ts`)
+  tokenised the PASSAGE with `searchTokens`, which keeps only the first 32 tokens (a limit meant for queries). A lecture
+  sentence after the 32nd word of its chunk (long heading path + earlier sentences) was invisible to the OR-hit
+  coverage check → «not found in scope». `searchTokens(input, limit = 32)` (shared) now takes a limit and coverage reads
+  the whole passage (`Infinity`). AC-05 (an answer only in the out-of-scope reference still abstains under Lecture
+  Only) is asserted next to it. Tests: `srv:evidence/scope-retrieval.test.ts` «H1 hardening — over-abstention» (3).
+  Eval (scripted): over_abstention 4/5 → 5/5, abstention 4/4 → 4/4 (see `docs/EVALUATION.md`).
+* **«مذكور نصًا» catches a swapped key term** (`evidence/critical.ts`, AC-07). `directly_stated` containment now needs,
+  in ONE same-language quote, ≥ 80 % of the claim's content words AND every key term of the claim
+  (`directlyStatedKeyTerms`: abbreviations / mixed case, Greek letters, capitalised terms not at sentence start, medical
+  morphology such as -itis / -emia / -ectomy / hypo- / hyper-, laterality, Latin terms inside an Arabic claim) AND no
+  aligned one-word swap (`findSwap`, LCS alignment; inflections such as «appendix / appendices» are not swaps). The
+  check's details carry `missing_key_terms` / `swapped`; the reason names the term («الجملة موسومة «مذكور نصًا» لكن
+  المصطلح «appendicitis» غير موجود في المقتطف…» / «الكلمة «a» حلّت محل «b»…»). This closes the limit recorded in G2:
+  the near-verbatim copy with one key noun swapped is now refused by the deterministic pre-check, before the verifier is
+  asked. Tests: `srv:evidence/critical.test.ts` «H1 hardening — «directly stated»…» (English and Arabic swaps; valid
+  claims still pass: verbatim, subset, reordered, inflected, hedge words, β-hCG, Arabic), `srv:acceptance/g2-ac07.test.ts`
+  (first case now asserts the deterministic refusal and that the verifier is never asked about it).
+* **Evidence that rests ONLY on a low-confidence reading** (`evidence/claims.ts`). Each cited excerpt now carries its
+  region's extraction state (`region_needs_review` = region status `needs_review`, `region_origin` = `text_origin`). A
+  claim whose every excerpt is an OCR reading still awaiting review, or `uncertain`, can never be `linked`: it becomes
+  `needs_review` with the reason «الجملة تستند فقط إلى نص قُرئ آليًا (OCR) بثقة منخفضة ولم يُراجَع بعد…» (or, for a
+  suspicious text layer, «…نص استخراجه مشكوك فيه…») and a failed `evidence_exists` check listing the excerpts and their
+  extraction state; a claim already `needs_review` for another reason gets the reason appended. One reliable excerpt among them keeps the normal path. The web Evidence
+  Peek shows the reason («لماذا تحتاج مراجعة؟ …») and an extraction note on such excerpts (`CitationChip.tsx`,
+  `claimReasonAr`; used by the Study Book, exam feedback and cases). Tests: `srv:evidence/claims.test.ts` «H1 hardening —
+  claims resting ONLY on a low-confidence OCR reading» (3), `web:src/features/evidence/EvidencePeek.test.tsx` (2 H1 cases).
+* **A verifier answer without `based_on` is conservative** (AC-07). When the verifier says «supported» for a claim citing
+  MORE than one excerpt but does not name which ones (`based_on` missing), no excerpt is presented as support: the claim
+  is `needs_review` (reason «لم يذكر المحقق المستقل أيّ المقتطفات المستشهد بها يستند إليه حكمه…»), its citations are stored with relation
+  `context`, and the check carries `excerpts_unconfirmed: true` (the same for an empty `based_on`). A single cited
+  excerpt is unambiguous and keeps the old path. The test-only scripted verifiers (`test/helpers/verifier.ts`,
+  `test/studybook/helpers.ts`, `test/exams/helpers.ts`, `control/evaluation/scripted.ts`) now name `based_on` per the
+  contract. Tests: `srv:evidence/claims.test.ts` «H1 hardening — a verifier answer without «based_on»…» (3).
+* **Text «citations» in unusual phrasings** (`evidence/textcite.ts`): ordinals and relative positions («see the third
+  page», «on the next / previous / following slide», «the last page»), number words («page three», «Slide two»), roman
+  numerals («page xii»), «#» / «no.» / «number», and in Arabic ordinal / relative adjectives («انظر الصفحة الثالثة»,
+  «في الشريحة التالية», «الصفحة السابقة / الأخيرة / الأولى», «الحادية عشرة»), ta-marbuta-less spellings, «رقم» + number word and
+  prefixed forms («بالصفحة 4», «وفي الشريحة الخامسة»). False positives are guarded by a clean list (figures, tables,
+  «the next step», «الخطوة التالية», «the third cranial nerve», «المرحلة الثالثة»…). A source that itself says «see the next
+  page» keeps it when quoted faithfully (`inventedCitations`). Tests: `srv:evidence/textcite.test.ts` (new; 21 flagged,
+  19 clean, strip, invented).
+* **Dedicated alert kind `question_corrected`** («تصحيح نص سؤال»; shared `CONTENT_ALERT_KINDS`, additive). A correction
+  of a question's own text raised a `source_updated` alert («تحديث في المصدر») although no source changed. Migration
+  `0310_content_alert_question_corrected.sql` (evidence range 03xx) rebuilds `content_alert` with the wider CHECK
+  (SQLite cannot alter a CHECK): items are copied to a temporary table first (the rebuild's DROP would cascade to
+  `content_alert_item`), every alert row and column — including the 0300 additions — is copied, the indexes are
+  recreated, the items restored, and alerts written by the old code for a question correction
+  (`details_json` with `question_id` + `corrected` + `by: 'owner'`) are relabelled. `questions/lifecycle.ts` now writes
+  the new kind. Tests: `srv:evidence/alert-kind-migration.test.ts` (rows + items preserved, relabel only of question
+  corrections, CHECK accepts the kind), `srv:acceptance/g8-ac26.test.ts` (kind + label asserted).
+* **AC-04: one page label for the whole server** (`sources/pagelabel.ts`). `pageLabelAr(db, page)` derives
+  `numbered_version` from the page's version (by `version_id`, page id, or a known flag — the type makes one required),
+  `pageLabelKnown(page)` serves list queries that computed the flag with `versionNumberedSql(alias)`. Every server
+  producer was routed through it (evidence views, search hits, annotation anchors / describeAnchor, recognition, media
+  links / recordings / images, exam hints / results / generation, Home «continue», weakness, export, Course Brain
+  store / topics / student / coverage / map, Control Center corrections / review / processing, Study Book book /
+  explain, questions store / match / concepts / keys / routes). Before, 20 server files called `pageDisplayLabel`
+  directly and most omitted the flag, so an unnumbered cover among printed pages read «ص 1». The web producers that
+  build labels from a page list use the shared `withNumberedVersion(pages)` (exam generation page picker — which also
+  had its own hand-built «ص N» label — figure picker, audio link dialog, sources pages panel, topics region dialog, Home
+  session from a downloaded list). Tests: `srv:sources/page-labels.h1.test.ts` (guard: no direct `pageDisplayLabel(` or
+  hand-built «ص ${…}» outside `pagelabel.ts`; helper; one test per producer family: evidence, search, annotations,
+  Home continue, question occurrences, exam results + weakness, media links, Course Brain coverage + mentions, export),
+  `sh:page-label.test.ts` (`withNumberedVersion`), `web:test/learning/home-page-label.h1.test.tsx`.

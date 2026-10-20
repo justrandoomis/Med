@@ -132,6 +132,22 @@ rates. The one regression case that does not pass is a **measured over-abstentio
   region for this wording (the anchored and other keyword questions are answered). This is reported, not tuned away:
   the fix belongs to the evidence / retrieval module, and the case stays in the frozen set to show when it is fixed.
 
+**Round 7 — H1 (2026-10-20): `overabstain.pregnancy_test` fixed.** Cause: the OR-hit coverage check
+(`evidence/terms.ts groupCoverage`) read only the first 32 tokens of a passage (the query-token limit of
+`searchTokens`), and the lecture sentence sits after the 32nd word of its chunk. Coverage now reads the whole passage
+(`docs/modules/evidence-search.md` «Round 7»). Runs (scripted mode, reports under `eval-reports/`, not committed):
+
+| run | regression (frozen) | over_abstention | abstention | claim_support | citation_validity |
+|---|---|---|---|---|---|
+| before H1 (`eval-20261020T130658-7edf17b4`) | 79 / 80 | 4 / 5 | 4 / 4 | 6 / 6 | 5 / 5 |
+| after the fix (`eval-20261020T130723-9418017e`, `--compare` → `no_regressions`, 1 now passes) | 80 / 80 | 5 / 5 | 4 / 4 | 6 / 6 | 5 / 5 |
+| end of H1, all 11 items, shared tree (`eval-20261020T140424-983e7484`) | 77 / 80 | 5 / 5 | 4 / 4 | 6 / 6 | 5 / 5 |
+
+The last run's three failures are `key.g4_inline.2_{1,2,3}` (key_binding 15 / 18: «an unlabelled trailing key is not
+bound to part 2 by number alone»). They come from the parallel H2 change to `questions/keys.ts` (`trailingBlockSection`,
+binding a trailing unlabelled key block to the last section), not from H1; `--compare` against `docs/eval/baseline.json`
+reports them (exit 4). The committed baseline was not rewritten.
+
 ## 4. Compare and roll back a change
 
 Every result depends on recorded versions (`report.system`): `pipeline` (processing / OCR orchestration,

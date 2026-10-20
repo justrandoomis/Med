@@ -54,6 +54,13 @@ describe('ligature words from the glyphs (unit)', () => {
     expect(map.has('العالم')).toBe(false);
   });
 
+  it('only lam-alef glyphs are rebuilt: a letter + harakah drawn as one glyph keeps pdf.js text (still flagged as an orphan mark)', () => {
+    // a converter drew «تُ» (ta + damma) as ONE glyph; the word may be damaged otherwise (a stray glyph next to it), so it
+    // is not «fixed» silently — the orphan-mark check keeps flagging it (srv:processing/pipeline .doc test)
+    const run = visualRun([['تُ', 'ص', 'ن', 'ف']]);
+    expect(ligatureWordMap([run]).map.size).toBe(0);
+  });
+
   it('presentation-form ligature glyphs (U+FEFB) and hamza forms count; Latin runs are left alone', () => {
     const run = visualRun([['ا', 'ﻷ', 'ل', 'م']]); // «الألم» = ا + [لأ] + ل + م, drawn with the presentation form
     expect([...ligatureWordMap([run]).map.entries()]).toEqual([['األلم', 'الألم']]); // «األلم», the known reversed form

@@ -517,3 +517,20 @@ with the test-only scripted provider).
   version's `fingerprint` is cleared, so extraction's «same question, any version» lookup can never attach a source
   occurrence to a question through generated text (`srv:f3/review.test.ts`). Residual (outside F3's files): the
   question screen's «سجل النسخ» lists the derived row with its own stored key mark; «النسخ المشتقة» shows the original's.
+
+## Round 7 — H1 (2026-10-20)
+* **«سجل النسخ» shows the original's CURRENT key on a derived row** (closes the F3-review residual above).
+  `GET /api/questions/:id` now overrides a translation / paraphrase row's `correct_option_ids` and `answer_status` with
+  the source version's current key, mapped by `option_key` (`derived.ts derivedKeyOverride`, used by `routes.ts`): a key
+  changed in place on an unattempted original is marked on the same answer of the derived row. The web row says so
+  («المفتاح المعروض هنا هو مفتاح النسخة N الحالي — النسخة المشتقة لا تغيّر المفتاح.», `DetailSections.tsx`). Tests:
+  `srv:f3/review.test.ts` «H1 hardening — «سجل النسخ»…» (scripted provider: a published derivation, key changed in place,
+  the derived row follows), `web:src/features/questions/VersionsSection.h1.test.tsx`.
+* **A correction of a question's text raises a `question_corrected` alert** («تصحيح نص سؤال»), no longer
+  `source_updated` (`lifecycle.ts questionCorrectionAlert`; migration `0310` in the evidence range relabels the rows
+  written before — see `evidence-search.md` «Round 7»). Tests: `srv:acceptance/g8-ac26.test.ts`,
+  `srv:evidence/alert-kind-migration.test.ts`.
+* **AC-04 page labels**: `store.ts` (occurrences, original pages — `PageLite.numbered_version` is now required and the
+  query computes it), `match.ts`, `concepts.ts`, `keys.ts`, `routes.ts` label pages through `sources/pagelabel.ts`
+  (an unnumbered page among printed ones is «الصفحة N في الملف»). Test: `srv:sources/page-labels.h1.test.ts`
+  (question occurrences).
