@@ -238,6 +238,20 @@ function updateAnnotation(tx: SyncTx, id: string, f: AnnotationFields, restore: 
 
 const UNRESOLVED_AR = 'الصفحة التي كُتب عليها غير موجودة في هذا الإصدار على الخادم؛ حُفظت الكتابة كما هي في قائمة «تحتاج إعادة ربط».';
 
+/** Shape kinds added after R1-a whose geometry an R1-a app cannot move without damage (review R10 of N1 wave 2). */
+const LEGACY_UNSAFE_SHAPES = new Set(['polygon', 'curved_arrow', 'double_arrow']);
+export const LEGACY_SHAPE_AR =
+  'هذا الشكل (سهم منحنٍ أو سهم مزدوج أو مضلّع) رُسم بإصدار أحدث من التطبيق، وتحريكه أو تغيير شكله من هذا الإصدار القديم يفسده. أُعيد الشكل كما هو محفوظ على الخادم؛ حدّث التطبيق على هذا الجهاز ثم عدّله.';
+
+/** Would this edit change the geometry of a shape kind the R1-a app cannot transform? */
+function legacyClientWouldDamage(existing: AnnotationRow, incoming: AnnotationFields): boolean {
+  if (existing.kind !== 'shape') return false;
+  const stored = fromJson<Record<string, unknown>>(existing.data_json) ?? {};
+  if (!LEGACY_UNSAFE_SHAPES.has(String(stored.shape))) return false;
+  const geometry = (d: Record<string, unknown>) => stableStringify([d.shape ?? null, d.from ?? null, d.to ?? null, d.points ?? null, d.control ?? null, d.rotation ?? 0]);
+  return incoming.kind !== 'shape' || geometry(incoming.data) !== geometry(stored);
+}
+
 export function annotationHandler(db: Db): SyncEntityHandler {
   const serialize = (id: string, opts?: SerializeOptions) => {
     const r = getAnnotation(db, id);
@@ -275,6 +289,13 @@ export function annotationHandler(db: Db): SyncEntityHandler {
       const p = parsePayload(annotationPayloadSchema, op);
       const { fields, unresolved } = annotationFields(tx.db, p);
       const detail = unresolved ? UNRESOLVED_AR : undefined;
+      // (Release R1-b; parity N1 wave-2 review R10) an R1-a app does not know these shape kinds: moving one there keeps
+      // only its frame (a curved / double arrow's ends normalised — its direction and pathway head can flip — and a
+      // polygon's corners left behind). Such an edit is refused WITH the server's copy, so the old app shows a conflict
+      // and puts the shape back as stored; deleting, restoring unchanged and recolouring still go through.
+      if (tx.format?.legacyClient && existing && op.op === 'upsert' && legacyClientWouldDamage(existing, fields)) {
+        return { result: 'rejected', entity: toAnnotationDTO(existing, fmt), detail: LEGACY_SHAPE_AR };
+      }
       // the layer the op names (absent: an insert → «ملاحظاتي»; an edit keeps the item's layer — an older client never
       // moves an item off its layer)
       const requested = p.layer_id === undefined ? (existing?.layer_id ?? null) : p.layer_id;

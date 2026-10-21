@@ -42,6 +42,8 @@ Control Center («مركز التحكم» → «القدرات») lists each fea
 | Devices & data | offline downloads, sync between devices without losing writing, backup + verified restore, export to Markdown / print-ready HTML / JSON / Word (DOCX) / PDF (the original PDF with your writing drawn on it; other exports through LibreOffice when it is installed) |
 | Quality & control | Personal Control Center: live capabilities with reasons, processing and review queues, sync conflicts, client error log and failure trends, the evaluation runs (`npm run eval`), the allowed external visual-source registry |
 | Academic OS preview (release R1-a, single owner) | writing layers on every document (show / hide per study session, «اكتب هنا», read-only layers that are never changed — writing on one is re-created in «ملاحظاتي» with the reason shown), a per-layer history, copying one layer; lecture numbers, names and dates read from the file and only **proposed**; «إصدار جديد من …» when an upload matches a lecture you have, with a side-by-side page comparison before you confirm; «انقل ملاحظاتي إلى الإصدار الجديد» — a **copy, never a move**: preview, one tap, a report, one-step undo and a review list for what changed; e-ink, high-contrast and lite display modes kept per device. Nothing of it was run on an iPad, S Pen or e-ink device ([`docs/CAPABILITY_MATRIX.md`](docs/CAPABILITY_MATRIX.md)) |
+| Writing comfort (parity N1, release R1-b) | up to 12 colour slots per tool with a meaning saved on each stroke and «اعرض هذا المعنى فقط»; scribble-to-erase, circle + hold → lasso, two- / three-finger tap undo / redo (each switchable); eraser by type, «امسح الصفحة» with counts first and one undo; lasso chips; free resize and rotation; an arrangeable toolbar per study mode; palm-rejection levels and pen feel per nib (latency measured in this browser, never assumed); dashed / dotted lines, a pencil, an eyedropper, a zoom writing window that advances right to left, insert space and straighten, a long-press page menu, filled / rounded / labelled shapes with pathway heads (activation, inhibition, conversion — always spoken), connectors that follow their shapes, snapping guides, a ruler and a labelled **educational** measurement, a neat-copy view that never changes the stored ink. Headless Chromium only — **no iPad, S Pen or BOOX was used** ([`docs/modules/ink.md`](docs/modules/ink.md)) |
+| Accounts foundation (release R1-b) | one database («vault») per account beside a system database; on the first boot of this release an R1-a server shows an upgrade page (`/api/maintenance`) and, only after the owner confirms with the current password, moves the existing database **byte for byte** into account #1 (journaled, resumable, with a verified backup first and a rollback); per-account storage on each device; encrypted backups (`npm run backup -- --encrypt`), storage and AI allowances per account; «نسخة من بياناتي» and deleting an account exist as server APIs only (no screen yet). There is **no sign-up screen yet**: in this release the owner is the only account (channels and other users arrive with R1-c) — see [Updating](#deploy-from-a-phone-no-computer) |
 | Hosting from a phone | a Render Blueprint (`render.yaml` + `Dockerfile`) deployed from GitHub with a persistent disk, nightly **encrypted** off-site backups to Cloudflare R2 that are verified before upload, a one-command restore, status in «مركز التحكم» → «النسخ الاحتياطي خارج الخادم» — see [Deploy from a phone](#deploy-from-a-phone-no-computer) |
 
 | needs `ANTHROPIC_API_KEY` on the server | shown as «تحتاج إعدادًا على الخادم» until then |
@@ -165,6 +167,12 @@ screens differ from the guide, what you see wins. Prices in the guide were read 
 
 **Updating** (code, schema, models, sources):
 
+0. **First update from release R1-a to R1-b (accounts):** follow
+   [`docs/DEPLOY_PHONE_AR.md`](docs/DEPLOY_PHONE_AR.md) «التحديث الأول إلى نظام الحسابات المتعددة» (Render) or
+   [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) §6.1 (your own server): back up first, then open `/api/maintenance` after
+   the deploy and confirm with your current password; the steps and the rollback order are summarised in
+   [`docs/academic-os/BUILD_PLAN.md`](docs/academic-os/BUILD_PLAN.md) §1.3 «Release R1-b». Never start a rollback with
+   Render's «Rollback» button.
 1. Make a backup and verify it (next section).
 2. `git pull && npm ci && npm run build`, then restart. Database migrations run automatically at boot, in order, each
    in its own transaction; an already-applied migration that was edited, or a database newer than the code, stops the
@@ -185,7 +193,9 @@ npm run restore:verify -- /path/to/backup.tar.gz -- --target /srv/medlevo/data-r
 
 Backups are safe while the server runs (SQLite `VACUUM INTO` + the content-addressed file store) and can also be made
 and verified in the app («بياناتك» → «النسخ الاحتياطي»). A restore always goes into a new, empty directory; start the
-server on it with `MEDLEVO_DATA_DIR`. Local archives are **not encrypted** — store them accordingly. Off-site copies
+server on it with `MEDLEVO_DATA_DIR`. Local archives are **not encrypted** unless you run
+`npm run backup -- --encrypt` (needs `MEDLEVO_BACKUP_ENCRYPTION_KEY`; keeps only the encrypted `….tar.gz.mlenc`, which
+`restore:verify` accepts) — store plain ones accordingly. Off-site copies
 (when `MEDLEVO_R2_*` is set) are encrypted on the server before upload and verified by a full restore first. The offline
 copy on a device is not a backup. Details: [`docs/BACKUP_RESTORE.md`](docs/BACKUP_RESTORE.md).
 
@@ -237,7 +247,7 @@ docs/               documentation (below)
 | [`docs/BACKUP_RESTORE.md`](docs/BACKUP_RESTORE.md) | backup, verification and restore |
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | production setup: reverse proxy + TLS, environment, setup token, backup schedule, update and rollback plan; §8 Render + R2 |
 | [`docs/DEPLOY_PHONE_AR.md`](docs/DEPLOY_PHONE_AR.md) | (Arabic) step-by-step deploy, off-site backup and restore from a phone or iPad only |
-| [`docs/academic-os/`](docs/academic-os) | the Academic OS design (PRD, IA and journeys, architecture delta, build plan with its releases — R1-a in §1.3) and the second owner spec in [`docs/spec/`](docs/spec) |
+| [`docs/academic-os/`](docs/academic-os) | the Academic OS design (PRD, IA and journeys, architecture delta, build plan with its releases — R1-a and R1-b in §1.3) and the second owner spec in [`docs/spec/`](docs/spec) |
 | [`docs/EVALUATION.md`](docs/EVALUATION.md) | the accuracy evaluation (axes, regression vs tuning sets, honest rates) and the compare-and-rollback procedure |
 | [`docs/design-system.md`](docs/design-system.md) | tokens, components, accessibility rules |
 | [`docs/SKILLS_AUDIT.md`](docs/SKILLS_AUDIT.md) | skills actually used to build MedLevo, and the capabilities still needed |

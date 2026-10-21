@@ -26,6 +26,7 @@ import {
   type InkItem,
 } from './model';
 import { loadRows, loadTarget, persistChanges } from './persistence';
+import { followConnectors, reattachCopy } from './connectors';
 import { SpatialGrid } from './spatial';
 
 export type PageEvent =
@@ -89,6 +90,8 @@ function sameState(a: InkItem | null, b: InkItem | null): boolean {
   return a === b || itemState(a) === itemState(b);
 }
 
+const NUDGE_LABEL = 'تحريك بالأسهم';
+
 const SAVE_ERROR_AR = 'تعذّر حفظ الكتابة على هذا الجهاز (مساحة التخزين ممتلئة أو محجوبة). ما زالت ظاهرة أمامك؛ ستُعاد محاولة الحفظ مع الكتابة التالية.';
 
 /** Copied items (shared by every open document → copy on one page, paste on another). */
@@ -111,6 +114,12 @@ export class InkDocumentStore {
    * change that failed — a later successful write of the same item supersedes it).
    */
   private failed = new Map<string, string>();
+  /**
+   * (review of N1 wave 1) the state each failed write meant to store. An item the engine does not hold in memory — on a
+   * page that is not open (a bulk delete, an undo after a reload) or of a kind the reader draws (a text highlight) — has
+   * no «current state» to retry with: the retry writes this one instead (never a tombstone in place of a restore).
+   */
+  private failedIntent = new Map<string, InkItem | null>();
   private inFlight = new Map<string, number>();
   private status: PersistStatus = { state: 'idle' };
   private statusListeners = new Set<() => void>();
@@ -138,6 +147,11 @@ export class InkDocumentStore {
   private layerViewListeners = new Set<() => void>();
   /** called when new writing lands on a layer that is hidden in this session (the host shows it again) */
   onWriteToHiddenLayer: ((layerId: string | null) => void) | null = null;
+  /**
+   * (N1 Wave 0) named view filters ANDed with the layers' predicate: the colour-legend filter, «نسخة نظيفة للمراجعة», an
+   * export toggle (N5). Each has a key (the same visible set → the same key, so cached tiles are reused).
+   */
+  private viewFilters = new Map<string, { fn: (it: InkItem) => boolean; key: string; onCleared?: () => void }>();
   /** Called when new writing lands on a layer hidden in this session (the layers view shows it again). */
   setWriteToHiddenLayerHandler(fn: ((layerId: string | null) => void) | null): void {
     this.onWriteToHiddenLayer = fn;
@@ -169,6 +183,11 @@ export class InkDocumentStore {
       window.addEventListener('pagehide', hide);
       this.removePageHide = () => window.removeEventListener('pagehide', hide);
     }
+  }
+
+  /** (N1) this device's database (bulk actions read pages that are not open). */
+  get localDb(): MedLevoDB {
+    return this.db;
   }
 
   dispose(): void {
@@ -305,9 +324,28 @@ export class InkDocumentStore {
     this.visibleKey = fn ? (key ?? `anon:${++this.visibleSeq}`) : '';
     this.layerViewChanged();
   }
-  /** Names the current visible-layer set ('' = everything visible); the tile cache keys its grids by it. */
+  /**
+   * (N1 Wave 0) A named view filter, applied with the layers' predicate wherever `isVisible` is asked (render, hit-test,
+   * eraser, lasso, the page summary). `null` removes it. `onCleared` runs when the store drops the filter because new
+   * writing would be hidden by it (the owner always sees what they write).
+   */
+  setViewFilter(name: string, fn: ((it: InkItem) => boolean) | null, key: string | null = null, opts: { onCleared?: () => void } = {}): void {
+    if (!fn) {
+      if (!this.viewFilters.delete(name)) return;
+    } else {
+      this.viewFilters.set(name, { fn, key: key ?? `anon:${++this.visibleSeq}`, onCleared: opts.onCleared });
+    }
+    this.layerViewChanged();
+  }
+  /** The names of the view filters in force. */
+  viewFilterNames(): string[] {
+    return [...this.viewFilters.keys()];
+  }
+  /** Names the current visible set ('' = everything visible); the tile cache keys its grids by it. */
   get visibilityKey(): string {
-    return this.visibleKey;
+    if (this.viewFilters.size === 0) return this.visibleKey;
+    const parts = [...this.viewFilters.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([n, f]) => `${n}=${f.key}`);
+    return `${this.visibleKey}|${parts.join('|')}`;
   }
   /** Items for which `fn` is false can be selected and copied but never moved, recoloured, restacked or deleted. */
   setEditability(fn: ((it: InkItem) => boolean) | null): void {
@@ -327,7 +365,9 @@ export class InkDocumentStore {
   }
   getActiveLayer = (): string | null => this.activeLayer;
   isVisible(it: InkItem): boolean {
-    return !this.visibleFn || this.visibleFn(it);
+    if (this.visibleFn && !this.visibleFn(it)) return false;
+    if (this.viewFilters.size) for (const f of this.viewFilters.values()) if (!f.fn(it)) return false;
+    return true;
   }
   isEditable(it: InkItem): boolean {
     return !this.editableFn || this.editableFn(it);
@@ -352,6 +392,24 @@ export class InkDocumentStore {
     }
     for (const page of this.pages.values()) this.emit(page, { kind: 'view' });
     this.layerViewListeners.forEach((l) => l());
+  }
+
+  /**
+   * (N1) Items of a kind the engine does not hold in memory (the reader's text highlights), read fresh from this
+   * device's storage — the eraser and «امسح الصفحة» work on the stored state, never on a stale copy.
+   */
+  async loadForeignItems(targetKey: string, kind: string): Promise<InkItem[]> {
+    try {
+      const rows = await this.db.annotations.where('[targetKey+kind]').equals([targetKey, kind]).toArray();
+      return rows.filter((r) => !r.deletedAt).map(itemFromRow);
+    } catch {
+      return [];
+    }
+  }
+
+  /** (N1 wave 2) the page the owner wrote on last (paste, «امسح الصفحة» without a host) */
+  markActive(targetKey: string): void {
+    this.activeTargetKey = targetKey;
   }
 
   nextZ(targetKey: string): number {
@@ -403,13 +461,43 @@ export class InkDocumentStore {
       const scope = this.activeLayerScope;
       if (layer) real = real.map((c) => (isNew(c) && (!scope || scope(c.after!)) ? { ...c, after: { ...c.after!, layer_id: layer } } : c));
       if (this.visibleFn && real.some((c) => !c.before && c.after && !this.visibleFn!(c.after))) this.onWriteToHiddenLayer?.(layer);
+      // (N1) a view filter that would hide the new writing is lifted (and its owner told, to say so)
+      if (this.viewFilters.size) {
+        const lifted = [...this.viewFilters.entries()].filter(([, f]) => real.some((c) => !c.before && c.after && isEngineItem(c.after) && !f.fn(c.after)));
+        if (lifted.length) {
+          for (const [name] of lifted) this.viewFilters.delete(name);
+          this.layerViewChanged();
+          for (const [, f] of lifted) f.onCleared?.();
+        }
+      }
     }
+    // (N1 wave 2, G21) connectors attached to a shape this step moves, resizes or turns follow it in the SAME step (an
+    // undo / redo replays the recorded states, attachments included)
+    if (opts.record !== false) real = this.withFollowers(real);
     this.applyInMemory(real);
     if (opts.record !== false) {
-      if (opts.amend) this.history.amendLast(real);
+      if (opts.amend) this.history.amendLast(real, label_ar || undefined);
       else this.history.push({ label_ar, changes: real });
     }
     this.persist(real);
+  }
+
+  /** (N1 wave 2, G21) the step's changes plus the connectors that follow the shapes it changed */
+  private withFollowers(changes: ItemChange[]): ItemChange[] {
+    if (!changes.some((c) => c.after?.kind === 'shape')) return changes;
+    let out = changes;
+    const now = this.now();
+    for (const targetKey of new Set(changes.map((c) => c.targetKey))) {
+      const page = this.pages.get(targetKey);
+      if (!page) continue;
+      const follow = followConnectors(page.items, out, targetKey, page.ar, now);
+      if (follow.length === 0) continue;
+      const byId = new Map(follow.map((f) => [f.id, f]));
+      out = out.map((c) => (c.targetKey === targetKey && byId.has(c.id) ? { ...c, after: byId.get(c.id)!.after } : c));
+      const present = new Set(out.filter((c) => c.targetKey === targetKey).map((c) => c.id));
+      out = [...out, ...follow.filter((f) => !present.has(f.id) && this.isEditable(f.before!) && !f.before!.locked)];
+    }
+    return out;
   }
 
   private applyInMemory(changes: readonly ItemChange[]) {
@@ -421,7 +509,8 @@ export class InkDocumentStore {
       if (!acc) byPage.set(page, (acc = { dirty: [], ids: [] }));
       const prev = page.items.get(c.id);
       if (prev) acc.dirty.push(itemBBox(prev, page.ar));
-      if (c.after && !c.after.deleted_at) {
+      // (N1) kinds the engine only erases (the reader's text highlights) are written, never held in the page memory
+      if (c.after && !c.after.deleted_at && isEngineItem(c.after)) {
         this.putInMemory(page, c.after);
         acc.dirty.push(itemBBox(c.after, page.ar));
       } else {
@@ -449,12 +538,18 @@ export class InkDocumentStore {
       try {
         const keys = await persistChanges(this.db, batch, this.now());
         // whatever failed before for these ids is now superseded by what was just written
-        for (const c of batch) this.failed.delete(c.id);
+        for (const c of batch) {
+          this.failed.delete(c.id);
+          this.failedIntent.delete(c.id);
+        }
         broadcast(keys, batch.map((c) => c.id));
         if (this.failed.size === 0) this.setStatus({ state: 'idle' });
       } catch {
         // keep the changes in memory and try them again with the next write (never dropped)
-        for (const c of batch) this.failed.set(c.id, c.targetKey);
+        for (const c of batch) {
+          this.failed.set(c.id, c.targetKey);
+          this.failedIntent.set(c.id, c.after);
+        }
         this.setStatus({ state: 'error', message: SAVE_ERROR_AR });
       } finally {
         for (const c of changes) {
@@ -470,7 +565,8 @@ export class InkDocumentStore {
    * Items whose earlier write failed, as changes carrying their CURRENT in-memory state (null =
    * removed → tombstone). Ids that the new batch writes anyway are skipped (the batch has the
    * newest state). Built when the write is queued; ids leave `failed` only once a write of them
-   * succeeds.
+   * succeeds. (Review of N1 wave 1) An item the engine does not hold in memory — its page is not open, or it is a kind
+   * the reader draws — is retried with the state its failed write meant to store.
    */
   private retryChanges(changes: readonly ItemChange[]): ItemChange[] {
     if (this.failed.size === 0) return [];
@@ -478,7 +574,10 @@ export class InkDocumentStore {
     const out: ItemChange[] = [];
     for (const [id, targetKey] of this.failed) {
       if (inBatch.has(id)) continue;
-      const current = this.pages.get(targetKey)?.items.get(id) ?? null;
+      const page = this.pages.get(targetKey);
+      const intent = this.failedIntent.get(id);
+      const inMemory = !!page?.loaded && (intent === undefined || intent === null || isEngineItem(intent));
+      const current = inMemory ? (page!.items.get(id) ?? null) : (intent ?? page?.items.get(id) ?? null);
       out.push({ id, targetKey, before: null, after: current });
     }
     return out;
@@ -574,7 +673,9 @@ export class InkDocumentStore {
     const cmd = dir === 'undo' ? this.history.peekUndo() : this.history.peekRedo();
     if (!cmd) return 'empty';
     const changes = dir === 'undo' ? invertChanges(cmd.changes) : cmd.changes.map((c) => ({ ...c }));
-    const unloaded = changes.filter((c) => !this.pages.get(c.targetKey)?.loaded);
+    // pages that are not open, and kinds the engine does not hold in memory (N1: text highlights), are checked against
+    // this device's stored copy
+    const unloaded = changes.filter((c) => !this.pages.get(c.targetKey)?.loaded || !isEngineChange(c));
     if (unloaded.length === 0) return this.decide(dir, cmd, changes, (c) => this.memoryState(c));
     const ids = unloaded.map((c) => c.id);
     this.checking = loadRows(this.db, ids)
@@ -582,7 +683,7 @@ export class InkDocumentStore {
         const stored = new Map(ids.map((id, i) => [id, aliveItem(rows[i] && !rows[i]!.deletedAt ? itemFromRow(rows[i]!) : null)]));
         const top = dir === 'undo' ? this.history.peekUndo() : this.history.peekRedo();
         if (top !== cmd) return;
-        this.decide(dir, cmd, changes, (c) => (this.pages.get(c.targetKey)?.loaded ? this.memoryState(c) : (stored.get(c.id) ?? null)));
+        this.decide(dir, cmd, changes, (c) => (this.pages.get(c.targetKey)?.loaded && isEngineChange(c) ? this.memoryState(c) : (stored.get(c.id) ?? null)));
       })
       .catch(() => undefined)
       .finally(() => {
@@ -745,8 +846,34 @@ export class InkDocumentStore {
     this.editSelection('نقل/تحجيم/تدوير', (it, now) => transformItem(it, m, page.ar, now));
   }
 
-  recolorSelection(color: string): void {
-    this.editSelection('تغيير اللون', (it, now) => recolorItem(it, color, now));
+  private lastNudge: { at: number; ids: string } | null = null;
+  /**
+   * (N1, G19) Moves the selection by an iso offset (arrow keys). Presses within a second of each other on the same
+   * selection are one undo step.
+   */
+  nudgeSelection(dx: number, dy: number): void {
+    const sel = this.selection;
+    const page = sel ? this.pages.get(sel.targetKey) : undefined;
+    if (!sel || !page) return;
+    const now = this.now();
+    const ids = sel.ids.slice().sort().join(',');
+    const top = this.history.peekUndo();
+    const amend = !!this.lastNudge && this.lastNudge.ids === ids && now - this.lastNudge.at < 1000 && top?.label_ar === NUDGE_LABEL;
+    const m: Mat = [1, 0, 0, 1, dx, dy];
+    const changes: ItemChange[] = [];
+    for (const it of this.selectedItems()) {
+      if (!this.isEditable(it) || it.locked) continue;
+      const after = transformItem(it, m, page.ar, now);
+      if (after !== it) changes.push({ id: it.id, targetKey: sel.targetKey, before: it, after });
+    }
+    if (changes.length === 0) return;
+    this.commit(NUDGE_LABEL, changes, { amend });
+    this.lastNudge = { at: now, ids };
+  }
+
+  /** `meaning` (N1, G03): the meaning of the colour slot picked (null = none; undefined = keep each item's). */
+  recolorSelection(color: string, meaning?: string | null): void {
+    this.editSelection('تغيير اللون', (it, now) => recolorItem(it, color, now, meaning));
   }
 
   rewidthSelection(width: number): void {
@@ -791,21 +918,30 @@ export class InkDocumentStore {
    * Paste the clipboard onto `targetKey` (another page is fine). New ids, on the active layer (a copy of a read-only
    * layer's item becomes the owner's own writing); one undo step.
    */
-  paste(targetKey: string | null = this.activeTargetKey, opts: { offset?: boolean } = {}): number {
+  paste(targetKey: string | null = this.activeTargetKey, opts: { offset?: boolean; at?: [number, number] } = {}): number {
     const page = targetKey ? this.pages.get(targetKey) : undefined;
     if (!clipboard || !page || !page.anchor || !targetKey) return 0;
     const now = this.now();
     const offset = clipboard.from === targetKey && opts.offset !== false ? 0.02 : 0;
-    const m: Mat = [1, 0, 0, 1, offset, offset * page.ar];
+    let m: Mat = [1, 0, 0, 1, offset, offset * page.ar];
+    // (N1 wave 2, G67) «الصق هنا»: the copied items centred where the owner pressed
+    if (opts.at) {
+      let b: NormBox | null = null;
+      for (const it of clipboard.items) b = unionBox(b, itemBBox(it, clipboard.ar));
+      if (b) m = [1, 0, 0, 1, opts.at[0] - (b.x + b.w / 2), (opts.at[1] - (b.y + b.h / 2)) * page.ar];
+    }
+    const moved = m[4] !== 0 || m[5] !== 0;
     let z = page.maxZ + 1;
     const changes: ItemChange[] = [];
+    // (review of N1 wave 2, G21) a pasted diagram's connectors attach to the pasted shapes, never to the originals
+    const newIds = new Map(clipboard.items.map((src) => [src.id, newId(now)]));
     for (const src of clipboard.items) {
-      const copy: InkItem = { ...cloneItem(src, newId(now), page.anchor, now, z++), layer_id: null };
+      const copy: InkItem = { ...reattachCopy(cloneItem(src, newIds.get(src.id)!, page.anchor, now, z++), newIds), layer_id: null };
       if (!this.activeLayerScope || this.activeLayerScope(copy)) copy.layer_id = this.activeLayer;
       delete copy.author_user_id;
       delete copy.origin;
       delete copy.migrated_from_id;
-      const placed = offset ? transformItem(copy, m, page.ar, now) : copy;
+      const placed = moved ? transformItem(copy, m, page.ar, now) : copy;
       changes.push({ id: placed.id, targetKey, before: null, after: placed });
     }
     this.commit('لصق', changes);
@@ -829,6 +965,12 @@ export class InkDocumentStore {
     return this.selectedItems().some((it) => !this.isEditable(it));
   }
 
+}
+
+/** The change is about an item the engine keeps in memory (not a reader kind it only erases). */
+function isEngineChange(c: ItemChange): boolean {
+  const it = c.after ?? c.before;
+  return !it || isEngineItem(it);
 }
 
 /** Two copies of an item that are the same row: same revision, same change time, same layer and author. */

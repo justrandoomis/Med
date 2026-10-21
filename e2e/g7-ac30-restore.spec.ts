@@ -50,7 +50,8 @@ test('AC-30: backup made in the app, restore verified by the server, restored wi
     await tab.click();
     await page.getByRole('button', { name: 'ملاحظة على هذه الصفحة' }).click();
     await page.getByRole('textbox', { name: /ملاحظة جديدة/ }).fill(noteText);
-    await page.getByRole('button', { name: 'تم' }).click();
+    // exact: the writing bar's hand tool «اليد (قراءة وتمرير)» (and its previous-tool slot) also contain «تم»
+    await page.getByRole('button', { name: 'تم', exact: true }).click();
     // on a phone the study rail is a bottom sheet over the book: close it before turning pages
     const sheet = page.locator('.ml-overlay--sheet');
     if (await sheet.isVisible()) {

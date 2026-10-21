@@ -7,6 +7,7 @@ import { ACCEPT_INK_HEADER, parseAcceptInk, SYNC_OPS, type SyncPullResponse, typ
 import type { ModuleOptions } from '../../context';
 import { AppError } from '../../lib/errors';
 import { parseBody, parseQuery, RATE_LIMITS } from '../../lib/http';
+import { isOldClient } from '../auth/clientGate';
 import { currentEpoch } from '../data/epoch';
 import { MAX_PULL_LIMIT, MAX_PUSH_OPS } from './registry';
 
@@ -63,14 +64,17 @@ export default async function syncModule(app: FastifyInstance, opts: ModuleOptio
       }
     }
     // (P1-T2) `accept-ink: 2` → ink entities in the answer carry packed points; without it, today's v1 (old clients)
+    // (R1-b) `legacyClient`: an R1-a app (no supported `x-medlevo-client`; only user #1 gets this far) — see
+    // annotations/sync.ts for the edit it cannot make safely
     const res = ctx.sync.push(
       body.ops.map((o) => ({ ...o, payload: o.payload ?? null })),
-      { inkFormat: parseAcceptInk(req.headers[ACCEPT_INK_HEADER]) },
+      { inkFormat: parseAcceptInk(req.headers[ACCEPT_INK_HEADER]), ...(isOldClient(req) ? { legacyClient: true } : {}) },
     );
     // remember which device this session syncs from (sessions list shows it)
     const deviceId = body.ops[0]?.device_id;
     if (deviceId && req.auth?.sessionId) {
-      ctx.db.run('UPDATE auth_session SET device_id = COALESCE(device_id, ?) WHERE id = ?', [deviceId, req.auth.sessionId]);
+      // sessions live in the system DB (P1-T1): only the caller's own session row
+      ctx.system.sessions.rememberDevice(req.auth.user.id, req.auth.sessionId, deviceId);
     }
     return res;
   });

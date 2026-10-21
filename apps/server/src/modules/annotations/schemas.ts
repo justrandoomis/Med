@@ -3,7 +3,30 @@
 // Server-managed fields (rev, created_at/updated_at, deleted_at, conflict ids) sent by a client are ignored.
 // `data` objects are validated for the fields the contract defines and keep any extra keys (forward
 // compatible ink formats); free-form records are size-limited.
-import { ANNOTATION_IMAGE_MAX_BYTES, ANNOTATION_IMAGE_MAX_SIDE, ANNOTATION_IMAGE_MIMES, COVER_COLORS, decodeInkPoints, NOTE_PAGE_KINDS, richTextSchema } from '@medlevo/shared';
+import {
+  ANNOTATION_IMAGE_MAX_BYTES,
+  ANNOTATION_IMAGE_MAX_SIDE,
+  ANNOTATION_IMAGE_MIMES,
+  CONNECTOR_RELATIONS,
+  CONNECTOR_ROUTES,
+  COVER_COLORS,
+  decodeInkPoints,
+  hasBidiControls,
+  INK_DASHES,
+  INK_MEANING_MAX,
+  INK_SMOOTHING_MAX,
+  INK_TAPERS,
+  INK_TEXTURES,
+  NOTE_PAGE_KINDS,
+  PATHWAY_HEADS,
+  richTextSchema,
+  richTextToPlain,
+  SHAPE_CORNER_MAX,
+  SHAPE_KINDS,
+  SHAPE_LABEL_MAX,
+  SHAPE_POLYGON_MAX,
+  SHAPE_SIDES,
+} from '@medlevo/shared';
 import { z } from 'zod';
 
 const ID = z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/, 'معرّف غير صالح.');
@@ -46,11 +69,32 @@ export const anchorSchema = z.discriminatedUnion('type', [
 export type AnchorInput = z.infer<typeof anchorSchema>;
 
 const inkPoint = z.array(finite).min(3).max(6);
+/**
+ * (parity N1, G03) the meaning of a colour slot copied onto a stroke: one trimmed line, 1–60 characters, no bidi control
+ * characters (AC-20). Validated without transforming (the stored `data` is the payload as sent).
+ */
+export const inkMeaningSchema = z
+  .string()
+  .min(1, 'معنى اللون فارغ.')
+  .max(INK_MEANING_MAX, `معنى اللون أطول من ${INK_MEANING_MAX} حرفًا.`)
+  .refine((s) => s === s.trim() && !/[\r\n\t]/.test(s), 'معنى اللون سطر واحد دون مسافات في طرفيه.')
+  .refine((s) => !hasBidiControls(s), 'معنى اللون يحتوي رموز اتجاه مخفية.');
+/** (parity N1, G19) a rotation in radians about the item's centre (page space); one turn either way at most */
+const rotationSchema = finite.refine((n) => Math.abs(n) <= 2 * Math.PI + 1e-9, 'زاوية دوران غير صالحة.');
 const inkStyleSchema = z.looseObject({
   tool: z.enum(['pen', 'fountain', 'ball', 'highlighter']),
   color: z.string().min(1).max(40),
   width: finite.refine((n) => n > 0 && n <= 0.2, 'سماكة غير صالحة.'),
   opacity: unit.optional(),
+  // (parity N1) colour meaning (G03) and pen feel (G01), saved with the stroke so every device draws it the same way
+  meaning: inkMeaningSchema.optional(),
+  smoothing: z.number().int('التنعيم عدد صحيح.').min(0).max(INK_SMOOTHING_MAX, 'التنعيم خارج المدى.').optional(),
+  pressure_floor: finite.refine((n) => n >= 0 && n <= 0.9, 'حد الضغط الأدنى خارج المدى.').optional(),
+  taper: z.enum(INK_TAPERS, 'نوع طرف الخط غير معروف.').optional(),
+  constant: z.boolean().optional(),
+  // (parity N1 wave 2) dashes / dots (G04) and the pencil's graphite grain (G06)
+  dash: z.enum(INK_DASHES, 'نمط الخط غير معروف.').optional(),
+  texture: z.enum(INK_TEXTURES, 'ملمس القلم غير معروف.').optional(),
 });
 /** (track F4) time link of a stroke to an in-app recording (shared InkAudioLink) */
 export const audioLinkSchema = z.object({
@@ -96,17 +140,44 @@ export const inkDataV2Schema = z
       ctx.addIssue({ code: 'custom', path: ['points_packed'], message: 'نقطة خارج نطاق الصفحة.' });
     }
   });
-const shapeDataSchema = z.looseObject({
-  v: z.literal(1),
-  shape: z.enum(['line', 'arrow', 'rect', 'ellipse']),
-  from: z.tuple([coord, coord]),
-  to: z.tuple([coord, coord]),
-  rotation: finite.optional(),
-  style: inkStyleSchema,
-  recognized_from: inkDataSchema.optional(),
-  audio_link: audioLinkSchema.optional(),
-});
-const textBoxDataSchema = z.looseObject({ v: z.literal(1), box: normBoxSchema, text: richTextSchema, color: z.string().max(40), font_scale: finite });
+/** (parity N1 wave 2, G20) a fill colour: a palette token or #rrggbb */
+const fillColorSchema = z.string().regex(/^(#[0-9a-fA-F]{6}|(ink|hl)-[a-z]{2,20})$/, 'لون التعبئة غير معروف.');
+/** (G21) the edge point of a shape a connector is attached to */
+const shapeAttachSchema = z.object({ id: ID, side: z.enum(SHAPE_SIDES, 'جهة الاتصال غير معروفة.') });
+export const shapeDataSchema = z
+  .looseObject({
+    v: z.literal(1),
+    shape: z.enum(SHAPE_KINDS, 'نوع الشكل غير معروف.'),
+    from: z.tuple([coord, coord]),
+    to: z.tuple([coord, coord]),
+    rotation: finite.optional(),
+    style: inkStyleSchema,
+    recognized_from: inkDataSchema.optional(),
+    audio_link: audioLinkSchema.optional(),
+    // ── (parity N1 wave 2 — G20 shapes, G21 connectors) ──
+    fill: fillColorSchema.optional(),
+    corner: finite.refine((n) => n > 0 && n <= SHAPE_CORNER_MAX, 'نصف قطر الزاوية خارج المدى.').optional(),
+    label: richTextSchema
+      .refine((t) => richTextToPlain(t).length <= SHAPE_LABEL_MAX, `النص داخل الشكل أطول من ${SHAPE_LABEL_MAX} حرف.`)
+      .refine((t) => !hasBidiControls(richTextToPlain(t)), 'النص داخل الشكل يحتوي رموز اتجاه مخفية.')
+      .optional(),
+    label_scale: finite.refine((n) => n >= 0.004 && n <= 0.1, 'حجم خط النص داخل الشكل خارج المدى.').optional(),
+    points: z.array(z.tuple([coord, coord])).min(3, 'المضلّع يحتاج ثلاث زوايا على الأقل.').max(SHAPE_POLYGON_MAX, `المضلّع ${SHAPE_POLYGON_MAX} زاوية على الأكثر.`).optional(),
+    control: z.tuple([coord, coord]).optional(),
+    head: z.enum(PATHWAY_HEADS, 'رأس السهم غير معروف.').optional(),
+    route: z.enum(CONNECTOR_ROUTES, 'مسار الموصِّل غير معروف.').optional(),
+    attach: z.object({ from: shapeAttachSchema.optional(), to: shapeAttachSchema.optional() }).optional(),
+    relation: z.enum(CONNECTOR_RELATIONS, 'نوع العلاقة غير معروف.').optional(),
+    concept_id: ID.optional(),
+    concept_name: z
+      .string()
+      .min(1)
+      .max(300)
+      .refine((s) => !hasBidiControls(s) && !/[\r\n]/.test(s), 'اسم المفهوم سطر واحد دون رموز اتجاه مخفية.')
+      .optional(),
+  })
+  .refine((d) => d.shape !== 'polygon' || (Array.isArray(d.points) && d.points.length >= 3), { message: 'المضلّع يحتاج زواياه.', path: ['points'] });
+const textBoxDataSchema = z.looseObject({ v: z.literal(1), box: normBoxSchema, text: richTextSchema, color: z.string().max(40), font_scale: finite, rotation: rotationSchema.optional() });
 const stickyDataSchema = z.looseObject({ v: z.literal(1), at: z.tuple([coord, coord]), text: z.string().max(20_000), color: z.string().max(40), collapsed: z.boolean().optional() });
 export const textHighlightDataSchema = z.looseObject({
   v: z.literal(1),
@@ -155,6 +226,8 @@ export const imageDataSchema = z.looseObject({
   bytes: z.number().int().min(1).max(ANNOTATION_IMAGE_MAX_BYTES, 'الصورة أكبر من الحد المسموح (10 ميغابايت).'),
   alt: z.string().max(500).nullish(),
   name: z.string().max(255).nullish(),
+  /** (parity N1, G19) rotation about the picture's centre */
+  rotation: rotationSchema.optional(),
 });
 /** any other kind: a JSON object, size-limited by the caller */
 const freeDataSchema = z.record(z.string(), z.unknown());

@@ -95,18 +95,21 @@ async function main(): Promise<number> {
   if (!argv.includes('--no-record')) {
     const dataDirArg = opt(argv, 'data-dir');
     const config = loadConfig({ ...process.env, ...(dataDirArg ? { MEDLEVO_DATA_DIR: fromInitCwd(dataDirArg) } : {}) }, { cwd: process.env.INIT_CWD ?? process.cwd() });
-    if (existsSync(config.dbPath)) {
-      const db = openDb(config.dbPath);
+    // P1-T1: in a multi-user data directory the platform's evaluation records live in user #1's (the first platform
+    // admin's) vault; a single-owner directory keeps them in medlevo.sqlite. Only an existing database is written.
+    const target = evaluationTarget(config.systemDbPath, config.vaultsDir) ?? (existsSync(config.dbPath) ? config.dbPath : null);
+    if (target && existsSync(target)) {
+      const db = openDb(target);
       try {
         migrate(db);
         syncCatalogue(db, Date.now());
         recordRun(db, report, Date.now());
-        process.stdout.write(`recorded in ${config.dbPath} (Control Center → التقييم)\n`);
+        process.stdout.write(`recorded in ${target} (Control Center → التقييم)\n`);
       } finally {
         db.close();
       }
     } else {
-      process.stdout.write(`no server database at ${config.dbPath}: the run was not recorded (the files above are the report)\n`);
+      process.stdout.write(`no server database at ${config.dataDir}: the run was not recorded (the files above are the report)\n`);
     }
   }
 
@@ -135,3 +138,17 @@ main()
     process.stderr.write(`MedLevo evaluation failed: ${(e as Error)?.stack ?? String(e)}\n`);
     process.exit(1);
   });
+
+/** The vault that keeps the platform's records in a multi-user data directory (user #1's), or null. */
+function evaluationTarget(systemDbPath: string, vaultsDir: string): string | null {
+  if (!existsSync(systemDbPath)) return null;
+  const sys = openDb(systemDbPath);
+  try {
+    const row = sys.get<{ db_file: string }>(
+      `SELECT v.db_file FROM vault v JOIN user_account u ON u.id = v.user_id WHERE u.is_platform_admin = 1 AND v.status = 'active' ORDER BY u.created_at, u.id LIMIT 1`,
+    );
+    return row && /^[A-Za-z0-9_-]{1,80}\.sqlite$/.test(row.db_file) ? join(vaultsDir, row.db_file) : null;
+  } finally {
+    sys.close();
+  }
+}

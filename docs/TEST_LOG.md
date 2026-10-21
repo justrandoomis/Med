@@ -818,3 +818,439 @@ effect), `apps/web/src/features/workspace/ink/layers/layers.css`; tests `apps/we
 | A live AI provider; `npm run eval -- --mode=live` | no `ANTHROPIC_API_KEY`; nothing in R1-a changes an AI path |
 | `MEDLEVO_PERF=1` suites, the ink harness config, a Docker image rebuild, the CI workflows on GitHub | not re-run: no change to the measured paths, the ink engine or `Dockerfile` / `deploy/` since their track reviews; no GitHub runner |
 | Safari, Firefox, screen readers, axe-core | not available here (axe-core is not in the repository; structural probes instead) |
+
+## Academic OS P1-T1 step 1 — system DB, request binding, vault pool, accounts, authz core (2026-10-21, final gates 08:19 → 09:40 UTC, run in this container; the parity N1 writing track was editing `apps/web/src/features/workspace/ink/*` and running its own Playwright spec in parallel)
+
+Code under test: `HEAD` d0c8ab4 plus this step's uncommitted work (and N1's uncommitted ink work). Commands from the
+repository root with `NODE_OPTIONS='--disable-warning=ExperimentalWarning'`; logs under the session scratchpad
+(`p1-t1-step1/`), Playwright output in `p1-t1-step1/e2e-results` (`--output`, `--reporter=list`).
+
+| # | command | exit | result |
+|---|---|---|---|
+| 1 | `npm run typecheck` | 0 | no type errors (shared, server, web, e2e) |
+| 2 | `npm run lint` | 0 | 0 problems (`--max-warnings 0`) |
+| 3 | `npm test` (run 2, after the off-site test fix) | 0 | **shared** 11 files, 109 passed · **server** 181 files passed, 7 skipped; **1 838 passed**, 7 skipped · **web** 154 files passed, 1 skipped; **980 passed**, 1 skipped |
+| 4 | `npm test -w @medlevo/server` (run 3, after the last fix — the correction-history open hook) | 0 | 181 files passed, 7 skipped; **1 840 passed**, 7 skipped |
+| 5 | `npm run build` | 0 | built; PWA `generateSW`, 282 precache entries |
+| 6 | `npx playwright test --output <scratch>/e2e-results --reporter=list` (156 tests, phone + desktop, 31.5 min) | 1 | **139 passed, 15 skipped** (perf 12 opt-in, `aos-p1-layers` 2 and `h3-reader-notes` 1 by design), **2 failed**: `f4-handwriting-audio` «in-app recording … plays that moment» on phone and desktop — see below |
+| 7 | `MEDLEVO_PERF=1 MEDLEVO_PERF_PAGES=60 vitest run test/perf/crash-resume.perf.test.ts` | 0 | kill -9 mid-processing → restart → resumed 2.95 s after the restart; no duplicate reading orders / review items / image assets (the 300-page default was not run) |
+
+Run 1 of `npm test` failed once (server 1 failed / 1 837 passed): `test/data/offsite.test.ts` «a different key is
+refused … nothing is restored» found a `medlevo-restored-*` directory in the shared OS temp directory — written there by
+`test/data/offsite-cli.test.ts` running in another worker. Test isolation, not product behaviour: each off-site test app
+now gets its own parent directory; both files pass together (19 / 19) and run 2 is green.
+
+**The E2E failure (not caused by this step).** The failing step is the last one — «tapping the stroke with the lasso
+plays that moment»: `pickInkTool(page, /التحديد الحر/)` now hits N1's renamed «خيارات التحديد الحر (Lasso)» control,
+which opens the lasso options (`[expanded]` in the page snapshot) instead of selecting the tool, so no stroke is
+selected and the «استمع من …» button never appears. Every server step before it passed in the same test (the recording
+uploaded into the user's vault, linked to the lecture, the stroke carrying an automatic link with a plausible offset),
+and the server log of the run has no 5xx. Left to the N1 track (its toolbar, or the spec's tool picker); not edited here.
+
+Step-1 acceptance tests (new, `apps/server/test/tenancy/`): `pool` 8 · `isolation` 12 · `authz` 12 · `accounts` 7 ·
+`platform-routes` 5 · `layout-and-tokens` 11 · `import-boundary` 6 · `migrations-system` 6 — 67 tests. Measured
+(`isolation.test.ts`, written with `MEDLEVO_MEASURE_OUT`): binding overhead p50 **130 ns** per statement (proxy 4.47 µs vs
+direct 4.37 µs, p95 1.37 µs); pool miss p95 **3.67 ms** (12 vaults, 4 slots; first open with hooks p95 3.87 ms);
+200 interleaved requests of two users: **0 cross reads**.
+
+Not run: any device, a second browser engine, Render / R2, a live AI provider, the 300-page crash-resume default, the
+«200 sign-ins from one address» load test, a deployment over existing single-owner data (refused by design until step 3).
+
+## Academic OS P1-T1 step 1 — adversarial review (2026-10-21, run in this container; the parity N1 writing track was editing `apps/web/src/features/workspace/ink/*` in parallel)
+
+Reviewer, not the builder. Read every changed file, probed binding under concurrency with scratch tests (session
+scratchpad `p1t1-review/probes/`, not in the repository), reproduced each defect with a failing test, fixed it, and
+re-ran the gates. Findings, fixes and what stays open: `docs/modules/tenancy.md` «Step 1 review»; matrix statuses:
+`docs/REQUIREMENTS_MATRIX.md` (part AOS, «Step 1 adversarial review»).
+
+Regression tests (each failed before its fix): `apps/server/test/tenancy/step1.review.test.ts` — a session whose vault
+is locked can read the sign-in state, sign out and hand the browser to another account (2); the job index re-indexes a
+queued job missing after a restore and one parked «unavailable» while its vault was locked, without dropping the entry
+of an enqueue in progress (2); the admin's storage report no longer calls other accounts' files unregistered leftovers
+(1); plus a verification test with no defect behind it: two accounts' sync pull, op-id replay and SRS stay apart (1).
+
+Probes that found nothing (kept out of the repository): 300 interleaved requests of 10 users on a pool of 4 — no
+error, 0 cross reads, 0 leaked leases; 28 SSE streams + request-scoped timers firing after lease release and eviction —
+every write in the requester's vault; 20 interleaved multipart uploads of two users — each source in its own vault.
+Re-measured (`isolation.test.ts`, `MEDLEVO_MEASURE_OUT`): binding overhead p50 83 ns / p95 2.1 µs per statement; pool
+miss p50 3.75 ms / p95 5.6 ms; first open with hooks p95 6.5 ms.
+
+| # | command (repository root, `NODE_OPTIONS='--disable-warning=ExperimentalWarning'`) | exit | result |
+|---|---|---|---|
+| 1 | `npm run typecheck` | 0 | no type errors (shared, server, web, e2e) |
+| 2 | `npm run lint` | 0 | 0 problems |
+| 3 | `npm test` | 0 | **shared** 109 passed · **server** 182 files passed, 7 skipped; **1 846 passed**, 7 skipped (the builder's 1 840 + 6 review tests) · **web** 154 files, **980 passed**, 1 skipped |
+| 4 | `npm run build` | 0 | built; PWA 282 precache entries |
+| 5 | `npx playwright test e2e/smoke.spec.ts e2e/g1-ac01-personal-library.spec.ts e2e/g7-ac30-restore.spec.ts e2e/g8-security.spec.ts e2e/aos-p1-layers.spec.ts e2e/h3-reader-notes.spec.ts e2e/g7-ac24-two-devices.spec.ts e2e/g7-ac23-offline.spec.ts --output <scratch>/e2e-results --reporter=list` (34 tests, phone + desktop, 6.3 min) | 1 | **30 passed, 3 skipped** (by design: `aos-p1-layers` 2, `h3-reader-notes` 1), **1 failed**: `g7-ac30-restore` on desktop — see below. AC-30 on the phone passed end to end (backup made in the app over the multi-user layout, verified by the server, restored with the CLI, a second server shows everything) |
+| 6 | the failed spec again, alone (`--project=desktop`) | 1 | same failure, same step |
+
+**The desktop AC-30 failure (not caused by P1-T1).** The step «the owner writes in the reader … then reads on» clicks
+`getByRole('button', { name: 'تم' })` to close the note; that name now also matches two ink-toolbar buttons of the
+parity N1 track's uncommitted work — the hand tool «اليد (قراءة وتمرير)» («وتمرير» contains «تم») and N1's new
+«الأداة السابقة: اليد (قراءة وتمرير)» — a strict-mode violation before any backup step. On the phone the toolbar layout
+hides them and the whole spec passes. Left to N1 (its toolbar labels, or the spec's `exact: true`); neither file is
+P1-T1's and neither was edited here.
+
+Not run: any device, a second browser engine, Render / R2, a live AI provider, the full E2E suite (the builder's full
+run is the entry above; this review ran the specs that touch tenancy plus smoke), `MEDLEVO_PERF=1` suites, a deployment
+over existing single-owner data (refused by design until step 3).
+
+## Parity N1 wave 1 — writing comfort and speed, part 1 (2026-10-21, run in this container; P1-T1 was editing the server and running its own suites in parallel)
+
+Gaps G03 · G14 · G15 · G17 · G19 · G66 · G02 · G01 and the Wave 0 seams (`docs/modules/ink.md`, «Parity N1 wave 1»).
+No migration; new optional fields in `InkStyle` / `TextBoxData` / `ImageAnnotationData` (append-only) and the `ink` part
+of the owner's settings.
+
+| gate | result |
+|---|---|
+| `npm run typecheck` | pass (shared, server, web, e2e) |
+| `npm run lint` | pass (0 warnings) |
+| `npm test` | pass — shared 11 files / 109 tests; server 181 files / 1 840 passed, 7 skipped; web 154 files / 980 passed, 1 skipped (web re-run on the final code: same) |
+| `npm run build` | pass |
+| `npx playwright test e2e/n1-writing.spec.ts` | 8 / 8 pass (phone 390 × 844 + desktop 1280 × 800), also inside both full runs |
+| `npx playwright test` (full, run 1) | 139 passed, 15 skipped (perf, opt-in), 2 failed: `f4-handwriting-audio` «automatic time link» (phone + desktop) — the lasso's new options button «خيارات التحديد الحر (Lasso)» matched `pickInkTool(/التحديد الحر/)`. Fixed in this track (the lasso options are named «خيارات التحديد (الشكل والأنواع)»; the overflow menu lists the options after the tools); `f4`, `n1`, `g6-ac28`, `h3` re-run: 25 / 25 pass |
+| `npx playwright test` (full, run 2, final code) | 140 passed, 15 skipped, 1 failed: `g7-ac30-restore` (phone; a restored card not shown within 60 s while P1-T1 was editing `modules/data/*` and running its suites) — re-run once: 2 / 2 pass |
+| `MEDLEVO_PERF=1 … perf.spec.ts -g "5 000 ink strokes"` (desktop, 2 runs) | pass ×2 — open → 5 000 strokes painted 12.6 s at load ≈ 7 / 8.3 s at load ≈ 2 (I2 baseline 10.6 s), new stroke 164 / 63 ms, 0 long tasks while writing, zoom repaint longest task 106 / 55 ms |
+| `MEDLEVO_PERF=1 … -g "dense page, 5 layers"` (desktop, 3 runs) | 1 pass (warm layer show 0.2 ms, 6/6 warm tiles; writing during re-rasters longest task 74 ms; zoom in again 4/6 warm), 2 fails before measuring: the 4 layers seeded through sync were not listed in «الطبقات» after 15 s (layers / sync code, not this track) |
+
+New tests: server `test/annotations/n1-ink.test.ts` 8; web `test/ink/` gestures 12 · n1-seams 8 · n1-colours 10 ·
+n1-gestures-erase 10 · n1-select-resize 13 · n1-toolbar-palm-feel 17; e2e `e2e/n1-writing.spec.ts` 4 × 2 projects.
+
+Measured here (not a device): input → frame latency in headless Chromium with a mouse, desktop project — p50 8.7 ms,
+p95 23.1 ms (45 samples). Not run: iPad + Apple Pencil, S Pen, BOOX e-ink, a real palm, perceived latency on any device
+(no device in this container).
+
+## Parity N1 wave 1 — adversarial review (2026-10-21, run in this container; P1-T1 step 2 was editing the server and running its own suites in parallel)
+
+Independent review of the N1 wave 1 build (BUILD_PLAN §1.2; findings R1–R9 and what stays open: `docs/modules/ink.md`,
+«Review of N1 wave 1»; row statuses: `docs/REQUIREMENTS_MATRIX.md`, «C-PAR / parity N1 wave 1»). Every finding was
+reproduced first — a scratch probe outside the repository, then a regression test that failed before the fix (6 web
+tests in `n1-gestures-erase` / `gestures` failing, 4 in `n1-select-resize` / `n1-colours` / `n1-toolbar-palm-feel`
+failing, then all passing).
+
+| # | gate | exit | result |
+|---|---|---|---|
+| 1 | `npm run typecheck` | 0 | shared, server, web, e2e |
+| 2 | `npm run lint` | 0 | 0 warnings |
+| 3 | `npm test` | 1 → re-run 0 | shared 11 files / 109 passed · server 196 files: 1 899 passed, 7 skipped, **1 failed** — `test/acceptance/g7-ac30.test.ts` «EVERY table comes back row for row» (`blob_mark`, a table of P1-T1 step 2's unfinished blob registry, not in the expected diff); re-run alone after a few minutes: 9 / 9 passed · web (run separately, the workspace script stops at the server failure) 154 files / **990 passed**, 1 skipped (the builder's 980 + 10 review tests) |
+| 4 | `npm run build` | 0 | built |
+| 5 | `npx playwright test` aos-eink, aos-p1-layers, g6-ac20, g6-ac21, g6-ac22, g6-ac28, g7-ac24, g7-ac30, f4-handwriting-audio, h3-reader-notes, n1-writing, smoke (phone + desktop, own `--output`) | 1 | 54 passed, 3 skipped (by design), **1 failed**: `g7-ac30-restore` desktop — strict-mode violation on `getByRole('button', { name: 'تم' })` (the hand tool «اليد (قراءة وتمرير)» and N1's previous-tool slot contain «تم»; R9) |
+| 6 | `npx playwright test e2e/g7-ac30-restore.spec.ts` after the exact-name fix | 0 | 2 / 2 passed (phone + desktop) |
+| 7 | `MEDLEVO_PERF=1 … perf.spec.ts --project=desktop -g "5 000 ink strokes"` | 0 | open → 5 000 strokes painted 12.0 s at load ≈ 8.7 (the other track's suites; builder: 12.6 s at load ≈ 7, 8.3 s at load ≈ 2; I2 baseline 10.6 s); a new stroke 94 ms pointer-up → committed, 0 long tasks; zoom repaint 2 long tasks, longest 141 ms |
+
+New tests: web `test/ink/gestures` +3 (15), `n1-gestures-erase` +4 (14), `n1-select-resize` +1 (14), `n1-colours` +1 (11),
+`n1-toolbar-palm-feel` +1 (18); e2e `n1-writing` two new assertions (the page named in «امسح الصفحة»; visible slot names in
+the e-ink colour picker), both passing on phone and desktop.
+
+Not run: iPad + Apple Pencil, S Pen, BOOX, a real palm, perceived latency on any device (no device here); the full E2E
+suite (the specs touching the ink engine, the reader and AC-30 plus smoke were run); the dense-page tile perf spec.
+
+## Academic OS P1-T1 step 2 — uploads, blob registry + GC, R2 blobs, encrypted / per-vault backups, export / delete my account, quotas, AI allowance (2026-10-21, final gates 10:58 → 11:51 UTC, run in this container; the parity N1 writing track was editing `apps/web/src/features/workspace/ink/*` — wave 2 from about 11:30, including shared / server ink schema tests — and running its own Playwright spec in parallel)
+
+Code under test: `HEAD` d0c8ab4 plus the uncommitted work of P1-T1 steps 1–2 (and N1's uncommitted ink work). Commands from
+the repository root with `NODE_OPTIONS='--disable-warning=ExperimentalWarning'`; logs under the session scratchpad
+(`p1-t1-step2/`), Playwright output in `p1-t1-step2/e2e-results` (`--output`, `--reporter=list`).
+
+| # | command | exit | result |
+|---|---|---|---|
+| 1 | `npm run typecheck` (10:58, before N1 wave 2 started) | 0 | no type errors (shared, server, web, e2e) |
+| 2 | `npm run lint` (10:58 and again 11:49 on the final tree) | 0 | 0 problems (`--max-warnings 0`) |
+| 3 | `npm run build` | 0 | built; PWA `generateSW`, 282 precache entries |
+| 4 | `npm test` run 1 (11:01) | 1 | shared 11 files, 109 passed · **server 1 failed** / 1 900 passed, 7 skipped: `g7-ac30` «EVERY table comes back row for row» — see below (web not reached) |
+| 5 | `npm test` run 2 (11:08, after the AC-30 test change) | 1 | shared 109 passed · **server 190 files passed, 7 skipped; 1 901 passed**, 7 skipped · web **1 failed** / 989 passed: `StudyBookPane.test.tsx` «… the book opened at the block of the lecture page» (not this track's file; passes 3 / 3 alone — load: N1's Playwright was running) |
+| 6 | `npm test -w @medlevo/web` run 3 (11:45) | 0 | 154 files passed, 1 skipped; **990 passed**, 1 skipped |
+| 7 | `npx playwright test --output <scratch>/e2e-results --reporter=list` (156 tests, phone + desktop, 11:18 → 11:45, 27.2 min) | 0 | **141 passed, 15 skipped** (perf 12 opt-in, `aos-p1-layers` 2 and `h3-reader-notes` 1 by design), 0 failed — the step-1 `f4-handwriting-audio` lasso failure no longer occurs |
+| 8 | `npm run typecheck` again on the final tree (11:49, re-run per project 11:51) | 2 | shared and e2e clean; **errors only in N1 wave-2 files being written at that moment** (at 11:51 two remained: `n1-wave2.test.ts` `dash`, `InkToolbar.tsx` `./zoomWindow`) (`apps/server/test/annotations/n1-wave2.test.ts` — `dash` not yet in `ShapeData`; `apps/web/src/features/workspace/ink/InkToolbar.tsx` — `./zoomWindow`, `ChoiceChips`, `ShapeOptionsPanel`, `DashChoice` not yet present). Not edited here; every P1-T1 file type-checks |
+
+**The AC-30 change (deliberate, documented).** The restore's boot check on a multi-user directory now runs one blob mark
+pass (`docs/BACKUP_RESTORE.md` §7), so `blob_sweep`, `blob_mark` and `blob_ref` of the restored `system.sqlite` differ from
+the live one. The test now asserts exactly that: one new `mark` sweep, completed, nothing orphaned / quarantined /
+deleted; its marks equal the hints; the hints equal the live hints as a set (only their row order changed, the pass
+rewrites them). Every vault table and every other system table still comes back row for row.
+
+Step-2 tests (new, all passing): `test/tenancy/blob-gc` 14 · `storage-quota` 4 · `uploads` 8 · `blob-r2` 5 ·
+`vault-backup` 9 · `test/ai/allowance` 8 · `test/accounts/export-delete` 5 · `test/data/encrypted-cli` 1 — 54 tests, plus
+the device cap in `test/tenancy/accounts`. Measured (scratch, not in the repository): mark pass over 41 vaults / 2 000
+blobs ≈ 275–310 ms, full sweep ≈ 284–297 ms; `files.put` 1 KB with quota + registry p50 4.1 ms / p95 13.5 ms (without
+the quota p50 3.3 / p95 12.2 ms).
+
+Not run: a real Cloudflare R2 bucket (the R2 blob adapter ran only against the local signature-verifying S3 fake), Render,
+any device, a second browser engine, a live AI provider, the 300-page crash-resume default, the «200 sign-ins from one
+address» load test, a deployment over existing single-owner data (refused by design until step 3).
+
+## Academic OS P1-T1 step 2 — adversarial review (2026-10-21, gates 12:05 → 12:45 UTC, run in this container; the parity N1 writing track was editing `apps/web/src/features/workspace/ink/*` and its wave-2 tests in parallel)
+
+Reviewer, not the builder. Read every file step 2 changed, reproduced each defect with a failing test, fixed it, and
+re-ran the gates. Findings, fixes and what stays open: `docs/modules/tenancy.md` «Step 2 review»; matrix statuses:
+`docs/REQUIREMENTS_MATRIX.md` (part AOS, «Step 2 adversarial review»). Logs: session scratchpad `p1-t1-step2-review/`.
+
+Regression tests (each failed before its fix): `apps/server/test/tenancy/step2.review.test.ts` (12) — a stopped AI call
+keeps its reservation (and one aborted before it was sent gives it back) (2); account deletion removes sessions,
+sign-in attempts under the old login name and upload sessions, and the policy says when file bytes go (1); the export
+fetches a missing local copy back from R2 and names files it cannot have (2); the replicator never starves, never
+confirms a damaged local copy, never leaves a copy of a quarantined blob (3); two concurrent «complete» calls store the
+file once (1; the first version of this test passed — the race window is narrow — so it was sharpened to count the
+stores and checked to fail with the fix disabled); a vault restored while a sweep runs keeps its blob readable (1); one
+restore per vault at a time (1); a whole-instance archive of a multi-user past never leaves in clear (1).
+
+| # | command (repository root, `NODE_OPTIONS='--disable-warning=ExperimentalWarning'`) | exit | result |
+|---|---|---|---|
+| 1 | `npm run typecheck` | 2 | shared clean; **errors only in the N1 track's in-progress wave-2 test files** (`apps/server/test/annotations/n1-wave2.test.ts` `dash` not in `ShapeData`; `apps/web/test/ink/n1w2-logic.test.ts` a cast); per project: server and web have no other error, `tsc -p e2e` exit 0. Not edited here |
+| 2 | `npm run lint` | 0 | 0 problems (`--max-warnings 0`) |
+| 3 | `npm test` | 0 | **shared** 11 files, 109 passed · **server** 192 files passed, 7 skipped; **1 922 passed**, 7 skipped (incl. the 12 review tests) · **web** 157 files passed, 1 skipped; **1 030 passed**, 1 skipped |
+| 4 | `npm run build` | 0 | built; PWA `generateSW`, 282 precache entries |
+| 5 | `npx playwright test e2e/smoke.spec.ts e2e/g7-ac30-restore.spec.ts e2e/h4-exports-sources.spec.ts e2e/f5-quality-ops.spec.ts e2e/g8-security.spec.ts e2e/g7-ac23-offline.spec.ts --output <scratch>/e2e-results --reporter=list` | 0 | **26 passed**, 0 failed, 0 skipped (13 tests × phone + desktop, 3.2 min) — AC-30 backup / verify / restore on both projects, exports, quality ops, security, offline, smoke |
+
+Not run: a real Cloudflare R2 bucket (only the local signature-verifying S3 fake), Render, any phone / tablet / pen, a
+second browser engine, a live AI provider, the full E2E suite (the builder's full run is the entry above; this review
+ran the specs that touch backups, exports, files, security and offline, plus smoke), a deployment over existing
+single-owner data (refused by design until step 3).
+
+## Parity N1 wave 2 — writing comfort and speed, part 2 (2026-10-21, gates 12:41 → 13:26 UTC, run in this container; P1-T1 step 3 was editing server files in parallel)
+
+Built: G09 zoom writing window (right to left for Arabic), G10 insert space / straighten (+ word reflow behind
+`workspace.handwriting_recognition`, fake reader only), G67 page menu, G04 dashes, G06 pencil, G07 eyedropper, G20
+shapes and pathway heads, G22 snapping incl. processed regions, G08 ruler + educational measurement, G21 connectors with
+medical relations and Course Brain concepts, G11 neat copy. Details and limits: `docs/modules/ink.md` «Parity N1 wave 2».
+No migration (all new fields optional JSON). Logs: session scratchpad `n1w2/`.
+
+New tests: server `test/annotations/n1-wave2.test.ts` (9); web `test/ink/n1w2-logic.test.ts` (22), `n1w2-layer.test.tsx`
+(13), `n1w2-shapes.test.tsx` (6); e2e `e2e/n1-writing.spec.ts` «N1 wave 2» (2 tests × phone + desktop). Defects found by
+them and fixed: the dash cutter could loop forever (float remainder); connector ends and «أفسح مكانًا» ignored where the
+pen lifted; the click after a long press swallowed the first page-menu tap; every page in view showed a measurement
+panel (found by the e2e run); an inhibition bar on a box edge was invisible.
+
+| # | command (repository root, `NODE_OPTIONS='--disable-warning=ExperimentalWarning'`) | exit | result |
+|---|---|---|---|
+| 1 | `npm run typecheck` | 0 | clean (shared, server, web, e2e) |
+| 2 | `npm run lint` | 1 | **one error, outside this track**: `apps/server/src/system/ownerMigration.ts:1028` `prefer-const` (P1-T1 step 3, in progress in parallel). Every file this track touched: `npx eslint --max-warnings 0 <N1 files>` → 0 problems |
+| 3 | `npm test` | 0 | **shared** 11 files, 109 passed · **server** 192 files passed, 7 skipped; 1 922 passed, 7 skipped · **web** 157 files passed, 1 skipped; 1 031 passed, 1 skipped (`test/ink` re-run after the last ink edits: 30 files, 297 passed) |
+| 4 | `npm run build` | 0 | built; PWA `generateSW`, 282 precache entries |
+| 5 | `npx playwright test e2e/n1-writing.spec.ts --grep "N1 wave 2" --output <scratch>/n1w2/pw-w2` | 0 | 4 passed (phone + desktop) |
+| 6 | `E2E_BUILD=0 npx playwright test --output <scratch>/n1w2/e2e-full --reporter=list` (160 tests, 12:50 → 13:22) | 0 | **145 passed, 15 skipped** (perf 12 opt-in, `aos-p1-layers` 2, `h3-reader-notes` 1), 0 failed |
+
+Not run: any phone / tablet / stylus (iPad + Pencil, S Pen, BOOX) — pencil grain, zoom window with a pen, two-finger
+ruler, long press timing; the EyeDropper API path in a browser; a real (or the server's fake) recognition provider for the
+word reflow; the 5 000-stroke performance budget for wave 2; a second browser engine.
+
+## Parity N1 wave 2 — adversarial review (2026-10-21, gates 13:40 → 14:36 UTC, run in this container; P1-T1 step 3 was editing server / web-lib files and ran its own full Playwright suite 13:59 → 14:32 in parallel)
+
+Independent review of the N1 wave 2 build (BUILD_PLAN §1.2; findings R1–R10 and what stays open: `docs/modules/ink.md`,
+«Review of N1 wave 2»; row statuses: `docs/REQUIREMENTS_MATRIX.md`, «C-PAR / parity N1 wave 2»). Every finding was
+reproduced first: 12 of the 13 tests in `apps/web/test/ink/n1w2-review.test.tsx` and the one in
+`n1w2-review-neat.test.tsx` failed before the fixes (the e-ink guard needed only a `Path2D` stand-in; the ink v2 guard was
+added after); R10 (old clients) was reproduced by running the R1-a `transformItem` shape branch on the new kinds (script
+in the session scratchpad, `n1w2-review/oldclient/old-move.mjs`). Commands from the repository root with
+`NODE_OPTIONS='--disable-warning=ExperimentalWarning'`; Playwright with `E2E_BUILD=0`, own `--output` under the session
+scratchpad (`n1w2-review/e2e/`), `--reporter=list`.
+
+| # | gate | exit | result |
+|---|---|---|---|
+| 1 | `npm run typecheck` | 0 | shared, server, web, e2e |
+| 2 | `npm run lint` | 0 | 0 problems (`--max-warnings 0`) |
+| 3 | `npm test` | 0 | shared 11 files / 109 passed · server 196 files passed, 7 skipped; **1 985 passed**, 7 skipped · web 163 files passed, 1 skipped; **1 070 passed**, 1 skipped (includes the 14 review tests; `test/ink` alone, re-run after: 32 files, 311 passed) |
+| 4 | `npm run build` | 0 | built; PWA `generateSW`, 283 precache entries |
+| 5 | `npx playwright test e2e/n1-writing.spec.ts e2e/smoke.spec.ts` (phone + desktop) | 0 | **16 passed** (N1 wave 1 and wave 2 blocks, smoke) |
+| 6 | `npx playwright test` aos-eink, aos-p1-layers, g6-ac20, g6-ac21, g6-ac22, g6-ac28, g7-ac30-restore, f4-handwriting-audio, h3-reader-notes, f1-notebook-pages (phone + desktop) | 1 | 44 passed, 3 skipped (by design), **1 failed**: `g6-ac21` phone «… on another device» — 8 × «Failed to load resource: 404» on the second browser: P1-T1's parallel full run rebuilt `apps/web/dist` (new chunk hashes) at 13:59:28, two minutes into this run, while this run's server kept serving the page — not a product defect |
+| 7 | `npx playwright test e2e/g6-ac21-ink-position.spec.ts` after the other run had finished (dist stable) | 0 | **4 passed** (phone + desktop) |
+
+New tests: web `test/ink/n1w2-review.test.tsx` (13: R1–R8 + e-ink and ink-v2 guards), `n1w2-review-neat.test.tsx` (1: R9).
+Not run: iPad + Apple Pencil, S Pen, BOOX (no device here) — the zoom strip with a stylus, the two-finger ruler, long-press
+timing, pencil grain on an e-ink panel; word reflow with a real (or the server's fake) recognition provider; the
+EyeDropper API path; the 5 000-stroke perf spec and the full E2E suite (the ink-related specs and smoke were run).
+
+## Academic OS P1-T1 step 3 — owner migration, boot guard, client-version gate, per-user web storage, AC-01a server part (2026-10-21, final gates 13:42 → 14:43 UTC, run in this container; the parity N1 writing track and its reviewer were editing `apps/web/src/features/workspace/ink/*` and running their own vitest / Playwright runs in parallel)
+
+Code under test: `HEAD` d0c8ab4 plus the uncommitted work of P1-T1 steps 1–3 (and N1's uncommitted ink work). Commands from
+the repository root with `NODE_OPTIONS='--disable-warning=ExperimentalWarning'`; logs under the session scratchpad
+(`p1t1s3/logs/`), Playwright output in `p1t1s3/e2e-results` (`--output`, `--reporter=list`).
+
+| # | command | exit | result |
+|---|---|---|---|
+| 1 | `npm run typecheck` (13:42) | 2 | shared, server and e2e clean; one error in an N1 wave-2 file being written at that moment (`ink/zoomWindow.tsx:60`), not edited here |
+| 2 | `npm run lint` (13:43) | 1 | one error in this track: `system/ownerMigration.ts:1028` `prefer-const` — fixed; re-run → 0 problems |
+| 3 | `npm test -w @medlevo/shared` | 0 | 11 files, **109 passed** |
+| 4 | `npm test -w @medlevo/server` run 1 (13:45) | 1 | 195 files passed, 7 skipped · **1 failed** / 1 984 passed: `owner-migration` «kill -9 at growing delays …» — every kill landed before the CLI had started (≤ 1.2 s) and the next run finished the small fixture in < 300 ms, so no kill fell inside the migration (a timing assumption of the test, not a data defect: every run ended `none` or `complete`). Fixed in the test: each delay now counts from the run's first journal line; 3 runs alone → kills land in `begin`, `freeze`, `safety`, `system_db`, `move_vault`, then resume completes |
+| 5 | `npm test -w @medlevo/web` run 1 | 1 | 162 files passed · **1 failed** / 1 069 passed: `offline/entry-points.test.tsx` «links to «بياناتك»» (not this track's file; passes 3 / 3 alone — load: another track's Playwright and vitest were running) |
+| 6 | `npm run build` | 0 | built; PWA `generateSW`, 283 precache entries |
+| 7 | `E2E_BUILD=0 npx playwright test --output <scratch>/p1t1s3/e2e-results --reporter=list` (160 tests, phone + desktop, 13:59 → 14:31, 32.2 min; `E2E_BUILD=0` so this run never rebuilt `dist` under the other track's run — `dist` from #6) | 0 | **145 passed, 15 skipped** (perf 12 opt-in, `aos-p1-layers` 2, `h3-reader-notes` 1), 0 failed |
+| 8 | final tree (14:32 → 14:43): `npm run typecheck` · `npm run lint` · `npm test -w @medlevo/server` · `npm test -w @medlevo/web` | 0 · 0 · 0 · 0 | clean · 0 problems · **196 files passed, 7 skipped; 1 985 passed**, 7 skipped · **163 files passed, 1 skipped; 1 070 passed**, 1 skipped |
+
+Step-3 tests (new, all passing): server `test/tenancy/owner-migration` 37 (release rule; dry run; apply on the realistic
+R1-a fixture of `test/tenancy/legacy-fixture.ts`; user #1 verbatim; first boot; cursors, epoch and a legacy outbox of two
+devices replayed exactly once; refuses twice; boot guard; a crash at 18 journal points; `SIGKILL` of the CLI at 3 points
+and at growing delays; aborts; rollback, a crash inside it, and its two refusals) · `maintenance` 12 (incl. the real
+`src/index.ts` going from the page to the app on the same port with the R1-a session cookie) · `client-gate` 7 ·
+`test/acceptance/ac01a` 7; web `test/tenancy/userStorage` 9 · `localdb-per-user` 7 · `noteDrafts-per-user` 4 ·
+`client-headers` 5. The existing `web:test/stores.test.ts` «keeps the device signed in …» failed on the first full web
+run (the device pointer had moved into `activateAccount`) and passes after the fix in `lib/auth.ts`. The Docker wrapper
+`deploy/docker/medlevo-migrate-multi-user` was run outside Docker (paths substituted, as the unprivileged `nobody`):
+`--status` and `--dry-run` work, and the data directory of PID 1 wins over the shell's (also with a space in the path).
+
+Not run: Render, Cloudflare R2 (the off-site copy of the migration backup ran against the signature-checking S3 fake
+only), the Docker image itself (no Docker daemon in this container), any phone / iPad / pen, an installed R1-a PWA
+updating itself to this build, a legacy data directory produced by running the R1-a release (the fixture is built with
+the current code at R1-a's exact base migration set), `e2e/aos-p1-two-users-one-browser.spec.ts` (needs a second
+account; no register route before P1-T4), a second browser engine.
+
+## Academic OS P1-T1 step 3 — adversarial review (2026-10-21, gates 15:12 → 15:40 UTC, run in this container; the parity N1 writing track was editing `apps/web/src/features/workspace/ink/*` in parallel)
+
+Reviewer, not the builder. Read every file step 3 changed and the R1-a client code the gate must not break; reproduced
+each defect with a failing test, fixed it, re-ran the gates. Findings, fixes and what stays open: `docs/modules/tenancy.md`
+«Step 3 review»; matrix statuses: `docs/REQUIREMENTS_MATRIX.md` (part AOS, «Step 3 adversarial review»). Logs and the
+Playwright output: session scratchpad `review-p1t1s3/` (`logs/`, `e2e-results/`).
+
+Regression tests (each failed before its fix unless noted): server `apps/server/test/tenancy/owner-migration.review.test.ts`
+(11) — zero loss of every file and every row through the migration and the first boot (passed before: no defect, pinned);
+a double tap on «ابدأ» starts one run (passed before: the re-plan caught it, pinned); a double tap on «أعد المحاولة» plus
+«تراجع» started three operations (`[303, 303, 303]`) → one; a second run in the same process → `BUSY`; a rollback keeps
+sessions revoked under R1-b revoked; the tombstone stops an older release and is set aside by the rollback (2) and a
+tombstone alone is never «fresh»; an empty / torn journal is «nothing started» (2); an honest failure page after a refused
+boot-time rollback. Web `apps/web/test/tenancy/auth-switch.review.test.ts` (3) — no device id borrowed by another account
+after a sign-out in the same page (and kept for the same account); the capability cache follows the page's account.
+`owner-migration.test.ts` gained the crash point `move_vault:tombstone` and two lines that know the tombstone.
+
+| # | command (repository root, `NODE_OPTIONS='--disable-warning=ExperimentalWarning'`) | exit | result |
+|---|---|---|---|
+| 1 | `npm run lint` (15:12) | 0 | 0 problems (`--max-warnings 0`) |
+| 2 | `npm run typecheck` | 0 | shared, server, web, e2e clean |
+| 3 | `npm test -w @medlevo/server` (15:14 → 15:20) | 0 | 197 files passed, 7 skipped; **1 997 passed**, 7 skipped (builder: 1 985 + the 11 review tests + 1 crash point) |
+| 4 | `npm test -w @medlevo/web` (15:21 → 15:23) | 0 | 164 files passed, 1 skipped; **1 073 passed**, 1 skipped (builder: 1 070 + 3) |
+| 5 | `npm test -w @medlevo/shared` | 0 | 11 files, **109 passed** |
+| 6 | `npm run build` (15:33) | 0 | built; PWA `generateSW`, 283 precache entries |
+| 7 | `E2E_BUILD=0 npx playwright test e2e/smoke.spec.ts e2e/g1-ac01-personal-library.spec.ts e2e/g7-ac23-offline.spec.ts e2e/g7-ac24-two-devices.spec.ts e2e/g7-ac30-restore.spec.ts e2e/g8-security.spec.ts e2e/h3-reader-notes.spec.ts e2e/f5-quality-ops.spec.ts --output <scratch>/review-p1t1s3/e2e-results --reporter=list` (15:33 → 15:40) | 0 | **35 passed, 1 skipped** (`h3-reader-notes` item 5 is phone-only), 0 failed — smoke, AC-01, offline, two devices, AC-30 restore, security, reader notes (drafts), quality ops (error reporter headers) on phone + desktop |
+| 8 | cross-release check (`review-p1t1s3/r1a/cross-release.sh`: the real R1-a server from `git archive d0c8ab4` ↔ this build's CLI) | 0 | R1-a setup + a note → `--apply` → R1-a refuses the migrated directory («file is not a database»), directory unchanged → `--rollback` → R1-a starts, old password, the note, the pre-migration cookie still valid |
+
+Not run: the full E2E suite (the builder's full run is the entry above; this review ran the specs that touch accounts,
+local storage, sync, offline, restore and security, plus smoke), `e2e/aos-p1-two-users-one-browser.spec.ts` (needs the
+register route, P1-T4), Render, Cloudflare R2 (S3 fake only), the Docker image (no daemon), any phone / iPad / pen, an
+installed R1-a PWA updating itself, a second browser engine.
+
+## Release R1-b + N1 — final verification (2026-10-21, 15:42 → @@END@@ UTC, run in this container)
+
+The whole tree at the end of release R1-b «multi-user foundation» (P1-T1 steps 1–3) with parity N1 waves 1–2 beside it,
+each built and reviewed adversarially (entries above). `HEAD` d0c8ab4 (the R1-a release) plus the uncommitted R1-b and N1
+work. Same environment as above (Node 22.22, Chromium at `/opt/pw-browsers/chromium`, no `ANTHROPIC_API_KEY`,
+`NODE_OPTIONS='--disable-warning=ExperimentalWarning'`); no other track was editing the tree. Release checks only — no
+new feature. What shipped, the owner's update steps for Render and what is «Not run»: `docs/academic-os/BUILD_PLAN.md`
+§1.3 «Release R1-b». Logs, screenshots and scratch scripts: session scratchpad `r1b-final/` (outside the repository).
+
+### 1. First pass (before any change of this task)
+
+| # | command | exit | duration | result |
+|---|---|---|---|---|
+| 1 | `npm run typecheck` | 0 | 63 s | no type errors (shared, server, web, e2e) |
+| 2 | `npm run lint` (`eslint . --max-warnings 0`) | 0 | 76 s | no problems |
+| 3 | `npm test` | 0 | 512 s | shared 11 files · **109 passed** · server 197 files passed, 7 skipped · **1 997 passed**, 7 skipped · web 164 files passed, 1 skipped · **1 073 passed**, 1 skipped |
+| 4 | `npm run build` | 0 | 5 s | built in 2.1 s; PWA **283 precache entries** (4 913 KiB) |
+| 5 | `npm run eval -- --set=regression --compare=docs/eval/baseline.json --no-record` | 0 | 12 s | regression **80 / 80**, `no_regressions` (`eval-20261021T155353-9c36e1b1`) |
+| 6 | `E2E_BUILD=0 npx playwright test --output <scratch>` (full suite, phone + desktop) | 0 | 1 786 s (29.7 min) | 160 tests: **145 passed, 0 failed, 15 skipped** |
+
+The R10 server change (section 3) landed between rows 3 and 6, so run 6 already served it; the web build it used
+predates every CSS fix. The 15 skipped are the existing project-conditional skips: `perf.spec.ts` 6 × 2 (opt-in
+`MEDLEVO_PERF=1`), `aos-p1-layers` × 2 (desktop-only flow, phone-only panel check) and one phone-only check of
+`h3-reader-notes` on desktop.
+
+### 2. Owner migration end to end against the real R1-a release
+
+A scratch script (not in the repository) on a **fresh copy** of the realistic R1-a data directory that
+`apps/server/test/tenancy/legacy-fixture.ts` builds (sources and processed pages, ink on two layers, notes, cards with
+review history, an exam in progress, a recording, backups, sessions on three devices, queued outbox ops):
+
+1. **old build:** the REAL R1-a server (`git archive d0c8ab4`, its own `node_modules`) boots on it; the fixture's iPad
+   session is signed in; a note and an ink stroke pushed through R1-a's own sync (applied, applied); snapshot through
+   R1-a's API — 13 feed entities (5 annotations, 3 notes, a study session, 2 exam attempts, a question attempt, the
+   layer), the library tree, settings, recordings, cards, exam attempts, the lecture's detail, every file of the store;
+2. **migrate:** this build boots into the maintenance page (phase «waiting», never first-run setup; `/api/auth/status`
+   `setup_required: false`); a wrong password → 401 and nothing starts; «ابدأ الترقية» with the owner's password → 303;
+   the app answers on the same port 0.8 s later;
+3. **new build, user #1:** one vault, `medlevo.sqlite` is the tombstone; `/api/accounts/me` = `owner_r1a`, platform admin,
+   `owns_legacy_device_data`; all 13 feed entities identical (missing 0, different 0), epoch and head unchanged; every
+   read API equal (settings gain only the defaults of N1's `ink` part); the recording (6 063 B) and the lecture PDF
+   (67 045 B) stream the same bytes; the 4 stored files byte-identical; the vault sha256 equal to the database before
+   the first R1-b boot; the R1-a iPad cookie valid for the old app and the updated app; the expired session still 401;
+   two devices' queued outbox ops applied once, a re-send `duplicate`; a note written under R1-b;
+4. **rollback:** `MEDLEVO_OWNER_MIGRATION=rollback` → «rolled_back», `medlevo.sqlite` a database again; the real R1-a boots:
+   all 13 pre-migration entities, the replayed ops and the R1-b note there, library tree equal, same file bytes, the iPad
+   still signed in.
+
+**38 / 38 checks passed.** No defect in the migration itself.
+
+### 3. Critic pass of the new and changed screens (390 and 1280 px; light, dark and e-ink)
+
+A scratch Playwright spec (outside the repository, run with the repository's `e2e/support` harness against a real
+server serving a scratch build) opened 24 N1 / R1-b screens — the writing toolbar, the pen / eraser / lasso / shape
+options, the six sections of «إعدادات الكتابة», the colour legend, «امسح الصفحة», «احذف كل نوع», «المحذوف بالجملة», the clean
+view, the ruler, the measurement panel, the zoom strip, the neat copy, the page menu, «قدرات القلم على هذا الجهاز»,
+Settings and the Control Center — in light, dark and e-ink on both projects (144 screenshots), and drove the upgrade
+page on a fresh copy of the R1-a fixture through «waiting», a wrong password, the migration, «تم التراجع» and the
+«blocked» state in light and dark (16 screenshots). Each screen was probed (one h1, named controls, no sideways
+overflow, text contrast ≥ 4.5:1, an icon never alone on its line, on the phone 44 px targets) and looked at.
+
+Found and fixed (each reproduced by a test that failed first), plus the open N1 review finding R10:
+
+| # | finding | fix | regression test |
+|---|---|---|---|
+| 1 | **The upgrade page's forms did not work in a real browser:** «ابدأ الترقية» → «رُفض الطلب لأنه صادر من أصل غير مسموح.» (403), every time, phone and desktop. The page was served with `Referrer-Policy: no-referrer`; under it a browser posts a form with `Origin: null`, which the origin check refuses. Every server test had posted with a hand-written `Origin` | `system/maintenance.ts`: `Referrer-Policy: same-origin` (a same-origin form keeps its Origin; a cross-site post still sends `null` and is refused) | `apps/server/test/tenancy/maintenance-form.r1b.test.ts` «… not served with Referrer-Policy no-referrer» (failed before) + «… Origin null stays refused» |
+| 2 | **R10 (data safety, open major of the N1 wave-2 review):** an R1-a app — still served for user #1 — that moves a polygon, curved or double arrow keeps only the frame: the arrow can flip, a polygon's corners stay behind | the sync push marks a client without a supported `x-medlevo-client` (`SerializeOptions.legacyClient`); `annotations/sync.ts` refuses from it an upsert that changes such a shape's geometry and returns the server's copy (the R1-a app files a conflict and puts the shape back); delete, restore unchanged, recolour and moving shapes R1-a knows still apply | `apps/server/test/annotations/r1b-old-client-shapes.test.ts` (6; the three kinds and the stale-edit case failed before) |
+| 3 | Desktop 1280 px with the study rail open (and 1180 / 1024): the writing bar covered the title, the page chip and the zoom group; «المزيد من أدوات الكتابة» and zoom-out could not be tapped (the middle slot never shrank, the others collapsed) | `workspace.css` top-bar slots (start ≥ 16 rem, centre may shrink, end keeps its content) — the writing bar then folds tools into «المزيد» as designed | `e2e/r1b-final-critic.spec.ts` (desktop; every top-bar control hit at its centre at 1280 / 1180 / 1024 px, rail open and closed — failed before) |
+| 4 | «التقط لونًا من الصفحة» (G07): the pipette icon on a line of its own (light, dark, e-ink; both widths) | `.ml-ink-eyedropper` centred inline flex row | `apps/web/test/ink/ink-css.critic.test.ts` (failed before) |
+| 5 | Dark theme: a shape's label (G20) inherited the theme's light text colour on the white page — 1.2:1, invisible | `.ml-ink-shape-label` drawn in the paper tone's ink colour (`--ml-ink-c-ink-black`; greys in e-ink) | same file (failed before); contrast probe clean |
+| 6 | Phone: the colour-meaning fields of «إعدادات الكتابة» and every writing slider (width, feel, alignment / zoom) were 40 px tall | 44 px under `(pointer: coarse)` | same file (failed before) |
+| 7 | Upgrade page at 390 px: the «blocked» reason ran off the screen (`(MEDLEVO_OWNER_MIGRATION=rollback)` is one unbreakable word) | `main { overflow-wrap: anywhere }` | `maintenance-form.r1b.test.ts` «long unbreakable words …» (failed before) |
+| 8 | Upgrade page at 390 px: the «نعم، ابدأ» checkbox squeezed to 14 × 24 px by its two-line label | `flex: none` (24 × 24 inside the 44 px label) | `maintenance-form.r1b.test.ts` «… keeps its 24 px box …» (failed before) |
+
+Looked at and left (not defects of R1-b): on the phone the probe lists the skip link (43 px, reported since Round 7), the
+custom colour inputs (24 × 24 in the tool options, 44 × 40 in «إعدادات الكتابة» — each inside a 44 px label that opens
+it), the design system's password-reveal button (40 × 40) and switches (31 px with a 45 px ring) and, on the upgrade
+page, the 24 × 24 checkbox inside its 44 px label.
+After the fixes the critic re-runs were clean apart from these: desktop all checks; phone the known 44 px items above;
+the upgrade page on both projects (no overflow, contrast ≥ 4.5:1).
+
+### 4. Final runs (after every change of this task)
+
+| # | command | exit | duration | result |
+|---|---|---|---|---|
+| 1 | `npm run typecheck` | 0 | — | no type errors (shared, server, web, e2e — includes `e2e/r1b-final-critic.spec.ts`) |
+| 2 | `npm run lint` | 0 | 56 s | no problems |
+| 3 | `npm test` | 0 | 464 s (vitest) | shared 11 files · **109 passed** · server 199 files passed, 7 skipped · **2 007 passed**, 7 skipped (1 997 + 6 + 4) · web 165 files passed, 1 skipped · **1 076 passed**, 1 skipped (1 073 + 3) |
+| 4 | `npm run build` | 0 | 4 s | built in 1.8 s; PWA **283 precache entries** (4 913 KiB) |
+| 5 | `npm run eval -- --set=regression --compare=docs/eval/baseline.json --no-record` | 0 | 11 s | regression **80 / 80**, `no_regressions` (`eval-20261021T164055-06d72a29`) |
+| 6 | `E2E_BUILD=0 npx playwright test --output <scratch>` (full suite, phone + desktop, on the build of row 4) | @@E2EEXIT@@ | @@E2EDUR@@ | @@E2ERES@@ |
+| 7 | critic spec re-runs (scratch) | — | — | after the CSS fixes: desktop 2 / 2 clean, phone only the known 44 px items; the upgrade page after its fixes: desktop clean, phone only the 24 px checkbox inside its 44 px label |
+
+Targeted runs while fixing: `npx vitest run test/annotations/r1b-old-client-shapes.test.ts` 4 failed / 2 passed before,
+6 passed after; `test/tenancy/maintenance-form.r1b.test.ts` 1, then 1, then 1 failed before each fix, 4 passed after
+(with `maintenance.test.ts`: 16 passed); `test/ink/ink-css.critic.test.ts` 3 failed against the old `ink.css` (swapped in
+and restored), 3 passed after; `e2e/r1b-final-critic.spec.ts` failed on the build before the top-bar fix, passed after.
+
+@@E2EPERSPEC@@
+
+### 5. The P1-T1 and N1 rows' named tests, file by file (final tree, `vitest --reporter=json`)
+
+For `docs/REQUIREMENTS_MATRIX.md` (part AOS / C-PAR, «Release R1-b + parity N1 — final verification»):
+
+@@COUNTSTABLE@@
+
+### Files changed by this task
+
+Code: `apps/server/src/system/maintenance.ts` (referrer policy; `main` wraps; the checkbox keeps its size),
+`apps/server/src/modules/sync/{registry,index}.ts` (`legacyClient` option), `apps/server/src/modules/annotations/sync.ts`
+(R10 refusal), `packages/shared/src/annotations.ts` (comment), `apps/web/src/features/workspace/ink/ink.css`,
+`apps/web/src/features/workspace/workspace.css`. Tests (new): `apps/server/test/annotations/r1b-old-client-shapes.test.ts`,
+`apps/server/test/tenancy/maintenance-form.r1b.test.ts`, `apps/web/test/ink/ink-css.critic.test.ts`,
+`e2e/r1b-final-critic.spec.ts`. Docs: this entry, `README.md`, `docs/REQUIREMENTS_MATRIX.md`, `docs/CAPABILITY_MATRIX.md`,
+`docs/academic-os/BUILD_PLAN.md` (status line, §1.3 «Release R1-b»), `docs/DEPLOYMENT.md` §6.1 (release verification
+line), `docs/modules/ink.md`, `docs/modules/tenancy.md`. No migration was added or changed.
+
+### Not run in this verification (and why)
+
+| what | why |
+|---|---|
+| The upgrade on Render, R2, the phone-only dry run | no Render / Cloudflare account, no phone; R2 paths against the signature-checking S3 fake |
+| An installed R1-a PWA on a real iPad / phone updating itself after the migration | no device; the end-to-end script replays two devices' queued ops, jsdom + fake IndexedDB tests cover the in-place claim |
+| Any device: iPad + Apple Pencil, S Pen, BOOX (N1 latency, palm levels, long press, two-finger ruler, pencil grain on e-ink) | no device; headless Chromium with mouse / CDP touch only |
+| The Docker image rebuild (`Dockerfile` gained `medlevo-migrate-multi-user`) | `dockerd` is installed but no daemon runs here |
+| `e2e/aos-p1-two-users-one-browser.spec.ts` | no registration route until P1-T4 |
+| A live AI provider, G10 phase-2 reflow with a real reader | no `ANTHROPIC_API_KEY`; fake providers only |
+| `MEDLEVO_PERF=1` suites, Safari / Firefox, screen readers, axe-core, CI on a GitHub runner | not available here / no change to the measured paths |

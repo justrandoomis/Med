@@ -2,6 +2,7 @@
 // it is (source, version, page, selection rectangles). Kept in sessionStorage so a reload of the editor keeps it.
 // The editor turns it into an exact evidence excerpt through the server (POST /cards/from-selection).
 import type { NormBox, SourceRegionView } from '@medlevo/shared';
+import { userSession } from '../../lib/userStorage'; // the selection belongs to the signed-in account (P1-T1 step 3)
 
 export interface SelectionCardDraft {
   source_id: string;
@@ -21,7 +22,7 @@ const KEY = 'medlevo.learning.selectionDraft';
 
 export function stashSelectionDraft(d: Omit<SelectionCardDraft, 'created_at'>): void {
   try {
-    sessionStorage.setItem(KEY, JSON.stringify({ ...d, quote: d.quote.slice(0, 6000), created_at: Date.now() }));
+    userSession.set(KEY, JSON.stringify({ ...d, quote: d.quote.slice(0, 6000), created_at: Date.now() }));
   } catch {
     // private mode / storage full: the editor says the selection is missing
   }
@@ -29,7 +30,7 @@ export function stashSelectionDraft(d: Omit<SelectionCardDraft, 'created_at'>): 
 
 export function readSelectionDraft(): SelectionCardDraft | null {
   try {
-    const raw = sessionStorage.getItem(KEY);
+    const raw = userSession.get(KEY);
     if (!raw) return null;
     const d = JSON.parse(raw) as SelectionCardDraft;
     return d && typeof d.quote === 'string' && typeof d.source_id === 'string' && typeof d.version_id === 'string' ? d : null;
@@ -40,7 +41,7 @@ export function readSelectionDraft(): SelectionCardDraft | null {
 
 export function clearSelectionDraft(): void {
   try {
-    sessionStorage.removeItem(KEY);
+    userSession.remove(KEY);
   } catch {
     // ignore
   }

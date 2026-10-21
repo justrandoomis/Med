@@ -24,7 +24,8 @@ afterEach(async () => {
 
 async function appWith(env: Record<string, string>): Promise<TestApp> {
   const t = await createTestApp({
-    env,
+    // P1-T1: the per-IP rule is a ceiling per hour (default 300, a campus NAT); 5 here keeps «the 6th is refused»
+    env: { MEDLEVO_LOGIN_IP_FAILURES_PER_HOUR: '5', ...env },
     modules: MODULES.map((m) => (m.name === 'auth' ? { ...m, plugin: createAuthModule({ setupToken: SETUP_TOKEN }) } : m)),
   });
   apps.push(t);
@@ -45,7 +46,8 @@ const badLogin = (t: TestApp, headers: Record<string, string>, remoteAddress = P
 const goodLogin = (t: TestApp, headers: Record<string, string>, remoteAddress = PEER) =>
   t.app.inject({ method: 'POST', url: '/api/auth/login', remoteAddress, headers: { ...CSRF, ...headers }, payload: { username: OWNER.username, password: OWNER.password } });
 
-const attemptIps = (t: TestApp) => t.ctx.db.all<{ ip: string }>('SELECT ip FROM login_attempt WHERE succeeded = 0 ORDER BY created_at, id').map((r) => r.ip);
+// P1-T1: login attempts live in the system DB
+const attemptIps = (t: TestApp) => t.ctx.system.db.all<{ ip: string }>('SELECT ip FROM login_attempt WHERE succeeded = 0 ORDER BY created_at, id').map((r) => r.ip);
 
 /** 5 failures from one client, each with a DIFFERENT forged X-Forwarded-For head; the 6th must still be refused */
 async function expectForgedXffDoesNotEscape(t: TestApp, headersFor: (forged: string) => Record<string, string>) {
@@ -65,7 +67,9 @@ describe('client address behind Render (MEDLEVO_TRUST_PROXY=1 + MEDLEVO_CLIENT_I
     const ips = attemptIps(t);
     expect(ips.length).toBe(5); // the refused 6th attempt is not recorded
     expect(new Set(ips)).toEqual(new Set([CLIENT]));
-    // another phone is not punished for the first one's failures (per-client, not global)
+    // another phone is not punished for the first one's failures (per-client, not global); the ACCOUNT itself is
+    // slowed 1 s after 5 failures since P1-T1, so wait that second — the address is what this test is about
+    t.clock.advance(1_000);
     expect((await badLogin(t, { 'x-forwarded-for': chain('192.0.2.1', OTHER_CLIENT), 'cf-connecting-ip': OTHER_CLIENT })).statusCode).toBe(401);
   });
 

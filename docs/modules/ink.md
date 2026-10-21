@@ -663,3 +663,324 @@ across undo + tap, read-only items never count as waiting),
 * The reader's review list shows one earlier version at a time (the newest with items waiting); the preview's `earlier`
   lists all of them.
 
+
+## Parity N1 wave 1 — writing comfort and speed, part 1 (2026-10-21; `docs/research/NOTE_APP_FEATURE_PARITY.md` B.4)
+
+Gaps G03, G14, G15, G17, G19, G66, G02, G01 on top of the «Wave 0» seams. No migration: everything new is optional
+fields of existing JSON (`InkStyle`, `TextBoxData`, `ImageAnnotationData`, append-only; `layer_id` and InkData v2
+untouched) and one more part of the owner's settings (`ink`). A stroke written with the classic feel and no colour
+meaning is byte for byte what the engine wrote before N1.
+
+### Wave 0 seams (for N2…N5)
+
+* `ink/kinds.ts` — item-kind registry: built-in kinds plus kinds other tracks register (`selectable`, `erasable`,
+  `exportable`, `contentType`, optional `geometry` / `bounds` / `draw` / `transform`). The lasso, the eraser, «امسح الصفحة»,
+  the page summary and the renderer ask the registry instead of hard-coded lists. Reader kinds (`text_highlight`) are
+  erasable but never held in the engine's page memory.
+* `ink/tools.ts` — toolbar tool registry (`registerInkTool`: id, Arabic name, icon, shortcut by `KeyboardEvent.code`,
+  options panel, pointer session). Registered tools appear after the built-in ones and in the toolbar layout.
+* Visibility: P1-T2's predicate is reused; `store.setViewFilter(name, fn, key)` adds named filters (colour legend,
+  clean review view, N5 exports) ANDed with the layers' predicate (tile cache keyed by them); new writing that a filter
+  would hide lifts the filter (the owner always sees what they write).
+* Lasso actions: `InkSelectionActions.extra` (named actions with id / label / icon / disabled reason), merged across
+  nested providers. Text editor slot: `<InkProvider textEditor={…}>` (N3 mounts a rich editor; default plain textarea).
+
+### What was built
+
+* **G03 colour slots + meanings** (`inkSettings.ts`, `InkSettingsDialog.tsx` «الألوان ومعانيها», `InkDialogs.tsx`
+  «دليل الألوان ومعانيها»): up to 12 slots per tool (tokens or `#rrggbb`), reorder / remove / reset, saved as the WHOLE
+  `ink` object through `/api/settings` (offline: the settings store keeps the change and sends it later). A slot's
+  meaning (≤ 60 chars, one line, no bidi controls — validated on the server) is saved in each new stroke
+  (`style.meaning`), named with the colour on the options button, the selection frame and the page summary («never
+  colour alone»), follows a lasso recolour, and drives «اعرض «…» فقط» (a session view filter, nothing deleted).
+* **G14 gestures** (`gestures.ts`): recognised only after the stroke is committed (off the pointer path).
+  Scribble-to-erase: ≥ 5 reversals, erases strokes it touches whose box it covers ≥ 60 % and only when ≥ 40 % of the
+  scribble lies over them — the scribble and the erased strokes are ONE undo step («مسح بالخربشة»), announced. The
+  highlighter never erases; locked / hidden / read-only items are kept; on empty paper it stays ink; a normal hand's
+  letters and an ECG strip are not scribbles (review: a very cramped «سسس», a small cursive «vvv» or a column of ticks in
+  one stroke can pass the shape test, but they erase nothing unless the zig-zag lies mostly over the strokes); shading or
+  filling inside a closed outline drawn before (a nucleus, a hand-drawn box, a rectangle or ellipse shape) never erases
+  that outline (review fix). Circle + hold (600 ms) → lasso selection of what
+  the loop encloses (the loop is not ink), Escape returns to the pen. Two-finger double tap = undo, three = redo
+  (fingers only; a moved finger, a pen touch or a cancelled pointer voids it). Each gesture can be turned off in
+  «إعدادات الكتابة» → «الإيماءات»; buttons and Ctrl/⌘ Z stay.
+* **G15 selective erasing** (`bulk.ts`, `InkDialogs.tsx`): the eraser's type chips (pen / highlighter / shapes / the
+  reader's text highlights — the last off by default); «امسح الصفحة» and «احذف كل نوع في الدفتر» show the count per type
+  first (reaching pages that are not open, read from this device's storage), then remove as tombstones in ONE undo step
+  (also after a reload: the H3 history); «المحذوف بالجملة» lists those removals on this device and restores them
+  (items changed since are left alone). «نسخة نظيفة للمراجعة» hides chosen kinds for the session (nothing erased).
+* **G17 lasso** (`kinds.ts` `lassoAllows`, `prefs.ts` `LassoPrefs`): chips ink / shapes / text / images / links,
+  «حبري فقط», rectangle mode; remembered per document on this device. Reader text highlights are never selected or
+  moved by the lasso.
+* **G19 resize / rotate / keyboard** (`model.ts`, `SelectionOverlay.tsx`): corner drags stretch shapes, strokes and text
+  boxes (Shift keeps the proportions, Alt resizes about the centre; a text box's letters keep their size); pictures and
+  links keep their proportions; the far side stops at the storable range (`limitStretchToRange`). Text boxes and
+  pictures turn with the rotate handle — `rotation` (radians, clockwise, page space) so zoom and page rotation never
+  change it (AC-21). The frame is a focusable group with an Arabic name and help; a new selection takes the keyboard;
+  arrows move it 1 page point (Shift: 10) in the direction pressed ON SCREEN (rotated views included), presses within a
+  second are one undo step; Delete removes; Escape clears; arrows are left alone while typing.
+* **G66 toolbar** (`toolbarLayout.ts`, `InkToolbar.tsx`, «شريط الأدوات»): order, hidden tools, dock top / start side /
+  end side (a vertical floating bar rendered at the app root), previous-tool slot, «insert returns to the lasso», per
+  study-mode profiles (the mode read from `InkHost.studyMode` or the reader's mode switch) with suggested profiles for
+  «تعلّم» / «امتحن نفسك». The active tool is never hidden; the fit keeps «المزيد», options, undo and redo; when the
+  options button has no room, «المزيد» opens the same options in a dialog.
+* **G02 palm rejection** (`input.ts` `PALM_LEVELS`, «راحة اليد»): low / medium / high map to the contact size and the
+  quiet time after the pen; the writing hand's zone (beside and below the pen on the hand's side — where the hand rests
+  on Arabic ink already written) for a while after the pen lifts; the values in force are shown in the settings and in
+  «قدرات القلم على هذا الجهاز»; a test pad counts rejected touches and would-be stray marks and records the result on this
+  device. System palm rejection stays «requires native».
+* **G01 pen feel** (`feel.ts`, `render.ts`): smoothing 0–6, pressure floor, round / sharp taper, constant width; profiles
+  كلاسيكي / كتابة / رسم دقيق / تشريح (steady, thin, constant) / مخصّص (the owner's values, synced); the profile is
+  remembered per notebook / document on this device and saved INTO each stroke's style (only what differs from the
+  classic drawing), so every device draws a stroke the same way. Latency: from the oldest pointer sample not drawn yet
+  (coalesced samples included — review fix) until the live layer draws it in the next animation frame, measured in THIS
+  browser (`latencyProbe`, p50 / p95 per pointer type, ≥ 20 samples) and shown in the capability panel; compositing,
+  presenting the frame and the display's own delay are not included (said in the row); nothing is shown until measured.
+
+### Tests (all passing)
+
+Server `apps/server/test/annotations/n1-ink.test.ts` (8: style / meaning / rotation validation, round trips, restore of a
+tombstone). Web `apps/web/test/ink/`: `gestures.test.ts` (15), `n1-seams.test.tsx` (8), `n1-colours.test.tsx` (11),
+`n1-gestures-erase.test.tsx` (14), `n1-select-resize.test.tsx` (14), `n1-toolbar-palm-feel.test.tsx` (18) — counts after
+the review below (it added 3 + 1 + 4 + 1 + 1 regression tests).
+E2E `e2e/n1-writing.spec.ts` (phone 390 × 844 + desktop 1280 × 800, Arabic UI): meaning synced to a second browser
+profile and back; offline scribble / clear page / one undo after reconnect + reload; on the phone two- and three-finger
+double taps (CDP touches); docked bar, hidden tool, 44 px targets, no sideways scroll; lasso chips and rectangle; e-ink
+greys in «إعدادات الكتابة»; arrow nudge; «تشريح» saved in the stroke; palm values and measured latency in the panel.
+5 000-stroke budget re-run (`MEDLEVO_PERF=1`, desktop, headless Chromium in this container, two runs): open → 5 000
+strokes painted 12.6 s under load from the parallel track / 8.3 s at load ≈ 2 (I2 baseline 10.6 s); a new stroke
+164 / 63 ms pointer-up → committed with 0 long tasks; zoom repaint longest task 106 / 55 ms. The dense-page tile run
+passed once (warm layer show 0.2 ms, 6/6 warm tiles; writing during re-rasters: longest task 74 ms) and failed twice
+before measuring because the 4 layers seeded through sync were not yet listed in «الطبقات» after 15 s (layers / sync
+code, not this track).
+
+### Limits (honest)
+
+* Device behaviour is **Not run (no device)**: iPad + Apple Pencil, S Pen, BOOX, a real palm, perceived latency. The only
+  latency numbers are headless Chromium with a mouse in this container (desktop: p50 8.7 ms, p95 23.1 ms, 45 samples) —
+  not a device figure, not recorded as one in `CAPABILITY_MATRIX.md`.
+* The clean review view hides the engine's kinds only; the reader's own text highlights are hidden from «الطبقات»
+  (`reader/overlays.tsx` is not part of this track).
+* The lasso choice and the pen-feel profile are remembered per document on this device (not in the study session /
+  synced); per-mode toolbars are opt-in profiles (nothing hidden by default); the study mode is read from the reader's
+  switch when the screen does not pass `InkHost.studyMode`.
+* Sticky notes stay fixed-size widgets (moved, never resized). Links stay upright (a rotation moves their centre).
+* G14's medical extensions (circle a printed term → dictionary, a check-mark on a question number → revision) and
+  searching by colour meaning are not built.
+* On a desktop reader with the study rail open, the reader's top bar (`workspace.css` `.wk-topbar__center { flex: none }`)
+  let the writing bar measure its own content width: after a reload the bar could show every tool and lie under the zoom
+  group. **Fixed in the R1-b final verification** (see «Review of N1 wave 1» below).
+
+### Review of N1 wave 1 (2026-10-21, independent adversarial review)
+
+Found and fixed, each with a regression test that failed before the fix:
+
+| # | severity | what was wrong | fix | test |
+|---|---|---|---|---|
+| R1 | major | Scribble-to-erase (on by default) took shading or filling INSIDE a small outline drawn before — the nucleus of a sketched cell, a hand-drawn check box — for a scratch-out: the outline was erased, and the shading too (an undo brought the outline back, never the shading) | a scribble lying ≥ 80 % inside a closed outline (a stroke that closes on itself, a rectangle or an ellipse) never erases that outline (`gestures.ts` `closedOutline`, candidate `outline`; `layerController.ts` `outlineOf`); a scratch-out that runs over a small loop still erases it | `gestures.test.ts` «shading inside a small drawn outline …», «a scratch-out that runs over a small loop …»; `n1-gestures-erase.test.tsx` «shading inside a small circle drawn before stays ink …» |
+| R2 | major | «امسح الصفحة» cleared the page written on LAST, not the page in view, and did not say which page: after writing on page 3 and scrolling to page 10 it removed page 3's writing | the page the reader shows comes first (the page written on last only without a host); the dialog names the page («الصفحة التي تُمسح: الصفحة ١٠») and the announcement too | `n1-gestures-erase.test.tsx` «… acts on the page in view (named in the dialog) …»; e2e G14 / G15 step |
+| R3 | minor | With a selection on the page, the arrow keys moved the owner's ink even while a slider, a radio group or a check box elsewhere had the keyboard (and that control lost its arrows) | the arrows move the selection only when the keyboard is on the selection, on a page's ink layer or on nothing in particular | `n1-select-resize.test.tsx` «the arrows are left alone while another control …» |
+| R4 | minor | A failed IndexedDB write of a restore (undo) of an item the engine does not hold in memory — a reader text highlight, an item on a page that is not open (delete by type, undo after a reload) — was retried as a tombstone: the restore was lost silently and the save status went back to «saved» | the store keeps the state each failed write meant to store (`failedIntent`) and retries such items with it | `n1-gestures-erase.test.tsx` «a restore (undo) whose write failed is written again …» |
+| R5 | minor | With finger writing on (pen-only off), the first finger of a two-finger double tap with the eraser (or the lasso) acted before the tap was recognised: the «undo» then undid that erase instead of the owner's last step | a second finger within 200 ms of a fresh touch eraser / lasso gesture cancels it (as a second finger already did for a fresh stroke) | `n1-gestures-erase.test.tsx` «with finger writing on, a two-finger double tap with the eraser …» |
+| R6 | minor | Latency was counted from the dispatching event's time stamp (the newest coalesced sample), understating it, and the row said «إلى رسم الإطار» although presenting the frame is not included | counted from the oldest coalesced sample; the row says «حتى يرسمه التطبيق … لا يشمل عرض الإطار على الشاشة ولا تأخر الشاشة نفسها» | `n1-toolbar-palm-feel.test.tsx` «latency is counted from the oldest coalesced sample …» |
+| R7 | minor | On e-ink every pen colour becomes a near-black grey and the colour picker showed only swatches: the slots (and their meanings) could not be told apart by sight | each slot carries a visible name (its meaning, else its colour), shown only in e-ink mode (the radio's accessible name is unchanged) | `n1-colours.test.tsx` «the colour picker carries a visible name …»; e2e G66 e-ink step |
+| R8 | minor | «امسح الصفحة»'s type check boxes grouped a registered kind by its kind name, the counts by its content type | both use `contentTypeOf` | covered by the clear-page tests |
+| R9 | minor | On desktop the new previous-tool slot («الأداة السابقة: اليد (قراءة وتمرير)») gave the AC-30 spec a third button whose name contains «تم» (as the hand tool's «وتمرير» does): `e2e/g7-ac30-restore` failed on desktop with a strict-mode violation (found by P1-T1's reviewer, reproduced here) | the spec's «تم» click is exact (`e2e/g7-ac30-restore.spec.ts`, one line; test-only, the product names are right) | `e2e:g7-ac30-restore` phone + desktop pass |
+
+Open (not fixed here, with the reason):
+
+* **The `ink` settings object is one last-writer-wins unit between devices.** It is sent whole (the web settings store,
+  `lib/settings.ts` — P1-T1's file — spreads a pending patch over the cached settings at the TOP level, so a partial `ink`
+  would show defaults offline after a reload). Consequence: a toolbar change made offline on one device can, when it is
+  sent, put back colour meanings renamed meanwhile on another device. Remedy: the settings store merges pending patches
+  with `mergeSettingsPatch` (as the server does), then `updateInkSettings` sends only the parts it changed.
+* **Circle + hold pre-empts hold-to-shape for a loop drawn around writing**: holding still after circling a handwritten
+  word selects it (the loop is not saved) instead of turning the loop into a neat ellipse; an empty loop still becomes a
+  shape. As designed by G14; turn «دائرة ثم توقّف = تحديد» off in «الإيماءات» to keep the ellipse.
+* **Undo of a scribble does not bring the scribble back** (it was a gesture). After R1 the known misfire (shading inside
+  an outline) no longer erases; any other misfire still costs the zig-zag itself, never the strokes under it.
+* **On a desktop reader with the study rail open the writing bar lies over the zoom group** (`workspace.css`
+  `.wk-topbar__center { flex: none }` lets the bar size itself from its own content; seen in the AC-30 desktop screenshot:
+  redo over the zoom-out button). Reported by the builder as pre-existing; the previous-tool slot makes the bar one button
+  wider. Not fixed here (`workspace.css` is outside `ink/*`); the fix belongs to the reader's top bar (bound the centre
+  slot, e.g. `flex: 0 1 auto; min-width: 0`). **Fixed in the R1-b final verification:** the critic pass found the zoom
+  group, the page chip and «المزيد من أدوات الكتابة» covered at 1280 px after a few tools had been used and the page
+  reloaded. The middle slot now gives way (`flex: 0 1 auto; min-width: 0` — the writing bar folds what does not fit into
+  «المزيد»), the title slot keeps `16rem` (back button, page chip, part of the title) and the end slot its content
+  (`min-width: max-content`). Test: `e2e/r1b-final-critic.spec.ts` (desktop; 1280 / 1180 / 1024 px, study rail open and
+  closed: every top-bar control can be hit at its centre — failed before at 1280 px, rail open).
+* Device behaviour (palm, latency, S Pen / Pencil / BOOX) — **Not run (no device)**, as above.
+
+
+## Parity N1 wave 2 — writing comfort and speed, part 2 (2026-10-21; `docs/research/NOTE_APP_FEATURE_PARITY.md` B.4)
+
+No base migration: every new field is optional JSON inside the existing annotation `data` (ink style, shape data) or a
+new part of the `ink` settings object; old rows load and save byte for byte. Old clients draw the new shape kinds
+(triangle, polygon, curved / double arrow) as ellipses and a pencil stroke as a pen stroke; an old client that MOVES a
+curved / double arrow or a polygon would damage it — since the R1-b final verification the server refuses that edit and
+sends its own copy back (review finding R10 below).
+
+### What was built
+
+* **G04 line patterns** — `style.dash: 'dash' | 'dot'` on strokes, shapes and colour slots (a slot can carry its pattern:
+  «متقطع = للتحقق»). Dashes are cut by arc length in PAGE units scaled to the width (`ink/pencil.ts` `dashPieces`), so
+  the pattern is the same at every zoom and cached with the stroke's paths. Highlighters are never dashed.
+* **G06 pencil** — a points-only stroke stored as `style.tool: 'pen'` + `style.texture: 'graphite'` (`InkData` keeps its
+  six keys). Pressure changes width AND opacity; the graphite grain is MedLevo's own seeded noise tile (no image from
+  anywhere) laid in page units. Own palette slots and feel (`ink.palettes.pencil`, `ink.feel.pencil`).
+* **G07 eyedropper** — the browser's `EyeDropper` where it exists; elsewhere the next tap on the page reads the colour
+  MedLevo itself drew there (page canvas / picture / ink, highlight canvas composited with multiply). The colour becomes
+  the tool's colour and is added to its slots when there is room (synced). The capability panel names the path
+  («eyedropper» row: supported / heuristic). Pictures from another origin cannot be read (none exist in MedLevo).
+* **G09 zoom writing window** (tool «نافذة الكتابة المكبّرة») — a tap places a box on the page; a docked strip shows it
+  magnified (×N shown); strokes written in the strip are mapped into the box and stored in PAGE space, one undo step
+  each. Direction: `ink.zoom.direction` auto = right to left unless the page's text is English; a stroke reaching the far
+  third of the strip moves the box on by 60 % of its width (LEFT for Arabic), and past the margin it wraps to the start
+  of the next line (`zoomGeometry.ts`). Line height, margins, gap, strip size and auto-advance are owner settings
+  («المحاذاة والتكبير»). The box and the strip move with the arrow keys.
+* **G10 phase 1** — «أفسح مكانًا»: a drag down from a line moves every visible, editable, unlocked engine item whose top
+  is below it by the distance dragged (sideways: the rest of THAT written line only, LEFT for Arabic — review fix R1), in
+  ONE undo step; never past the page's edge (the room made is what the page has left, and the announcement says so —
+  review fix R2); printed text and the reader's highlights never move; items that cross the line stay (counted in the
+  announcement). «استقم» (lasso
+  menu): each written line is turned about its centre to a level fitted baseline (rotation only; 0.6°–25°).
+  **Phase 2 (word reflow)** is offered only when `workspace.handwriting_recognition` is available (else the menu item is
+  disabled with the reason): the selection is read by the server's recognition (a derived reading), and the words move
+  — whole, translation only — only when the reading has the same number of words as the gaps in the writing; preview
+  first, one undo step. Tested only with a fake reader (`reflow.ts` `setReflowReader`, the shape the server's fake
+  provider returns).
+* **G67 page menu** — a finger held still 550 ms on blank space (pen-only mode or a non-writing tool), a right click, or
+  the context-menu key / Shift+F10 on the page in view: «الصق هنا» (disabled with the reason when nothing is copied),
+  «نص هنا», «ملاحظة لاصقة هنا», «صفحة ملاحظات بعد هذه الصفحة» (note pages: the reader's own actions; lecture pages: a
+  one-prop seam in `WorkspaceScreen.tsx`), the neat copy toggle; on printed text «عرّف» / «أضف إلى المراجعة» appear
+  only when a host provides them (`InkHost.pageMenu`, for N3 / N4). The click a lifted long press may fire is swallowed
+  (only that one).
+* **G20 shapes** — new kinds triangle, polygon (tapped corner by corner; Enter / first corner closes; Escape cancels),
+  curved arrow (control point), double arrow; `fill` (a highlighter token, drawn translucent), rounded corners, text
+  inside a shape (RichText `label`, bidi-correct DOM text read by screen readers); pathway heads for physiology /
+  pharmacology: activation (solid head, «ينشّط»), inhibition (bar ⊣, «يثبّط»), conversion (dashed shaft, «يتحوّل إلى»)
+  — always spoken, never a glyph alone. One geometry for web and server PDF export (`shared/annotations.ts`
+  `shapeParts` / `shapeOutlineIso`); old shapes give exactly the old outline.
+* **G22 snapping** — a moving selection or a shape being drawn snaps (within 8 px) to other items' edges and centres,
+  the note paper's grid / ruled lines and the processed source regions of a lecture page; guides are drawn while
+  dragging; Alt turns it off; each source can be turned off (`ink.snap`).
+* **G08 ruler and measurement** — the ruler (toolbar «المسطرة») is moved by drag or arrows, turned by its handle, two
+  fingers, «[ / ]» or 15° buttons (settles on multiples of 15°), shows centimetre marks of the page; a stroke that STARTS
+  on its writing edge is projected onto it (time / pressure kept). It is session state, never saved. «قياس تعليمي»:
+  calibrate from a scale bar on a picture (or the page), then lengths and angles; every result carries
+  «تقدير تعليمي — ليس قياسًا سريريًا»; the scale is remembered per picture on this device (`localGet/localSet`), the
+  lines are never ink.
+* **G21 connectors** — the «موصِّل» tool draws an arrow from a shape's edge point to another's (`attach.from/to` = id +
+  side; the end sits a small gap outside the edge, so a head — the inhibition bar ⊣ above all — is not lost in the
+  outline); when an attached shape moves, is resized or turned, its connectors are re-routed INSIDE the same commit
+  (`store.commit` → `followConnectors`), so one undo restores both with the attachments. Routes straight / elbow /
+  curved; medical relations causes / inhibits / treats / complicates (spoken sentence «Insulin يسبّب GLUT4»); edge dots
+  «أضف شكلًا متصلًا من …» (one undo step); «رتّب تلقائيًا» (the study diagrams' flowchart layout, right to left);
+  a node can be bound to a Course Brain concept (search `GET /api/brain/concepts`, needs the connection; the id and name
+  are stored, the name becomes the label); «تحقّق من العلاقات» reads `GET /api/brain/relations` and says found /
+  missing («لا يعني أنها خطأ») / no such kind («يثبّط») — a read, nothing changes.
+* **G11 neat copy** — «النسخة المرتبة لهذه الصفحة (عرض فقط)» draws a DERIVED copy (lines straightened, sizes evened
+  ±25 % about the line start, stronger smoothing) over the hidden pen canvas, with a banner saying the original ink is
+  kept unchanged; nothing is written (unit + e2e check the stored rows byte for byte).
+
+### Tests (all passing)
+
+Server `apps/server/test/annotations/n1-wave2.test.ts` (9: dash / texture round trip incl. ink v2, refusals with Arabic
+reasons, new shape fields, shared geometry equals the PDF export's for old shapes, pathway heads, connector attach /
+relation / concept round trip, settings defaults and part-by-part PATCH). Web `apps/web/test/ink/`: `n1w2-logic.test.ts`
+(22: dashes, pencil, shapes, zoom geometry both directions, insert space / straighten / reflow, neat copy, ruler,
+measurement, snapping, connectors, eyedropper, settings), `n1w2-layer.test.tsx` (13: through the real layer and store),
+`n1w2-shapes.test.tsx` (6: heads, fill, polygon, labels, concepts and the relation check with a mocked API, the
+eyedropper's tap path). E2E `e2e/n1-writing.spec.ts` «N1 wave 2» (2 tests × phone + desktop: pencil + dash saved, filled
+rounded shapes, connector attached / following / one undo, zoom window right to left, insert space, reflow reason, page
+menu + neat copy unchanged rows, ruler straight stroke, measurement label; full suite 145 passed, see `docs/TEST_LOG.md`).
+
+Bugs found by these tests and fixed before shipping: the dash cutter could loop forever on a float remainder a hair
+under the period (it hung the renderer); connector ends and «أفسح مكانًا» used the last pointermove instead of where the
+pen lifted; the click left by a long press swallowed the first tap on the page menu; with several pages on screen every
+page showed its own measurement panel (now one: the page measured last; found by the e2e run).
+
+### Limits (honest)
+
+* Device behaviour — **Not run (no device)**: the pencil grain and pressure opacity on a real stylus, the zoom window with
+  an Apple Pencil / S Pen, the two-finger ruler, long-press timing on iPad / Android, the eyedropper on iPad Safari (tap
+  path) — only jsdom and headless Chromium with a mouse here.
+* Word reflow was never run against a real recognition provider (none configured here); only the fake reader.
+* The PDF export (server) draws the new shapes' outlines and heads with the shared geometry but not fill, dashes, the
+  pencil grain or shape labels (`pdf-export.ts` belongs to another track; a 1-line seam routes new shapes to the shared
+  geometry).
+* Concept search and the relation check need the server (offline: the reason is shown; bound concepts stay).
+* The eyedropper's tap path reads only what MedLevo drew (not the screen outside the page).
+* Snapping to processed regions uses the regions the reader fetched for the page (`fetchRegions`); a page without
+  processing has none.
+
+### Review of N1 wave 2 (2026-10-21, independent adversarial review)
+
+Scope: zoom window coordinates and right-to-left auto-advance, insert space (only the owner's items, one undo),
+connectors following moves and surviving undo, snapping performance, measurement never stored and labelled, the neat copy
+never changing strokes, pencil / dashes through ink v2 and old clients, e-ink drawing of every new kind, keyboard and
+screen-reader paths. Every changed file was read. Found and fixed, each with a regression test that failed before the
+fix (`apps/web/test/ink/n1w2-review.test.tsx`, `n1w2-review-neat.test.tsx`):
+
+| # | severity | what was wrong | fix | test |
+|---|---|---|---|---|
+| R1 | major | «أفسح مكانًا» sideways («between words») moved the writing of EVERY line of the page left (or right) of the press, not only the line pressed — the tool's own help says «يزيح ما بعد النقطة على السطر» | the written line at the press is found (`handwritingLayout.ts` `lineBandAt`: the line's top and bottom with its dots) and only items whose middle lies in it move | «sideways: only the line pressed makes room …» |
+| R2 | major | «أفسح مكانًا» pushed writing past the page's bottom (or side) edge, where nothing draws it and no tool (lasso, eraser) can reach it — only an undo while the history lasts could bring it back | the distance is cut to the room the page has left (`insertSpacePlan` → `delta`, `limited`); with no room nothing moves and the announcement says why («بلغت … أسفل الصفحة … لا يُدفع شيء خارج الصفحة») | «down: the writing at the bottom never leaves the page …» |
+| R3 | major | Paste / duplicate («تكرار») / «انسخ إلى طبقتي» of a diagram kept each connector attached to the ORIGINAL shapes: moving an original pulled the copy's connector away from the copied shapes onto the original (and the relation check named the originals) | `connectors.ts` `reattachCopy`: a pasted connector is attached to the pasted copies of its shapes; an end whose shape was not copied with it is left free (`store.paste`) | «a duplicated diagram is attached to its own copies …», «a connector copied without its shapes is pasted free …» |
+| R4 | major | The zoom window's box lost the strip's proportions when the strip is wider than 12 : 1 (a wide screen with the small strip), when the line is wider than 0.9 of the page (large line height on an iPad in landscape) or when narrow margins cut its width: the strip draws at one scale but mapped the pen per axis, so the ink was saved up to ~20 % away (vertically) from where the pen wrote in the strip | `zoomGeometry.ts` `boxSize` / `lineStartBox` / `boxAt` keep the strip's proportions (a too-wide line is made less tall); the strip maps the pen with the SAME single scale it draws with, inside its border (`zoomWindow.tsx` `toNorm`, measured `clientWidth/Height`); the page picture under it uses that scale too | «the box keeps the strip proportions …», «… inside narrow margins …», «a stroke written in a measured strip is saved where it was drawn there» (1 348 × 152 strip, line height 0.12) |
+| R5 | minor | Auto-advance (and «سطر جديد») on the last line of the page «wrapped» onto the same last line, so the next word was written over the line just finished | `advanceBox` returns `end` when no line fits below; the box stays and the owner is told («بلغت النافذة آخر سطر في الصفحة …») | «on the last line of the page the window stops …» |
+| R6 | minor (performance) | Drawing a shape rebuilt every snap line of the page (every item's box, sorted) on EVERY pointer move — the module said «collected once» | collected once per shape at its first point (again at most every 200 ms only while the page's processed regions are still loading — `SnapTargets.partial`; the selection drag does the same) | «the snap targets are collected once per shape …» (33 collections for one rectangle before, 1 after) |
+| R7 | minor (a11y) | Closing the page menu with Escape / Tab dropped the keyboard focus to the document | the focus goes back to where it was when the menu opened | «closing the page menu with Escape gives the focus back …» |
+| R8 | minor (a11y) | A diagram's connections were spoken once, when drawn; afterwards they existed only as canvas paths (labels are DOM text, the arrows were not) | the page summary read by screen readers lists them in words («المخطط: «Insulin» يسبّب «GLUT4»؛ …», up to 20) | «the page summary … says what each connector of a diagram connects» |
+| R9 | minor (performance) | The neat copy was derived again (every line regrouped, every point transformed) on every zoom / pinch frame | derived once per change of the page's writing or of the layers shown; a zoom only redraws it | `n1w2-review-neat.test.tsx` (5 derivations for 4 zoom steps before, 1 after) |
+
+Verified and kept (guards added): every new kind (pencil grain, dashes, fill, activation / conversion heads) draws only
+greys under e-ink («guard: e-ink …»); a pencil / dotted stroke round-trips through ink v2 on the wire byte for byte
+(«guard: a pencil / dashed stroke through ink v2 …»; the server side is `n1-wave2.test.ts`); the measurement and the
+ruler write nothing (`n1w2-layer.test.tsx`); the neat copy leaves stored rows byte for byte (unit + e2e); insert space moves
+only visible, editable, unlocked engine items in one undo step, and connectors follow in that step.
+
+Open (not fixed here, with the reason):
+
+* **R10 (major — fixed in the R1-b final verification, server side).** An R1-a app (the owner's own un-updated tab: the client gate lets user
+  #1's old client keep writing) draws the new shape kinds as ellipses in their frame and, if the owner MOVES one there,
+  keeps only that frame: a curved or double arrow comes back normalised from its top-left to its bottom-right corner —
+  its direction (and with it a pathway head ⊣ / →) can flip — and its control point stays behind; a polygon's corners do
+  not move at all (reproduced by running the R1-a `transformItem` shape branch — `git show d0c8ab4:apps/web/src/features/workspace/ink/model.ts` — on these shapes; review report). Not fixable
+  inside the old client. Remedy options, a contract decision for the N1 owner before any row of these kinds exists: store
+  the curved / double arrow as `shape: 'arrow'` + `route: 'curve'` + a tail flag (an old client then moves both ends and
+  keeps the direction; it draws a straight arrow), and fit a polygon's corners into its frame when they disagree; or a
+  server refusal of shape writes without the client-version header. Until then: update every device before drawing these
+  shapes (CAPABILITY_MATRIX / release note).
+  **Fix (R1-b final verification):** the server answers such an edit with `rejected` and its own copy — the third
+  option above, chosen because it needs no change to the stored representation and protects rows that already exist.
+  `POST /api/sync/push` marks a request without a supported `x-medlevo-client` (an R1-a app; only user #1 passes the
+  client gate) and `annotations/sync.ts` refuses, from such a client, an upsert that changes the geometry (`shape`,
+  `from`, `to`, `points`, `control`, `rotation`) of a polygon, curved arrow or double arrow — including a stale edit
+  that would otherwise become a damaged conflict copy. The R1-a app files the answer as a conflict and applies the
+  server's copy, so the shape is put back as stored; the Arabic detail tells the owner to update that device.
+  Deleting such a shape, restoring it unchanged, recolouring it and moving any shape R1-a knows (line, arrow, rect,
+  ellipse, triangle) still go through. Test: `apps/server/test/annotations/r1b-old-client-shapes.test.ts` (6; the
+  three kinds and the stale case failed before the fix). Remaining: on the R1-a app itself the shapes are still drawn
+  as ellipses until it updates.
+* Shift-constrained shapes (AOS-1.7) were not built; the ruler turns with «[ / ]» (Shift 10°) and the 15° buttons — the
+  arrows move it (AOS-1.8 names arrows 1°, Shift 15°).
+* The connector relation check, concept search and word reflow need the server (and reflow a recognition provider:
+  never run with a real one here).
+* Device behaviour (stylus in the zoom strip, two-finger ruler, long-press timing, pencil grain on e-ink panels) —
+  **Not run (no device)**.
+
+### Release R1-b final verification — writing screens (2026-10-21)
+
+The release critic pass (390 and 1280 px; light, dark and e-ink; screenshots outside the repository) found four
+defects in the N1 screens, each fixed with a test that failed first:
+
+| finding | fix | test |
+|---|---|---|
+| «التقط لونًا من الصفحة» (G07) showed its pipette icon on a line of its own (the link style is not a flex row) | `.ml-ink-eyedropper` is a centred inline flex row | `web:test/ink/ink-css.critic` «every .ml-ink-linkbtn that starts with an icon…» |
+| Dark theme: a shape's label (G20) inherited the theme's light text colour on the white PDF page — contrast 1.2:1, invisible | `.ml-ink-shape-label { color: var(--ml-ink-c-ink-black) }`: the paper tone's ink colour, like a text box (greys in e-ink) | `web:test/ink/ink-css.critic` «a shape label is drawn in an ink colour…»; critic contrast probe clean in dark |
+| Phone: the colour-meaning fields of «إعدادات الكتابة» and every writing slider (width, pen feel, alignment / zoom) were 40 px tall | 44 px under `(pointer: coarse)` | `web:test/ink/ink-css.critic` «on a coarse pointer…» |
+| Desktop / iPad landscape: the top bar let the writing bar cover the zoom group and «المزيد» (above) | `workspace.css` top-bar slots | `e2e/r1b-final-critic.spec.ts` |
+
+R10 (old-client edits of the new shape kinds) was closed in the same verification on the server (above).
+

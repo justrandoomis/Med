@@ -2,15 +2,55 @@
 // The server types its responses with these, and the web client consumes them — one contract.
 import type { JobStatus } from './enums';
 import type { OwnerSettings } from './settings';
+import type { MeLite } from './academic/accounts-api';
 
 // ───────── auth (/api/auth) ─────────
 export const SESSION_COOKIE_NAME = 'medlevo_session';
 export const CSRF_HEADER_NAME = 'x-medlevo-csrf';
 /**
- * (Academic OS, ARCHITECTURE_DELTA §4.5 / §7.1) every request will carry `x-medlevo-client: <app version>`; a missing or
- * pre-multi-user version is answered `426 CLIENT_TOO_OLD` once accounts ship (release R1-b). Not sent or checked yet.
+ * (Academic OS, ARCHITECTURE_DELTA §4.5 / §7.1; P1-T1 step 3) every request of the web client carries
+ * `x-medlevo-client: <app version>`. A request without it — every client of R1-a and earlier — or below
+ * MIN_CLIENT_VERSION is answered `426 CLIENT_TOO_OLD` when it could write or pull data under an account other than
+ * user #1 (whose local single-owner data the old client holds anyway). See apps/server/src/modules/auth/clientGate.ts.
  */
 export const CLIENT_VERSION_HEADER_NAME = 'x-medlevo-client';
+/**
+ * The oldest client version the server accepts from a user other than user #1. Clients of R1-a and earlier send no
+ * version at all; raise this when a later release changes what an older client could break.
+ */
+export const MIN_CLIENT_VERSION = '0.1.0';
+/**
+ * (P1-T1 step 3) the account the page is signed in as, on every request of the web client. Two tabs of one browser
+ * share ONE session cookie: when another account signs in in a second tab, the first tab's requests (its outbox
+ * pushes above all) would otherwise run under the new account. The server answers 401 when this header names another
+ * account than the session's (ARCHITECTURE_DELTA §8.7 «never pushed under another session»).
+ */
+export const USER_HEADER_NAME = 'x-medlevo-user';
+
+/** Compare dotted numeric versions («0.1.0»); missing parts count as 0, a pre-release suffix is ignored. */
+export function compareClientVersions(a: string, b: string): number {
+  const parts = (v: string) =>
+    v
+      .trim()
+      .split(/[-+]/)[0]!
+      .split('.')
+      .map((p) => (/^\d+$/.test(p) ? Number(p) : NaN));
+  const pa = parts(a);
+  const pb = parts(b);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] ?? 0;
+    const y = pb[i] ?? 0;
+    if (Number.isNaN(x) || Number.isNaN(y)) return Number.isNaN(x) ? -1 : 1;
+    if (x !== y) return x < y ? -1 : 1;
+  }
+  return 0;
+}
+
+/** Is this `x-medlevo-client` value a multi-user client (present, well-formed, ≥ MIN_CLIENT_VERSION)? */
+export function isSupportedClientVersion(v: string | null | undefined, min: string = MIN_CLIENT_VERSION): boolean {
+  if (typeof v !== 'string' || v.length === 0 || v.length > 40 || !/^\d+(\.\d+){0,3}([-+][0-9A-Za-z.-]+)?$/.test(v.trim())) return false;
+  return compareClientVersions(v, min) >= 0;
+}
 export const RECOVERY_CODE_COUNT = 10;
 
 export interface SessionInfo {
@@ -40,11 +80,15 @@ export interface AuthStatusResponse {
    * one-time token printed to the server log at boot (never stored in the database).
    */
   setup_token_required?: boolean;
+  /** (P1-T1, additive) the signed-in account; only when authenticated */
+  user?: MeLite;
 }
 
 export interface SetupRequest {
   username: string;
   password: string;
+  /** (P1-T1, additive) shown to others later; defaults to the username */
+  display_name?: string;
   device_label?: string;
   device_id?: string;
   /** (track D1, additive) required when AuthStatusResponse.setup_token_required */
@@ -62,6 +106,8 @@ export interface SetupResponse {
   recovery_codes: string[];
   session: SessionInfo;
   notice_ar: string;
+  /** (P1-T1, additive) the account just created: the first account is the platform admin */
+  user?: MeLite;
 }
 export interface LoginResponse {
   ok: true;

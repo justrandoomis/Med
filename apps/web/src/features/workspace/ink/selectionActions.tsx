@@ -1,7 +1,7 @@
 // Lasso actions provided by the screen around the engine (track F4, §28/§29): «تحويل إلى نص» and «اسأل عن المحدد»
 // (handwriting recognition + the contextual chat) and the time links of strokes written during a recording. The engine
 // stays independent of routes and servers: without a provider the menu items stay disabled with their reason.
-import { createContext, useContext, type ReactNode } from 'react';
+import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import type { AnnotationAnchor, InkAudioLink, NormBox } from '@medlevo/shared';
 import type { InkItem } from './model';
 
@@ -23,7 +23,20 @@ export interface InkSelectionAction {
   run(sel: InkSelectionInfo): void;
 }
 
+/**
+ * (parity N1 Wave 0) A named lasso action supplied by the screen around the engine (N2 «احفظ كعنصر», N4 «أنشئ بطاقة»,
+ * «أنشئ سؤالًا», «لقطة» …). It appears in the selection's «المزيد» menu, disabled with its reason while it cannot run.
+ */
+export interface InkSelectionExtraAction extends InkSelectionAction {
+  /** stable id (also the React key), e.g. 'n4.card' */
+  id: string;
+  label_ar: string;
+  icon?: ReactNode;
+}
+
 export interface InkSelectionActions {
+  /** (N1 Wave 0) more named actions, after the built-in ones */
+  extra?: InkSelectionExtraAction[];
   convert?: InkSelectionAction;
   ask?: InkSelectionAction;
   /** (H3 item 4) «اصنع بطاقة من المحدد…»: a flashcard (front from the reading of the strokes, or a picture of the page) */
@@ -38,8 +51,21 @@ export interface InkSelectionActions {
 
 const Ctx = createContext<InkSelectionActions | null>(null);
 
+/**
+ * Provides lasso actions. Providers nest: an inner provider's actions win, and the `extra` actions of every provider
+ * around are kept (each track can wrap the reader with its own actions).
+ */
 export function InkSelectionActionsProvider({ value, children }: { value: InkSelectionActions; children: ReactNode }) {
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+  const outer = useContext(Ctx);
+  const merged = useMemo<InkSelectionActions>(() => {
+    if (!outer) return value;
+    const extra = [...(outer.extra ?? []), ...(value.extra ?? [])];
+    const seen = new Set<string>();
+    // the inner provider's action wins over an outer one with the same id
+    const unique = extra.reverse().filter((a) => (seen.has(a.id) ? false : (seen.add(a.id), true))).reverse();
+    return { ...outer, ...value, extra: unique };
+  }, [outer, value]);
+  return <Ctx.Provider value={merged}>{children}</Ctx.Provider>;
 }
 
 export function useInkSelectionActions(): InkSelectionActions | null {

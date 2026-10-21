@@ -5,7 +5,8 @@
 // restore into a new directory, wrong key, damaged object), and that no secret ever reaches the API, the database or
 // the bucket in clear.
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -15,6 +16,7 @@ import { DecryptStream, parseBackupKey } from '../../src/lib/objectstore/encrypt
 import { offsiteService, type OffsiteRunView, type OffsiteStatusResponse } from '../../src/modules/data/offsite';
 import { restoreFromOffsite } from '../../src/modules/data/offsite-restore';
 import { createTestApp, type AuthHeaders, type TestApp } from '../helpers/app';
+import { dataDirDatabases, ownerVaultPath } from '../helpers/tenancy';
 import { FakeS3 } from './fake-s3';
 
 const PART = 64 * 1024;
@@ -54,7 +56,11 @@ function r2Env(extra: Record<string, string> = {}): Record<string, string> {
 }
 
 async function app(env: Record<string, string>, opts: { verifyBoot?: boolean } = {}): Promise<{ t: TestApp; h: AuthHeaders }> {
-  const t = await createTestApp({ env, jobs: { backoffBaseMs: 0, backoffMaxMs: 0 } });
+  // the data dir sits in a parent of its own: a restore lands «beside the data», and the shared temp directory is used
+  // by other test files running in parallel (offsite-cli restores there too) — never assert on that shared listing
+  const parent = mkdtempSync(join(tmpdir(), 'medlevo-offsite-'));
+  dirs.push(parent);
+  const t = await createTestApp({ env: { MEDLEVO_DATA_DIR: join(parent, 'data'), ...env }, jobs: { backoffBaseMs: 0, backoffMaxMs: 0 } });
   apps.push(t);
   offsiteService(t.ctx).configure({ client: { sleep: noSleep, maxAttempts: 3 }, encChunkSize: 4096, partSizeBytes: PART, verifyBoot: opts.verifyBoot ?? false });
   const h = await t.login();
@@ -316,9 +322,9 @@ describe('restore from the off-site copy (the Render-Shell command)', () => {
     const res = await restoreFromOffsite(config, { key: objects[0]!.file_name, clientOptions: { sleep: noSleep }, bootCheck: true });
     expect(res.report.ok, JSON.stringify(res.report.checks.filter((c) => !c.ok))).toBe(true);
     dirs.push(res.restoredTo!);
-    expect(res.restoredTo!.startsWith(join(t.dataDir, '..'))).toBe(true);
+    expect(res.restoredTo!.startsWith(join(t.config.dataDir, '..'))).toBe(true);
     expect(res.restoredTo).toMatch(/medlevo-restored-\d{8}-\d{6}$/);
-    const db = openDb(join(res.restoredTo!, 'medlevo.sqlite'));
+    const db = openDb(dataDirDatabases(res.restoredTo!).primaryVault);
     try {
       const files = db.all<{ original_name: string }>('SELECT original_name FROM stored_file ORDER BY original_name').map((r) => r.original_name);
       expect(files).toEqual(['lecture-1.pdf', 'lecture-2.pdf']);
@@ -327,8 +333,9 @@ describe('restore from the off-site copy (the Render-Shell command)', () => {
       db.close();
     }
     // the live data directory was never touched; no working files are left beside it
-    expect(existsSync(t.config.dbPath)).toBe(true);
-    expect(readdirSync(join(t.dataDir, '..')).filter((n) => n.startsWith('.medlevo-offsite-restore-'))).toEqual([]);
+    expect(existsSync(t.config.systemDbPath)).toBe(true);
+    expect(existsSync(ownerVaultPath(t))).toBe(true);
+    expect(readdirSync(join(t.config.dataDir, '..')).filter((n) => n.startsWith('.medlevo-offsite-restore-'))).toEqual([]);
   });
 
   it('a different key is refused with the reason; a damaged object is refused; nothing is restored', async () => {
@@ -358,9 +365,13 @@ describe('secrets', () => {
     const keyHex = parseBackupKey(KEY_B64).toString('hex');
     for (const s of [fake.secretAccessKey, KEY_B64, keyHex]) expect(bodies).not.toContain(s);
     t.ctx.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-    const dbBytes = readFileSync(t.config.dbPath);
-    for (const s of [fake.secretAccessKey, KEY_B64]) expect(dbBytes.includes(Buffer.from(s))).toBe(false);
-    expect(dbBytes.includes(parseBackupKey(KEY_B64))).toBe(false);
+    t.ctx.system.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    // P1-T1: every database file of the instance — the system DB and the vault
+    for (const file of [t.config.systemDbPath, ownerVaultPath(t)]) {
+      const dbBytes = readFileSync(file);
+      for (const s of [fake.secretAccessKey, KEY_B64]) expect(dbBytes.includes(Buffer.from(s))).toBe(false);
+      expect(dbBytes.includes(parseBackupKey(KEY_B64))).toBe(false);
+    }
     for (const o of fake.objects.values()) {
       expect(o.body.includes(Buffer.from(fake.secretAccessKey))).toBe(false);
       expect(o.body.includes(parseBackupKey(KEY_B64))).toBe(false);

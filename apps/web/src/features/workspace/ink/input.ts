@@ -22,6 +22,9 @@ export interface PointerLike {
   width: number;
   height: number;
   isPrimary: boolean;
+  /** client position (used by the hand-side palm zone) */
+  clientX?: number;
+  clientY?: number;
 }
 
 export interface PointerPolicyContext {
@@ -29,11 +32,47 @@ export interface PointerPolicyContext {
   strokeActive: boolean;
   /** ms since the pen last lifted (Infinity if never) */
   sincePenUp: number;
+  /** (N1, G02) the owner's palm settings; absent = the medium thresholds without the hand zone (the engine before N1) */
+  palm?: PalmPolicy;
+  /** (N1, G02) where the pen last touched (client px), for the hand-side zone */
+  lastPen?: { x: number; y: number } | null;
 }
 
 /** css px: a fingertip is ≈ 8–20 px across; a resting palm is much larger. */
 export const PALM_CONTACT_PX = 44;
 export const PALM_AFTER_PEN_MS = 400;
+
+/**
+ * (N1, G02) The palm-rejection heuristic as numbers. `contactPx`: a touch wider than this is a palm. `afterPenMs`: any touch
+ * this soon after the pen lifted is a palm. `zoneMs`: for this long after the pen lifted, a touch on the writing hand's
+ * side of the pen and below it (where the hand rests) is a palm too — for Arabic writing the hand rests on the ink already
+ * written, to the right of the pen for a right-handed writer.
+ */
+export interface PalmPolicy {
+  level: 'low' | 'medium' | 'high';
+  hand: 'right' | 'left';
+  contactPx: number;
+  afterPenMs: number;
+  zoneMs: number;
+}
+
+export const PALM_LEVELS: Record<PalmPolicy['level'], Omit<PalmPolicy, 'level' | 'hand'>> = {
+  low: { contactPx: 60, afterPenMs: 250, zoneMs: 0 },
+  medium: { contactPx: PALM_CONTACT_PX, afterPenMs: PALM_AFTER_PEN_MS, zoneMs: 1200 },
+  high: { contactPx: 32, afterPenMs: 700, zoneMs: 3000 },
+};
+
+export function palmPolicy(level: PalmPolicy['level'], hand: PalmPolicy['hand']): PalmPolicy {
+  return { level, hand, ...PALM_LEVELS[level] };
+}
+
+/** Is a touch at (x, y) where the writing hand rests, relative to the pen's last point? */
+export function inPalmZone(touch: { x: number; y: number }, pen: { x: number; y: number }, hand: PalmPolicy['hand']): boolean {
+  const dx = touch.x - pen.x;
+  const dy = touch.y - pen.y;
+  if (dy < -60 || Math.hypot(dx, dy) > 480) return false;
+  return hand === 'right' ? dx > -40 : dx < 40;
+}
 
 export function classifyPointerDown(e: PointerLike, ctx: PointerPolicyContext): PointerDecision {
   if (ctx.strokeActive) return 'ignore_secondary';
@@ -42,8 +81,14 @@ export function classifyPointerDown(e: PointerLike, ctx: PointerPolicyContext): 
   if (e.pointerType === 'pen' && e.button !== 0 && e.button !== -1) return 'ignore_button'; // barrel button
   if (e.pointerType === 'touch') {
     if (ctx.penOnly) return 'ignore_touch_pen_only';
-    if (Math.max(e.width || 0, e.height || 0) > PALM_CONTACT_PX) return 'ignore_palm';
-    if (ctx.sincePenUp < PALM_AFTER_PEN_MS) return 'ignore_palm';
+    const contact = ctx.palm?.contactPx ?? PALM_CONTACT_PX;
+    const after = ctx.palm?.afterPenMs ?? PALM_AFTER_PEN_MS;
+    if (Math.max(e.width || 0, e.height || 0) > contact) return 'ignore_palm';
+    if (ctx.sincePenUp < after) return 'ignore_palm';
+    const p = ctx.palm;
+    if (p && p.zoneMs > 0 && ctx.sincePenUp < p.zoneMs && ctx.lastPen && typeof e.clientX === 'number' && typeof e.clientY === 'number' && inPalmZone({ x: e.clientX, y: e.clientY }, ctx.lastPen, p.hand)) {
+      return 'ignore_palm';
+    }
     if (!e.isPrimary) return 'ignore_secondary';
   }
   return 'write';

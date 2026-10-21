@@ -18,7 +18,9 @@ import {
   type OfflineManifestResponse,
 } from '@medlevo/shared';
 import type { ModuleOptions } from '../../context';
+import { AppError } from '../../lib/errors';
 import { parseParams, parseQuery } from '../../lib/http';
+import { ENC_SUFFIX, EncryptStream, encryptedSize } from '../../lib/objectstore/encryption';
 import { BACKUP_EXCLUDED } from './backup';
 import {
   BACKUP_INCLUDED_AR,
@@ -87,15 +89,22 @@ export const EXPORT_PDF_NOTE_AR =
 export const EXPORT_PDF_NO_CONVERTER_AR =
   'PDF «الأصل مع كتابتي» يعمل (نسخة مسطحة تحفظ المظهر). تحويل كتاب الدراسة والملاحظات والأسئلة إلى PDF يحتاج LibreOffice على الخادم وهو غير مثبّت هنا — صدّرها Word أو اطبع نسخة HTML.';
 
+export const BACKUP_DOWNLOAD_NEEDS_KEY_AR =
+  'هذه النسخة تضم بيانات كل الحسابات على الخادم، فلا تُنزَّل إلا مشفّرة. اضبط MEDLEVO_BACKUP_ENCRYPTION_KEY على الخادم ثم أعد المحاولة؛ وتُفتح النسخة المشفّرة بالمفتاح نفسه عند الاستعادة.';
+
 export default async function register(app: FastifyInstance, { ctx }: ModuleOptions): Promise<void> {
-  ensureEpoch(ctx.db, ctx.clock.now());
   registerBackupJobs(ctx);
-  markInterruptedBackups(ctx);
   // PL-0: off-site backups to Cloudflare R2 — job, interrupted-run cleanup, and the daily scheduler, which runs only
   // in a server that listens (never in fastify.inject tests or the restore verification boot)
   const offsite = offsiteService(ctx);
   offsite.register();
-  offsite.markInterrupted();
+  // P1-T1: per vault, the first time it is opened in this process (there is no single database at boot): the sync
+  // epoch row, and backups / off-site runs a previous process left «running»
+  ctx.pool.onOpen('vault', 'data.epoch-and-interrupted', () => {
+    ensureEpoch(ctx.db, ctx.clock.now());
+    markInterruptedBackups(ctx);
+    offsite.markInterrupted();
+  });
   app.addHook('onListen', async () => offsite.startScheduler());
   app.addHook('onClose', async () => offsite.stopScheduler());
 
@@ -174,6 +183,23 @@ export default async function register(app: FastifyInstance, { ctx }: ModuleOpti
   app.get('/backups/:id/download', { config: { rateLimit: LIMITS.download } }, async (req, reply) => {
     const { id } = parseParams(idParams, req);
     const f = archiveForDownload(ctx, id);
+    // P1-T1 step 2: a whole-instance archive holds EVERY account's vault. While this server has only ever had one account
+    // it is downloaded as before; once it has had several (deleted ones included — an older archive still holds them),
+    // it leaves only encrypted (MLVENC01, MEDLEVO_BACKUP_ENCRYPTION_KEY) — or not at all
+    if (ctx.tenancy.hasHadSeveralDatabases()) {
+      const key = ctx.config.secrets.backupEncryptionKey();
+      if (!key) throw new AppError('CONFLICT', BACKUP_DOWNLOAD_NEEDS_KEY_AR, 409);
+      const name = `${f.fileName}${ENC_SUFFIX}`;
+      reply.header('content-type', 'application/octet-stream');
+      reply.header('content-length', String(encryptedSize(f.size)));
+      reply.header('content-disposition', `attachment; filename="${name}"`);
+      reply.header('cache-control', 'private, no-store');
+      ctx.audit.record({ entityType: 'backup', entityId: id, action: 'download', summary: `تنزيل نسخة احتياطية مشفّرة (${name})` });
+      const enc = new EncryptStream(key);
+      const src = createReadStream(f.path);
+      src.on('error', (e) => enc.destroy(e)); // a read error ends the download instead of leaving it hanging
+      return reply.send(src.pipe(enc));
+    }
     reply.header('content-type', 'application/gzip');
     reply.header('content-length', String(f.size));
     reply.header('content-disposition', `attachment; filename="${f.fileName}"`);

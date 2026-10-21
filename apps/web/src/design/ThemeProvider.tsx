@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useSyncExternalStore, type ReactNode } from 'react';
 import { applyDisplay, DEFAULT_DISPLAY, displayStore, type DisplayPrefs } from './themeDisplay';
+import { deviceStorage } from '../lib/userStorage';
 
 /**
  * Appearance preferences (a subset of OwnerSettings). Applied as attributes on <html>:
@@ -46,7 +47,7 @@ export function normalizeAppearance(raw: Partial<AppearancePrefs> | null | undef
 
 function readStored(): AppearancePrefs {
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = deviceStorage.get(STORAGE_KEY); // device-wide by choice (ARCHITECTURE_DELTA §4.5)
     return normalizeAppearance(raw ? (JSON.parse(raw) as Partial<AppearancePrefs>) : null);
   } catch {
     return DEFAULT_APPEARANCE;
@@ -55,7 +56,7 @@ function readStored(): AppearancePrefs {
 
 function writeStored(p: AppearancePrefs): void {
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(p));
+    deviceStorage.set(STORAGE_KEY, JSON.stringify(p));
   } catch {
     // storage blocked (private mode / quota): appearance still applies for this session
   }

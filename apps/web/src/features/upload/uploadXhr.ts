@@ -1,7 +1,7 @@
 // Multipart upload with REAL byte progress (XMLHttpRequest upload events; fetch cannot report it).
 // Same conventions as lib/api.ts: same-origin cookie, CSRF header, ApiErrorBody → ApiError (Arabic).
 import { isApiErrorBody } from '@medlevo/shared';
-import { ApiError, OFFLINE_MESSAGE_AR, UNREACHABLE_MESSAGE_AR } from '../../lib/api';
+import { ApiError, clientHeaders, OFFLINE_MESSAGE_AR, UNREACHABLE_MESSAGE_AR } from '../../lib/api';
 
 export interface UploadHandle<T> {
   promise: Promise<T>;
@@ -36,6 +36,7 @@ export function postMultipart<T>(path: string, form: FormData, onProgress: (sent
     xhr.open('POST', path.startsWith('/api') ? path : `/api${path}`);
     xhr.setRequestHeader('x-medlevo-csrf', '1');
     xhr.setRequestHeader('Accept', 'application/json');
+    for (const [k, v] of Object.entries(clientHeaders())) xhr.setRequestHeader(k, v); // version + account (P1-T1 step 3)
     xhr.withCredentials = true;
     xhr.timeout = 30 * 60 * 1000;
     xhr.upload.onprogress = (e) => {

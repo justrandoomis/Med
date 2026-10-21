@@ -542,7 +542,7 @@ export class OffsiteService {
     if (this.ctx.db.get('SELECT 1 AS x FROM data_offsite_backup WHERE created_at >= ? OR status = ? LIMIT 1', [slot, 'running'])) return null;
     try {
       // nothing to protect before the owner account exists (a fresh deploy)
-      if (!this.ctx.db.get(`SELECT 1 AS x FROM owner LIMIT 1`)) return null;
+      if (this.ctx.system.users.countInternal() === 0) return null; // nothing to back up before the first account
     } catch {
       // no owner table in this schema: back up anyway
     }
@@ -551,13 +551,21 @@ export class OffsiteService {
 
   startScheduler(): void {
     if (this.timer || this.firstTimer) return;
+    // P1-T1: timers run in the root context; each tick binds the vault that keeps the platform's backup records (user
+    // #1's in R1-b) explicitly, and skips before the first account exists
     const tick = () => {
       try {
-        this.tick();
+        const b = this.ctx.tenancy.platformVaultBinding();
+        if (!b) return;
+        this.ctx.binding.run(b, () => this.tick());
       } catch (e) {
         this.ctx.log.warn({ err: e }, 'off-site backup scheduler tick failed');
       }
     };
+    this.ctx.binding.runRoot(() => this.armScheduler(tick));
+  }
+
+  private armScheduler(tick: () => void): void {
     this.firstTimer = setTimeout(() => {
       this.firstTimer = null;
       tick();

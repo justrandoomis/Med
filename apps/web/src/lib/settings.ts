@@ -6,6 +6,7 @@ import { DEFAULT_OWNER_SETTINGS, mergeSettingsPatch, type OwnerSettings, type Se
 import { api, isApiError } from './api';
 import { setOwnerTimeZone } from './time';
 import { appearanceStore, type AppearancePrefs } from '../design/ThemeProvider';
+import { onStorageAccountChange, readJson, userStorage, writeJson } from './userStorage';
 
 const PENDING_KEY = 'medlevo.settings.pending.v1';
 const CACHE_KEY = 'medlevo.settings.cache.v1';
@@ -21,21 +22,12 @@ interface SettingsState {
   saveError: string | null;
 }
 
+// the signed-in account's keys (P1-T1 step 3): pending changes queued offline belong to the account that made them
 function read<T>(key: string): T | null {
-  try {
-    const raw = window.localStorage.getItem(key);
-    return raw ? (JSON.parse(raw) as T) : null;
-  } catch {
-    return null;
-  }
+  return readJson<T>(userStorage, key);
 }
 function write(key: string, v: unknown) {
-  try {
-    if (v == null) window.localStorage.removeItem(key);
-    else window.localStorage.setItem(key, JSON.stringify(v));
-  } catch {
-    // ignore
-  }
+  writeJson(userStorage, key, v ?? null);
 }
 
 const APPEARANCE_KEYS = ['theme', 'paper_texture', 'reduce_motion', 'text_scale'] as const;
@@ -54,11 +46,22 @@ class SettingsStore {
   private onlineHooked = false;
 
   constructor() {
+    this.pending = {};
+    this.state = this.initial();
+    // P1-T1 step 3: another account in this page → its own cached settings and its own pending changes (never the
+    // previous account's queued changes sent under the new session)
+    onStorageAccountChange(() => {
+      this.state = this.initial();
+      this.listeners.forEach((l) => l());
+    });
+  }
+
+  private initial(): SettingsState {
     const cached = typeof window !== 'undefined' ? read<OwnerSettings>(CACHE_KEY) : null;
     this.pending = (typeof window !== 'undefined' ? read<Partial<OwnerSettings>>(PENDING_KEY) : null) ?? {};
     const settings = { ...DEFAULT_OWNER_SETTINGS, ...(cached ?? {}), ...this.pending };
-    this.state = { settings, loaded: false, loadError: null, save: Object.keys(this.pending).length ? 'pending_offline' : 'idle', saveError: null };
     setOwnerTimeZone(settings.timezone);
+    return { settings, loaded: false, loadError: null, save: Object.keys(this.pending).length ? 'pending_offline' : 'idle', saveError: null };
   }
 
   get = () => this.state;

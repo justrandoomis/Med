@@ -50,6 +50,7 @@ import {
   ENTITY_TABLE,
   getDb,
   isSyncTarget,
+  LOCAL_DB_NAME,
   kvGet,
   kvSet,
   outboxTarget,
@@ -525,7 +526,10 @@ export class SyncEngine {
 
   private async withLock(fn: () => Promise<void>): Promise<void> {
     if (!this.locks) return fn();
-    await this.locks.request(LOCK_NAME, { ifAvailable: true }, async (lock) => {
+    // one pusher per local database across tabs; the legacy `medlevo` keeps R1-a's lock name (an old tab of user #1
+    // and an updated one never push the same outbox at once), every account database has its own (P1-T1 step 3)
+    const lockName = this.db.name === LOCAL_DB_NAME ? LOCK_NAME : `${LOCK_NAME}:${this.db.name}`;
+    await this.locks.request(lockName, { ifAvailable: true }, async (lock) => {
       if (!lock) return; // another tab is syncing; its liveQuery updates reach us
       await fn();
     });
@@ -1138,8 +1142,18 @@ export function describeSyncSnapshot(s: SyncSnapshot): string {
 // ─── app singleton & hooks ─────────────────────────────────────────────────────────────────
 let engine: SyncEngine | null = null;
 
+/**
+ * The page's sync engine, bound to the page's local database (P1-T1 step 3). When the page's account changes, the
+ * previous account's engine stops: its outbox is frozen in its own database and is never pushed under another
+ * session (ARCHITECTURE_DELTA §8.7); it is pushed again when that account signs in.
+ */
 export function getSyncEngine(): SyncEngine {
-  if (!engine) engine = new SyncEngine();
+  const db = getDb();
+  if (engine && engine.db !== db) {
+    engine.stop();
+    engine = null;
+  }
+  if (!engine) engine = new SyncEngine({ db });
   return engine;
 }
 

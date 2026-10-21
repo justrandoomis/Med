@@ -11,8 +11,14 @@
 //   * already saved with the same text → nothing to do;
 //   * the stored note is still what the editor last saw → the draft is applied on top of it;
 //   * the stored note changed elsewhere meanwhile (or was deleted) → the draft is kept as a NEW note next to it.
+//
+// Drafts belong to their writer (P1-T1 step 3, ARCHITECTURE_DELTA §4.5): they are written in the signed-in account's
+// namespace (lib/userStorage.ts) and carry its id (`uid`); recovery reads only that namespace and only drafts tagged
+// with the account — an untagged draft (written before accounts) is recovered only by user #1, who owns the legacy
+// namespace on this device (draftBelongsTo). A draft is never saved, nor pushed, under another account.
 import { richTextToPlain, stripBidiControls, type AnnotationAnchor, type RichText } from '@medlevo/shared';
-import type { MedLevoDB } from '../../../lib/localdb';
+import { draftBelongsTo, type MedLevoDB } from '../../../lib/localdb';
+import { storageAccount, userStorage } from '../../../lib/userStorage';
 import { saveNote, type WorkspaceNoteRow } from './local';
 
 export const NOTE_DRAFT_PREFIX = 'medlevo.note-draft.';
@@ -28,62 +34,49 @@ export interface NoteDraft {
   /** text of the stored note as the editor last saw / wrote it (null: not stored yet) */
   baseText: string | null;
   savedAt: number;
+  /** (P1-T1 step 3) the account that typed it; absent = written before accounts existed (user #1's legacy draft) */
+  uid?: string;
 }
 
 export function noteText(body: RichText): string {
   return stripBidiControls(richTextToPlain(body));
 }
 
-function storage(): Storage | null {
-  try {
-    return typeof localStorage === 'undefined' ? null : localStorage;
-  } catch {
-    return null;
-  }
-}
-
 /** Synchronous backup of what is being typed (best effort: a full or blocked storage never blocks typing). */
-export function writeNoteDraft(d: Omit<NoteDraft, 'v' | 'savedAt'>): void {
-  try {
-    storage()?.setItem(NOTE_DRAFT_PREFIX + d.key, JSON.stringify({ v: 1, ...d, savedAt: Date.now() } satisfies NoteDraft));
-  } catch {
-    // quota / private mode: the IndexedDB save still runs
-  }
+export function writeNoteDraft(d: Omit<NoteDraft, 'v' | 'savedAt' | 'uid'>): void {
+  const uid = storageAccount()?.userId;
+  // quota / private mode: the IndexedDB save still runs
+  userStorage.set(NOTE_DRAFT_PREFIX + d.key, JSON.stringify({ v: 1, ...d, savedAt: Date.now(), ...(uid ? { uid } : {}) } satisfies NoteDraft));
 }
 
 /** Remove the backup once `savedText` is in IndexedDB — unless newer text was typed meanwhile. */
 export function clearNoteDraft(key: string, savedText?: string): void {
-  const s = storage();
-  if (!s) return;
   try {
     if (savedText !== undefined) {
-      const raw = s.getItem(NOTE_DRAFT_PREFIX + key);
+      const raw = userStorage.get(NOTE_DRAFT_PREFIX + key);
       const d = raw ? (JSON.parse(raw) as NoteDraft) : null;
       if (d && noteText(d.body) !== savedText) return;
     }
-    s.removeItem(NOTE_DRAFT_PREFIX + key);
+    userStorage.remove(NOTE_DRAFT_PREFIX + key);
   } catch {
     // ignore
   }
 }
 
+/** The drafts of the signed-in account (its namespace, its tag; untagged ones only for user #1's legacy namespace). */
 export function readNoteDrafts(): NoteDraft[] {
-  const s = storage();
-  if (!s) return [];
+  const a = storageAccount();
   const out: NoteDraft[] = [];
-  try {
-    for (let i = 0; i < s.length; i++) {
-      const k = s.key(i);
-      if (!k?.startsWith(NOTE_DRAFT_PREFIX)) continue;
-      try {
-        const d = JSON.parse(s.getItem(k) ?? 'null') as NoteDraft | null;
-        if (d && d.v === 1 && typeof d.noteId === 'string' && d.body && Array.isArray(d.body.paragraphs)) out.push(d);
-      } catch {
-        // unreadable entry: left for inspection, never applied
-      }
+  for (const k of userStorage.keys(NOTE_DRAFT_PREFIX)) {
+    try {
+      const d = JSON.parse(userStorage.get(k) ?? 'null') as NoteDraft | null;
+      if (!(d && d.v === 1 && typeof d.noteId === 'string' && d.body && Array.isArray(d.body.paragraphs))) continue;
+      // before the sign-in state is known (a = null) only the legacy namespace is read and only untagged drafts count
+      if (a ? !draftBelongsTo(d.uid ?? null, { userId: a.userId, isLegacyOwner: a.legacy }) : d.uid !== undefined) continue;
+      out.push(d);
+    } catch {
+      // unreadable entry: left for inspection, never applied
     }
-  } catch {
-    return out;
   }
   return out;
 }

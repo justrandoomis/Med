@@ -95,12 +95,33 @@ describe('G8 security — authentication on every registered /api route', () => 
     expect(checked).toBeGreaterThan(300);
   });
 
-  it('the public list is exactly health, auth status/setup/login/recover and the signed file token — and none of them leaks owner data', async () => {
+  it('the public list is exactly health, auth status/setup/login/recover, the signed file token and the migration page redirect — and none of them leaks owner data', async () => {
     expect([...PUBLIC_ROUTES].sort()).toEqual(
-      ['GET /api/auth/status', 'GET /api/files/t/:token', 'GET /api/health', 'HEAD /api/auth/status', 'HEAD /api/files/t/:token', 'HEAD /api/health', 'POST /api/auth/login', 'POST /api/auth/recover', 'POST /api/auth/setup'].sort(),
+      [
+        'GET /api/auth/status',
+        'GET /api/files/t/:token',
+        'GET /api/health',
+        'HEAD /api/auth/status',
+        'HEAD /api/files/t/:token',
+        'HEAD /api/health',
+        'POST /api/auth/login',
+        'POST /api/auth/recover',
+        'POST /api/auth/setup',
+        // P1-T1 step 3: the owner-migration page's address; once the app runs it only redirects to the app
+        'GET /api/maintenance',
+        'HEAD /api/maintenance',
+      ].sort(),
     );
+    const m = await t.app.inject({ method: 'GET', url: '/api/maintenance' });
+    expect(m.statusCode).toBe(303);
+    expect(m.headers.location).toBe('/');
+    expect(m.body).toBe('');
     const registered = new Set(uniqueRoutes().map((r) => `${r.method} ${r.url}`));
-    for (const p of PUBLIC_ROUTES) expect(registered.has(p), p).toBe(true);
+    for (const p of PUBLIC_ROUTES) {
+      // module routes are collected per module; the app-level ones (health, the migration page) are asked of Fastify
+      const [method, url] = p.split(' ') as ['GET' | 'HEAD' | 'POST', string];
+      expect(registered.has(p) || t.app.hasRoute({ method, url }), p).toBe(true);
+    }
     // a forged token is refused; setup cannot run twice; a wrong login is refused
     expect((await t.app.inject({ method: 'GET', url: `/api/files/t/${'x'.repeat(48)}` })).statusCode).toBe(403);
     expect((await t.app.inject({ method: 'POST', url: '/api/auth/setup', headers: CSRF, payload: { username: 'x', password: 'another-password-123' } })).statusCode).toBe(409);

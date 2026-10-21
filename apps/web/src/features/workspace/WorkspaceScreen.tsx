@@ -57,21 +57,21 @@ import { ExternalLinkDialog, LinkTargetDialog } from './notes/NotePageDialogs';
 import { useReaderNotePages } from './notes/readerNotePages';
 import { sheetLabel } from './model/sequence';
 import './workspace.css';
+import { userStorage } from '../../lib/userStorage';
 
 // per-device view preferences (UI conveniences, never owner data): the Study Book view per source, sync scrolling
 const VIEW_PREF_KEY = (sourceId: string) => `medlevo.workspace.view.${sourceId}`;
 const BOOK_SYNC_KEY = 'medlevo.workspace.studybook-sync';
 function readPref(key: string): string | null {
   try {
-    return window.localStorage.getItem(key);
+    return userStorage.get(key);
   } catch {
     return null;
   }
 }
 function writePref(key: string, value: string | null): void {
   try {
-    if (value === null) window.localStorage.removeItem(key);
-    else window.localStorage.setItem(key, value);
+    userStorage.set(key, value); // the account's own view preferences (P1-T1 step 3)
   } catch {
     /* storage unavailable: the preference is simply not remembered */
   }
@@ -328,6 +328,9 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
   const notePageInk = caps.feature('workspace.ink').available;
   const hasNotePages = notes.sheets.some((sh) => sh.kind === 'note');
   const seqCurrent = notePageId != null && notes.index.ofNote(notePageId) >= 0 ? notes.index.ofNote(notePageId) : notes.index.ofSource(pageIndex);
+  // (parity N1 wave 2, G67 seam) the ink page menu's «صفحة ملاحظات بعد هذه الصفحة» on a lecture page
+  const { openNew: openNewNotePage, index: noteSeq } = notes;
+  const inkPageMenu = useMemo(() => ({ newNotePageAfter: (a: AnnotationAnchor) => { if (a.type === 'page') openNewNotePage(noteSeq.ofSource(a.page_index)); } }), [openNewNotePage, noteSeq]);
   const strokeActive = useRef(false);
   /** when the last stroke ended (a swipe right after it is the same hand, not a page turn) */
   const lastStrokeEndAt = useRef<number | null>(null);
@@ -1094,7 +1097,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
   );
 
   return (
-    <InkHost links={linkHost} currentPage={currentInkPage} notify={(m) => toast.show({ title: m, tone: 'warning' })}>
+    <InkHost links={linkHost} currentPage={currentInkPage} notify={(m) => toast.show({ title: m, tone: 'warning' })} pageMenu={inkPageMenu}>
     <LayerViewProvider documentKey={`source:${sourceId}`} session={layerSession} onSession={setLayerSession}>
     <HandwritingHost sourceId={sourceId} nodeId={detail.node_id ?? null} online={online} askHiddenReason={studyMode === 'exam' ? EXAM_MODE_HIDDEN_AR : null}>
     <SourceNavigationContext.Provider value={nav}>

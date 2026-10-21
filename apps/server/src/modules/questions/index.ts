@@ -29,9 +29,12 @@ const matchInput = z
   .refine((i) => !!i.version_id !== !!i.question_ids, 'version_id أو question_ids (أحدهما فقط)');
 
 export default async function register(app: FastifyInstance, { ctx }: ModuleOptions): Promise<void> {
-  // H2 item 10f: fingerprints written before the G5 fix are recomputed once (migration 0530 marks them)
-  const refingerprinted = refingerprintVersions(ctx);
-  if (refingerprinted > 0) ctx.log.info({ versions: refingerprinted }, 'question fingerprints recomputed with the current algorithm');
+  // H2 item 10f: fingerprints written before the G5 fix are recomputed once (migration 0530 marks them) — per vault,
+  // when it is opened (P1-T1: there is no single database at boot)
+  ctx.pool.onOpen('vault', 'questions.refingerprint', () => {
+    const refingerprinted = refingerprintVersions(ctx);
+    if (refingerprinted > 0) ctx.log.info({ versions: refingerprinted }, 'question fingerprints recomputed with the current algorithm');
+  });
   ctx.capabilities.set('questions.vault', 'available');
   ctx.capabilities.set('questions.extraction', 'available');
   ctx.capabilities.set('questions.matching', 'available');

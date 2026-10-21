@@ -48,18 +48,23 @@
   min-height: auto;
   padding-bottom: var(--ml-space-2);
 }
+/* (R1-b final critic) on a wide reader the middle slot (mode, view, the writing bar) is the one that gives way: the
+   writing bar folds what does not fit into «المزيد». The title slot keeps the back button and the page chip, the end
+   slot keeps search and zoom — before, the middle slot never shrank and these lay under the writing tools
+   (e2e/r1b-final-critic.spec.ts). */
 .wk-topbar__start {
   display: flex;
   align-items: center;
   gap: var(--ml-space-2);
-  min-width: 0;
+  min-width: 16rem;
   flex: 1 1 0;
 }
 .wk-topbar__center {
   display: flex;
   align-items: center;
   gap: var(--ml-space-2);
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
 }
 .wk-topbar__end {
   display: flex;
@@ -67,7 +72,7 @@
   justify-content: flex-end;
   gap: var(--ml-space-1);
   flex: 1 1 0;
-  min-width: 0;
+  min-width: max-content;
 }
 .wk-topbar__title {
   display: flex;

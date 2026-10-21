@@ -34,12 +34,17 @@ const errorReport = z
 const batchBody = z.object({ errors: z.array(errorReport).min(1).max(50) }).strict();
 
 export function registerQualityRoutes(app: FastifyInstance, ctx: AppContext): void {
-  // the EvaluationCase store mirrors the code catalogue (upsert by id; removed cases are retired, never deleted)
-  try {
-    syncCatalogue(ctx.db, ctx.clock.now());
-  } catch (e) {
-    ctx.log.warn({ err: e }, 'control: syncing the evaluation catalogue failed');
-  }
+  // the EvaluationCase store mirrors the code catalogue (upsert by id; removed cases are retired, never deleted) —
+  // in the vault that keeps the platform's records (evaluation is a platform operation), when it is first opened
+  // (P1-T1: there is no single database at boot)
+  ctx.pool.onOpen('vault', 'control.evaluation-catalogue', (_kind, vaultId) => {
+    if (ctx.tenancy.platformVaultBinding()?.vaultId !== vaultId) return;
+    try {
+      syncCatalogue(ctx.db, ctx.clock.now());
+    } catch (e) {
+      ctx.log.warn({ err: e }, 'control: syncing the evaluation catalogue failed');
+    }
+  });
 
   app.get('/evaluation', async () => evaluationOverview(ctx.db));
 

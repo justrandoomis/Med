@@ -48,6 +48,28 @@ medlevo-backup/files/aa/bb/<sha256> every stored file a database row refers to (
                                    page renders, figure crops)
 ```
 
+**Multi-user layout (P1-T1 step 1, release R1-b).** A data directory with `system.sqlite` + `vaults/` is backed up
+whole, by the app and by `npm run backup` alike:
+
+```
+medlevo-backup/system.sqlite             accounts, sessions, devices, the vault registry, the job index
+medlevo-backup/vaults/<vault>.sqlite     one snapshot per account (each consistent on its own, VACUUM INTO)
+medlevo-backup/files/aa/bb/<sha256>      every stored file any vault refers to (stored once when shared)
+```
+
+The manifest adds `layout: "multi_user"`, `system` and `vaults[]` (`db` describes the primary vault — the first
+platform admin's, whose `data_backup` list shows the archive); `database_hash` and the integrity checks cover every
+database. `restore:verify --target` writes a complete multi-user data directory (with its `.multi-user` marker),
+revokes every session and gives every vault a new sync epoch. An archive made by R1-a or earlier (single
+`medlevo.sqlite`) still verifies and restores to `medlevo.sqlite` — but this build refuses to **serve** a single-owner
+directory until the owner migration (P1-T1 step 3) ships; its boot check runs on a sandbox copy.
+
+The snapshots are taken one after the other (the system DB first, then each vault), so they are each consistent but
+not one instant: a job enqueued while the vaults were being copied is in its vault but not in the restored job index.
+The restored server re-indexes every unfinished job of a vault when it first opens that vault (and entries met while a
+vault was locked once it is usable again), so such a job still runs exactly once (P1-T1 step 1 review,
+`apps/server/test/tenancy/step1.review.test.ts`).
+
 **Never included:**
 
 * `secret.key`, the server's signing key. A restored server generates a new one. Old signed file links simply
@@ -170,8 +192,10 @@ pulled it.
 * If a verification process is killed, its temporary `.medlevo-restore-*` directory can remain in the temp directory
   (or `--work-dir`). Delete it by hand.
 * No incremental backups: every run is a full archive (R2 storage is cheap; see the guide's cost table). Local
-  archives are not encrypted (§6 encrypts the off-site copies). No restore "into" a running server: restoring always
-  means starting the server on the new directory.
+  whole-instance archives made by the app are not encrypted on the server disk (§6 encrypts the off-site copies; §7
+  covers `--encrypt`, per-vault archives and the encrypted download once several accounts exist). No whole-instance
+  restore "into" a running server: restoring always means starting the server on the new directory (one account's
+  vault CAN be restored in place, §7).
 
 ## 6. Off-site backups to Cloudflare R2 (PL-0)
 
@@ -282,3 +306,99 @@ underneath itself. The app shows the exact command with a copy button, which is 
   in the API, the database or the bucket.
 * Docker: the same flow inside the image (DEPLOYMENT.md §8.5).
 * **Not run:** Cloudflare R2 itself, Render's Shell. The fake implements R2's documented multipart rules but is not R2.
+
+## 7. Several accounts: encrypted archives, one vault at a time, «نسخة من بياناتي» (P1-T1 step 2, release R1-b)
+
+Encryption is PL-0's «MLVENC01» format (AES-256-GCM frames, a fresh salt per archive, the key in
+`MEDLEVO_BACKUP_ENCRYPTION_KEY` — the same key as the off-site copies; losing it makes every encrypted archive
+unreadable, by design). Implemented in `apps/server/src/modules/data/{archive-crypto,vault-backup,backup,restore}.ts`
+and `apps/server/src/modules/accounts/export.ts`.
+
+| what | who | where it lands | encrypted |
+|---|---|---|---|
+| whole-instance archive (system DB + every active vault + their files) | platform admin (app or `npm run backup`) | `DATA_DIR/backups/` | `npm run backup -- --encrypt` keeps **only** `…tar.gz.mlenc` (the plain archive is removed; without the key nothing is kept, exit 2). The app's archive stays plain on the server disk, but once the server has **ever had more than one account** (deleted accounts count: an older archive still holds their vaults — step-2 review) the download route sends it **only encrypted** (`…tar.gz.mlenc`, streamed) and refuses (409, Arabic reason) without a key; a server that has only ever had one account downloads it unchanged (AC-30) |
+| per-vault backup (one account's vault + the files it references, `manifest.layout = 'vault'`) | platform admin: `POST /api/platform/vaults/:vaultId/backups` | `DATA_DIR/backups/vaults/<vault id>/medlevo-vault-…tar.gz[.mlenc]` | yes whenever the key is set (the plain archive never stays on disk) |
+| «نسخة من بياناتي» (the user's own export, same per-vault format) | the user: `POST /api/accounts/me/export` → job; `GET /api/accounts/me/exports[/:jobId/download]` | `DATA_DIR/exports/<vault id>/` (newest 3 kept; removed with the account) | no — it is the user's own copy, delivered over their authenticated connection |
+
+**Verification accepts encrypted archives.** `verifyBackup` / `npm run restore:verify` decrypt an «MLVENC01» archive
+into their own work directory first (a `decrypt` check: wrong key, tampering and truncation each have their Arabic
+reason) and then run every usual check. Without the key the verification fails at `decrypt` and nothing is extracted.
+A per-vault archive is verified like a single-owner one (its boot check runs on a sandbox copy), and `restore:verify
+--target` refuses it: a per-vault archive is restored **in place**, into its own account, not as a data directory.
+
+**Restoring ONE vault in place** (`POST /api/platform/vaults/:vaultId/restore {file_name}`, platform admin; runs in the
+background, the result in `GET /api/platform/vaults/:vaultId/backups` → `last_restore`):
+
+1. the archive is verified first in a separate directory (decrypt, hashes, integrity, row counts, sandbox boot); it must
+   be **this** vault's archive (vault id, user and file name) — otherwise nothing changes;
+2. the vault is locked (its user's requests answer «حسابك غير متاح حاليًا…») and its connection closed once no request
+   or job uses it (after 15 s it gives up and unlocks, nothing changed);
+3. the current vault file is moved to `DATA_DIR/backups/vaults/<vault id>/pre-restore-<ms>.sqlite` (**the rollback
+   copy**), the restored file takes its place atomically, and files the vault references that the store lacks are put
+   back from the archive;
+4. that vault starts a new sync epoch (only that user's devices reset their cursor) and **only that user's** sessions
+   are revoked;
+5. the vault is unlocked, its job index reconciled, and a blob mark pass rebuilds the registry hints.
+
+Any failure after the lock puts the previous file back. Rollback after a successful restore: stop using the account
+(or lock it), put `pre-restore-<ms>.sqlite` back as the vault file — it is the exact file that was replaced.
+
+**After any restore a mark pass rebuilds the blob registry hints.** Every boot runs one (≈ 30 s after the server starts
+listening — a restored data directory always boots), the boot check of `restore:verify` runs one on the restored
+directory (its `boot` check reports it), and the vault restore runs one at the end. Hints are never the reason a file
+is deleted (`docs/modules/tenancy.md` «Step 2», blob GC).
+
+**What a whole-instance backup contains with several accounts.** Every vault in status `active` or `locked`; a vault
+being deleted is left out. A registered vault whose file is missing stops the backup with a reason (it is never
+created empty by the snapshot). Accounts deleted after an archive was made remain in that archive until its retention
+removes it (the account-deletion preview says so) — and such an archive is never downloaded in clear again, even when
+only one account is left (step-2 review).
+
+**Missing local copies (MEDLEVO_BLOB_STORE=r2).** The app's whole-instance backup, the per-vault backup and «نسخة من
+بياناتي» fetch a referenced blob back from the object store before archiving it when its local copy is missing (a new
+disk); a file that cannot be had anywhere is listed in `manifest.json → files_missing`, and the export view names the
+count (`missing_files`, `warning_ar`) instead of a silent «complete». The CLI (`npm run backup`) has no object-store
+access and lists such files as missing.
+
+**Restoring one vault while the GC runs.** The vault restore copies the restored database beside the live file, waits
+until no sweep or mark pass runs, then swaps the file and runs a mark pass — a sweep never decides on the OLD file of a
+vault that was restored under it. One restore per vault at a time.
+
+**Tests** (this container, against the S3 fake where R2 is involved — never Cloudflare R2):
+`apps/server/test/tenancy/vault-backup.test.ts` (plain and encrypted per-vault archives, verification with and without
+the key, in-place restore of one account with a rollback copy and its own epoch / sessions, refusal of another vault's
+or a damaged archive, a vault in use, the multi-account download, missing and departing vaults),
+`apps/server/test/accounts/export-delete.test.ts` (the export holds only the user's vault and files, verifies as a
+per-vault archive, and is downloadable by that user alone), `apps/server/test/data/encrypted-cli.test.ts` (`npm run
+backup -- --encrypt` and `restore:verify` of the `.mlenc` as real processes).
+
+
+## 8. The owner migration's own backup and its rollback (P1-T1 step 3, release R1-b)
+
+The first boot of R1-b on an R1-a data directory moves the single-owner database into user #1's vault
+([`DEPLOYMENT.md`](DEPLOYMENT.md) §6.1; ADR-0003 §5). Before anything moves, its `safety` step:
+
+* records the reference — sha256, size and per-table row counts of `medlevo.sqlite` after a WAL checkpoint;
+* writes a full backup (the usual archive: database + every referenced file) to **`DATA_DIR/migration/`**
+  (`medlevo-backup-….tar.gz` + `.sha256`), verifies it by restoring it into a temporary directory and booting the app
+  on it, and keeps the verification report beside it (`….tar.gz.verify.json`);
+* with R2 configured, uploads an encrypted copy (`<MEDLEVO_R2_PREFIX>backups/<archive>.mlenc`, the same «MLVENC01»
+  format and key as §6). If the upload fails the migration stops before anything moved; the owner can retry or continue
+  without the R2 copy (the local verified archive stays).
+
+The archive is a **single-owner** archive. `npm run restore:verify -- DATA_DIR/migration/<archive> --target <empty
+dir>` restores it as an R1-a data directory (`medlevo.sqlite` + `files/`): R1-a runs on it unchanged, and R1-b on it
+shows the maintenance page and migrates it again. It is kept until you delete it (it is not counted in the retention of
+`backups/`).
+
+**Rollback without the archive** (the usual way, while it is allowed): `MEDLEVO_OWNER_MIGRATION=rollback` + a restart
+(or `npm run migrate:multi-user -- --rollback` with the server stopped). The vault — with everything written after the
+migration — is moved back to `medlevo.sqlite`; the owner's current password and recovery codes are copied back into it
+if they changed, and sessions revoked under R1-b stay revoked in it; the tombstone that stood at `medlevo.sqlite` since
+the move (a text file R1-a refuses to open — DEPLOYMENT.md §6.1), `system.sqlite`, its `-wal`/`-shm` and the journal are
+moved to `DATA_DIR/rolled-back-<time>/`, never deleted. It is **refused** once another account exists or a base migration was applied after the move (then the vault
+is no longer an R1-a database): restore the archive above into a new directory instead, accepting that what was
+written on the server after the migration is not in it (devices re-send what is still in their outbox).
+
+Tests: `apps/server/test/tenancy/owner-migration.test.ts` (verified backup + its report, the R2 object in the S3 fake,
+rollback keeping later writes, rollback after a crash inside it, the two refusals).

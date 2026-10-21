@@ -8,6 +8,7 @@
 // They describe the device, not the owner, so they are kept on this device only (never synced to another one). E-ink is
 // only SUGGESTED, and only from an honest signal the browser gives: the CSS media feature `(update: slow)`. Nothing is
 // inferred from a device name.
+import { deviceStorage } from '../lib/userStorage';
 
 export interface DisplayPrefs {
   eink: boolean;
@@ -33,7 +34,7 @@ export function normalizeDisplay(raw: Partial<DisplayPrefs> | null | undefined):
 
 function readStored(): DisplayPrefs {
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = deviceStorage.get(STORAGE_KEY); // the device's display (e-ink, contrast): device-wide (P1-T1 step 3)
     return normalizeDisplay(raw ? (JSON.parse(raw) as Partial<DisplayPrefs>) : null);
   } catch {
     return DEFAULT_DISPLAY;
@@ -87,7 +88,7 @@ class DisplayStore {
     if (JSON.stringify(next) === JSON.stringify(this.prefs)) return;
     this.prefs = next;
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      deviceStorage.set(STORAGE_KEY, JSON.stringify(next));
     } catch {
       // storage blocked: the mode still applies for this session
     }

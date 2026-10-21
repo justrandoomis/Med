@@ -1,8 +1,9 @@
 # Academic OS — Build plan
 
 > **Status:** v1 · 2026-10-20 · written after the adversarial design review. Release R1-a (P1-T1 step 0, P1-T2,
-> P1-T3, with PL-0 beside them) is built, reviewed and verified as of 2026-10-21 (§1.3, «Release R1-a»); nothing
-> later is built yet.
+> P1-T3, with PL-0 beside them) is built, reviewed and verified as of 2026-10-21 (§1.3, «Release R1-a»); release R1-b
+> (P1-T1 steps 1–3, with parity N1 waves 1–2 beside it) is built, reviewed and verified in this container as of
+> 2026-10-21 (§1.3, «Release R1-b»); R1-c (P1-T4, P1-T5) is not started.
 > **What it is:** the delivery plan for the Academic OS in the spec's phase order (spec §23 «Implementation Priority»).
 > Each phase is split into **build tracks**; each track is built by **one builder agent** and checked by **one adversarial
 > reviewer agent**. Phase 1 is planned in full detail; Phases 2–5 at track level.
@@ -119,6 +120,103 @@ note or the matrix «remains» column): P1-T1's baseline re-check (DoD item 1) a
 history growth (3.58 KB per stroke edit), layer copy inside the request, per-layer highlight blending, two layer sets in
 the split pane, the lock not checked on undo / redo, bookmarks of hidden layers still listed; P1-T3's eight and PL-0's
 five minors; `ARCHITECTURE_DELTA.md` §3.2 has no rows yet for `0164`, `0274`, `0751` (its owner adds them).
+
+#### Release R1-b «multi-user foundation» + parity N1 — final verification (2026-10-21)
+
+**Status: verified in this container for the owner as user #1** — every gate green on the whole tree after the fixes
+below (commands, counts and durations: `docs/TEST_LOG.md`, «Release R1-b + N1 — final verification»). There is still
+**one account in practice**: no registration route exists until P1-T4 (R1-c), and no channel or space. Nothing was run on
+a device, on Render or on Cloudflare R2 (see «Not run»).
+
+**What shipped** (each part built by its track and reviewed adversarially, §1.2):
+
+| part | what the owner gets | reviewed in |
+|---|---|---|
+| P1-T1 step 1 — system DB, binding, vaults, accounts, authz | `system.sqlite` beside one SQLite «vault» per account; every request and job bound to the caller's vault (AsyncLocalStorage); accounts and devices; the space-route allow-list (an unlisted route stops the boot), platform-only whole-instance routes, a progressive sign-in delay | `TEST_LOG` «P1-T1 step 1 — adversarial review» |
+| P1-T1 step 2 — files, quotas, backups | chunked resumable uploads, a blob registry with mark-and-sweep GC (quarantine before delete), per-account storage quota and AI allowance (atomic reservation), the R2 blob adapter (encrypted, verified on read), encrypted whole-instance and per-vault backups (`backup --encrypt`), «نسخة من بياناتي» and account deletion (server APIs) | «P1-T1 step 2 — adversarial review» |
+| P1-T1 step 3 — owner migration | the journaled, resumable move of the R1-a database **byte for byte** into user #1's vault behind an Arabic maintenance page (`/api/maintenance`; or `MEDLEVO_OWNER_MIGRATION=apply`), a verified backup first, the tombstone that stops a mistaken R1-a deploy, rollback; the client-version gate (an R1-a app is served for user #1 only, others get 426); per-account IndexedDB / `localStorage` / drafts on each device with the R1-a database claimed in place for user #1; AC-01a server part | «P1-T1 step 3 — adversarial review» |
+| Parity N1 waves 1–2 — writing comfort | G01–G04, G06–G11, G14, G15, G17, G19–G22, G66, G67 (`docs/modules/ink.md`): colour slots with meanings, gestures, selective erase, lasso chips, free resize / rotate, an arrangeable toolbar, palm levels, pen feel, dashes, pencil, eyedropper, zoom writing window, insert space / straighten, page menu, new shapes and pathway heads, connectors, snapping, ruler and educational measurement, neat copy | «Parity N1 wave 1 / wave 2 — adversarial review» |
+
+**Migrations actually shipped:** base **none** — the 44 base migration files are byte-identical to the R1-a release
+commit `d0c8ab4` (`git diff --stat d0c8ab4 -- apps/server/src/db/migrations` is empty), as the owner-migration rule
+requires; system `2000_identity`, `2010_devices`, `2040_registry`, `2250_ops`, `2300_security` (applied to the new
+`system.sqlite` only); space: none. N1 changed no schema (its new fields are inside the annotation JSON, validated by
+the server).
+
+**Final verification** (2026-10-21, this container): the first full pass (typecheck, lint, unit, build, evaluation,
+full E2E on phone + desktop) was green. Then the owner migration was run **end to end against the real R1-a release**
+(`git archive d0c8ab4`, booted on a fresh copy of the realistic R1-a data directory of `test/tenancy/legacy-fixture.ts`,
+more data written through R1-a's own sync, this build's page, every entity / file / session reachable as user #1,
+rollback to the real R1-a with nothing lost — 38 / 38 checks), and the new and changed screens were driven at 390 and
+1280 px in light, dark and e-ink (the upgrade page in light and dark). That found seven defects; they and the open
+N1 review finding R10 were fixed, each with a test that failed first:
+
+* **release-blocking — the upgrade page's form never worked in a real browser:** it was served with
+  `Referrer-Policy: no-referrer`, under which a browser posts with `Origin: null`, and the origin check refused «ابدأ
+  الترقية» (403) — the owner's main upgrade path; now `same-origin` — `apps/server/test/tenancy/maintenance-form.r1b.test.ts`;
+* **data safety — review finding R10 closed:** an un-updated R1-a app (still served for user #1) that moved a polygon,
+  curved or double arrow would flip the arrow or leave the corners behind; the server now refuses that edit from a
+  client without a supported `x-medlevo-client` and sends its copy back (the old app files a conflict and puts the shape
+  back) — `apps/server/test/annotations/r1b-old-client-shapes.test.ts`;
+* desktop / iPad landscape: the writing bar covered the reader's zoom group and «المزيد» — `e2e/r1b-final-critic.spec.ts`;
+* the eyedropper's icon alone on a line; in the dark theme a shape's label invisible on the white page (1.2:1); 40 px
+  meaning fields and sliders on a phone — `apps/web/test/ink/ink-css.critic.test.ts`;
+* the upgrade page at 390 px: a long variable name ran off the «blocked» page, the confirmation checkbox squeezed to
+  14 px — `maintenance-form.r1b.test.ts`.
+
+**Updating the owner's Render deployment safely (owner-facing steps).** The Arabic, step-by-step version is
+`docs/DEPLOY_PHONE_AR.md` «التحديث الأول إلى نظام الحسابات المتعددة»; the technical record is `docs/DEPLOYMENT.md` §6.1.
+`render.yaml` deploys every commit to the tracked branch (`autoDeployTrigger: commit`), so **R1-b reaches that branch
+in one merge, as a whole** — never step 1 or 2 alone (step-1 review), and no other change may be merged until the
+upgrade page says «اكتملت الترقية».
+
+1. **Before merging:** «مركز التحكم» → «نسخ احتياطي الآن» and wait for «نجحت» (with R2 configured, check the copy
+   arrived: «النسخ الاحتياطي خارج الخادم»). Write down the upgrade page address: the service address +
+   `/api/maintenance`. Make sure you know the **current password** or have an unused **recovery code**. Check the disk:
+   the migration needs about 2.2 × (database + files) + 64 MB free (Render → Disks; enlarge first if in doubt).
+2. **Merge** the R1-b pull request into the branch Render deploys. Wait until the deploy is **Live** (the health check
+   passes while the server waits on the maintenance page).
+3. The installed app on your devices shows its sign-in screen and a message naming the upgrade page — expected. **Do
+   not delete the app or clear its site data**: what it wrote offline is kept and sent after the upgrade.
+4. Open `https://<your-service>.onrender.com/api/maintenance` in Safari or Chrome → «الترقية لم تكتمل بعد». Enter the
+   username and current password (or a recovery code — checked, not used up), tick «نعم، ابدأ…», press **«ابدأ
+   الترقية»**. The page refreshes itself through seven steps (the backup and its restore check take longest).
+5. **«اكتملت الترقية»** → «افتح التطبيق». On each device tap **«تحديث»** when it appears; the device keeps its data and
+   sign-in for your account (user #1). Then make a fresh backup («نسخ احتياطي الآن»).
+6. **If it stops** («توقفت الترقية», with the reason in Arabic; nothing deleted): fix the reason (disk, R2) and press
+   «أعد المحاولة», or «تراجع عن الترقية». A restart or redeploy in the middle resumes by itself from the last step.
+   Alternative start without the page: Render → Environment → `MEDLEVO_OWNER_MIGRATION=apply` → Save; remove it after
+   «اكتملت الترقية».
+7. **Rolling back after it completed** (only while no other account exists) — **in this order**: Render → Environment →
+   `MEDLEVO_OWNER_MIGRATION=rollback` → Save → the page shows «تم التراجع عن الترقية» → only then Render → Events → the
+   deploy before R1-b → **Rollback** → remove `MEDLEVO_OWNER_MIGRATION`. **Never start with Render's Rollback:** R1-a
+   on the migrated disk refuses to start («file is not a database» — the tombstone, on purpose; nothing is lost);
+   redeploy the latest commit and follow the order above. If the rollback is refused (another account exists, or a later
+   release changed the schema), restore the backup kept in `DATA_DIR/migration/` or the latest R2 copy
+   (`docs/BACKUP_RESTORE.md` §8, `DEPLOY_PHONE_AR.md` «الاستعادة»).
+
+**Not run (reason)** — R1-b ships with these open:
+
+| what | why |
+|---|---|
+| The upgrade on Render, an R2 copy of the pre-migration backup, the phone-only dry run | no Render / Cloudflare account and no phone here; R2 paths tested against the signature-checking S3 fake |
+| An **installed** R1-a PWA (iPad / phone) updating itself after the migration, offline outbox on a real device | no device; covered by replaying two devices' queued outbox operations against R1-b in the end-to-end script and by jsdom + fake IndexedDB tests of the in-place claim |
+| Any device: iPad + Apple Pencil, S Pen, BOOX (N1 pen feel, palm levels, latency, long press, two-finger ruler, pencil grain on e-ink) | no device; headless Chromium (390 × 844 touch emulation, 1280 × 800), mouse / CDP touch only |
+| The Docker image rebuild (`Dockerfile` gains `medlevo-migrate-multi-user`) | `dockerd` is installed but no daemon runs in this container: the image is not rebuilt, and the wrapper script `deploy/docker/medlevo-migrate-multi-user` was not run inside it (the CLI it calls, `src/cli/migrate-multi-user.ts`, is run as a real process by `test/tenancy/owner-migration.test.ts`) |
+| Two accounts in one browser (`e2e/aos-p1-two-users-one-browser.spec.ts`) | there is no registration route until P1-T4; covered by server isolation tests and web jsdom tests |
+| A live AI provider (`npm run eval -- --mode=live`), recognition reflow (G10 phase 2) with a real reader | no `ANTHROPIC_API_KEY`; fake providers only |
+| `MEDLEVO_PERF=1` suites, Safari / Firefox, screen readers, axe-core, CI on a GitHub runner | not available or not re-run here (no change to the measured paths) |
+
+**Carried forward** (reported by the reviews, not blocking R1-b; each in its module note and the matrix «remains»
+column): RATE_LIMITS.auth still 30 sign-ins / minute / address (a class behind one NAT, AOS-21.45); platform records
+(client errors, evaluation runs, backups list) live in user #1's vault until T4 moves them; the platform admin can
+download a whole-instance archive (plain while only one account has ever existed — ADR-0003 owner to decide);
+export archives not counted in the quota; `pre-restore-*.sqlite` copies never pruned; R2 remote copies kept after
+switching back to local blobs; the CLI cannot see a running R1-a server (stop it first); while the maintenance page is
+up an R1-a app is signed out until the migration ends; the pre-migration R2 copy follows normal retention; two CLIs at
+once not mutually excluded; N1: the `ink` settings object is one last-writer-wins unit between devices, sticky notes
+are not resizable, per-tool current presets stay on the device, Shift-constrained shapes (AOS-1.7) not built, the ruler's
+keys differ from AOS-1.8, «عرّف» / «أضف إلى المراجعة» in the page menu wait for N3 / N4.
 
 ### 1.4 Coordination with other work
 

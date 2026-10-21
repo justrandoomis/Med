@@ -3,7 +3,7 @@
 // <InkHost> inside their <InkProvider>; without it links are not offered (the tool stays out of the toolbar) and a
 // pasted picture lands on the last page that was touched.
 import { createContext, useContext, useEffect, useInsertionEffect, useMemo, useRef, type ReactNode } from 'react';
-import type { AnnotationAnchor, LinkTarget } from '@medlevo/shared';
+import type { AnnotationAnchor, LinkTarget, StudyMode } from '@medlevo/shared';
 import { useInkInternal } from './InkProvider';
 import { insertImage, startImageUploader } from './images';
 import { onRehomed } from './layers/rehome';
@@ -31,6 +31,21 @@ export interface InkHostValue {
   currentPage: () => { targetKey: string; anchor: AnnotationAnchor; ar: number; pageWidthPt: number } | null;
   /** report a problem to the owner (polite live region of the host) */
   notify?: (message: string) => void;
+  /**
+   * (parity N1, G66) the study mode the screen is in, for the per-mode toolbars. Absent: the engine reads it from the
+   * reader's mode switch; null: no study mode here (a notebook).
+   */
+  studyMode?: StudyMode | null;
+  /**
+   * (parity N1 wave 2, G67) host entries of the long-press page menu. Each is offered only when the screen provides it:
+   * a note page after a lecture page (the reader), and on printed text «عرّف» (N3, the terms dictionary) and «أضف إلى
+   * المراجعة» (N4). Note pages get «صفحة ملاحظات بعد هذه الصفحة» from the reader's own note-page actions.
+   */
+  pageMenu?: {
+    newNotePageAfter?: (anchor: AnnotationAnchor) => void;
+    define?: (q: { text: string; anchor: AnnotationAnchor; at: [number, number] }) => void;
+    addToReview?: (q: { text: string; anchor: AnnotationAnchor; at: [number, number] }) => void;
+  };
 }
 
 const InkHostContext = createContext<InkHostValue | null>(null);
@@ -48,9 +63,9 @@ function isTyping(t: EventTarget | null): boolean {
  * Provides the host to every ink layer and handles pasting a picture (Ctrl/⌘ V with an image on the clipboard)
  * onto the current page. Starts the picture uploader (retries while the app is open).
  */
-export function InkHost({ links, currentPage, notify, children }: InkHostValue & { children: ReactNode }) {
+export function InkHost({ links, currentPage, notify, studyMode, pageMenu, children }: InkHostValue & { children: ReactNode }) {
   const { store, announce } = useInkInternal();
-  const value = useMemo<InkHostValue>(() => ({ links, currentPage, notify }), [links, currentPage, notify]);
+  const value = useMemo<InkHostValue>(() => ({ links, currentPage, notify, ...(studyMode !== undefined ? { studyMode } : {}), ...(pageMenu ? { pageMenu } : {}) }), [links, currentPage, notify, studyMode, pageMenu]);
   const ref = useRef(value);
   // the latest host value for the paste listener, written at commit (before any layout effect) rather than during render
   useInsertionEffect(() => {

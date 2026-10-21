@@ -1,5 +1,7 @@
-// Owner sessions: opaque 32-byte random token in an HttpOnly cookie; only sha256(token) is stored.
-// 30-day sliding expiry (refreshed at most every few minutes to avoid a write per request).
+// Sessions (system DB, P1-T1 step 1): opaque 32-byte random token in an HttpOnly cookie; only sha256(token) is stored.
+// 30-day sliding expiry (refreshed at most every few minutes to avoid a write per request). Moved from the single-owner
+// database to DATA_DIR/system.sqlite with one change: every session belongs to a user (`user_id`), and every listing
+// or revocation a user can trigger is limited to that user's own sessions.
 import type { SessionInfo } from '@medlevo/shared';
 import type { Db } from '../../db/db';
 import { randomToken, sha256 } from '../../lib/hash';
@@ -9,6 +11,7 @@ import { deviceLabelFromUserAgent } from '../../lib/useragent';
 
 export interface SessionRow {
   id: string;
+  user_id: string;
   token_hash: string;
   device_id: string | null;
   device_label: string | null;
@@ -25,17 +28,19 @@ export const SESSION_TOUCH_INTERVAL_MS = 5 * 60 * 1000;
 
 export class SessionStore {
   constructor(
+    /** the SYSTEM database */
     private readonly db: Db,
     private readonly clock: Clock,
     private readonly ttlMs: number,
   ) {}
 
-  create(meta: { userAgent?: string | null; ip?: string | null; deviceLabel?: string | null; deviceId?: string | null }): { token: string; session: SessionRow } {
+  create(meta: { userId: string; userAgent?: string | null; ip?: string | null; deviceLabel?: string | null; deviceId?: string | null }): { token: string; session: SessionRow } {
     const now = this.clock.now();
     const token = randomToken(32);
     const ua = meta.userAgent ? meta.userAgent.slice(0, 512) : null;
     const row: SessionRow = {
       id: newId(now),
+      user_id: meta.userId,
       token_hash: sha256(token),
       device_id: meta.deviceId ?? null,
       device_label: (meta.deviceLabel?.trim() || deviceLabelFromUserAgent(ua)).slice(0, 100),
@@ -47,9 +52,9 @@ export class SessionStore {
       revoked_at: null,
     };
     this.db.run(
-      `INSERT INTO auth_session (id, token_hash, device_id, device_label, user_agent, ip, created_at, last_seen_at, expires_at, revoked_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
-      [row.id, row.token_hash, row.device_id, row.device_label, row.user_agent, row.ip, row.created_at, row.last_seen_at, row.expires_at],
+      `INSERT INTO auth_session (id, user_id, token_hash, device_id, device_label, user_agent, ip, created_at, last_seen_at, expires_at, revoked_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+      [row.id, row.user_id, row.token_hash, row.device_id, row.device_label, row.user_agent, row.ip, row.created_at, row.last_seen_at, row.expires_at],
     );
     return { token, session: row };
   }
@@ -71,21 +76,31 @@ export class SessionStore {
     return expires;
   }
 
-  listActive(): SessionRow[] {
-    return this.db.all<SessionRow>('SELECT * FROM auth_session WHERE revoked_at IS NULL AND expires_at > ? ORDER BY last_seen_at DESC', [this.clock.now()]);
+  /** The user's own active sessions (never another user's). */
+  listActive(userId: string): SessionRow[] {
+    return this.db.all<SessionRow>('SELECT * FROM auth_session WHERE user_id = ? AND revoked_at IS NULL AND expires_at > ? ORDER BY last_seen_at DESC', [
+      userId,
+      this.clock.now(),
+    ]);
   }
 
-  revoke(id: string): boolean {
-    const r = this.db.run('UPDATE auth_session SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL', [this.clock.now(), id]);
+  /** Revoke one of the user's own sessions; another user's session id is «not found». */
+  revoke(userId: string, id: string): boolean {
+    const r = this.db.run('UPDATE auth_session SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL', [this.clock.now(), id, userId]);
     return r.changes > 0;
   }
 
-  revokeAllExcept(keepId: string | null): number {
+  revokeAllExcept(userId: string, keepId: string | null): number {
     const now = this.clock.now();
     const r = keepId
-      ? this.db.run('UPDATE auth_session SET revoked_at = ? WHERE revoked_at IS NULL AND id <> ?', [now, keepId])
-      : this.db.run('UPDATE auth_session SET revoked_at = ? WHERE revoked_at IS NULL', [now]);
+      ? this.db.run('UPDATE auth_session SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL AND id <> ?', [now, userId, keepId])
+      : this.db.run('UPDATE auth_session SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL', [now, userId]);
     return r.changes;
+  }
+
+  /** The device this session syncs from (first push), shown in the sessions list. */
+  rememberDevice(userId: string, sessionId: string, deviceId: string): void {
+    this.db.run('UPDATE auth_session SET device_id = COALESCE(device_id, ?) WHERE id = ? AND user_id = ?', [deviceId, sessionId, userId]);
   }
 
   /** housekeeping: drop long-expired/revoked rows */

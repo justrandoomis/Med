@@ -7,6 +7,7 @@ import { isLoopbackHost } from '../../src/modules/auth';
 import { createAuthModule } from '../../src/modules/auth';
 import { MODULES } from '../../src/modules';
 import { createTestApp, CSRF, OWNER, type TestApp } from '../helpers/app';
+import { ownerVaultPath } from '../helpers/tenancy';
 
 let apps: TestApp[] = [];
 afterEach(async () => {
@@ -58,9 +59,13 @@ describe('first-run setup token', () => {
     expect(s.setup_required).toBe(false);
     expect(s.setup_token_required).toBeUndefined();
     t.ctx.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-    const dbBytes = readFileSync(t.config.dbPath);
-    expect(dbBytes.includes(Buffer.from(tok!))).toBe(false);
-    expect(dbBytes.includes(Buffer.from(tok!.replace(/-/g, '')))).toBe(false);
+    t.ctx.system.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    // P1-T1: neither the system DB (where the account is) nor the vault holds it
+    for (const file of [t.config.systemDbPath, ownerVaultPath(t)]) {
+      const dbBytes = readFileSync(file);
+      expect(dbBytes.includes(Buffer.from(tok!))).toBe(false);
+      expect(dbBytes.includes(Buffer.from(tok!.replace(/-/g, '')))).toBe(false);
+    }
     // a second setup is impossible anyway
     expect((await setup(t, { setup_token: tok })).statusCode).toBe(409);
   });

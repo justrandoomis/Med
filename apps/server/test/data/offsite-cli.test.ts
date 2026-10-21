@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { REPO_ROOT } from '../../src/config';
 import { offsiteService } from '../../src/modules/data/offsite';
 import { createTestApp, type TestApp } from '../helpers/app';
+import { dataDirDatabases } from '../helpers/tenancy';
 import { FakeS3 } from './fake-s3';
 
 const CLI = join(REPO_ROOT, 'apps', 'server', 'src', 'cli', 'restore-offsite.ts');
@@ -75,7 +76,9 @@ describe('medlevo-restore-offsite', () => {
     const m = /Restored into: (.+)/.exec(r.out);
     expect(m).not.toBeNull();
     restored.push(m![1]!.trim());
-    expect(existsSync(join(m![1]!.trim(), 'medlevo.sqlite'))).toBe(true);
+    // P1-T1: the restored directory is a multi-user data dir (system DB + vault files)
+    expect(existsSync(join(m![1]!.trim(), 'system.sqlite'))).toBe(true);
+    expect(existsSync(dataDirDatabases(m![1]!.trim()).primaryVault)).toBe(true);
     expect(r.out).toContain(`MEDLEVO_DATA_DIR=${m![1]!.trim()}`);
   }, 90_000);
 

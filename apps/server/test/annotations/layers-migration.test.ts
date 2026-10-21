@@ -8,11 +8,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { defaultPersonalLayerId, type LayersResponse } from '@medlevo/shared';
-import { buildApp } from '../../src/app';
-import { loadConfig } from '../../src/config';
 import { type Db, openDb } from '../../src/db/db';
 import { migrate, MIGRATIONS_DIR } from '../../src/db/migrate';
-import { CSRF, createClock, sessionCookie, TEST_ORIGIN } from '../helpers/app';
+import { bootOnVaultFile } from '../helpers/tenancy';
 
 const NEW = ['0271_annotation_layers.sql', '0272_annotation_revision.sql', '0861_attribution.sql'];
 
@@ -129,21 +127,22 @@ describe('migration 0271 / 0272 / 0861 on the owner database (zero loss)', () =>
   });
 
   it('the upgraded server lists that writing on «ملاحظاتي» and keeps serving it unchanged; an old client keeps editing it', async () => {
-    const dataDir = join(dir, 'data');
-    mkdirSync(dataDir);
-    const old = openDb(join(dataDir, 'medlevo.sqlite'));
-    migrate(old, { dir: previousMigrationsDir() });
-    seedOwnerWriting(old);
-    const before = snapshot(old);
-    old.close();
-
-    const config = loadConfig({ NODE_ENV: 'test', MEDLEVO_DATA_DIR: dataDir, MEDLEVO_ORIGIN: TEST_ORIGIN, MEDLEVO_LOG_LEVEL: 'silent', MEDLEVO_SCRYPT_LOG_N: '12' });
-    const app = await buildApp({ config, overrides: { clock: createClock(NOW + 100_000), aiProvider: null } });
+    // P1-T1 step 1: the owner's database is a vault (a single-owner data dir is refused until the owner migration,
+    // step 3); the pool migrates a vault when it opens it — the same in-place upgrade as before
+    let before!: ReturnType<typeof snapshot>;
+    const { app, headers } = await bootOnVaultFile(
+      join(dir, 'data'),
+      (path) => {
+        const old = openDb(path);
+        migrate(old, { dir: previousMigrationsDir() });
+        seedOwnerWriting(old);
+        before = snapshot(old);
+        old.close();
+      },
+      { now: NOW + 100_000 },
+    );
     try {
-      await app.ready();
       expect(snapshot(app.ctx.db)).toEqual(before);
-      const setup = await app.inject({ method: 'POST', url: '/api/auth/setup', headers: { ...CSRF, 'user-agent': 'vitest' }, payload: { username: 'owner', password: 'test-password-123' } });
-      const headers = { cookie: sessionCookie(setup), ...CSRF };
 
       const src = (await app.inject({ method: 'GET', url: '/api/annotations/layers?document_key=source:SRC1', headers })).json() as LayersResponse;
       expect(src.layers).toHaveLength(1);

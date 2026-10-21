@@ -24,6 +24,8 @@ import casesModule from './cases';
 import mediaModule from './media';
 import brainModule from './brain';
 import versionsModule from './versions';
+import accountsModule from './accounts';
+import platformModule from './platform';
 
 export interface ModuleEntry {
   name: string;
@@ -59,4 +61,8 @@ export const MODULES: ModuleEntry[] = [
   { name: 'brain', prefix: '/api/brain', plugin: brainModule },
   // Academic OS P1-T3: lecture identity, page fingerprints, version page maps, compare, link candidates
   { name: 'versions', prefix: '/api/versions', plugin: versionsModule },
+  // Academic OS P1-T1 step 1: the signed-in user's own account and devices (system DB, viewer-scoped)
+  { name: 'accounts', prefix: '/api/accounts', plugin: accountsModule },
+  // Academic OS P1-T1 step 1: whole-deployment views, platform admin only (404 for everyone else)
+  { name: 'platform', prefix: '/api/platform', plugin: platformModule },
 ];

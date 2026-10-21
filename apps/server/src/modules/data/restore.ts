@@ -10,17 +10,29 @@
 //   overwrites data). Verifies first (same checks), then starts a new server data epoch (clients reset their sync
 //   cursor), revokes every session (a revoked device in the old snapshot must not come back), and moves the
 //   verified directory into place.
+// P1-T1: a multi-user archive (system DB + every vault) restores to a complete multi-user data directory (marker
+//   written, every vault gets its own new epoch, every account's sessions revoked). A single-owner archive restores
+//   to medlevo.sqlite as before; its boot check runs on a sandbox copy (this build serves it after the owner migration).
+// P1-T1 step 2: an ENCRYPTED archive («MLVENC01», .mlenc) is accepted when MEDLEVO_BACKUP_ENCRYPTION_KEY is given: it is
+//   decrypted (every frame authenticated) into the verification's own work directory first. A per-vault archive
+//   (layout 'vault') is verified like a single-owner one (sandbox boot) and restored only into its account by the
+//   platform's vault restore (./vault-restore.ts), never as a whole data directory. The boot check runs a blob mark pass
+//   on the restored directory, which rebuilds the registry hints from the restored vaults.
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, rmdirSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { z } from 'zod';
 import { BACKUP_FORMAT, type BackupManifest, type RestoreCheck, type RestoreReport } from '@medlevo/shared';
 import { openDb, toJson, type Db } from '../../db/db';
-import { readMigrations } from '../../db/migrate';
+import { MIGRATIONS_DIR, readMigrations, SYSTEM_MIGRATIONS_DIR } from '../../db/migrate';
+import { MARKER_FILE } from '../../system/layout';
 import { newId } from '../../lib/ids';
-import { BACKUP_DB_PATH, BACKUP_MANIFEST_PATH, BACKUP_ROOT, rowCounts } from './backup';
+import { BACKUP_DB_PATH, BACKUP_MANIFEST_PATH, BACKUP_ROOT, BACKUP_SYSTEM_PATH, rowCounts } from './backup';
+import { copyFileSync, writeFileSync } from 'node:fs';
 import { startRestoreEpoch } from './epoch';
 import { ArchiveError, extractTarGz, type ExtractedEntry, type TarExtractLimits } from './tar';
+import { DecryptError } from '../../lib/objectstore/encryption';
+import { decryptArchive, isEncryptedArchive } from './archive-crypto';
 
 const GiB = 1024 * 1024 * 1024;
 export const DEFAULT_RESTORE_LIMITS: TarExtractLimits = {
@@ -31,6 +43,12 @@ export const DEFAULT_RESTORE_LIMITS: TarExtractLimits = {
   ratioMinBytes: 8 * 1024 * 1024,
 };
 
+const migrationList = z.array(z.object({ name: z.string().max(200), checksum: z.string().max(128) })).max(10_000);
+const rowCountsSchema = z.record(z.string().max(200), z.number().int().nonnegative());
+const sha = z.string().regex(/^[0-9a-f]{64}$/);
+/** the single-owner database, or a vault of a multi-user archive (P1-T1) */
+const DB_PATH_RE = /^medlevo-backup\/(medlevo\.sqlite|vaults\/[A-Za-z0-9_-]{1,80}\.sqlite)$/;
+
 const manifestSchema = z.object({
   format: z.literal(BACKUP_FORMAT),
   backup_id: z.string().min(1).max(64),
@@ -38,14 +56,38 @@ const manifestSchema = z.object({
   created_at: z.number().int().nonnegative(),
   root: z.literal(BACKUP_ROOT),
   db: z.object({
-    path: z.literal(BACKUP_DB_PATH),
-    sha256: z.string().regex(/^[0-9a-f]{64}$/),
+    path: z.string().regex(DB_PATH_RE),
+    sha256: sha,
     size: z.number().int().nonnegative(),
-    migrations: z.array(z.object({ name: z.string().max(200), checksum: z.string().max(128) })).max(10_000),
-    row_counts: z.record(z.string().max(200), z.number().int().nonnegative()),
+    migrations: migrationList,
+    row_counts: rowCountsSchema,
     sync_head_seq: z.number().int().nonnegative(),
     server_epoch: z.string().max(64).nullable(),
   }),
+  // P1-T1: a whole multi-user instance (system DB + every vault); step 2: ONE account's vault
+  layout: z.enum(['multi_user', 'vault']).optional(),
+  account: z.object({ user_id: z.string().max(64), username: z.string().max(200), display_name: z.string().max(200) }).optional(),
+  system: z
+    .object({ path: z.literal(BACKUP_SYSTEM_PATH), sha256: sha, size: z.number().int().nonnegative(), migrations: migrationList, row_counts: rowCountsSchema })
+    .optional(),
+  vaults: z
+    .array(
+      z.object({
+        vault_id: z.string().regex(/^[A-Za-z0-9_-]{1,80}$/),
+        user_id: z.string().max(64),
+        db_file: z.string().regex(/^[A-Za-z0-9_-]{1,80}\.sqlite$/),
+        path: z.string().regex(DB_PATH_RE),
+        primary: z.boolean(),
+        sha256: sha,
+        size: z.number().int().nonnegative(),
+        migrations: migrationList,
+        row_counts: rowCountsSchema,
+        sync_head_seq: z.number().int().nonnegative(),
+        server_epoch: z.string().max(64).nullable(),
+      }),
+    )
+    .max(1_000_000)
+    .optional(),
   files: z
     .array(
       z.object({
@@ -75,6 +117,8 @@ export interface VerifyOptions {
    * report names every file restored without its blob. A file missing for any other reason still fails.
    */
   acceptMissingFiles?: boolean;
+  /** P1-T1 step 2: the key that opens an encrypted («MLVENC01») archive; without it an encrypted archive fails verification */
+  decryptionKey?: Buffer | null;
 }
 
 export interface VerifyResult {
@@ -198,7 +242,10 @@ function relationalChecks(db: Db, checks: RestoreCheck[]): void {
   );
 }
 
-async function bootCheck(dataDir: string, expected: Record<string, number>): Promise<{ ok: boolean; detail: string; details: unknown }> {
+type BootResult = { ok: boolean; detail: string; details: unknown };
+
+/** Boot the real app on a multi-user data directory (P1-T1): health, the primary vault's counts, auth required. */
+async function bootOn(dataDir: string, primaryVaultId: string, expected: Record<string, number>, scope: 'restored' | 'sandbox'): Promise<BootResult> {
   // dynamic imports: app.ts imports the module registry, which imports this module
   const { buildApp } = await import('../../app');
   const { loadConfig } = await import('../../config');
@@ -214,20 +261,139 @@ async function bootCheck(dataDir: string, expected: Record<string, number>): Pro
   try {
     await app.ready();
     const health = await app.inject({ method: 'GET', url: '/api/health' });
-    const sources = app.ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM source')!.n;
-    const annotations = app.ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM annotation')!.n;
+    const vault = { kind: 'vault' as const, vaultId: primaryVaultId, viewer: null };
+    const { sources, annotations } = app.ctx.binding.run(vault, () => ({
+      sources: app.ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM source')!.n,
+      annotations: app.ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM annotation')!.n,
+    }));
     const unauth = await app.inject({ method: 'GET', url: '/api/library/tree' });
-    const ok = health.statusCode === 200 && (health.json() as { ok: boolean }).ok && sources === (expected.source ?? 0) && annotations === (expected.annotation ?? 0) && unauth.statusCode === 401;
+    // P1-T1 step 2: a blob mark pass on the restored directory rebuilds the registry hints from the restored vaults
+    const mark = await app.ctx.gc.run('mark');
+    const ok =
+      health.statusCode === 200 &&
+      (health.json() as { ok: boolean }).ok &&
+      sources === (expected.source ?? 0) &&
+      annotations === (expected.annotation ?? 0) &&
+      unauth.statusCode === 401 &&
+      mark.status === 'completed';
+    const where = scope === 'restored' ? 'على البيانات المستعادة' : 'على نسخة تجريبية من البيانات المستعادة (قاعدة المالك الواحد تُفتح بعد ترحيلها إلى حساب)';
     return {
       ok,
       detail: ok
-        ? `شُغّل الخادم على البيانات المستعادة: /api/health سليم، ${sources} مصدر و${annotations} عنصر كتابة، والمسارات المحمية تطلب تسجيل الدخول.`
-        : `فشل تشغيل الخادم على البيانات المستعادة كما يجب (health ${health.statusCode}، مصادر ${sources}/${expected.source ?? 0}، كتابات ${annotations}/${expected.annotation ?? 0}).`,
-      details: { health: health.statusCode, sources, annotations, protected_status: unauth.statusCode },
+        ? `شُغّل الخادم ${where}: /api/health سليم، ${sources} مصدر و${annotations} عنصر كتابة، والمسارات المحمية تطلب تسجيل الدخول.`
+        : `فشل تشغيل الخادم ${where} كما يجب (health ${health.statusCode}، مصادر ${sources}/${expected.source ?? 0}، كتابات ${annotations}/${expected.annotation ?? 0}).`,
+      details: { health: health.statusCode, sources, annotations, protected_status: unauth.statusCode, scope, blob_mark: { status: mark.status, databases: mark.databases_marked, blobs: mark.blobs_marked } },
     };
   } finally {
     await app.close();
   }
+}
+
+/** A multi-user archive extracts to a complete data directory: mark it and boot on it. */
+async function bootCheckMultiUser(dataDir: string, primaryVaultId: string, expected: Record<string, number>): Promise<BootResult> {
+  const marker = join(dataDir, MARKER_FILE);
+  if (!existsSync(marker)) writeFileSync(marker, 'restored multi-user layout\n', { mode: 0o600 });
+  return bootOn(dataDir, primaryVaultId, expected, 'restored');
+}
+
+/**
+ * A single-owner archive (R1-a and earlier) restores to `medlevo.sqlite`, which this build serves only after the
+ * owner migration (P1-T1 step 3). The boot check therefore runs on a SANDBOX: a fresh multi-user directory whose one
+ * vault is a COPY of the restored database — the restored file itself is never touched or migrated.
+ */
+async function bootCheckSingleOwner(work: string, restoredDb: string, expected: Record<string, number>): Promise<BootResult> {
+  const sandbox = join(work, 'boot-sandbox');
+  rmSync(sandbox, { recursive: true, force: true });
+  mkdirSync(join(sandbox, 'vaults'), { recursive: true });
+  try {
+    const { prepareDataDir } = await import('../../system/layout');
+    prepareDataDir(
+      { dataDir: sandbox, legacyDbPath: join(sandbox, 'medlevo.sqlite'), systemDbPath: join(sandbox, 'system.sqlite'), vaultsDir: join(sandbox, 'vaults'), spacesDir: join(sandbox, 'spaces') },
+      Date.now,
+    );
+    const vaultId = `restorecheck${newId(Date.now()).toLowerCase()}`;
+    copyFileSync(restoredDb, join(sandbox, 'vaults', `${vaultId}.sqlite`));
+    const sys = openDb(join(sandbox, 'system.sqlite'));
+    try {
+      const t = Date.now();
+      sys.run(
+        `INSERT INTO user_account (id, username, username_norm, display_name, password_hash, password_changed_at, is_platform_admin, created_at, updated_at)
+         VALUES ('restore-check', 'restore-check', 'restore-check', 'restore-check', 'scrypt$disabled', ?, 1, ?, ?)`,
+        [t, t, t],
+      );
+      sys.run(`INSERT INTO vault (id, user_id, db_file, status, created_at) VALUES (?, 'restore-check', ?, 'active', ?)`, [vaultId, `${vaultId}.sqlite`, t]);
+    } finally {
+      sys.close();
+    }
+    return await bootOn(sandbox, vaultId, expected, 'sandbox');
+  } finally {
+    rmSync(sandbox, { recursive: true, force: true });
+  }
+}
+
+function onDiskShas(dataDir: string): Set<string> {
+  return new Set(listFilesUnder(join(dataDir, 'files')).map((p) => p.split('/').pop() ?? ''));
+}
+
+/**
+ * Multi-user archives (P1-T1): the system DB (integrity, foreign keys, system migrations, row counts) and every
+ * non-primary vault (the same checks with the base migrations, plus its referenced blobs), and the registry in the
+ * system DB names exactly the archived vaults with the same owners.
+ */
+function instanceChecks(extractDir: string, manifest: BackupManifest, onDisk: Set<string>, acceptMissing: boolean, checks: RestoreCheck[]): void {
+  const problems: string[] = [];
+  const known = (dir: string, set: 'system' | 'base') => new Map(readMigrations(dir, set).map((m) => [m.name, m.checksum]));
+  const checkDb = (label: string, path: string, entry: { migrations: Array<{ name: string; checksum: string }>; row_counts: Record<string, number> }, build: Map<string, string>) => {
+    let db: Db | null = null;
+    try {
+      db = openDb(join(extractDir, path));
+      const integrity = db.all<{ integrity_check: string }>('PRAGMA integrity_check');
+      if (!(integrity.length === 1 && integrity[0]!.integrity_check === 'ok')) problems.push(`${label}: PRAGMA integrity_check`);
+      if (db.all('PRAGMA foreign_key_check').length) problems.push(`${label}: foreign_key_check`);
+      const applied = db.all<{ name: string; checksum: string }>('SELECT name, checksum FROM schema_migration ORDER BY name');
+      if (JSON.stringify(applied) !== JSON.stringify(entry.migrations)) problems.push(`${label}: migrations ≠ manifest`);
+      if (applied.some((m) => build.get(m.name) !== m.checksum)) problems.push(`${label}: migration unknown to this build or changed`);
+      const counts = rowCounts(db);
+      if (Object.entries(entry.row_counts).some(([t, c]) => counts[t] !== c)) problems.push(`${label}: row counts ≠ manifest`);
+      return db;
+    } catch (e) {
+      problems.push(`${label}: ${(e as Error).message.slice(0, 120)}`);
+      db?.close();
+      return null;
+    }
+  };
+  const sys = checkDb('system', manifest.system!.path, manifest.system!, known(SYSTEM_MIGRATIONS_DIR, 'system'));
+  if (sys) {
+    try {
+      const registry = sys.all<{ id: string; user_id: string; db_file: string }>(`SELECT id, user_id, db_file FROM vault WHERE status IN ('active','locked') ORDER BY id`);
+      const archived = [...manifest.vaults!].sort((a, b) => (a.vault_id < b.vault_id ? -1 : 1));
+      const same =
+        registry.length === archived.length && registry.every((r, i) => r.id === archived[i]!.vault_id && r.user_id === archived[i]!.user_id && r.db_file === archived[i]!.db_file);
+      if (!same) problems.push('system: the vault registry does not name exactly the archived vaults');
+    } finally {
+      sys.close();
+    }
+  }
+  const missingAtBackup = new Set(manifest.files_missing.map((m) => m.sha256));
+  for (const v of manifest.vaults!.filter((x) => !x.primary)) {
+    const db = checkDb(`vault ${v.vault_id}`, v.path, v, known(MIGRATIONS_DIR, 'base'));
+    if (!db) continue;
+    try {
+      const absent = db.all<{ sha256: string }>('SELECT sha256 FROM stored_file').filter((f) => !onDisk.has(f.sha256) && !(acceptMissing && missingAtBackup.has(f.sha256)));
+      if (absent.length) problems.push(`vault ${v.vault_id}: ${absent.length} referenced file(s) not in the archive`);
+    } finally {
+      db.close();
+    }
+  }
+  add(
+    checks,
+    'instance',
+    problems.length === 0,
+    problems.length === 0
+      ? `قاعدة النظام و${manifest.vaults!.length} خزنة سليمة ومطابقة لهذا الإصدار، وسجل الخزائن يطابق النسخة.`
+      : `${problems.length} مشكلة في قاعدة النظام أو الخزائن الأخرى.`,
+    problems.length ? problems.slice(0, 30) : undefined,
+  );
 }
 
 function listFilesUnder(dir: string, base = ''): string[] {
@@ -272,14 +438,32 @@ export async function verifyBackup(archivePath: string, opts: VerifyOptions = {}
   };
 
   try {
+    // 0. an encrypted archive is decrypted into this work directory first (P1-T1 step 2)
+    let plainArchive = archivePath;
+    if (existsSync(archivePath) && statSync(archivePath).isFile() && isEncryptedArchive(archivePath)) {
+      if (!opts.decryptionKey) {
+        add(checks, 'decrypt', false, 'هذه النسخة مشفّرة (MLVENC01). اضبط MEDLEVO_BACKUP_ENCRYPTION_KEY بالمفتاح الذي شُفّرت به ثم أعد المحاولة.');
+        return finish();
+      }
+      plainArchive = join(work, 'archive.tar.gz');
+      try {
+        await decryptArchive(archivePath, plainArchive, opts.decryptionKey);
+        add(checks, 'decrypt', true, 'فُكّ تشفير النسخة وتُحقّق من سلامة كل أجزائها (MLVENC01، AES-256-GCM).');
+      } catch (e) {
+        add(checks, 'decrypt', false, e instanceof DecryptError ? e.reasonAr : 'تعذّر فك تشفير النسخة.');
+        return finish();
+      }
+    }
+
     // 1. archive (safe extraction with limits)
     let entries: ExtractedEntry[];
     try {
-      if (!existsSync(archivePath) || !statSync(archivePath).isFile()) {
+      if (!existsSync(plainArchive) || !statSync(plainArchive).isFile()) {
         add(checks, 'archive', false, 'ملف النسخة الاحتياطية غير موجود.');
         return finish();
       }
-      const r = await extractTarGz(archivePath, extractDir, limits);
+      const r = await extractTarGz(plainArchive, extractDir, limits);
+      if (plainArchive !== archivePath) rmSync(plainArchive, { force: true });
       entries = r.entries;
       add(checks, 'archive', true, `استُخرج الأرشيف بأمان في مجلد مؤقت منفصل: ${entries.length} عنصرًا.`, { entries: entries.length, inflated_bytes: r.inflatedBytes });
     } catch (e) {
@@ -306,10 +490,48 @@ export async function verifyBackup(archivePath: string, opts: VerifyOptions = {}
       return finish();
     }
     manifest = parsed.data as BackupManifest;
-    add(checks, 'manifest', true, `نسخة ${manifest.backup_id} من الإصدار ${manifest.app_version}، أُنشئت ${new Date(manifest.created_at).toISOString()}.`);
+    const multi = manifest.layout === 'multi_user';
+    const vaultOnly = manifest.layout === 'vault';
+    if (vaultOnly) {
+      const vs = manifest.vaults ?? [];
+      const ok = !manifest.system && vs.length === 1 && vs[0]!.primary && vs[0]!.path === manifest.db.path && vs[0]!.path === `${BACKUP_ROOT}/vaults/${vs[0]!.db_file}`;
+      if (!ok) {
+        add(checks, 'manifest', false, 'ملف manifest.json لنسخة خزنة واحدة غير متّسق.');
+        return finish();
+      }
+    } else if (multi) {
+      const vs = manifest.vaults ?? [];
+      const primaries = vs.filter((v) => v.primary);
+      const consistent =
+        !!manifest.system &&
+        vs.length > 0 &&
+        primaries.length === 1 &&
+        primaries[0]!.path === manifest.db.path &&
+        vs.every((v) => v.path === `${BACKUP_ROOT}/vaults/${v.db_file}`) &&
+        new Set(vs.map((v) => v.db_file)).size === vs.length;
+      if (!consistent) {
+        add(checks, 'manifest', false, 'ملف manifest.json لنسخة متعددة الحسابات غير متّسق (قاعدة النظام أو قائمة الخزائن).');
+        return finish();
+      }
+    } else if (manifest.db.path !== BACKUP_DB_PATH || manifest.system || manifest.vaults) {
+      add(checks, 'manifest', false, 'ملف manifest.json لا يطابق صيغة نسخ MedLevo الاحتياطية.');
+      return finish();
+    }
+    add(
+      checks,
+      'manifest',
+      true,
+      `نسخة ${manifest.backup_id} من الإصدار ${manifest.app_version}، أُنشئت ${new Date(manifest.created_at).toISOString()}${multi ? `؛ تشمل قاعدة النظام و${manifest.vaults!.length} خزنة` : vaultOnly ? '؛ خزنة حساب واحد وملفاتها' : ''}.`,
+    );
+    const dbEntries = multi
+      ? [
+          { path: manifest.system!.path, sha256: manifest.system!.sha256, size: manifest.system!.size },
+          ...manifest.vaults!.map((v) => ({ path: v.path, sha256: v.sha256, size: v.size })),
+        ]
+      : [{ path: manifest.db.path, sha256: manifest.db.sha256, size: manifest.db.size }];
 
     // 3. layout: every entry is expected
-    const listed = new Set<string>([BACKUP_MANIFEST_PATH, BACKUP_DB_PATH, ...manifest.files.map((f) => f.path)]);
+    const listed = new Set<string>([BACKUP_MANIFEST_PATH, ...dbEntries.map((d) => d.path), ...manifest.files.map((f) => f.path)]);
     const damagedShas = new Set(manifest.files_missing.filter((m) => m.reason === 'hash_mismatch').map((m) => m.sha256));
     const unexpected = entries.filter((e) => !listed.has(e.path) && !(e.path.startsWith(`${BACKUP_ROOT}/files/`) && damagedShas.has(e.path.split('/').pop() ?? '')));
     add(
@@ -327,17 +549,23 @@ export async function verifyBackup(archivePath: string, opts: VerifyOptions = {}
       if (e.path.startsWith(`${BACKUP_ROOT}/files/`) && !listedFiles.has(e.path)) rmSync(e.absPath, { force: true });
     }
 
-    // 4. database file hash
-    const dbEntry = byPath.get(BACKUP_DB_PATH);
-    if (!dbEntry) {
-      add(checks, 'database_hash', false, 'ملف قاعدة البيانات غير موجود في الأرشيف.');
+    // 4. database file hashes (the single-owner database, or the system DB and every vault)
+    const absentDbs = dbEntries.filter((d) => !byPath.has(d.path));
+    if (absentDbs.length) {
+      add(checks, 'database_hash', false, 'ملف قاعدة البيانات غير موجود في الأرشيف.', { missing: absentDbs.map((d) => d.path).slice(0, 20) });
       return finish();
     }
+    const badDbs = dbEntries.filter((d) => byPath.get(d.path)!.sha256 !== d.sha256 || byPath.get(d.path)!.size !== d.size);
     add(
       checks,
       'database_hash',
-      dbEntry.sha256 === manifest.db.sha256 && dbEntry.size === manifest.db.size,
-      dbEntry.sha256 === manifest.db.sha256 ? 'بصمة sha256 لقاعدة البيانات مطابقة.' : 'بصمة قاعدة البيانات لا تطابق manifest.json — الملف تالف أو مُعدَّل.',
+      badDbs.length === 0,
+      badDbs.length === 0
+        ? dbEntries.length > 1
+          ? `بصمة sha256 مطابقة لكل قواعد البيانات (${dbEntries.length}).`
+          : 'بصمة sha256 لقاعدة البيانات مطابقة.'
+        : 'بصمة قاعدة البيانات لا تطابق manifest.json — الملف تالف أو مُعدَّل.',
+      badDbs.length ? { bad: badDbs.map((d) => d.path).slice(0, 20) } : undefined,
     );
 
     // 5. file hashes
@@ -357,7 +585,7 @@ export async function verifyBackup(archivePath: string, opts: VerifyOptions = {}
     // 6. database checks
     let opened: Db | null = null;
     try {
-      opened = openDb(join(dataDir, 'medlevo.sqlite'));
+      opened = openDb(join(extractDir, manifest.db.path));
       opened.get('SELECT COUNT(*) AS n FROM sqlite_master');
     } catch (e) {
       try {
@@ -415,15 +643,16 @@ export async function verifyBackup(archivePath: string, opts: VerifyOptions = {}
       );
 
       // stored files ↔ archive
+      // matched by content (sha256): in a multi-user archive one blob serves every vault that references it
       const stored = db.all<{ id: string; sha256: string }>('SELECT id, sha256 FROM stored_file');
-      const listedIds = new Set(manifest.files.map((f) => f.file_id));
-      const notRestorable = stored.filter((s) => !listedIds.has(s.id));
+      const listedShas = new Set(manifest.files.map((f) => f.sha256));
+      const notRestorable = stored.filter((s) => !listedShas.has(s.sha256));
       const onDisk = new Set(listFilesUnder(join(dataDir, 'files')).map((p) => p.split('/').pop()));
-      const absent = stored.filter((s) => listedIds.has(s.id) && !onDisk.has(s.sha256));
-      const missingAtBackup = new Set(manifest.files_missing.map((m) => m.file_id));
+      const absent = stored.filter((s) => listedShas.has(s.sha256) && !onDisk.has(s.sha256));
+      const missingAtBackup = new Set(manifest.files_missing.map((m) => m.sha256));
       // files missing only because they were already missing/damaged at backup time (recorded in the manifest)
-      const knownMissing = notRestorable.filter((s) => missingAtBackup.has(s.id));
-      const unexplained = [...notRestorable.filter((s) => !missingAtBackup.has(s.id)), ...absent];
+      const knownMissing = notRestorable.filter((s) => missingAtBackup.has(s.sha256));
+      const unexplained = [...notRestorable.filter((s) => !missingAtBackup.has(s.sha256)), ...absent];
       const complete = notRestorable.length === 0 && absent.length === 0 && manifest.files_missing.length === 0;
       const accepted = !complete && !!opts.acceptMissingFiles && unexplained.length === 0;
       add(
@@ -481,10 +710,15 @@ export async function verifyBackup(archivePath: string, opts: VerifyOptions = {}
       db.close();
     }
 
-    // 7. boot the app on the restored directory
+    // 6b. multi-user: the system DB and every other vault, and the registry ↔ archive consistency
+    if (multi && checks.every((c) => c.ok)) instanceChecks(extractDir, manifest, onDiskShas(dataDir), !!opts.acceptMissingFiles, checks);
+
+    // 7. boot the app on the restored directory (multi-user), or on a sandbox copy of a single-owner database
     if (opts.bootCheck !== false && checks.every((c) => c.ok)) {
       try {
-        const b = await bootCheck(dataDir, counts);
+        const b = multi
+          ? await bootCheckMultiUser(dataDir, manifest.vaults!.find((v) => v.primary)!.vault_id, counts)
+          : await bootCheckSingleOwner(work, join(extractDir, manifest.db.path), counts);
         add(checks, 'boot', b.ok, b.detail, b.details);
       } catch (e) {
         add(checks, 'boot', false, `تعذّر تشغيل الخادم على البيانات المستعادة: ${(e as Error).message.slice(0, 200)}`);
@@ -543,49 +777,67 @@ export async function applyRestore(
   const res = await verifyBackup(archivePath, { ...opts, workDir: dirname(abs), keep: true });
   if (!res.report.ok || !res.dataDir || !res.workDir) return res;
   const staging = res.workDir;
+  if (res.manifest?.layout === 'vault') {
+    rmSync(staging, { recursive: true, force: true });
+    throw new RestoreTargetError(
+      'هذه نسخة خزنة حساب واحد، لا نسخة خادم كاملة: تُستعاد داخل حسابها على الخادم العامل (استعادة خزنة من أدوات مسؤول المنصة)، لا في مجلد بيانات جديد.',
+    );
+  }
   try {
-    const db = openDb(join(res.dataDir, 'medlevo.sqlite'));
-    try {
-      const t = now();
-      const epoch = startRestoreEpoch(db, { now: t, backupId: res.manifest?.backup_id ?? null, backupCreatedAt: res.manifest?.created_at ?? null });
-      db.tx(() => {
-        const revoked = db.run('UPDATE auth_session SET revoked_at = ? WHERE revoked_at IS NULL', [t]).changes;
-        // the backup being restored was itself "running" in its own snapshot (the API job snapshots first): it did
-        // complete — say so instead of calling it interrupted. Its archive is not inside the restored directory.
-        if (res.manifest?.backup_id) {
-          db.run(
-            `UPDATE data_backup SET status = 'completed', error_detail = NULL, warnings_json = ?, finished_at = COALESCE(finished_at, ?)
-             WHERE id = ? AND status IN ('running', 'failed')`,
-            [
-              toJson(['استُعيدت البيانات من هذه النسخة. ملف الأرشيف نفسه ليس داخل مجلد البيانات المستعاد؛ احتفظ به حيث هو.']),
-              res.manifest.created_at,
-              res.manifest.backup_id,
-            ],
-          );
-        }
-        db.run(
-          `UPDATE data_backup SET status = 'failed', error_detail = ?, finished_at = ? WHERE status = 'running'`,
-          ['انقطع إنشاء هذه النسخة: البيانات استُعيدت من لقطة أُخذت أثناء إنشائها.', t],
-        );
-        // (PL-0) an off-site run caught in the snapshot is over too (a backup from before migration 0751 has no table)
-        if (db.get(`SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'data_offsite_backup'`)) {
-          db.run(`UPDATE data_offsite_backup SET status = 'failed', error_detail = ?, finished_at = ? WHERE status = 'running'`, [
-            'انتهى هذا النسخ مع الاستعادة: البيانات استُعيدت من لقطة أُخذت أثناءه. النسخ التالي يبدأ من جديد.',
+    const t = now();
+    const backupId = res.manifest?.backup_id ?? null;
+    const multi = res.manifest?.layout === 'multi_user';
+    let revoked = 0;
+    if (multi) {
+      // P1-T1: every session of every account is revoked (a revoked device in the old snapshot must not come back)
+      const sys = openDb(join(res.dataDir, 'system.sqlite'));
+      try {
+        revoked = sys.run('UPDATE auth_session SET revoked_at = ? WHERE revoked_at IS NULL', [t]).changes;
+      } finally {
+        sys.close();
+      }
+      writeFileSync(join(res.dataDir, MARKER_FILE), `restored from backup ${backupId ?? ''} at ${new Date(t).toISOString()}\n`, { mode: 0o600 });
+    }
+    const vaultFiles = multi ? res.manifest!.vaults!.map((v) => join(res.dataDir!, 'vaults', v.db_file)) : [join(res.dataDir, 'medlevo.sqlite')];
+    for (const file of vaultFiles) {
+      const db = openDb(file);
+      try {
+        const epoch = startRestoreEpoch(db, { now: t, backupId, backupCreatedAt: res.manifest?.created_at ?? null });
+        db.tx(() => {
+          if (!multi) revoked = db.run('UPDATE auth_session SET revoked_at = ? WHERE revoked_at IS NULL', [t]).changes;
+          // the backup being restored was itself "running" in its own snapshot (the API job snapshots first): it did
+          // complete — say so instead of calling it interrupted. Its archive is not inside the restored directory.
+          if (backupId) {
+            db.run(
+              `UPDATE data_backup SET status = 'completed', error_detail = NULL, warnings_json = ?, finished_at = COALESCE(finished_at, ?)
+               WHERE id = ? AND status IN ('running', 'failed')`,
+              [toJson(['استُعيدت البيانات من هذه النسخة. ملف الأرشيف نفسه ليس داخل مجلد البيانات المستعاد؛ احتفظ به حيث هو.']), res.manifest!.created_at, backupId],
+            );
+          }
+          db.run(`UPDATE data_backup SET status = 'failed', error_detail = ?, finished_at = ? WHERE status = 'running'`, [
+            'انقطع إنشاء هذه النسخة: البيانات استُعيدت من لقطة أُخذت أثناء إنشائها.',
             t,
           ]);
-        }
-        db.run(
-          `INSERT INTO change_log (id, entity_type, entity_id, action, summary, after_json, actor, created_at) VALUES (?, 'server', 'data', 'restore', ?, ?, 'system', ?)`,
-          [
-            newId(t),
-            `استُعيدت البيانات من النسخة الاحتياطية ${res.manifest?.backup_id ?? ''}؛ أُلغيت ${revoked} جلسة وبدأت حقبة بيانات جديدة للمزامنة.`,
-            JSON.stringify({ backup_id: res.manifest?.backup_id ?? null, backup_created_at: res.manifest?.created_at ?? null, epoch: epoch.id }),
-            t,
-          ],
-        );
-      });
-    } finally {
-      db.close();
+          // (PL-0) an off-site run caught in the snapshot is over too (a backup from before migration 0751 has no table)
+          if (db.get(`SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'data_offsite_backup'`)) {
+            db.run(`UPDATE data_offsite_backup SET status = 'failed', error_detail = ?, finished_at = ? WHERE status = 'running'`, [
+              'انتهى هذا النسخ مع الاستعادة: البيانات استُعيدت من لقطة أُخذت أثناءه. النسخ التالي يبدأ من جديد.',
+              t,
+            ]);
+          }
+          db.run(
+            `INSERT INTO change_log (id, entity_type, entity_id, action, summary, after_json, actor, created_at) VALUES (?, 'server', 'data', 'restore', ?, ?, 'system', ?)`,
+            [
+              newId(t),
+              `استُعيدت البيانات من النسخة الاحتياطية ${backupId ?? ''}؛ أُلغيت ${revoked} جلسة وبدأت حقبة بيانات جديدة للمزامنة.`,
+              JSON.stringify({ backup_id: backupId, backup_created_at: res.manifest?.created_at ?? null, epoch: epoch.id }),
+              t,
+            ],
+          );
+        });
+      } finally {
+        db.close();
+      }
     }
     rmSync(join(res.dataDir, 'tmp'), { recursive: true, force: true });
     if (existsSync(abs)) rmdirSync(abs);

@@ -7,11 +7,9 @@ import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { buildApp } from '../../src/app';
-import { loadConfig } from '../../src/config';
 import { type Db, openDb } from '../../src/db/db';
 import { migrate, MIGRATIONS_DIR } from '../../src/db/migrate';
-import { CSRF, createClock, sessionCookie, TEST_ORIGIN } from '../helpers/app';
+import { bootOnVaultFile } from '../helpers/tenancy';
 
 const NEW = ['0041_sync_actor_visibility.sql', '0050_change_log_actor.sql'];
 
@@ -106,29 +104,19 @@ describe('base migrations 0041 / 0050 (P1-T1 step 0)', () => {
   });
 
   it('the server boots on an upgraded owner data directory: old rows intact, sync and audit keep working (new columns NULL)', async () => {
-    const dataDir = join(dir, 'data');
-    mkdirSync(dataDir);
-    const old = openDb(join(dataDir, 'medlevo.sqlite'));
-    migrate(old, { dir: previousMigrationsDir() });
-    seedOwnerRows(old);
-    const before = snapshot(old);
-    old.close();
-
-    const config = loadConfig({
-      NODE_ENV: 'test',
-      MEDLEVO_DATA_DIR: dataDir,
-      MEDLEVO_ORIGIN: TEST_ORIGIN,
-      MEDLEVO_LOG_LEVEL: 'silent',
-      MEDLEVO_SCRYPT_LOG_N: '12',
+    // P1-T1 step 1: the owner's database is a vault (a single-owner data dir is refused until the owner migration,
+    // step 3); the pool migrates a vault when it opens it — the same in-place upgrade as before
+    let before!: ReturnType<typeof snapshot>;
+    const booted = await bootOnVaultFile(join(dir, 'data'), (path) => {
+      const old = openDb(path);
+      migrate(old, { dir: previousMigrationsDir() });
+      seedOwnerRows(old);
+      before = snapshot(old);
+      old.close();
     });
-    const app = await buildApp({ config, overrides: { clock: createClock(), aiProvider: null } });
+    const { app, ctx, headers } = booted;
     try {
-      await app.ready();
-      const ctx = app.ctx;
       expect(snapshot(ctx.db)).toEqual(before);
-      const setup = await app.inject({ method: 'POST', url: '/api/auth/setup', headers: { ...CSRF, 'user-agent': 'vitest' }, payload: { username: 'owner', password: 'test-password-123' } });
-      expect(setup.statusCode).toBe(200);
-      const headers = { cookie: sessionCookie(setup), ...CSRF };
       const pushed = await app.inject({
         method: 'POST',
         url: '/api/sync/push',

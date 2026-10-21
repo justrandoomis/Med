@@ -1,0 +1,23 @@
+#!/bin/sh
+# The owner migration to the multi-user layout (ADR-0003 §5, P1-T1 step 3) — for the Render Shell:
+#   medlevo-migrate-multi-user --status     what the migration journal says
+#   medlevo-migrate-multi-user --dry-run    what the migration would do (changes nothing)
+# --apply / --resume / --rollback refuse while the server runs on the same disk; on Render use the page
+# /api/maintenance (or MEDLEVO_OWNER_MIGRATION=apply|rollback + a restart). See docs/DEPLOY_PHONE_AR.md «التحديث».
+set -eu
+cd /app/apps/server
+# A Render Shell is not documented to carry the service's environment: the data directory the running server uses
+# (PID 1, e.g. after a restore switched MEDLEVO_DATA_DIR) wins over the image default. Read as a value, never evaluated.
+if [ -r /proc/1/environ ]; then
+  d=$({ tr '\0' '\n' < /proc/1/environ; } 2>/dev/null | sed -n 's/^MEDLEVO_DATA_DIR=//p' | head -n 1)
+  if [ -n "$d" ]; then
+    MEDLEVO_DATA_DIR="$d"
+    export MEDLEVO_DATA_DIR
+  fi
+fi
+# A root shell runs it as the unprivileged «node» user, like the server, so no file of the data directory (a SQLite
+# -wal / -shm) is ever left owned by root.
+if [ "$(id -u)" = "0" ]; then
+  exec setpriv --reuid=node --regid=node --init-groups --inh-caps=-all -- node --disable-warning=ExperimentalWarning --import tsx src/cli/migrate-multi-user.ts "$@"
+fi
+exec node --disable-warning=ExperimentalWarning --import tsx src/cli/migrate-multi-user.ts "$@"

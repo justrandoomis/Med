@@ -23,7 +23,14 @@ const SARA = 'شرح سارة (TEST FIXTURE)';
 function db(project: string): DatabaseSync {
   const dir = serverFor(project).dataDir;
   if (!dir) throw new Error('this spec needs the harness-started server (its data dir)');
-  const d = new DatabaseSync(join(dir, 'medlevo.sqlite'));
+  // P1-T1 step 1: the owner's database is user #1's vault, named in the system DB (multi-user layout)
+  const sys = new DatabaseSync(join(dir, 'system.sqlite'), { readOnly: true });
+  const vault = sys
+    .prepare(`SELECT v.db_file AS f FROM vault v JOIN user_account u ON u.id = v.user_id WHERE u.is_platform_admin = 1 ORDER BY u.created_at, u.id LIMIT 1`)
+    .get() as { f: string } | undefined;
+  sys.close();
+  if (!vault) throw new Error('no owner vault yet (run setupOwner first)');
+  const d = new DatabaseSync(join(dir, 'vaults', vault.f));
   d.exec('PRAGMA busy_timeout = 10000');
   return d;
 }

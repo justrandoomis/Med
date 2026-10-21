@@ -83,6 +83,10 @@ export function detectApiSupport(): ApiSupport {
   };
 }
 
+const POINTER_NAMES_AR: Record<string, string> = { pen: 'القلم', touch: 'اللمس', mouse: 'الفأرة' };
+/** (N1, G01; wording made exact in review) what the latency row measures: until the app draws, not until the screen shows */
+const LATENCY_LABEL_AR = 'زمن الاستجابة (من حدث المؤشر حتى يرسمه التطبيق)';
+
 export const EMPTY_OBSERVATIONS: PenObservations = {
   penSeen: false,
   touchSeen: false,
@@ -104,7 +108,17 @@ export const EMPTY_OBSERVATIONS: PenObservations = {
 export function buildCapabilityReport(
   api: ApiSupport,
   o: PenObservations,
-  opts: { recognitionReason_ar?: string; recognitionAvailable?: boolean; storage?: 'ok' | 'failed' | null } = {},
+  opts: {
+    recognitionReason_ar?: string;
+    recognitionAvailable?: boolean;
+    storage?: 'ok' | 'failed' | null;
+    /** (N1, G02) the palm-rejection values in force */
+    palm?: { level: 'low' | 'medium' | 'high'; hand: 'right' | 'left'; contactPx: number; afterPenMs: number; zoneMs: number };
+    /** (N1, G01) input-to-frame latency measured on this device in this session */
+    latency?: LatencyStats[];
+    /** (N1 wave 2, G07) how the eyedropper reads a colour in this browser */
+    eyedropper?: 'api' | 'canvas';
+  } = {},
 ): CapabilityRow[] {
   const noPen = 'لم يُستخدم قلم هنا بعد. اكتب أو مرّر القلم في مساحة الاختبار.';
   const rows: CapabilityRow[] = [];
@@ -135,12 +149,30 @@ export function buildCapabilityReport(
         : { key: 'hover', label_ar: 'تمرير القلم فوق الشاشة', state: 'not_observed', detail_ar: noPen },
   );
 
+  const p = opts.palm;
+  const level = p ? (p.level === 'low' ? 'منخفضة' : p.level === 'high' ? 'عالية' : 'متوسطة') : null;
   rows.push({
     key: 'palm',
     label_ar: 'رفض راحة اليد',
     state: 'heuristic',
-    detail_ar: 'تقريبي: في وضع «القلم فقط» يُتجاهل اللمس للكتابة ويبقى للتمرير، وتُرفض مساحات اللمس الكبيرة واللمس بعد رفع القلم مباشرة. رفض راحة اليد الأصلي من النظام يحتاج تطبيقًا أصليًا.',
+    detail_ar:
+      'تقريبي: في وضع «القلم فقط» يُتجاهل اللمس للكتابة ويبقى للتمرير، وتُرفض مساحات اللمس الكبيرة واللمس بعد رفع القلم مباشرة. رفض راحة اليد الأصلي من النظام يحتاج تطبيقًا أصليًا.' +
+      (p
+        ? ` القيم الآن (حساسية ${level}، اليد ${p.hand === 'right' ? 'اليمنى' : 'اليسرى'}): لمسة أعرض من ${p.contactPx} بكسل راحةُ يد، ويُتجاهل اللمس ${p.afterPenMs} ملّي ثانية بعد رفع القلم${p.zoneMs ? `، واللمس في جهة اليد وأسفل القلم ${p.zoneMs} ملّي ثانية` : ''}. غيّرها من «إعدادات الكتابة».`
+        : ''),
   });
+  // (N1, G01) latency: only what was measured here
+  const lat = (opts.latency ?? []).filter((l) => l.samples >= 20);
+  rows.push(
+    lat.length
+      ? {
+          key: 'latency',
+          label_ar: LATENCY_LABEL_AR,
+          state: 'supported',
+          detail_ar: `قِيس على هذا الجهاز في هذه الجلسة: ${lat.map((l) => `${POINTER_NAMES_AR[l.pointerType] ?? l.pointerType} — الوسيط ${l.p50} ملّي ثانية، و95٪ من العيّنات أقل من ${l.p95} (${l.samples} عيّنة)`).join('؛ ')}. من أقدم عيّنة للمؤشر حتى يرسمها التطبيق في الإطار التالي؛ لا يشمل عرض الإطار على الشاشة ولا تأخر الشاشة نفسها.`,
+        }
+      : { key: 'latency', label_ar: LATENCY_LABEL_AR, state: 'not_observed', detail_ar: 'لم يُقس بعد: اكتب بضعة أسطر على صفحة ثم افتح هذه اللوحة. لا نعرض رقمًا لم يُقس على هذا الجهاز.' },
+  );
 
   rows.push(
     !api.coalesced
@@ -191,6 +223,19 @@ export function buildCapabilityReport(
           detail_ar: opts.recognitionReason_ar ?? 'يحتاج مزود ذكاء اصطناعي يقرأ الصور (vision) على الخادم. الحبر الأصلي يُحفظ دائمًا، والتعرف نتيجة مشتقة قابلة للتصحيح.',
         },
   );
+  // (N1 wave 2, G07) the eyedropper: the browser's own picker, or MedLevo reading what it drew
+  if (opts.eyedropper) {
+    rows.push(
+      opts.eyedropper === 'api'
+        ? { key: 'eyedropper', label_ar: 'التقاط لون من الصفحة', state: 'supported', detail_ar: 'أداة EyeDropper في هذا المتصفح (اختبار الميزة نجح هنا): تلتقط لون أي نقطة على الشاشة.' }
+        : {
+            key: 'eyedropper',
+            label_ar: 'التقاط لون من الصفحة',
+            state: 'heuristic',
+            detail_ar: 'هذا المتصفح لا يوفّر أداة EyeDropper: المس الصفحة فيُقرأ اللون الذي رسمه التطبيق في ذلك الموضع (صفحة الملف أو الصورة والحبر فوقهما). لا يلتقط ألوانًا من خارج الصفحة.',
+          },
+    );
+  }
   const offline = 'الكتابة دون اتصال';
   rows.push(
     !api.indexedDB || opts.storage === 'failed'
@@ -299,4 +344,82 @@ export function usePenObservations(): PenObservations {
 
 export function useLastPointerSample(): PointerSample | null {
   return useSyncExternalStore(penProbe.subscribeLast, penProbe.getLast, penProbe.getLast);
+}
+
+// ─── (N1, G01) input-to-frame latency, measured on THIS device in this session ──────────────────────────────────────
+/**
+ * Time from a pointer sample (the `timeStamp` of the OLDEST coalesced sample not drawn yet) to the animation frame
+ * callback that drew it on the live layer, per pointer type. It is what the web page can measure — not the time until the
+ * pixels reach the screen (compositing and presenting the frame, the display's own refresh and, on e-ink, its update
+ * time come on top). Only measured numbers are ever shown.
+ */
+export interface LatencyStats {
+  pointerType: string;
+  samples: number;
+  p50: number;
+  p95: number;
+}
+
+const LATENCY_KEEP = 600;
+
+export function percentile(sorted: readonly number[], p: number): number {
+  if (sorted.length === 0) return NaN;
+  const i = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
+  return sorted[i]!;
+}
+
+class LatencyProbe {
+  private samples = new Map<string, number[]>();
+  private listeners = new Set<() => void>();
+  private snapshot: LatencyStats[] = [];
+  private dirty = false;
+
+  /** One measurement (ms). Absurd values (a frame never came, a clock jump) are dropped. */
+  record(pointerType: string, ms: number): void {
+    if (!(ms >= 0 && ms < 1000)) return;
+    let a = this.samples.get(pointerType);
+    if (!a) this.samples.set(pointerType, (a = []));
+    a.push(ms);
+    if (a.length > LATENCY_KEEP) a.splice(0, a.length - LATENCY_KEEP);
+    if (!this.dirty) {
+      this.dirty = true;
+      // listeners hear about it at most once per second (the panel, never the writing path)
+      setTimeout(() => {
+        this.dirty = false;
+        this.snapshot = this.compute();
+        this.listeners.forEach((l) => l());
+      }, 1000);
+    }
+  }
+
+  compute(): LatencyStats[] {
+    const out: LatencyStats[] = [];
+    for (const [pointerType, a] of this.samples) {
+      if (a.length === 0) continue;
+      const s = [...a].sort((x, y) => x - y);
+      out.push({ pointerType, samples: s.length, p50: Math.round(percentile(s, 50) * 10) / 10, p95: Math.round(percentile(s, 95) * 10) / 10 });
+    }
+    return out;
+  }
+
+  get = (): LatencyStats[] => this.snapshot;
+  subscribe = (l: () => void) => {
+    this.listeners.add(l);
+    return () => this.listeners.delete(l);
+  };
+  /** tests */
+  reset(): void {
+    this.samples.clear();
+    this.snapshot = [];
+  }
+  flushNow(): void {
+    this.snapshot = this.compute();
+    this.listeners.forEach((l) => l());
+  }
+}
+
+export const latencyProbe = new LatencyProbe();
+
+export function useLatencyStats(): LatencyStats[] {
+  return useSyncExternalStore(latencyProbe.subscribe, latencyProbe.get, latencyProbe.get);
 }

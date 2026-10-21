@@ -157,8 +157,9 @@ export default async function sourcesModule(app: FastifyInstance, { ctx }: Modul
   }
   const svc = new SourcesService(ctx);
 
-  // Versions uploaded while no processing handler existed (or whose enqueue failed) are queued once one does.
-  app.addHook('onReady', async () => {
+  // Versions uploaded while no processing handler existed (or whose enqueue failed) are queued once one does —
+  // per vault, the first time it is opened after boot (P1-T1: there is no single database at boot)
+  ctx.pool.onOpen('vault', 'sources.enqueue-pending', () => {
     enqueuePendingVersions(ctx);
   });
 

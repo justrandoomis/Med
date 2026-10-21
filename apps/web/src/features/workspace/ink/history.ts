@@ -71,10 +71,14 @@ export class InkHistory {
     this.emit();
   }
 
-  /** Merge into the last command (one undo step for a whole gesture). */
-  amendLast(changes: readonly ItemChange[]): void {
+  /**
+   * Merge into the last command (one undo step for a whole gesture). `label_ar` (N1) renames the step — e.g. a stroke
+   * that turned out to be a scribble becomes «مسح بالخربشة».
+   */
+  amendLast(changes: readonly ItemChange[], label_ar?: string): void {
     const last = this.undoStack[this.undoStack.length - 1];
     if (!last) return;
+    if (label_ar) last.label_ar = label_ar;
     for (const c of changes) {
       const prev = last.changes.find((x) => x.id === c.id);
       if (prev) prev.after = c.after;

@@ -450,7 +450,8 @@ interface Details {
 }
 
 // A cheap signature of every input of the weakness center; an unchanged signature skips the recompute.
-const weaknessMemo = new WeakMap<Db, string>();
+// keyed by the bound connection (`ctx.db.raw`): `ctx.db` is one proxy for every vault (P1-T1)
+const weaknessMemo = new WeakMap<object, string>();
 
 function inputSignature(ctx: AppContext): string {
   const db = ctx.db;
@@ -480,9 +481,9 @@ function inputSignature(ctx: AppContext): string {
 
 /** Recompute every weakness from the signals and persist (owner edits kept) — skipped when no input changed. */
 export function refreshWeaknesses(ctx: AppContext, opts: { force?: boolean } = {}): WeaknessDetailView[] {
-  if (!opts.force && weaknessMemo.get(ctx.db) === inputSignature(ctx)) return listStored(ctx);
+  if (!opts.force && weaknessMemo.get(ctx.db.raw) === inputSignature(ctx)) return listStored(ctx);
   const out = recomputeWeaknesses(ctx);
-  weaknessMemo.set(ctx.db, inputSignature(ctx));
+  weaknessMemo.set(ctx.db.raw, inputSignature(ctx));
   return out;
 }
 
@@ -762,7 +763,7 @@ export function patchWeakness(ctx: AppContext, id: string, patch: WeaknessPatchR
     }
     if (!set.length) return;
     ctx.db.run(`UPDATE weakness SET ${set.join(', ')}, updated_at = ? WHERE id = ?`, [...params, now, id]);
-    weaknessMemo.delete(ctx.db);
+    weaknessMemo.delete(ctx.db.raw);
     ctx.audit.record({
       entityType: 'weakness',
       entityId: id,

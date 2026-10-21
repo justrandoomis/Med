@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "backup": "NODE_OPTIONS='--disable-warning=ExperimentalWarning' tsx src/cli/backup.ts",
     "restore:verify": "NODE_OPTIONS='--disable-warning=ExperimentalWarning' tsx src/cli/restore-verify.ts",
+    "migrate:multi-user": "NODE_OPTIONS='--disable-warning=ExperimentalWarning' tsx src/cli/migrate-multi-user.ts",
     "eval": "NODE_OPTIONS='--disable-warning=ExperimentalWarning' tsx src/cli/eval.ts"
   },
   "dependencies": {

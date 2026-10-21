@@ -2,6 +2,9 @@
 //  * no provider → AI_NOT_CONFIGURED (409); nothing pretends to work
 //  * Source Lock: every source version passed to a call must belong to the resolved scope (server-enforced)
 //  * monthly budget from usage_record ESTIMATED costs → AI_BUDGET_EXCEEDED (never a silently degraded result)
+//  * (P1-T1 step 2) with several accounts: every call first RESERVES its worst-case cost atomically in the system ledger
+//    against the charged user's (or subject space's) allowance and the deployment ceiling, then settles / releases it
+//    (./budget.ts); user #1 keeps today's whole budget, other accounts start at 0 until the platform admin sets a cap
 //  * output validated with the zod schema; one bounded repair attempt, then SCHEMA_REJECTED
 //  * every provider call writes a usage_record (ok / error / schema_rejected / budget_blocked) — no prompt text
 import type { FastifyBaseLogger } from 'fastify';
@@ -12,6 +15,8 @@ import { toJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
 import { newId } from '../../lib/ids';
 import { type Clock, startOfMonthInTz } from '../../lib/time';
+import { isNoTenantBound } from '../../system/binding';
+import type { AiBudgetService } from './budget';
 import { buildPrompt, estimateTokens } from './prompt';
 import { ProviderError, type AiProvider, type ProviderErrorKind, type ProviderImage, type ProviderResponse, type UntrustedBlock } from './types';
 
@@ -56,6 +61,8 @@ export interface AiOrchestratorOptions {
   provider: AiProvider | null;
   monthlyBudgetUsd: number;
   timezone: string;
+  /** P1-T1 step 2: per-user / per-space allowances with atomic reservations (absent: the single budget of R1-a) */
+  charge?: AiBudgetService | null;
 }
 
 type UsageStatus = 'ok' | 'error' | 'schema_rejected' | 'budget_blocked';
@@ -107,6 +114,7 @@ export class AiOrchestrator {
   private provider: AiProvider | null;
   private monthlyBudgetUsd: number;
   private readonly timezone: string;
+  private readonly charge: AiBudgetService | null;
 
   constructor(
     private readonly db: Db,
@@ -117,6 +125,7 @@ export class AiOrchestrator {
     this.provider = opts.provider;
     this.monthlyBudgetUsd = opts.monthlyBudgetUsd;
     this.timezone = opts.timezone;
+    this.charge = opts.charge ?? null;
   }
 
   get providerName(): string | null {
@@ -128,8 +137,19 @@ export class AiOrchestrator {
   }
 
   budget(): AiBudgetStatus {
+    // P1-T1 step 2: the charged party's allowance (the bound vault's user, or a subject space)
+    const charged = this.charge?.status() ?? null;
+    if (charged) return charged;
     const periodStart = startOfMonthInTz(this.clock.now(), this.timezone);
-    const r = this.db.get<{ spent: number | null }>('SELECT SUM(estimated_cost_usd) AS spent FROM usage_record WHERE created_at >= ?', [periodStart]);
+    // usage lives in each user's vault (P1-T1): spent is the bound vault's. Module registration asks for the provider's
+    // task models before any vault is bound — then nothing is spent yet (requests and jobs are always bound).
+    let r: { spent: number | null } | undefined;
+    try {
+      r = this.db.get<{ spent: number | null }>('SELECT SUM(estimated_cost_usd) AS spent FROM usage_record WHERE created_at >= ?', [periodStart]);
+    } catch (e) {
+      if (!isNoTenantBound(e)) throw e;
+      r = { spent: 0 };
+    }
     const spent = Math.round((r?.spent ?? 0) * 1e6) / 1e6;
     return {
       monthly_usd: this.monthlyBudgetUsd,
@@ -140,25 +160,35 @@ export class AiOrchestrator {
     };
   }
 
-  private taskStatus(task: AiTask, budget: AiBudgetStatus): AiTaskStatus {
+  /** Why calls are refused before they start (allowance, ceiling), or null. */
+  private blockedReason(budget: AiBudgetStatus): string | null {
+    const state = this.charge?.state() ?? null;
+    if (state) return state.blockedAr;
+    return budget.monthly_usd <= 0 || budget.remaining_usd <= 0 ? budgetMessage(budget.monthly_usd) : null;
+  }
+
+  private taskStatus(task: AiTask, budget: AiBudgetStatus, blocked: string | null): AiTaskStatus {
     const p = this.provider;
     if (!p) return { available: false, reason_ar: MSG.notConfigured };
     if (!p.supports(task)) return { available: false, reason_ar: MSG.unsupported };
     const model = p.modelFor(task);
+    if (blocked) return { available: false, model, reason_ar: blocked };
     if (budget.monthly_usd <= 0 || budget.remaining_usd <= 0) return { available: false, model, reason_ar: budgetMessage(budget.monthly_usd) };
     return { available: true, model };
   }
 
   status(): AiStatusResponse {
     const budget = this.budget();
-    const tasks = Object.fromEntries(AI_TASKS.map((t) => [t, this.taskStatus(t, budget)])) as Record<AiTask, AiTaskStatus>;
+    const blocked = this.blockedReason(budget);
+    const tasks = Object.fromEntries(AI_TASKS.map((t) => [t, this.taskStatus(t, budget, blocked)])) as Record<AiTask, AiTaskStatus>;
     const out: AiStatusResponse = { configured: this.configured, tasks, budget };
     if (this.provider) out.provider = this.provider.name;
     return out;
   }
 
   isAvailable(task: AiTask): boolean {
-    return this.taskStatus(task, this.budget()).available;
+    const budget = this.budget();
+    return this.taskStatus(task, budget, this.blockedReason(budget)).available;
   }
 
   /** (track F4) the configured provider can run this task at all (ignores the budget) */
@@ -229,22 +259,38 @@ export class AiOrchestrator {
     const base = { task: req.task, provider: provider.name, sourceVersionIds: req.sourceVersionIds, rulesVersion, jobId: req.jobId ?? null };
 
     // budget guard (worst case: full output length, incl. any reasoning headroom the provider adds)
-    const budget = this.budget();
     const ceiling = provider.outputTokenCeiling ? provider.outputTokenCeiling(req.task, maxOutputTokens) : maxOutputTokens;
     const worstCase = provider.estimateCostUsd(model, { inputTokens: estimateTokens(built.system + built.prompt), outputTokens: Math.max(ceiling, maxOutputTokens) });
-    if (budget.monthly_usd <= 0 || budget.spent_usd + worstCase > budget.monthly_usd) {
-      this.recordUsage({ ...base, model, status: 'budget_blocked', cost: 0 });
-      throw new AppError('AI_BUDGET_EXCEEDED', budgetMessage(budget.monthly_usd), 409, {
-        monthly_usd: budget.monthly_usd,
-        spent_usd: budget.spent_usd,
-        remaining_usd: budget.remaining_usd,
-      });
-    }
+    /**
+     * P1-T1 step 2: an atomic reservation of the worst case in the system ledger (the charged allowance and the
+     * deployment ceiling in one transaction). Without a ledger party (unbound tools): the R1-a pre-check.
+     */
+    const guard = (): string | null => {
+      const r = this.charge?.reserve(worstCase) ?? null;
+      if (r && !r.ok) {
+        this.recordUsage({ ...base, model, status: 'budget_blocked', cost: 0 });
+        throw new AppError('AI_BUDGET_EXCEEDED', r.messageAr, 409, r.details);
+      }
+      if (r && r.ok) return r.id;
+      const budget = this.budget();
+      if (budget.monthly_usd <= 0 || budget.spent_usd + worstCase > budget.monthly_usd) {
+        this.recordUsage({ ...base, model, status: 'budget_blocked', cost: 0 });
+        throw new AppError('AI_BUDGET_EXCEEDED', budgetMessage(budget.monthly_usd), 409, {
+          monthly_usd: budget.monthly_usd,
+          spent_usd: budget.spent_usd,
+          remaining_usd: budget.remaining_usd,
+        });
+      }
+      return null;
+    };
+    const firstReservation = guard();
 
-    const call = async (prompt: string, attempt: 1 | 2): Promise<{ res: ProviderResponse; latency: number; cost: number }> => {
+    const call = async (prompt: string, attempt: 1 | 2, reservation: string | null): Promise<{ res: ProviderResponse; latency: number; cost: number }> => {
       const signals = [AbortSignal.timeout(req.timeoutMs ?? 120_000)];
       if (req.signal) signals.push(req.signal);
       const signal = AbortSignal.any(signals);
+      // stopped before it was even sent (a job cancelled a moment earlier): nothing can have been billed
+      const abortedBeforeSend = signal.aborted;
       const started = Date.now();
       try {
         const res = await provider.generateStructured({
@@ -259,20 +305,34 @@ export class AiOrchestrator {
           ...(req.onText ? { onTextDelta: (text: string) => req.onText!({ type: 'delta', attempt, text }) } : {}),
         });
         const latency = Date.now() - started;
-        return { res, latency, cost: provider.estimateCostUsd(res.model, res.usage) };
+        const cost = provider.estimateCostUsd(res.model, res.usage);
+        // settled in the same synchronous step as the caller's usage_record write (no other request in between)
+        if (reservation) this.charge?.settle(reservation, cost, null);
+        return { res, latency, cost };
       } catch (e) {
         const pe = e instanceof ProviderError ? e : null;
+        const billed = pe?.usage ? provider.estimateCostUsd(pe.model ?? model, pe.usage) : 0;
         // a classified failure keeps the provider request id and any billed usage (e.g. a truncated answer)
-        this.recordUsage({
+        const usageId = this.recordUsage({
           ...base,
           model: pe?.model ?? model,
           status: 'error',
           latencyMs: Date.now() - started,
           inputTokens: pe?.usage?.inputTokens ?? null,
           outputTokens: pe?.usage?.outputTokens ?? null,
-          cost: pe?.usage ? provider.estimateCostUsd(pe.model ?? model, pe.usage) : 0,
+          cost: billed,
           requestRef: pe?.requestRef ?? null,
         });
+        if (reservation) {
+          // P1-T1 step 2 review: a call that was STOPPED after it reached the provider (the student closed the stream,
+          // a job was cancelled, the call timed out) may already have been billed for what it generated, and no usage
+          // comes back. Giving the reservation back would let anyone exceed an allowance by closing streams; it is kept
+          // at its worst-case estimate instead. Only a failure the provider reports without billing returns it.
+          const stopped = !abortedBeforeSend && (signal.aborted || pe?.kind === 'timeout');
+          if (billed > 0) this.charge?.settle(reservation, billed, usageId);
+          else if (stopped) this.charge?.settle(reservation, worstCase, usageId);
+          else this.charge?.release(reservation);
+        }
         if (req.signal?.aborted) throw req.signal.reason ?? e;
         this.log.warn({ task: req.task, provider: provider.name, errName: (e as Error)?.name, kind: pe?.kind, requestRef: pe?.requestRef }, 'AI provider call failed');
         if (pe) throw new AppError('AI_PROVIDER_ERROR', PROVIDER_ERROR_AR[pe.kind], 502, { provider_error: pe.kind, retryable: pe.retryable });
@@ -295,7 +355,7 @@ export class AiOrchestrator {
     };
 
     // attempt 1
-    const first = await call(built.prompt, 1);
+    const first = await call(built.prompt, 1, firstReservation);
     const v1 = validate(first.res);
     if (v1.ok) {
       const usageId = this.recordUsage({
@@ -321,11 +381,16 @@ export class AiOrchestrator {
       requestRef: first.res.requestRef,
     });
 
-    // one bounded repair attempt (budget re-checked)
-    const after = this.budget();
-    if (after.spent_usd + worstCase > after.monthly_usd) {
-      this.recordUsage({ ...base, model, status: 'budget_blocked', cost: 0 });
-      throw new AppError('AI_BUDGET_EXCEEDED', budgetMessage(after.monthly_usd), 409);
+    // one bounded repair attempt (budget re-checked: a fresh reservation, or the R1-a check)
+    let secondReservation: string | null = null;
+    if (this.charge?.state()) {
+      secondReservation = guard();
+    } else {
+      const after = this.budget();
+      if (after.spent_usd + worstCase > after.monthly_usd) {
+        this.recordUsage({ ...base, model, status: 'budget_blocked', cost: 0 });
+        throw new AppError('AI_BUDGET_EXCEEDED', budgetMessage(after.monthly_usd), 409);
+      }
     }
     const repairPrompt = [
       built.prompt,
@@ -336,7 +401,7 @@ export class AiOrchestrator {
       'Return ONLY corrected JSON matching the schema. Do not add claims that are not supported by the provided evidence.',
     ].join('\n\n');
     req.onText?.({ type: 'restart', attempt: 2 });
-    const second = await call(repairPrompt, 2);
+    const second = await call(repairPrompt, 2, secondReservation);
     const v2 = validate(second.res);
     const usage2 = {
       ...base,

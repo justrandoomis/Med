@@ -4,7 +4,29 @@
 //  - JSON in / JSON out
 //  - server errors (ApiErrorBody) → ApiError with the server's Arabic message
 //  - network failures → ApiError with `offline: true` (never confused with a server answer)
-import { isApiErrorBody, type ErrorCode } from '@medlevo/shared';
+import { CLIENT_VERSION_HEADER_NAME, isApiErrorBody, MIN_CLIENT_VERSION, USER_HEADER_NAME, type ErrorCode } from '@medlevo/shared';
+import { storageAccount } from './userStorage';
+
+/** This build's version, sent with every request as `x-medlevo-client` (P1-T1 step 3; tests: the minimum). */
+export const CLIENT_VERSION: string = typeof __APP_VERSION__ === 'string' && /^\d+(\.\d+){0,3}$/.test(__APP_VERSION__) ? __APP_VERSION__ : MIN_CLIENT_VERSION;
+
+/**
+ * Headers every request of this client carries (P1-T1 step 3, ARCHITECTURE_DELTA §4.5 / §8.7): its version — the
+ * server refuses a pre-multi-user client under any account but user #1 — and the account the page belongs to — two
+ * tabs share one session cookie, and a tab must never write under another account's session.
+ */
+export function clientHeaders(): Record<string, string> {
+  const h: Record<string, string> = { [CLIENT_VERSION_HEADER_NAME]: CLIENT_VERSION };
+  const a = storageAccount();
+  if (a) h[USER_HEADER_NAME] = a.userId;
+  return h;
+}
+
+let clientTooOldHandler: (() => void) | null = null;
+/** Called when the server answers 426 CLIENT_TOO_OLD: the app applies the waiting service-worker update (PwaUpdatePrompt). */
+export function setClientTooOldHandler(fn: (() => void) | null): void {
+  clientTooOldHandler = fn;
+}
 
 /** Client-side error codes in addition to the server's ErrorCode list. */
 export type ClientErrorCode = 'OFFLINE' | 'NETWORK_ERROR' | 'TIMEOUT' | 'BAD_RESPONSE' | 'HTTP_ERROR';
@@ -101,7 +123,7 @@ function isOnline(): boolean {
 }
 
 export async function request<T = unknown>(method: HttpMethod, path: string, body?: unknown, opts: RequestOptions = {}): Promise<T> {
-  const headers: Record<string, string> = { Accept: 'application/json', ...opts.headers };
+  const headers: Record<string, string> = { Accept: 'application/json', ...clientHeaders(), ...opts.headers };
   let payload: BodyInit | undefined;
   if (body !== undefined) {
     if (typeof FormData !== 'undefined' && body instanceof FormData) payload = body;
@@ -163,6 +185,7 @@ export async function request<T = unknown>(method: HttpMethod, path: string, bod
   }
 
   if (!res.ok) {
+    if (res.status === 426) clientTooOldHandler?.();
     if (isApiErrorBody(data)) {
       const err = new ApiError({ code: data.error.code, message: data.error.message || STATUS_MESSAGES_AR[res.status] || 'تعذّر إكمال الطلب.', status: res.status, details: data.error.details });
       if (res.status === 401 && !opts.skipAuthRedirect) unauthenticatedHandler?.();
@@ -188,7 +211,10 @@ export async function request<T = unknown>(method: HttpMethod, path: string, bod
  */
 export function apiFetch(input: string, init: RequestInit): Promise<Response> {
   const doFetch: FetchLike = fetchImpl ?? ((i, n) => fetch(i, n));
-  return doFetch(buildUrl(input), init);
+  // the version and the page's account travel with streamed requests too (P1-T1 step 3)
+  const given: Record<string, string> =
+    init.headers instanceof Headers ? Object.fromEntries(init.headers.entries()) : Array.isArray(init.headers) ? Object.fromEntries(init.headers) : { ...((init.headers as Record<string, string> | undefined) ?? {}) };
+  return doFetch(buildUrl(input), { ...init, headers: { ...clientHeaders(), ...given } });
 }
 
 /** (Round 7 H4) The ApiError a non-OK response stands for (server Arabic message; 401 → the session handler). */

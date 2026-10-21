@@ -68,19 +68,22 @@ interface BrainCache {
   regions: Map<string, RegionIndex>;
   usage: Map<string, { sig: string; hit: { id: string; text: string } | null }>;
 }
+// keyed by the bound database's connection (`ctx.db.raw`), never by the proxy `ctx.db`, which is one object for every
+// vault (P1-T1): each user's caches stay theirs
 const caches = new WeakMap<object, BrainCache>();
 function cacheOf(ctx: AppContext): BrainCache {
-  let c = caches.get(ctx.db);
+  const key = ctx.db.raw;
+  let c = caches.get(key);
   if (!c) {
     c = { facts: new Map(), regions: new Map(), usage: new Map() };
-    caches.set(ctx.db, c);
+    caches.set(key, c);
   }
   return c;
 }
 
 /** Forget the incremental caches (tests compare an incremental recompute with a cold one). */
 export function clearRecomputeCaches(ctx: AppContext): void {
-  caches.delete(ctx.db);
+  caches.delete(ctx.db.raw);
 }
 
 const TOKEN_SPLIT = /[^\p{L}\p{N}]+/u;

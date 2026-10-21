@@ -8,7 +8,8 @@
 //                   snapshot of the valid tiles those rectangles touch, so the grid on screen never goes stale.
 import type { NormBox } from '@medlevo/shared';
 import { expandBox, type Mat } from '../math';
-import { isInkStroke, isShape, type InkItem } from '../model';
+import { isCanvasItem } from '../kinds';
+import { isInkStroke, type InkItem } from '../model';
 import { deviceRectOf, drawItem, paintOrder, type RenderEnv } from '../render';
 import type { InkDocumentStore, PageModel } from '../store';
 import type { InkPageView } from '../types';
@@ -290,7 +291,7 @@ export class TiledPainter {
         const box = expandBox(normBoxOfDeviceRect(r, view, m), 0.002);
         job.items = store
           .query(this.d.targetKey, box)
-          .filter((it) => !store.isHidden(it.id) && (isInkStroke(it) || isShape(it)) && store.isVisible(it))
+          .filter((it) => !store.isHidden(it.id) && isCanvasItem(it) && store.isVisible(it))
           .sort(paintOrder);
         job.pos = 0;
         job.hasHl = job.items.some(isHighlighter);

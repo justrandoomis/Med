@@ -1,19 +1,33 @@
-// `withTestBinding(app, fn)` — the test harness of ARCHITECTURE_DELTA §1.1 (P1-T1 step 0).
+// `withTestBinding(app, fn)` — the test harness of ARCHITECTURE_DELTA §1.1 (P1-T1 step 0 seam, real since step 1).
 //
-// Once requests bind a user's vault (P1-T1 step 1), direct database access from test code — `ctx.db.*`, `jobs.drain()`,
-// `jobs.enqueue` outside a request — must run inside an explicit binding, or it throws NO_TENANT_BOUND. Tests then wrap
-// such access in `withTestBinding(t, () => …)` (the harness will also apply it around each test body by default).
-//
-// Step 0: there is exactly one owner database and nothing to bind, so this is a NO-OP that runs `fn` and returns what
-// it returns (a value or a promise), letting errors through unchanged. Landing it now lets new suites use the final
-// form from the start; step 1 gives it a body without touching its callers.
+// Requests bind the session's own vault (the binding hook). Direct database access from test code — `ctx.db.*`,
+// `jobs.drain()`, `jobs.enqueue` outside a request — runs inside an explicit binding: `withTestBinding(t, () => …)`
+// binds the test user's vault (createTestApp) or, for an app built directly on an existing data dir, the vault of the
+// first platform admin (user #1). The harness also applies that binding by default to code outside every context
+// (TenantBinding.setHarnessDefault, NODE_ENV=test only), so the existing suites need no wrapper; new suites use this
+// function to be explicit. `fn` may be sync or async; its value and its errors pass through unchanged.
 import type { FastifyInstance } from 'fastify';
 import type { AppContext } from '../../src/context';
+import type { Binding } from '../../src/system/binding';
 
 /** Anything a test holds that identifies the app: the TestApp, the Fastify instance or the context. */
-export type TestBindingTarget = { ctx: AppContext } | FastifyInstance | AppContext;
+export type TestBindingTarget = { ctx: AppContext; ownerBinding?: () => Binding } | FastifyInstance | AppContext;
+
+function contextOf(target: TestBindingTarget): AppContext {
+  if ('binding' in target && 'system' in target) return target as AppContext;
+  return (target as { ctx: AppContext }).ctx;
+}
+
+/** The binding test code runs in: the test user's vault (created on first use by createTestApp's harness). */
+export function testBinding(target: TestBindingTarget): Binding {
+  const own = (target as { ownerBinding?: () => Binding }).ownerBinding;
+  if (typeof own === 'function') return own();
+  const ctx = contextOf(target);
+  const b = ctx.binding.harnessDefault() ?? ctx.tenancy.platformVaultBinding();
+  if (!b) throw new Error('withTestBinding: no test user / vault exists yet in this app');
+  return b;
+}
 
 export function withTestBinding<T>(target: TestBindingTarget, fn: () => T): T {
-  void target; // step 1: resolve the test user's vault from `target` and run `fn` inside `ctx.binding.run(…)`
-  return fn();
+  return contextOf(target).binding.run(testBinding(target), fn);
 }

@@ -51,6 +51,7 @@ import {
   type SentenceDraft,
 } from './model';
 import './cases.css';
+import { userStorage } from '../../lib/userStorage'; // case drafts belong to their writer (P1-T1 step 3)
 
 const LECTURE_TYPES = new Set(['lecture', 'course_reference', 'textbook', 'guideline', 'practical_manual', 'my_notes', 'image_atlas']);
 
@@ -246,7 +247,7 @@ type StoredDraft = { base: number; draft: CaseDraft };
 /** The unsaved local draft of a new case of this kind, if any (a broken or missing one → null). */
 function readLocalDraft(draftKey: string, kind: CaseKind): CaseDraft | null {
   try {
-    const saved = window.localStorage.getItem(draftKey);
+    const saved = userStorage.get(draftKey);
     if (!saved) return null;
     const parsed = JSON.parse(saved) as StoredDraft;
     return parsed.draft?.kind === kind ? parsed.draft : null;
@@ -291,7 +292,7 @@ export function CaseEditor() {
         if (cancelled) return;
         let d = draftFromDefinition(c.definition);
         try {
-          const saved = window.localStorage.getItem(draftKey);
+          const saved = userStorage.get(draftKey);
           if (saved) {
             const parsed = JSON.parse(saved) as StoredDraft;
             if (parsed.base === c.version_no) {
@@ -299,11 +300,11 @@ export function CaseEditor() {
               setRestored(true);
             } else if (parsed.draft) {
               // never dropped silently: set aside, offered below until the owner restores or discards it
-              window.localStorage.setItem(STALE_KEY(draftKey), saved);
-              window.localStorage.removeItem(draftKey);
+              userStorage.set(STALE_KEY(draftKey), saved);
+              userStorage.remove(draftKey);
             }
           }
-          const aside = window.localStorage.getItem(STALE_KEY(draftKey));
+          const aside = userStorage.get(STALE_KEY(draftKey));
           if (aside) {
             const parsed = JSON.parse(aside) as StoredDraft;
             if (parsed.draft?.kind === c.kind) setStale(parsed);
@@ -350,7 +351,7 @@ export function CaseEditor() {
     if (!draft || !dirty.current) return;
     const t = window.setTimeout(() => {
       try {
-        window.localStorage.setItem(draftKey, JSON.stringify({ base: baseVersion ?? 0, draft }));
+        userStorage.set(draftKey, JSON.stringify({ base: baseVersion ?? 0, draft }));
       } catch {
         // storage full / private mode: the draft stays in memory
       }
@@ -391,7 +392,7 @@ export function CaseEditor() {
       const c = caseId ? await casesApi.update(caseId, body) : await casesApi.create(body);
       dirty.current = false;
       try {
-        window.localStorage.removeItem(draftKey);
+        userStorage.remove(draftKey);
       } catch {
         // ignore
       }
@@ -433,7 +434,7 @@ export function CaseEditor() {
                 setStale(null);
                 setRestored(true);
                 try {
-                  window.localStorage.removeItem(STALE_KEY(draftKey));
+                  userStorage.remove(STALE_KEY(draftKey));
                 } catch {
                   // the restored draft is saved under the current version by the effect below
                 }
@@ -447,7 +448,7 @@ export function CaseEditor() {
               onClick={() => {
                 setStale(null);
                 try {
-                  window.localStorage.removeItem(STALE_KEY(draftKey));
+                  userStorage.remove(STALE_KEY(draftKey));
                 } catch {
                   // ignore
                 }
@@ -466,7 +467,7 @@ export function CaseEditor() {
             variant="plain"
             onClick={() => {
               try {
-                window.localStorage.removeItem(draftKey);
+                userStorage.remove(draftKey);
               } catch {
                 // ignore
               }

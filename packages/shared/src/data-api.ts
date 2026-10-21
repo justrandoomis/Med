@@ -201,6 +201,37 @@ export interface BackupManifest {
   files_missing: Array<{ file_id: string; sha256: string; reason: string }>;
   /** never part of a backup */
   excluded: string[];
+  /**
+   * (P1-T1, additive) `multi_user`: the archive is a whole multi-user instance — the system DB and every vault at their
+   * data-directory paths; `db` then describes the primary vault. Absent in single-owner archives (R1-a and earlier).
+   */
+  layout?: 'multi_user' | 'vault';
+  /**
+   * (P1-T1 step 2, additive) `layout: 'vault'`: ONE account's vault and the files it references — a per-vault backup
+   * (platform) or «نسخة من بياناتي» (the user's own export). Whose it is, as recorded when it was made.
+   */
+  account?: { user_id: string; username: string; display_name: string };
+  system?: {
+    path: string;
+    sha256: string;
+    size: number;
+    migrations: Array<{ name: string; checksum: string }>;
+    row_counts: Record<string, number>;
+  };
+  vaults?: Array<{
+    vault_id: string;
+    user_id: string;
+    db_file: string;
+    path: string;
+    /** the vault `db` describes */
+    primary: boolean;
+    sha256: string;
+    size: number;
+    migrations: Array<{ name: string; checksum: string }>;
+    row_counts: Record<string, number>;
+    sync_head_seq: number;
+    server_epoch: string | null;
+  }>;
 }
 
 export interface BackupView {

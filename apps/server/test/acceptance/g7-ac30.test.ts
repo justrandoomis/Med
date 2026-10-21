@@ -23,6 +23,7 @@ import type { ExamSessionView, QuestionListItem } from '@medlevo/shared';
 import { openDb, type Db } from '../../src/db/db';
 import { newId } from '../../src/lib/ids';
 import { createTestApp, CSRF, OWNER, sessionCookie, type AuthHeaders, type TestApp } from '../helpers/app';
+import { dataDirDatabases } from '../helpers/tenancy';
 import { dataLibrary, pageAnchor, push, rt, writeOwnerData, type DataLib, type OwnerData } from '../data/helpers';
 import { stateOf } from './g4-helpers';
 
@@ -144,14 +145,20 @@ describe('AC-30 through the real command-line tools', () => {
     expect(report.ok).toBe(true);
     expect(report.checks.filter((c) => !c.ok)).toEqual([]);
     expect(report.checks.map((c) => c.name)).toEqual(expect.arrayContaining(['file_hashes', 'integrity_check', 'foreign_keys', 'fts', 'links', 'sessions', 'learning', 'boot']));
-    expect(existsSync(join(target, 'medlevo.sqlite'))).toBe(true);
+    // P1-T1: a multi-user data directory comes back (system DB + vault files + the marker), never a single-owner file
+    expect(existsSync(join(target, 'system.sqlite'))).toBe(true);
+    expect(existsSync(join(target, '.multi-user'))).toBe(true);
+    expect(existsSync(dataDirDatabases(target).primaryVault)).toBe(true);
+    expect(existsSync(join(target, 'medlevo.sqlite'))).toBe(false);
     // a second restore into the same (now non-empty) directory is refused: a restore never overwrites
     const again = cli('restore-verify.ts', [archive, '--target', target]);
     expect(again.status, again.out).toBe(2);
   }, 300_000);
 
   it('EVERY table comes back row for row; the only differences are the ones a restore makes on purpose', () => {
-    const rdb = openDb(join(target, 'medlevo.sqlite'));
+    const dbs = dataDirDatabases(target);
+    const rdb = openDb(dbs.primaryVault);
+    const rsys = openDb(dbs.system);
     try {
       const live = lib.t.ctx.db;
       const tables = ALL_TABLES(live);
@@ -162,11 +169,32 @@ describe('AC-30 through the real command-line tools', () => {
         const b = rdb.all(`SELECT * FROM "${t}" ORDER BY rowid`);
         if (JSON.stringify(a) !== JSON.stringify(b)) differing.push(t);
       }
-      // documented, deliberate differences (docs/BACKUP_RESTORE.md §3): every session revoked, a new current sync epoch,
-      // the restore recorded in the history. Nothing else — not one row of the owner's data — differs.
-      expect(differing.sort()).toEqual(['auth_session', 'change_log', 'data_server_epoch']);
+      // documented, deliberate differences (docs/BACKUP_RESTORE.md §3): a new current sync epoch and the restore recorded
+      // in the history of the vault; every session revoked in the system DB (P1-T1: sessions live there). Nothing
+      // else — not one row of the owner's data or account — differs.
+      expect(differing.sort()).toEqual(['change_log', 'data_server_epoch']);
       expect(tables.length).toBeGreaterThan(60);
-      expect(rdb.get<{ n: number }>('SELECT COUNT(*) AS n FROM auth_session WHERE revoked_at IS NULL')!.n).toBe(0);
+      const sysTables = ALL_TABLES(lib.t.ctx.system.db);
+      expect(ALL_TABLES(rsys)).toEqual(sysTables);
+      const sysDiffering = sysTables.filter(
+        (t) => JSON.stringify(lib.t.ctx.system.db.all(`SELECT * FROM "${t}" ORDER BY rowid`)) !== JSON.stringify(rsys.all(`SELECT * FROM "${t}" ORDER BY rowid`)),
+      );
+      // P1-T1 step 2: the restore's boot check runs ONE blob mark pass on the restored directory (docs/BACKUP_RESTORE.md
+      // §7), which records itself (`blob_sweep`, `blob_mark`) and rebuilds the registry hints (`blob_ref`) — the same
+      // hints, written again in another row order. Nothing else in the system DB differs.
+      expect(sysDiffering).toEqual(['auth_session', 'blob_mark', 'blob_ref', 'blob_sweep']);
+      const hints = (d: Db) => d.all('SELECT sha256, db_id, ref_count FROM blob_ref ORDER BY sha256, db_id');
+      expect(hints(rsys)).toEqual(hints(lib.t.ctx.system.db));
+      expect(hints(rsys).length).toBeGreaterThan(0);
+      const liveSweeps = lib.t.ctx.system.db.all<{ id: string }>('SELECT id FROM blob_sweep').map((r) => r.id);
+      const newSweeps = rsys.all<{ id: string; kind: string; status: string; databases_marked: number; orphaned: number; quarantined: number; deleted: number }>('SELECT * FROM blob_sweep').filter((r) => !liveSweeps.includes(r.id));
+      expect(newSweeps).toHaveLength(1);
+      expect(newSweeps[0]).toMatchObject({ kind: 'mark', status: 'completed', orphaned: 0, quarantined: 0, deleted: 0 });
+      expect(newSweeps[0]!.databases_marked).toBeGreaterThan(0);
+      const marked = rsys.all('SELECT sha256, db_id, 1 AS ref_count FROM blob_mark WHERE sweep_id = ? ORDER BY sha256, db_id', [newSweeps[0]!.id]);
+      expect(marked).toEqual(hints(rsys));
+      expect(rsys.get<{ n: number }>('SELECT COUNT(*) AS n FROM auth_session')!.n).toBeGreaterThan(0);
+      expect(rsys.get<{ n: number }>('SELECT COUNT(*) AS n FROM auth_session WHERE revoked_at IS NULL')!.n).toBe(0);
       const liveLog = live.all<{ id: string }>('SELECT id FROM change_log ORDER BY rowid').map((r) => r.id);
       const restoredLog = rdb.all<{ id: string; action: string }>('SELECT id, action FROM change_log ORDER BY rowid');
       expect(restoredLog.filter((r) => r.action !== 'restore').map((r) => r.id)).toEqual(liveLog.filter((id) => restoredLog.some((r) => r.id === id)));
@@ -174,6 +202,7 @@ describe('AC-30 through the real command-line tools', () => {
       expect(rdb.get<{ n: number }>('SELECT COUNT(*) AS n FROM data_server_epoch WHERE is_current = 1 AND reason = ?', ['restore'])!.n).toBe(1);
     } finally {
       rdb.close();
+      rsys.close();
     }
   });
 });

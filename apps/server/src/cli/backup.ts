@@ -10,13 +10,16 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { loadConfig, loadDotEnv } from '../config';
 import { openDb } from '../db/db';
 import { recordCliBackup } from '../modules/data/backups';
-import { createBackup } from '../modules/data/backup';
+import { type BackupInstance, createBackup } from '../modules/data/backup';
+import { encryptArchive, ENC_SUFFIX } from '../modules/data/archive-crypto';
+import { rmSync, writeFileSync } from 'node:fs';
 import { ArchiveError } from '../modules/data/tar';
 
 const HELP = `MedLevo backup
-Usage: npm run backup [-- --out <dir>] [--data-dir <dir>]
+Usage: npm run backup [-- --out <dir>] [--data-dir <dir>] [--encrypt]
   --out <dir>        where to write the archive (default: <DATA_DIR>/backups)
   --data-dir <dir>   the server's data directory (default: MEDLEVO_DATA_DIR from the environment / .env)
+  --encrypt          keep only an encrypted archive (.tar.gz.mlenc, MEDLEVO_BACKUP_ENCRYPTION_KEY); the plain one is removed
 The archive contains the database snapshot, the stored files and manifest.json.
 Never included: secret.key, .env / API keys, tmp, OCR caches, earlier backups.`;
 
@@ -30,6 +33,25 @@ function arg(argv: string[], name: string): string | null {
 
 function fromInitCwd(p: string): string {
   return isAbsolute(p) ? p : resolve(process.env.INIT_CWD ?? process.cwd(), p);
+}
+
+/**
+ * The registered vaults of a multi-user data directory, read from its system DB (a separate read connection; the
+ * server may be running). The primary — whose data_backup table lists the archive — is user #1's (the first platform
+ * admin's) vault.
+ */
+function readInstance(systemDbPath: string, vaultsDir: string): BackupInstance {
+  const sys = openDb(systemDbPath);
+  try {
+    const admin = sys.get<{ id: string }>(`SELECT id FROM user_account WHERE is_platform_admin = 1 ORDER BY created_at, id LIMIT 1`)?.id ?? null;
+    const rows = sys.all<{ id: string; user_id: string; db_file: string }>(`SELECT id, user_id, db_file FROM vault WHERE status IN ('active','locked') ORDER BY created_at, id`);
+    return {
+      systemPath: systemDbPath,
+      vaults: rows.map((r) => ({ id: r.id, userId: r.user_id, dbFile: r.db_file, path: join(vaultsDir, r.db_file), primary: r.user_id === admin })),
+    };
+  } finally {
+    sys.close();
+  }
 }
 
 function human(bytes: number): string {
@@ -53,19 +75,26 @@ async function main(): Promise<number> {
   const dataDirArg = arg(argv, '--data-dir');
   const env = { ...process.env, ...(dataDirArg ? { MEDLEVO_DATA_DIR: fromInitCwd(dataDirArg) } : {}) };
   const config = loadConfig(env, { cwd: process.env.INIT_CWD ?? process.cwd() });
-  if (!existsSync(config.dbPath)) {
-    process.stderr.write(`MedLevo backup: no database at ${config.dbPath}. Nothing was backed up.\n`);
+  // P1-T1: a multi-user data directory (system.sqlite + vaults/) is backed up whole — the system DB and every vault;
+  // a single-owner one (medlevo.sqlite, R1-a and earlier) exactly as before
+  const instance = existsSync(config.systemDbPath) ? readInstance(config.systemDbPath, config.vaultsDir) : null;
+  if (!instance && !existsSync(config.dbPath)) {
+    process.stderr.write(`MedLevo backup: no database at ${config.dbPath} or ${config.systemDbPath}. Nothing was backed up.\n`);
     return 2;
   }
+  const primaryPath = instance ? (instance.vaults.find((v) => v.primary) ?? instance.vaults[0])?.path ?? null : config.dbPath;
   const serverBackups = join(config.dataDir, 'backups');
   const outArg = arg(argv, '--out');
   const outDir = outArg ? fromInitCwd(outArg) : serverBackups;
   const started = Date.now();
-  process.stdout.write(`MedLevo backup: snapshot of ${config.dbPath}\n`);
+  process.stdout.write(
+    instance ? `MedLevo backup: snapshot of ${config.systemDbPath} and ${instance.vaults.length} vault(s) in ${config.vaultsDir}\n` : `MedLevo backup: snapshot of ${config.dbPath}\n`,
+  );
   let lastStage = '';
   const res = await createBackup({
     dataDir: config.dataDir,
     dbPath: config.dbPath,
+    ...(instance ? { instance } : {}),
     filesDir: config.filesDir,
     outDir,
     appVersion: config.appVersion,
@@ -77,10 +106,28 @@ async function main(): Promise<number> {
       }
     },
   });
+  // P1-T1 step 2: --encrypt keeps only the MLVENC01 archive (an archive of several accounts should never sit in clear)
+  if (argv.includes('--encrypt')) {
+    const key = config.secrets.backupEncryptionKey();
+    if (!key) {
+      rmSync(res.archivePath, { force: true });
+      rmSync(`${res.archivePath}.sha256`, { force: true });
+      process.stderr.write('MedLevo backup: --encrypt needs MEDLEVO_BACKUP_ENCRYPTION_KEY. Nothing was kept.\n');
+      return 2;
+    }
+    const enc = `${res.archivePath}${ENC_SUFFIX}`;
+    const h = await encryptArchive(res.archivePath, enc, key);
+    rmSync(res.archivePath, { force: true });
+    rmSync(`${res.archivePath}.sha256`, { force: true });
+    writeFileSync(`${enc}.sha256`, `${h.sha256}  ${res.fileName}${ENC_SUFFIX}\n`, { mode: 0o600 });
+    process.stdout.write(`Encrypted: ${enc} (${h.size} bytes, sha256 ${h.sha256}); the plain archive was removed.\nVerify: npm run restore:verify -- "${enc}" (with the same key)\n`);
+    return res.warnings_ar.length ? 3 : 0;
+  }
   if (resolve(outDir) === resolve(serverBackups)) {
     // listed in the app (Control Center → backups) when written into the server's own backups directory
     try {
-      const db = openDb(config.dbPath);
+      if (!primaryPath) throw new Error('no primary vault');
+      const db = openDb(primaryPath);
       try {
         recordCliBackup(db, {
           backupId: res.backupId,

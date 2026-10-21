@@ -29,18 +29,19 @@ import { NotePagesList, pageNumbers, sectionsOf } from './NotePagesList';
 import '../../library/library.css';
 import '../workspace.css';
 import './notebook.css';
+import { userStorage } from '../../../lib/userStorage';
 
 const LAST_PAGE_KEY = (nodeId: string) => `medlevo.notebook.last.${nodeId}`;
 function readLast(nodeId: string): string | null {
   try {
-    return window.localStorage.getItem(LAST_PAGE_KEY(nodeId));
+    return userStorage.get(LAST_PAGE_KEY(nodeId));
   } catch {
     return null;
   }
 }
 function writeLast(nodeId: string, id: string): void {
   try {
-    window.localStorage.setItem(LAST_PAGE_KEY(nodeId), id);
+    userStorage.set(LAST_PAGE_KEY(nodeId), id);
   } catch {
     // per-device convenience only
   }

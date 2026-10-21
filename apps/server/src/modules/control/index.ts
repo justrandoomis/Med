@@ -86,12 +86,15 @@ const historyQuery = z.object({
 });
 
 export default async function register(app: FastifyInstance, { ctx }: ModuleOptions): Promise<void> {
-  // a permanent delete of a source must not leave its text in the correction history
-  try {
-    pruneOrphanHistory(ctx);
-  } catch (e) {
-    ctx.log.warn({ err: e }, 'control: pruning correction history failed');
-  }
+  // a permanent delete of a source must not leave its text in the correction history — per database, on its first
+  // open in this process (P1-T1: no database is bound at boot)
+  ctx.pool.onOpen('vault', 'control.prune-orphan-history', () => {
+    try {
+      pruneOrphanHistory(ctx);
+    } catch (e) {
+      ctx.log.warn({ err: e }, 'control: pruning correction history failed');
+    }
+  });
 
   app.get('/overview', async (): Promise<ControlOverviewResponse> => {
     const c = counts(ctx);
@@ -140,7 +143,7 @@ export default async function register(app: FastifyInstance, { ctx }: ModuleOpti
   });
 
   app.get('/sources', async () => sourcesPriorities(ctx));
-  app.get('/storage', async () => storageReport(ctx));
+  app.get('/storage', async (req) => storageReport(ctx, req.viewer));
   app.get('/history', async (req) => history(ctx, parseQuery(historyQuery, req)));
 
   // (track F5) quality ops: evaluation reports, daily trends, client error sink — see ./quality.ts

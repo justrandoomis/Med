@@ -2,32 +2,30 @@
 // Stored in IndexedDB (kv) together with the outbox, so the id lives exactly as long as the local
 // data it describes; mirrored to localStorage for synchronous reads.
 import { isId, newId } from '@medlevo/shared';
-import { getDb, kvGet, kvSet, type MedLevoDB } from './localdb';
+import { currentLocalDbName, getDb, kvGet, kvSet, type MedLevoDB } from './localdb';
+import { userStorage } from './userStorage';
 
 const KV_KEY = 'device.id';
 const LS_KEY = 'medlevo.deviceId';
 let cached: string | null = null;
+/** the local database the cached id belongs to (another account in the page → another id) */
+let cachedFor: string | null = null;
 
+// P1-T1 step 3: a device id per account per device (ARCHITECTURE_DELTA §8.7) — the mirror is the account's key and
+// the id itself lives in the account's own local database
 function readLocalStorage(): string | null {
-  try {
-    const v = window.localStorage.getItem(LS_KEY);
-    return isId(v) ? v : null;
-  } catch {
-    return null;
-  }
+  const v = userStorage.get(LS_KEY);
+  return isId(v) ? v : null;
 }
 
 function writeLocalStorage(id: string): void {
-  try {
-    window.localStorage.setItem(LS_KEY, id);
-  } catch {
-    // ignore: IndexedDB is the source of truth
-  }
+  userStorage.set(LS_KEY, id); // ignored when storage is unavailable: IndexedDB is the source of truth
 }
 
 /** Returns the device id, creating and persisting it on first use. */
 export async function getDeviceId(db: MedLevoDB = getDb()): Promise<string> {
-  if (cached) return cached;
+  if (cached && cachedFor === db.name) return cached;
+  cached = null;
   let id: string | undefined;
   try {
     id = await kvGet<string>(db, KV_KEY);
@@ -43,18 +41,20 @@ export async function getDeviceId(db: MedLevoDB = getDb()): Promise<string> {
     }
   }
   cached = id;
+  cachedFor = db.name;
   writeLocalStorage(id);
   return id;
 }
 
 /** Synchronous best-effort read (null before getDeviceId() resolved once and nothing was stored). */
 export function peekDeviceId(): string | null {
-  return cached ?? readLocalStorage();
+  return (cachedFor === currentLocalDbName() ? cached : null) ?? readLocalStorage();
 }
 
 /** Test helper. */
 export function resetDeviceIdCache(): void {
   cached = null;
+  cachedFor = null;
 }
 
 /** Human label for the sessions list, e.g. «Safari على iPad». Derived locally from the user agent. */

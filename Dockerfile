@@ -69,7 +69,8 @@ COPY apps/server/src apps/server/src
 COPY --from=build /app/apps/web/dist apps/web/dist
 COPY deploy/docker/entrypoint.sh /usr/local/bin/medlevo-entrypoint
 COPY deploy/docker/medlevo-restore-offsite /usr/local/bin/medlevo-restore-offsite
-RUN chmod 755 /usr/local/bin/medlevo-entrypoint /usr/local/bin/medlevo-restore-offsite \
+COPY deploy/docker/medlevo-migrate-multi-user /usr/local/bin/medlevo-migrate-multi-user
+RUN chmod 755 /usr/local/bin/medlevo-entrypoint /usr/local/bin/medlevo-restore-offsite /usr/local/bin/medlevo-migrate-multi-user \
   && mkdir -p /var/data/medlevo \
   && chown -R node:node /var/data
 

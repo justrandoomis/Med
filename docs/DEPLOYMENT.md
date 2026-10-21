@@ -193,6 +193,29 @@ A restore always goes into a new, empty directory (`npm run restore:verify -- <a
 
 ## 6. Update plan — code and schema, models, sources
 
+> **Release R1-b — the first boot on an existing (R1-a) data directory runs the owner migration (P1-T1 step 3).**
+> This release keeps every account in its own database (`system.sqlite` + `vaults/<id>.sqlite`, ADR-0003). On a data
+> directory that still holds the single-owner `medlevo.sqlite`, the server does **not** start the app and never offers
+> first-run setup: it starts a **maintenance page** on the same port (`/api/maintenance`) and waits for the owner to
+> start the migration — a verified backup, then the database moved byte for byte into user #1's vault. The full
+> procedure, what the owner sees and the rollback are in **§6.1**. A fresh data directory starts as before (first-run
+> setup creates account #1, the platform admin). New settings: `MEDLEVO_DB_POOL_SIZE` (open user databases, lowered to
+> fit the open-file limit), `MEDLEVO_LOGIN_IP_FAILURES_PER_HOUR` and `MEDLEVO_OWNER_MIGRATION` (`off` | `apply` |
+> `rollback`, §6.1) (`.env.example`).
+>
+> **P1-T1 step 2 settings** (same release; `.env.example`): `MEDLEVO_USER_STORAGE_QUOTA_MB` (default 2048 for every
+> account except the first, which has no storage limit until the platform admin sets one) and
+> `MEDLEVO_SPACE_STORAGE_QUOTA_MB` (20480, subject spaces arrive with R1-c); AI for accounts other than the first is
+> off until the platform admin sets a monthly cap (`PUT /api/platform/quotas/users/:userId`), and
+> `MEDLEVO_AI_MONTHLY_BUDGET_USD` stays the ceiling over everyone; `MEDLEVO_BLOB_GC_SCHEDULE` (default `04:20`, the
+> daily file clean-up check — files go only after two checks ≥ 7 days apart plus 30 days in quarantine);
+> `MEDLEVO_UPLOAD_CHUNK_MB` (8, resumable uploads); `MEDLEVO_BLOB_STORE` (`local` by default; `r2` also keeps an
+> encrypted copy of every file in R2 under content-addressed keys and needs the R2 settings and
+> `MEDLEVO_BACKUP_ENCRYPTION_KEY` — the server refuses to start with `r2` when one is missing). New directories under
+> the data directory: `quarantine/` (files the GC moved out of the store), `exports/` (users' «نسخة من بياناتي»),
+> `backups/vaults/` (per-vault backups and the rollback copy of a vault restore). Backups and restore:
+> [`BACKUP_RESTORE.md`](BACKUP_RESTORE.md) §7.
+
 **Code and database schema** (migration safety):
 
 1. Backup + `restore:verify` (§5). Note the current commit (`git rev-parse HEAD`).
@@ -223,6 +246,98 @@ owner corrections survive re-processing.
 **Sources**: a new edition of a lecture or book is uploaded as a **new version** of the same source («النسخ»): the old
 version, its citations, notes and attempts stay; content alerts list what may be affected; «تثبيت هذه النسخة للدراسة»
 (Source Freeze) keeps studying on the version you choose. A source in the trash keeps everything until you purge it.
+
+### 6.1 Updating an R1-a installation: the owner migration (release R1-b, P1-T1 step 3)
+
+ADR-0003 §5. The release that migrates the owner contains **no new base migration** (BUILD_PLAN §1.3): the moved
+database is exactly the R1-a database, so it can be moved back. Before updating, run R1-a once on the data (it applies
+its own migrations); a database older than R1-a is refused with that instruction, a newer one too — nothing is changed.
+
+**What happens at the first boot of R1-b** (`src/system/maintenance.ts`, `planBoot` → `startMaintenance`):
+
+| data directory | what the server does |
+|---|---|
+| only `medlevo.sqlite` (R1-a) | maintenance page, **waits** for the owner (or starts at once with `MEDLEVO_OWNER_MIGRATION=apply`) |
+| a migration journal that is not complete (a crash, a redeploy, a kill) | **resumes** at once from the last completed step |
+| migrated (`system.sqlite` + `vaults/` + `.multi-user`) | the app, as on any multi-user directory; the journal records `first_boot` with checksums and row counts again |
+| `MEDLEVO_OWNER_MIGRATION=rollback` | moves the vault back to `medlevo.sqlite` (below), then shows «تم التراجع» and stays there |
+| vault files without `system.sqlite`, or a real `medlevo.sqlite` beside a multi-user directory | a page that says why; nothing is changed; **setup mode never runs over existing data** |
+| an empty / torn `migration-journal.json` beside `medlevo.sqlite` (a crash before its first line reached the disk) | treated as «nothing started»: the page waits; the empty file is set aside when the migration starts (review fix) |
+
+While the maintenance page is up: `GET /api/health` → 200 `{ ok: true, maintenance: true }` (Render's health check
+passes, the deploy goes Live); `GET /api/auth/status` → signed out, `setup_required: false`; every other `/api` route →
+503 `FEATURE_DISABLED` with an Arabic message naming `/api/maintenance` (an installed R1-a app shows its sign-in screen
+and that message; what it wrote offline stays in its outbox); any other page address → the maintenance page itself.
+The page (Arabic, RTL, no JavaScript, strict CSP, 44 px targets, light / dark / high contrast) asks for the owner's
+**current** username and password — or an unused recovery code, which is checked and **not** consumed — and an explicit
+confirmation. Wrong credentials are rate-limited (10 failures from one address → refused for 15 minutes); a cross-site or foreign-Origin POST is
+refused.
+
+**The steps** (journal `DATA_DIR/migration-journal.json`, one fsync'd JSON line per step; each step re-checks its own
+result on resume): `freeze` (WAL checkpoint, `integrity_check`, `foreign_key_check`, the owner row exists, the applied
+migrations are exactly the shipped base set) → `safety` (sha256 + size + per-table row counts of the database as the
+reference; a full backup into `DATA_DIR/migration/` restored into a temporary directory and booted there; with R2
+configured, an encrypted copy uploaded to `<MEDLEVO_R2_PREFIX>backups/…mlenc`) → `system_db` (written as
+`system.sqlite.migrating.tmp`: user #1 with the owner's username, password hash, recovery-code hashes and creation time
+verbatim, platform admin + `legacy_owner`; the active sessions with the same token hashes — devices stay signed in;
+devices seeded from the sessions and the sync log, so cursors and the epoch continue; blob rows; unfinished jobs) →
+`move_vault` (a rename on the same disk to `vaults/<vault>.sqlite`; its sha256 must equal the reference; a small text
+**tombstone** is then written at `medlevo.sqlite` — SQLite refuses it, so R1-a deployed by mistake stops with «file is not
+a database» instead of creating an empty database and offering setup; this build recognises it) → `commit`
+(system DB renamed into place, the marker `.multi-user` written last) → `verify` (sha256 and row counts again, before the
+first boot) → `complete`. A failure before the move that cannot be retried (no owner, a wrong schema) aborts with the data
+untouched (the journal is renamed `migration-journal.aborted-<time>.json`); any other failure leaves the journal in
+progress and the page offers «أعد المحاولة» (resume) and «تراجع». An R2 failure can be skipped from the page (the local
+verified backup stays). The migration refuses to run twice (`ALREADY_MIGRATED`).
+
+**Disk space**: about 2.2 × (database + files) + 64 MB free on the data disk (backup + its restore check); the page and
+`--dry-run` say when it is missing (on Render: Disks → enlarge, then «أعد المحاولة»).
+
+**CLI** (`npm run migrate:multi-user -- …`; in the Docker image `medlevo-migrate-multi-user …`, which runs as the
+`node` user and uses the running server's `MEDLEVO_DATA_DIR`): `--dry-run` (default; what would happen, changes
+nothing), `--status` (the journal), `--apply`, `--resume`, `--rollback`; `--data-dir`, `--skip-offsite`, `--json`. Exit
+0 done · 1 failed (nothing lost; the reason is printed) · 2 refused. `--apply` / `--resume` / `--rollback` refuse while a
+server runs on the same data directory (`DATA_DIR/server.lock`): on a host where the server is a service (Render), use
+the page or the variable. An **R1-a** server writes no lock, so the CLI cannot see one: stop it first (on Render the
+deploy of R1-b replaces it; seen in the review: the CLI ran next to a still-running R1-a process).
+
+**Rollback** (valid only because no base migration ships with the move): `MEDLEVO_OWNER_MIGRATION=rollback` and a
+restart (or `--rollback` with the server stopped, or «تراجع» on the page after a failure). The marker is set aside
+first; the owner's current password and recovery codes are copied back into the `owner` row if they changed after the
+migration, and every session that is no longer valid under R1-b (revoked by a password change or «sign out this device»)
+is revoked in the vault too (review fix — it came back to life before); the tombstone is set aside; the vault (with
+everything written since — it **is** the R1-a database) is moved back to `medlevo.sqlite`;
+`system.sqlite`, its WAL files and the journal go to `DATA_DIR/rolled-back-<time>/` (never deleted). Resumable after a
+crash. Refused when another account was created after the migration or a base migration has been applied since (then
+restore the step-0 backup from `DATA_DIR/migration/` instead, [`BACKUP_RESTORE.md`](BACKUP_RESTORE.md) §8). Only **after**
+the page says «تم التراجع», deploy R1-a again and remove the variable. **Never deploy R1-a over a migrated directory**:
+R1-a does not know the multi-user layout; since the review it finds the tombstone and **refuses to start** («MedLevo
+failed to start: … file is not a database»; the deploy fails, nothing is written) — redeploy the latest release, then
+roll back in this order. (Before the fix it created an empty `medlevo.sqlite`, offered first-run setup and backed that
+empty database up every night.) A refused boot-time rollback after a complete migration (another account, a later base
+migration) shows «توقفت الترقية» with the reason, says the data is in user #1's vault and that removing
+`MEDLEVO_OWNER_MIGRATION` lets the app start again. One migration or rollback runs at a time per process: the page
+re-checks its state after the password check, so a double tap on «ابدأ» / «أعد المحاولة» / «تراجع» starts one thing
+(review fix — two runners, or a run and a rollback, could work on the directory at once).
+
+**After the migration**: the R1-a app on each device keeps working for user #1 (an old client without
+`x-medlevo-client` is accepted only for user #1 — every other account gets 426 `CLIENT_TOO_OLD`) and shows «تحديث»;
+after the update, the app claims the device's R1-a local database and keys **in place** for user #1 (its unsent outbox
+is pushed once under user #1's session) and keeps every other account in its own `medlevo:<id>` database and
+`<id>:`-prefixed keys (`apps/web/src/lib/userStorage.ts`, `localdb.ts`; docs/modules/tenancy.md «Step 3»).
+
+**Tested** (`apps/server/test/tenancy/owner-migration.test.ts`, `maintenance.test.ts`, `client-gate.test.ts`, on a copy
+of a realistic R1-a data directory built by `test/tenancy/legacy-fixture.ts`: sources, processed pages, ink on two
+layers, notes, cards with review history, an exam in progress, a recording, backups, sessions on three devices and a
+queued outbox): byte-for-byte vault, user #1 verbatim, old password and recovery code, sessions, cursors and epoch,
+outbox replayed exactly once, a crash at each of 18 points and `SIGKILL` of the CLI at 3 points and at growing delays,
+each resumed to the same end state, refusals, rollback and a crash inside it, and the real `src/index.ts` going from the
+page to the app on the same port. **Release verification (2026-10-21):** the real R1-a release (`d0c8ab4`) on such a
+data directory → this build's page → user #1 → rollback to the real R1-a, 38 / 38 checks; and the page's forms driven
+in headless Chromium (phone and desktop). That found the page sent with `Referrer-Policy: no-referrer`, under which a
+browser posts the form with `Origin: null` and the origin check refused «ابدأ الترقية» — now `same-origin`
+(`test/tenancy/maintenance-form.r1b.test.ts`). **Not run**: Render, R2, a phone or iPad, Safari, an installed R1-a PWA
+updating itself.
 
 ## 7. What was exercised here, and what was not
 
@@ -329,6 +444,13 @@ does not define it, so a Blueprint sync never undoes it — §8.3). Anything out
 disk is wiped by every deploy, so the restore command refuses a target on another filesystem. Render also takes its own
 daily disk snapshots (kept ≥ 7 days, per Render's docs) — a second, provider-side safety net, not a replacement for the
 encrypted off-site copy.
+
+**Files in R2 too (P1-T1 step 2, optional).** With `MEDLEVO_BLOB_STORE=r2` the server copies every uploaded or
+generated file to the same bucket under `<MEDLEVO_R2_PREFIX>blobs/aa/bb/<sha256>.mlenc`, encrypted on the server first,
+and fetches a file back (decrypted, its sha256 checked) when the disk copy is missing — e.g. on a new disk. The disk
+still keeps every file in this step (no eviction yet), so the disk size is unchanged; the gain is a second copy outside
+Render. Verified only against the signature-checking S3 fake (`apps/server/test/tenancy/blob-r2.test.ts`), **not**
+against Cloudflare R2.
 
 ### 8.5 What was verified, and what was not
 

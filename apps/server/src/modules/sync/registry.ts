@@ -28,6 +28,11 @@ export interface SyncTx {
  */
 export interface SerializeOptions {
   inkFormat?: 1 | 2;
+  /**
+   * (Release R1-b) the request came from a client without a supported `x-medlevo-client` version (R1-a or older —
+   * allowed for user #1 only, auth/clientGate.ts). Handlers may refuse edits such a client cannot make without damage.
+   */
+  legacyClient?: boolean;
 }
 
 export interface SyncApplyResult {

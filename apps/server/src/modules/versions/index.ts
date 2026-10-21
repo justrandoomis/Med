@@ -101,7 +101,8 @@ export default async function versionsModule(app: FastifyInstance, { ctx }: Modu
   registerVersionsPurgeExtension(ctx);
 
   // versions processed before fingerprints existed get them once, in the background (no suggestions are made for them)
-  app.addHook('onReady', async () => {
+  // — per vault, the first time it is opened after boot (P1-T1: there is no single database at boot)
+  ctx.pool.onOpen('vault', 'versions.fingerprint-backfill', () => {
     try {
       if (versionsNeedingFingerprints(ctx, 1).length > 0) {
         ctx.jobs.enqueue(FINGERPRINT_BACKFILL_JOB, {}, { idempotencyKey: `${FINGERPRINT_BACKFILL_JOB}:${FINGERPRINT_ALGO}:${new Date(ctx.clock.now()).toISOString().slice(0, 10)}` });

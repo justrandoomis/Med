@@ -25,6 +25,7 @@ import {
   type RGB,
 } from 'pdf-lib';
 import type { AnnotatedPdfSummary, ImageAnnotationData, InkData, NormBox, ShapeData, TextHighlightData } from '@medlevo/shared';
+import { shapeOutlineIso } from '@medlevo/shared';
 import type { AppContext } from '../../context';
 import { fromJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
@@ -67,6 +68,8 @@ export function arrowHeadLength(shaftLength: number, width: number): number {
   return Math.min(shaftLength * 0.35, Math.max(width * 5, 0.018));
 }
 export function shapeOutline(d: ShapeData, ar: number): Vec[][] {
+  // (parity N1 wave 2) new shape kinds, pathway heads, routes, rounded corners: the shared geometry the reader draws
+  if (!['line', 'arrow', 'rect', 'ellipse'].includes(d.shape) || d.head || d.route || d.corner || d.points) return shapeOutlineIso(d, ar);
   const f: Vec = [d.from[0], d.from[1] * ar];
   const t: Vec = [d.to[0], d.to[1] * ar];
   if (d.shape === 'line') return [[f, t]];

@@ -2,10 +2,14 @@
 // Writes go to DATA_DIR/tmp first (hash computed while streaming), are fsynced, then atomically
 // renamed into place. Identical content is stored once (dedup by sha256). Files are never public:
 // they are served only through authenticated routes or short-lived signed tokens.
+// P1-T1 step 2 (hooks): a NEW row for a signed-in user's upload is checked against their storage quota first; every
+// row is reported to the blob registry (system DB) as a reference of the bound database; a blob whose local copy is
+// missing is fetched back from the object store (MEDLEVO_BLOB_STORE=r2) before it is read. Bytes are never deleted
+// here (modules/files/blobs.ts).
 import { closeSync, createReadStream, createWriteStream, existsSync, fsyncSync, mkdirSync, openSync, renameSync, rmSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { Readable, Transform } from 'node:stream';
+import { PassThrough, Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createHash, randomBytes } from 'node:crypto';
 import type { StoredFileView } from '@medlevo/shared';
@@ -32,6 +36,23 @@ export interface PutResult extends StoredFile {
 }
 
 export const MAX_FILE_TOKEN_TTL_MS = 60 * 60 * 1000;
+
+/** What the tenancy layer plugs into the store (P1-T1 step 2; context.ts wires them). */
+export interface FileStoreHooks {
+  /** before a NEW stored_file row is written in the bound database: throws QUOTA_EXCEEDED for a user over quota */
+  beforeNewFile?(size: number): void;
+  /** a stored_file row for this content exists in the bound database (new, or found by content) */
+  referenced?(meta: { sha256: string; size: number; mime: string; storageKey: string }): void;
+  /** the local copy is missing: fetch it from the object store; false when it cannot be had */
+  ensureLocal?(sha256: string, size: number): Promise<boolean>;
+}
+
+/** Which database a signed link resolves in, and for whom (ARCHITECTURE_DELTA §5.5 gate 5; P1-T1 step 1). */
+export interface FileTokenScope {
+  /** 'v:<vaultId>' (later 's:<spaceId>') */
+  db: string;
+  userId: string | null;
+}
 
 interface StoredFileRow {
   id: string;
@@ -72,6 +93,9 @@ export class FileStore {
     private readonly tmpDir: string,
     tokenKey: Buffer,
     private readonly clock: Clock,
+    /** the database (and user) of the current binding; tokens are only issued inside one */
+    private readonly scope: () => FileTokenScope | null = () => null,
+    private readonly hooks: FileStoreHooks = {},
   ) {
     this.tokenKey = tokenKey;
     mkdirSync(filesDir, { recursive: true, mode: 0o700 });
@@ -121,7 +145,14 @@ export class FileStore {
         renameSync(tmp, existingPath);
         fsyncPath(dirname(existingPath));
       }
+      this.hooks.referenced?.({ sha256: existing.sha256, size: existing.size, mime: existing.mime, storageKey: existing.storage_key });
       return { ...toFile(existing), deduplicated: true };
+    }
+    try {
+      this.hooks.beforeNewFile?.(size);
+    } catch (e) {
+      rmSync(tmp, { force: true });
+      throw e;
     }
 
     const storageKey = FileStore.storageKeyFor(sha);
@@ -151,9 +182,13 @@ export class FileStore {
     } catch (e) {
       // concurrent put of identical content: the other insert won
       const raced = this.getBySha(sha);
-      if (raced) return { ...toFile(raced), deduplicated: true };
+      if (raced) {
+        this.hooks.referenced?.({ sha256: raced.sha256, size: raced.size, mime: raced.mime, storageKey: raced.storage_key });
+        return { ...toFile(raced), deduplicated: true };
+      }
       throw e;
     }
+    this.hooks.referenced?.({ sha256: row.sha256, size: row.size, mime: row.mime, storageKey: row.storage_key });
     return { ...toFile(row), deduplicated: false };
   }
 
@@ -170,19 +205,50 @@ export class FileStore {
     return row ? toFile(row) : null;
   }
 
-  /** Absolute path of the blob. INTERNAL ONLY — never send to clients or logs shown to the owner. */
+  /**
+   * Absolute path of the blob. INTERNAL ONLY — never send to clients or logs shown to the owner. Synchronous: when the
+   * local copy is missing and an object-store copy exists, the fetch starts in the background and the caller's read
+   * fails this time (a retry finds it); async readers use `localPath`, `read` or `createReadStream`, which wait.
+   */
   path(id: string): string {
     const f = this.stat(id);
     if (!f) throw new AppError('NOT_FOUND', 'الملف غير موجود.', 404);
-    return this.absolute(f.storage_key);
+    const p = this.absolute(f.storage_key);
+    if (this.hooks.ensureLocal && !existsSync(p)) void this.hooks.ensureLocal(f.sha256, f.size);
+    return p;
+  }
+
+  /** Absolute path of the blob once its bytes are on the local disk (fetched from the object store if needed). */
+  async localPath(id: string): Promise<string> {
+    const f = this.stat(id);
+    if (!f) throw new AppError('NOT_FOUND', 'الملف غير موجود.', 404);
+    const p = this.absolute(f.storage_key);
+    if (!existsSync(p) && this.hooks.ensureLocal) await this.hooks.ensureLocal(f.sha256, f.size);
+    return p;
   }
 
   async read(id: string): Promise<Buffer> {
-    return readFile(this.path(id));
+    return readFile(await this.localPath(id));
   }
 
   createReadStream(id: string, range?: { start: number; end: number }): Readable {
-    return createReadStream(this.path(id), range ? { start: range.start, end: range.end } : undefined);
+    const f = this.stat(id);
+    if (!f) throw new AppError('NOT_FOUND', 'الملف غير موجود.', 404);
+    const p = this.absolute(f.storage_key);
+    const opts = range ? { start: range.start, end: range.end } : undefined;
+    if (existsSync(p) || !this.hooks.ensureLocal) return createReadStream(p, opts);
+    // the local copy is missing: wait for the object store, then stream (errors reach the consumer)
+    const out = new PassThrough();
+    this.hooks
+      .ensureLocal(f.sha256, f.size)
+      .then((ok) => {
+        if (!ok) throw new AppError('NOT_FOUND', 'الملف غير موجود أو لم يعد متاحًا.', 404);
+        const src = createReadStream(p, opts);
+        src.on('error', (e) => out.destroy(e));
+        src.pipe(out);
+      })
+      .catch((e: unknown) => out.destroy(e as Error));
+    return out;
   }
 
   /** true when the blob exists on disk with the recorded size */
@@ -196,18 +262,26 @@ export class FileStore {
     }
   }
 
-  /** Short-lived signed token for GET /api/files/t/:token (HMAC-SHA256, bound to the file id). */
+  /**
+   * Short-lived signed token for GET /api/files/t/:token (HMAC-SHA256). It carries {file, database, user, expiry}: the
+   * public token route binds exactly that database, so a link never resolves a file id in anyone else's vault.
+   */
   createToken(id: string, ttlMs: number): { token: string; expiresAt: number } {
     if (!this.stat(id)) throw new AppError('NOT_FOUND', 'الملف غير موجود.', 404);
+    const scope = this.scope();
+    if (!scope) throw new AppError('NOT_FOUND', 'الملف غير موجود.', 404);
     const ttl = Math.max(1000, Math.min(ttlMs, MAX_FILE_TOKEN_TTL_MS));
     const expiresAt = this.clock.now() + ttl;
-    const payload = Buffer.from(JSON.stringify({ f: id, e: expiresAt })).toString('base64url');
+    const payload = Buffer.from(JSON.stringify({ f: id, e: expiresAt, d: scope.db, u: scope.userId })).toString('base64url');
     const sig = hmacSha256(this.tokenKey, payload).toString('base64url');
     return { token: `${payload}.${sig}`, expiresAt };
   }
 
-  /** Returns the file id for a valid, unexpired token; null otherwise (never throws on bad input). */
-  verifyToken(token: string): { fileId: string; expiresAt: number } | null {
+  /**
+   * The file, database and user of a valid, unexpired token; null otherwise (never throws on bad input). Tokens
+   * issued before P1-T1 (no database) are refused — they expired within the hour anyway.
+   */
+  verifyToken(token: string): { fileId: string; expiresAt: number; db: string; userId: string | null } | null {
     if (typeof token !== 'string' || token.length > 512) return null;
     const dot = token.indexOf('.');
     if (dot <= 0) return null;
@@ -216,10 +290,11 @@ export class FileStore {
     const expected = hmacSha256(this.tokenKey, payload).toString('base64url');
     if (!safeEqual(sig, expected)) return null;
     try {
-      const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as { f?: unknown; e?: unknown };
-      if (typeof data.f !== 'string' || typeof data.e !== 'number') return null;
+      const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as { f?: unknown; e?: unknown; d?: unknown; u?: unknown };
+      if (typeof data.f !== 'string' || typeof data.e !== 'number' || typeof data.d !== 'string') return null;
+      if (data.u !== null && typeof data.u !== 'string') return null;
       if (this.clock.now() >= data.e) return null;
-      return { fileId: data.f, expiresAt: data.e };
+      return { fileId: data.f, expiresAt: data.e, db: data.d, userId: (data.u as string | null) ?? null };
     } catch {
       return null;
     }

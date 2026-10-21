@@ -3,6 +3,7 @@
 import type { NormBox } from '@medlevo/shared';
 import type { InkDocumentStore } from '../store';
 import { InkTileCache, type SurfaceFactory, type TileSurface } from './tileCache';
+import { deviceStorage } from '../../../../lib/userStorage';
 
 export { InkTileCache, TILE_PX, TileGrid, type GridKey, type DeviceRect, type TileSurface } from './tileCache';
 
@@ -51,7 +52,7 @@ export function __setInkTileCache(c: InkTileCache | null): void {
  */
 export function tilesEnabled(): boolean {
   try {
-    return globalThis.localStorage?.getItem('medlevo.ink.tiles') !== 'off';
+    return deviceStorage.get('medlevo.ink.tiles') !== 'off';
   } catch {
     return true;
   }

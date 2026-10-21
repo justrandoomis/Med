@@ -68,8 +68,15 @@ const LABELS: Record<string, { label: string; note?: string }> = {
   other: { label: 'ملفات أخرى', note: 'مرفقات لا ترتبط بصفحة مصدر (مثل صور الملاحظات).' },
 };
 
-export function storageReport(ctx: AppContext): StorageResponse {
-  const { dataDir, dbPath, filesDir, tmpDir } = ctx.config;
+/**
+ * «التخزين ودون اتصال» (ARCHITECTURE_DELTA §5.8, P1-T1 step 1): the database is the viewer's OWN vault, the files are
+ * the blobs that vault references. Deployment-wide numbers (the whole file store, backups, OCR models, tmp) are shown
+ * only to the platform admin — another user never sees them.
+ */
+export function storageReport(ctx: AppContext, viewer: { isPlatformAdmin: boolean } | null = null): StorageResponse {
+  const { dataDir, filesDir, tmpDir } = ctx.config;
+  const platform = viewer?.isPlatformAdmin === true;
+  const dbPath = ctx.db.path;
   const dbBytes = fileSize(dbPath) + fileSize(`${dbPath}-wal`) + fileSize(`${dbPath}-shm`);
   const dbFiles = [dbPath, `${dbPath}-wal`, `${dbPath}-shm`].filter((p) => fileSize(p) > 0).length;
   const byCat = new Map<string, { files: number; bytes: number }>();
@@ -82,31 +89,45 @@ export function storageReport(ctx: AppContext): StorageResponse {
   const categories: StorageCategoryView[] = Object.keys(LABELS)
     .filter((k) => byCat.has(k))
     .map((k) => ({ key: k, label_ar: LABELS[k]!.label, files: byCat.get(k)!.files, bytes: byCat.get(k)!.bytes, ...(LABELS[k]!.note ? { note_ar: LABELS[k]!.note } : {}) }));
-  const store = dirUsage(filesDir);
   const filesBytes = categories.reduce((n, c) => n + c.bytes, 0);
   const filesCount = categories.reduce((n, c) => n + c.files, 0);
-  const backups = dirUsage(join(dataDir, 'backups'));
+  const store = platform ? dirUsage(filesDir) : { files: filesCount, bytes: filesBytes };
+  const backups = platform ? dirUsage(join(dataDir, 'backups')) : { files: 0, bytes: 0 };
   let archives = 0;
   try {
-    archives = readdirSync(join(dataDir, 'backups')).filter((n) => n.endsWith('.tar.gz')).length;
+    archives = platform ? readdirSync(join(dataDir, 'backups')).filter((n) => n.endsWith('.tar.gz')).length : 0;
   } catch {
     archives = 0;
   }
   const other: StorageCategoryView[] = [];
-  const tess = dirUsage(join(dataDir, 'tessdata'));
-  const tessCache = dirUsage(join(dataDir, 'tessdata-cache'));
-  if (tess.files + tessCache.files > 0) {
-    other.push({ key: 'ocr_models', label_ar: 'نماذج القراءة الآلية (OCR)', files: tess.files + tessCache.files, bytes: tess.bytes + tessCache.bytes, note_ar: 'نسخة محلية من نماذج اللغتين العربية والإنجليزية؛ لا تغادر الخادم.' });
+  if (platform) {
+    const tess = dirUsage(join(dataDir, 'tessdata'));
+    const tessCache = dirUsage(join(dataDir, 'tessdata-cache'));
+    if (tess.files + tessCache.files > 0) {
+      other.push({ key: 'ocr_models', label_ar: 'نماذج القراءة الآلية (OCR)', files: tess.files + tessCache.files, bytes: tess.bytes + tessCache.bytes, note_ar: 'نسخة محلية من نماذج اللغتين العربية والإنجليزية؛ لا تغادر الخادم.' });
+    }
+    // P1-T1 step 2: blobs the GC moved out of the store (deleted 30 days later unless an account uses them again)
+    const quarantine = dirUsage(join(dataDir, 'quarantine'));
+    if (quarantine.files > 0) other.push({ key: 'quarantine', label_ar: 'ملفات في الحجر قبل حذفها', files: quarantine.files, bytes: quarantine.bytes, note_ar: 'ملفات لم يعد أي حساب يستخدمها في فحصين متتاليين؛ تُحذف بعد 30 يومًا ما لم يعد أحد يستخدمها.' });
+    const exportsDir = dirUsage(join(dataDir, 'exports'));
+    if (exportsDir.files > 0) other.push({ key: 'exports', label_ar: 'نسخ «بياناتي» الجاهزة للتنزيل', files: exportsDir.files, bytes: exportsDir.bytes, note_ar: 'آخر 3 نسخ لكل حساب طلبها؛ تُحذف مع حذف الحساب.' });
+    const tmp = dirUsage(tmpDir);
+    if (tmp.files > 0) other.push({ key: 'tmp', label_ar: 'ملفات مؤقتة', files: tmp.files, bytes: tmp.bytes, note_ar: 'ملفات رفع ومعالجة جارية؛ تُحذف بعد انتهائها.' });
   }
-  const tmp = dirUsage(tmpDir);
-  if (tmp.files > 0) other.push({ key: 'tmp', label_ar: 'ملفات مؤقتة', files: tmp.files, bytes: tmp.bytes, note_ar: 'ملفات رفع ومعالجة جارية؛ تُحذف بعد انتهائها.' });
   const notes = [
     'الأحجام مقيسة الآن من مجلد بيانات الخادم، وليست تقديرًا.',
     'الملفات مخزنة مرة واحدة حتى لو رفعتها أكثر من مرة (تخزين حسب المحتوى).',
     'التنزيلات للعمل دون اتصال تُحفظ في متصفح كل جهاز على حدة، وتظهر في «التنزيلات».',
   ];
   if (store.bytes > filesBytes) {
-    notes.push(`في مخزن الملفات ${store.files - filesCount > 0 ? `${store.files - filesCount} ملفًا` : 'بيانات'} غير مسجّلة في قاعدة البيانات (بقايا عمليات سابقة)؛ لا تدخل في النسخ الاحتياطية.`);
+    // P1-T1 review: with several accounts the store is shared — the difference is mostly OTHER accounts' files (which
+    // every whole-instance backup includes), not leftovers; only a single-database deployment can call it leftovers
+    const shared = platform && ctx.tenancy.sharesFileStore();
+    notes.push(
+      shared
+        ? 'مخزن الملفات مشترك بين كل الحسابات على هذا الخادم: الحجم الكلي أعلاه يشمل ملفات الحسابات الأخرى (وهي ضمن النسخ الاحتياطية الكاملة)، وقد يشمل بقايا لم تُجمع بعد.'
+        : `في مخزن الملفات ${store.files - filesCount > 0 ? `${store.files - filesCount} ملفًا` : 'بيانات'} غير مسجّلة في قاعدة البيانات (بقايا عمليات سابقة)؛ لا تدخل في النسخ الاحتياطية.`,
+    );
   }
   return {
     database: { bytes: dbBytes, files: dbFiles },

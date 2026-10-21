@@ -1,5 +1,6 @@
 // «قدرات القلم على هذا الجهاز» — an honest, live report (spec §27, AC-28). Rows come from what this
 // browser's Pointer Events actually carried; nothing is claimed from the device name.
+import { eyedropperPath } from './eyedropper';
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { CircleCheck, CircleDashed, CircleSlash, Construction, Smartphone, Waves, Settings2 } from 'lucide-react';
 import { Bidi, Dialog, StatusPill, type StatusTone } from '../../../design';
@@ -12,9 +13,12 @@ import {
   detectApiSupport,
   penProbe,
   useLastPointerSample,
+  useLatencyStats,
   usePenObservations,
   type CapabilityState,
 } from './capabilities';
+import { useInkSettings } from './inkSettings';
+import { palmPolicy } from './input';
 
 const TONE: Record<CapabilityState, StatusTone> = {
   supported: 'success',
@@ -66,7 +70,10 @@ export function CapabilityPanel() {
       alive = false;
     };
   }, [api.indexedDB]);
-  const rows = buildCapabilityReport(api, obs, { recognitionAvailable: recognition.available, recognitionReason_ar: recognition.available ? undefined : (recognition.reason ?? undefined), storage });
+  const ink = useInkSettings();
+  const latency = useLatencyStats();
+  const palm = palmPolicy(ink.palm.sensitivity, ink.palm.hand);
+  const rows = buildCapabilityReport(api, obs, { recognitionAvailable: recognition.available, recognitionReason_ar: recognition.available ? undefined : (recognition.reason ?? undefined), storage, palm, latency, eyedropper: eyedropperPath() });
   const device = useMemo(() => describeDevice(), []);
   return (
     <div className="ml-ink-caps" dir="rtl">

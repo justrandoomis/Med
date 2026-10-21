@@ -1,5 +1,6 @@
 // Source Jump & Back (§11): opening a cited place records where the owner was (page, offset, zoom,
 // rotation, layout) so «العودة إلى الشرح» returns to exactly that position.
+import { userSession } from '../../../lib/userStorage'; // the back stack belongs to the signed-in account (P1-T1 step 3)
 export interface ReaderPosition {
   sourceId: string;
   versionId: string;
@@ -47,7 +48,7 @@ const STORAGE_KEY = 'medlevo.workspace.back.v1';
 
 export function loadBackStack(): BackEntry[] {
   try {
-    const raw = sessionStorage.getItem(STORAGE_KEY);
+    const raw = userSession.get(STORAGE_KEY);
     const parsed: unknown = raw ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? (parsed.filter((e) => e && typeof e === 'object' && (e as BackEntry).position) as BackEntry[]) : [];
   } catch {
@@ -57,7 +58,7 @@ export function loadBackStack(): BackEntry[] {
 
 export function saveBackStack(stack: readonly BackEntry[]): void {
   try {
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(stack));
+    userSession.set(STORAGE_KEY, JSON.stringify(stack));
   } catch {
     // storage unavailable (private mode): the stack still works in memory
   }

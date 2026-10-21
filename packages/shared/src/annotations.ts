@@ -17,7 +17,49 @@ export interface InkStyle {
   /** base stroke width as a fraction of the page WIDTH (zoom independent), e.g. 0.0025 */
   width: number;
   opacity?: number;
+  /**
+   * (parity N1, G03) what the owner's colour slot means («موانع استعمال»), copied onto the stroke when it is written:
+   * read aloud with the colour (never colour alone) and usable as a «show only this meaning» filter. 1–60 characters,
+   * no bidi control characters (AC-20).
+   */
+  meaning?: string;
+  /**
+   * (parity N1, G01) pen feel, saved WITH the stroke so every device draws it the same way. Absent = today's drawing:
+   * smoothing radius 2, no pressure floor, no taper, width follows pressure when the pen reported it.
+   */
+  smoothing?: number;
+  /** lowest pressure used for the width, 0–0.9 */
+  pressure_floor?: number;
+  /** thinning at the ends of the stroke */
+  taper?: InkTaper;
+  /** constant width even when the pen reported pressure */
+  constant?: boolean;
+  /**
+   * (parity N1 wave 2, G04) the line pattern: dashes or dots, scaled to the stroke's width in page units (the same on
+   * every zoom). Absent = a solid line (every stroke before wave 2).
+   */
+  dash?: InkDash;
+  /**
+   * (parity N1 wave 2, G06) the pencil: a graphite grain, and pressure changes the opacity as well as the width. Stored
+   * with `tool: 'pen'` (the same points-only stroke), so an older app draws it as a pen line instead of failing.
+   */
+  texture?: InkTexture;
 }
+
+/** (parity N1 wave 2, G04) line patterns besides solid */
+export const INK_DASHES = ['dash', 'dot'] as const;
+export type InkDash = (typeof INK_DASHES)[number];
+/** (parity N1 wave 2, G06) nib textures */
+export const INK_TEXTURES = ['graphite'] as const;
+export type InkTexture = (typeof INK_TEXTURES)[number];
+
+/** (parity N1, G01) how a stroke's ends are drawn: 'none' = full width, 'round' = soft thinning, 'sharp' = to a point */
+export const INK_TAPERS = ['none', 'round', 'sharp'] as const;
+export type InkTaper = (typeof INK_TAPERS)[number];
+/** (parity N1, G01) smoothing radius range of a stroke (samples on each side) */
+export const INK_SMOOTHING_MAX = 6;
+/** (parity N1, G03) longest meaning label of a colour slot / stroke */
+export const INK_MEANING_MAX = 60;
 
 export interface InkData {
   v: 1;
@@ -54,8 +96,14 @@ export interface InkAudioLink {
 
 export interface ShapeData {
   v: 1;
-  shape: 'line' | 'arrow' | 'rect' | 'ellipse';
-  /** normalized corners / endpoints */
+  /**
+   * (parity N1 wave 2, G20) triangle, polygon, curved and double arrows were added. An R1-a app draws them as an ellipse
+   * in their frame and, if it MOVES one, keeps only the frame: a curved / double arrow comes out pointing down-right and
+   * a polygon's corners stay behind (review of N1 wave 2, R10). Since the R1-b final verification the server refuses
+   * that edit from an R1-a app and answers with its copy (annotations/sync.ts; docs/modules/ink.md).
+   */
+  shape: ShapeKind;
+  /** normalized corners / endpoints (a polygon: the corners of its bounding box) */
   from: [number, number];
   to: [number, number];
   rotation?: number;
@@ -64,6 +112,250 @@ export interface ShapeData {
   recognized_from?: InkData;
   /** (track F4) drawn while an in-app recording ran */
   audio_link?: InkAudioLink;
+  // ── (parity N1 wave 2 — G20 shapes, G21 connectors; every field optional: a shape without them draws as before) ──
+  /** inside colour of a closed shape (a colour token or #rrggbb), drawn translucent so writing under it stays readable */
+  fill?: string;
+  /** rounded corners of a rectangle: the radius as a fraction of the page width */
+  corner?: number;
+  /** text inside the shape (RichText: bidi-correct, terms and doses isolated) */
+  label?: RichText;
+  /** font size of the label as a fraction of the page width (absent = SHAPE_LABEL_SCALE) */
+  label_scale?: number;
+  /** a polygon's corners (normalized, unrotated page) */
+  points?: Array<[number, number]>;
+  /** a curved route's control point, or an elbow route's bend (its x) — normalized */
+  control?: [number, number];
+  /** physiology / pharmacology notation of the arrow head at `to`: activation →, inhibition ⊣, conversion ⇢ */
+  head?: PathwayHead;
+  /** (G21) how a connector runs between its ends (absent: straight; a curved arrow is always curved) */
+  route?: ConnectorRoute;
+  /** (G21) the shapes a connector is attached to (an edge point of each); it follows them when they move */
+  attach?: { from?: ShapeAttach; to?: ShapeAttach };
+  /** (G21) what the connection means (read aloud; checked against the Course Brain when both ends are concepts) */
+  relation?: ConnectorRelation;
+  /** (G21) a node bound to a Course Brain concept (`concept.id`) and its name when bound (display only) */
+  concept_id?: string;
+  concept_name?: string;
+}
+
+// ───────── (parity N1 wave 2) shapes, pathway notation and connectors ─────────
+export const SHAPE_KINDS = ['line', 'arrow', 'rect', 'ellipse', 'triangle', 'polygon', 'curved_arrow', 'double_arrow'] as const;
+export type ShapeKind = (typeof SHAPE_KINDS)[number];
+/** shapes kept as a box (from / to = corners of the unrotated box; rotation about its centre) */
+export const BOX_SHAPES: readonly ShapeKind[] = ['rect', 'ellipse', 'triangle'];
+/** shapes that run from one end to the other (connectors are these) */
+export const LINE_SHAPES: readonly ShapeKind[] = ['line', 'arrow', 'curved_arrow', 'double_arrow'];
+/** closed shapes (they can be filled, carry a label and be connected) */
+export const CLOSED_SHAPES: readonly ShapeKind[] = ['rect', 'ellipse', 'triangle', 'polygon'];
+export const SHAPE_KIND_LABELS_AR: Record<ShapeKind, string> = {
+  line: 'خط مستقيم',
+  arrow: 'سهم',
+  rect: 'مستطيل',
+  ellipse: 'شكل بيضاوي',
+  triangle: 'مثلث',
+  polygon: 'مضلّع',
+  curved_arrow: 'سهم منحنٍ',
+  double_arrow: 'سهم مزدوج',
+};
+
+/** pathway arrow heads (physiology / pharmacology) */
+export const PATHWAY_HEADS = ['activation', 'inhibition', 'conversion'] as const;
+export type PathwayHead = (typeof PATHWAY_HEADS)[number];
+/** their spoken names (never the glyph alone: a bare arrow glyph inside RTL text can be shown pointing the wrong way) */
+export const PATHWAY_HEAD_LABELS_AR: Record<PathwayHead, string> = { activation: 'ينشّط', inhibition: 'يثبّط', conversion: 'يتحوّل إلى' };
+
+export const CONNECTOR_ROUTES = ['straight', 'elbow', 'curve'] as const;
+export type ConnectorRoute = (typeof CONNECTOR_ROUTES)[number];
+export const CONNECTOR_ROUTE_LABELS_AR: Record<ConnectorRoute, string> = { straight: 'مستقيم', elbow: 'بزوايا قائمة', curve: 'منحنٍ' };
+
+/** medical relation types of a connector (N4 G48 and N2 G35 read them) */
+export const CONNECTOR_RELATIONS = ['causes', 'inhibits', 'treats', 'complicates'] as const;
+export type ConnectorRelation = (typeof CONNECTOR_RELATIONS)[number];
+export const CONNECTOR_RELATION_LABELS_AR: Record<ConnectorRelation, string> = { causes: 'يسبّب', inhibits: 'يثبّط', treats: 'يعالج', complicates: 'يُعقّد (مضاعفة لـ)' };
+
+/** the edge points of a shape a connector can attach to: top, right, bottom, left of its box (before its rotation) */
+export const SHAPE_SIDES = ['n', 'e', 's', 'w'] as const;
+export type ShapeSide = (typeof SHAPE_SIDES)[number];
+export interface ShapeAttach {
+  /** the shape's annotation id */
+  id: string;
+  side: ShapeSide;
+}
+
+/** most corners of a polygon */
+export const SHAPE_POLYGON_MAX = 64;
+/** default label size (fraction of the page width ≈ 10 pt on A4) */
+export const SHAPE_LABEL_SCALE = 0.017;
+/** longest label (characters) */
+export const SHAPE_LABEL_MAX = 500;
+/** largest corner radius (fraction of the page width) */
+export const SHAPE_CORNER_MAX = 0.2;
+
+type IsoVec = [number, number];
+
+/** One drawn part of a shape, in «iso» units (x = normalized x, y = normalized y × page height / page width). */
+export interface ShapePart {
+  pts: IsoVec[];
+  /** body: the outline or the shaft; head: an arrow head */
+  role: 'body' | 'head';
+  /** closed outline (fillable) */
+  closed?: boolean;
+  /** filled with the line colour (an activation head) */
+  solid?: boolean;
+  /** drawn dashed whatever the style (the shaft of a conversion arrow ⇢) */
+  dashed?: boolean;
+}
+
+/** Length of an arrow head (iso units) for a shaft and a line width. */
+export function shapeArrowHeadLength(shaftLength: number, width: number): number {
+  return Math.min(shaftLength * 0.35, Math.max(width * 5, 0.018));
+}
+
+function quadPoint(a: IsoVec, c: IsoVec, b: IsoVec, t: number): IsoVec {
+  const u = 1 - t;
+  return [u * u * a[0] + 2 * u * t * c[0] + t * t * b[0], u * u * a[1] + 2 * u * t * c[1] + t * t * b[1]];
+}
+
+/** The default control point of a curve: the middle pushed sideways by a quarter of the length (iso). */
+export function defaultCurveControl(f: IsoVec, t: IsoVec): IsoVec {
+  const mx = (f[0] + t[0]) / 2;
+  const my = (f[1] + t[1]) / 2;
+  const dx = t[0] - f[0];
+  const dy = t[1] - f[1];
+  return [mx - dy * 0.25, my + dx * 0.25];
+}
+
+/** The route of a line-like shape between its ends (iso). */
+export function shapeRoute(d: ShapeData, ar: number): IsoVec[] {
+  const f: IsoVec = [d.from[0], d.from[1] * ar];
+  const t: IsoVec = [d.to[0], d.to[1] * ar];
+  const route = d.shape === 'curved_arrow' ? 'curve' : (d.route ?? 'straight');
+  if (route === 'curve') {
+    const c: IsoVec = d.control ? [d.control[0], d.control[1] * ar] : defaultCurveControl(f, t);
+    const out: IsoVec[] = [];
+    for (let i = 0; i <= 24; i++) out.push(quadPoint(f, c, t, i / 24));
+    return out;
+  }
+  if (route === 'elbow') {
+    const bx = d.control ? d.control[0] : (f[0] + t[0]) / 2;
+    return [f, [bx, f[1]], [bx, t[1]], t];
+  }
+  return [f, t];
+}
+
+function headParts(tip: IsoVec, from: IsoVec, size: number, head: PathwayHead | 'open'): ShapePart[] {
+  const ang = Math.atan2(tip[1] - from[1], tip[0] - from[0]);
+  if (head === 'inhibition') {
+    // ⊣: a bar across the end of the shaft
+    const hw = size * 0.6;
+    const px = -Math.sin(ang) * hw;
+    const py = Math.cos(ang) * hw;
+    return [{ pts: [[tip[0] + px, tip[1] + py], [tip[0] - px, tip[1] - py]], role: 'head' }];
+  }
+  const spread = (28 * Math.PI) / 180;
+  const h1: IsoVec = [tip[0] - size * Math.cos(ang - spread), tip[1] - size * Math.sin(ang - spread)];
+  const h2: IsoVec = [tip[0] - size * Math.cos(ang + spread), tip[1] - size * Math.sin(ang + spread)];
+  if (head === 'activation') return [{ pts: [h1, tip, h2, h1], role: 'head', closed: true, solid: true }];
+  return [{ pts: [h1, tip, h2], role: 'head' }];
+}
+
+/** A rounded rectangle's outline (iso), corners clockwise from the top-left; `r` is clamped to the box. */
+function roundedBox(place: (u: number, v: number) => IsoVec, hx: number, hy: number, r: number): IsoVec[] {
+  const rr = Math.max(0, Math.min(r, hx, hy));
+  if (rr <= 1e-9) return [place(-hx, -hy), place(hx, -hy), place(hx, hy), place(-hx, hy), place(-hx, -hy)];
+  const out: IsoVec[] = [];
+  const corners: Array<[number, number, number]> = [
+    [hx - rr, -hy + rr, -Math.PI / 2],
+    [hx - rr, hy - rr, 0],
+    [-hx + rr, hy - rr, Math.PI / 2],
+    [-hx + rr, -hy + rr, Math.PI],
+  ];
+  for (const [cu, cv, a0] of corners) for (let i = 0; i <= 6; i++) {
+    const a = a0 + (i / 6) * (Math.PI / 2);
+    out.push(place(cu + rr * Math.cos(a), cv + rr * Math.sin(a)));
+  }
+  out.push(out[0]!);
+  return out;
+}
+
+/**
+ * (parity N1 wave 2) The drawn parts of a shape in iso units: its outline (or route) and its arrow heads. The web engine
+ * draws and hit-tests these, and the server's PDF export draws the same outline. A line, arrow, rectangle or ellipse
+ * without the wave-2 fields gives exactly the geometry it had before.
+ */
+export function shapeParts(d: ShapeData, ar: number): ShapePart[] {
+  const shape = d.shape;
+  if (shape === 'line' || shape === 'arrow' || shape === 'curved_arrow' || shape === 'double_arrow') {
+    const route = shapeRoute(d, ar);
+    const conversion = d.head === 'conversion' && shape !== 'line';
+    const parts: ShapePart[] = [{ pts: route, role: 'body', ...(conversion ? { dashed: true } : {}) }];
+    if (shape === 'line' && !d.head) return parts;
+    const f = route[0]!;
+    const t = route[route.length - 1]!;
+    const len = Math.hypot(t[0] - f[0], t[1] - f[1]);
+    const size = shapeArrowHeadLength(len, d.style.width);
+    parts.push(...headParts(t, route[route.length - 2]!, size, d.head ?? 'open'));
+    if (shape === 'double_arrow') parts.push(...headParts(f, route[1]!, size, 'open'));
+    return parts;
+  }
+  if (shape === 'polygon' && Array.isArray(d.points) && d.points.length >= 3) {
+    const pts = d.points.map((p): IsoVec => [p[0], p[1] * ar]);
+    return [{ pts: [...pts, pts[0]!], role: 'body', closed: true }];
+  }
+  const f: IsoVec = [d.from[0], d.from[1] * ar];
+  const t: IsoVec = [d.to[0], d.to[1] * ar];
+  const cx = (f[0] + t[0]) / 2;
+  const cy = (f[1] + t[1]) / 2;
+  const hx = Math.abs(t[0] - f[0]) / 2;
+  const hy = Math.abs(t[1] - f[1]) / 2;
+  const rot = d.rotation ?? 0;
+  const c = Math.cos(rot);
+  const s = Math.sin(rot);
+  const place = (u: number, v: number): IsoVec => [cx + u * c - v * s, cy + u * s + v * c];
+  if (shape === 'rect') {
+    if (d.corner && d.corner > 0) return [{ pts: roundedBox(place, hx, hy, d.corner), role: 'body', closed: true }];
+    return [{ pts: [place(-hx, -hy), place(hx, -hy), place(hx, hy), place(-hx, hy), place(-hx, -hy)], role: 'body', closed: true }];
+  }
+  if (shape === 'triangle') return [{ pts: [place(0, -hy), place(hx, hy), place(-hx, hy), place(0, -hy)], role: 'body', closed: true }];
+  const n = 64;
+  const pts: IsoVec[] = [];
+  for (let i = 0; i <= n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    pts.push(place(hx * Math.cos(a), hy * Math.sin(a)));
+  }
+  return [{ pts, role: 'body', closed: true }];
+}
+
+/** The outline polylines of a shape (iso): every part of `shapeParts`. */
+export function shapeOutlineIso(d: ShapeData, ar: number): IsoVec[][] {
+  return shapeParts(d, ar).map((p) => p.pts);
+}
+
+/**
+ * (G21) The edge point of a shape on `side` (normalized): the middle of that side of its box, turned with the box. A
+ * polygon uses its bounding box; a line-like shape has no edge points (null).
+ */
+export function shapeSidePoint(d: ShapeData, side: ShapeSide, ar: number): [number, number] | null {
+  if (!(CLOSED_SHAPES as readonly string[]).includes(d.shape)) return null;
+  let x0 = Math.min(d.from[0], d.to[0]);
+  let x1 = Math.max(d.from[0], d.to[0]);
+  let y0 = Math.min(d.from[1], d.to[1]);
+  let y1 = Math.max(d.from[1], d.to[1]);
+  if (d.shape === 'polygon' && Array.isArray(d.points) && d.points.length) {
+    x0 = Math.min(...d.points.map((p) => p[0]));
+    x1 = Math.max(...d.points.map((p) => p[0]));
+    y0 = Math.min(...d.points.map((p) => p[1]));
+    y1 = Math.max(...d.points.map((p) => p[1]));
+  }
+  const cx = (x0 + x1) / 2;
+  const cy = ((y0 + y1) / 2) * ar;
+  const hx = (x1 - x0) / 2;
+  const hy = ((y1 - y0) / 2) * ar;
+  const [u, v] = side === 'n' ? [0, -hy] : side === 's' ? [0, hy] : side === 'e' ? [hx, 0] : [-hx, 0];
+  const rot = d.shape === 'polygon' ? 0 : (d.rotation ?? 0);
+  const c = Math.cos(rot);
+  const s = Math.sin(rot);
+  return [cx + u * c - v * s, (cy + u * s + v * c) / ar];
 }
 
 export interface TextBoxData {
@@ -72,6 +364,11 @@ export interface TextBoxData {
   text: RichText;
   color: string;
   font_scale: number;
+  /**
+   * (parity N1, G19) rotation about the box's centre in radians, clockwise, in page space (so it survives zoom and the
+   * page's own rotation, AC-21). Absent = 0.
+   */
+  rotation?: number;
 }
 
 export interface StickyData {
@@ -320,6 +617,8 @@ export interface ImageAnnotationData {
   alt?: string | null;
   /** original file name, display only */
   name?: string | null;
+  /** (parity N1, G19) rotation about the box's centre in radians, clockwise, in page space. Absent = 0. */
+  rotation?: number;
 }
 
 export const ANNOTATION_IMAGE_MIMES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const;

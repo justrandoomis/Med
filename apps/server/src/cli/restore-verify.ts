@@ -16,6 +16,7 @@ import { applyRestore, DEFAULT_RESTORE_LIMITS, RestoreTargetError, verifyBackup 
 const HELP = `MedLevo restore verification
 Usage:
   npm run restore:verify -- <archive.tar.gz> [options]                    verify only (temporary directory, removed afterwards)
+  (an encrypted archive, .tar.gz.mlenc, is opened with MEDLEVO_BACKUP_ENCRYPTION_KEY from the environment)
   npm run restore:verify -- <archive.tar.gz> --target <empty dir> [opts]  verify, then restore into the empty directory
 Options:
   --target <dir>    restore into this directory (must not exist or be empty; never the live data directory)
@@ -83,7 +84,7 @@ async function main(): Promise<number> {
     return 2;
   }
   const limits = { ...DEFAULT_RESTORE_LIMITS, maxTotalBytes: maxGb * 1024 ** 3, maxEntryBytes: maxGb * 1024 ** 3 };
-  const opts = {
+  const baseOpts = {
     workDir: workDir ? fromInitCwd(workDir) : undefined,
     keep: argv.includes('--keep'),
     bootCheck: !argv.includes('--no-boot'),
@@ -92,12 +93,17 @@ async function main(): Promise<number> {
   };
 
   let liveDataDir: string | null = null;
+  let decryptionKey: Buffer | null = null;
   try {
     loadDotEnv();
-    liveDataDir = loadConfig(process.env, { cwd: process.env.INIT_CWD ?? process.cwd() }).dataDir;
+    const config = loadConfig(process.env, { cwd: process.env.INIT_CWD ?? process.cwd() });
+    liveDataDir = config.dataDir;
+    // P1-T1 step 2: an encrypted archive (.mlenc) opens with the key in the environment
+    decryptionKey = config.secrets.backupEncryptionKey();
   } catch {
     liveDataDir = null;
   }
+  const opts = { ...baseOpts, decryptionKey };
 
   process.stdout.write(`MedLevo restore${target ? '' : ' verification'}: ${fromInitCwd(archive)}\n`);
   let report: RestoreReport;

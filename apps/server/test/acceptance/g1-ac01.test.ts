@@ -1,7 +1,9 @@
-// G1 / AC-01 — personal library (§60, ARCHITECTURE §0.8 single owner). Server-wide checks that complement the
-// library test and the E2E spec (e2e/g1-ac01-personal-library.spec.ts):
-//   * NO registered route (of every module) is an institution / users / roles / subscription endpoint;
-//   * the schema has no such table and the owner table can hold exactly one row;
+// G1 / AC-01 — personal library (§60). Server-wide checks that complement the library test and the E2E spec
+// (e2e/g1-ac01-personal-library.spec.ts). Since P1-T1 step 1 (ADR-0003 §3.10) its purpose is AC-01a — the personal
+// library still works for a user who never joins a channel — and the vocabulary ban on ROUTES is removed (accounts and
+// platform routes exist now; AC-01b, no cross-user leakage, replaces it: test/tenancy/*):
+//   * every module is mounted; the personal library needs no institution;
+//   * the user's vault has no institution / user / subscription table — accounts live in the system DB;
 //   * a second owner can never be created; a surgery notebook → course → lecture / reference / question source
 //     library is built from the owner's own folders (no institution node kind is accepted).
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -20,19 +22,22 @@ afterAll(async () => {
 });
 
 describe('G1 AC-01 — personal library, single owner, no institution / users / subscription anywhere', () => {
-  it('no route of any module is an institution / users / roles / subscription endpoint', () => {
+  it('every module is mounted; no channel / institution route is needed for the personal library', () => {
     const routes = t.app.printRoutes({ commonPrefix: false });
     const lines = routes.split('\n').filter((l) => l.trim());
     expect(lines.length).toBeGreaterThan(100); // every module is mounted (sanity: the listing is real)
     expect(routes).toContain('/api/library/');
-    expect(lines.filter((l) => FORBIDDEN.test(l))).toEqual([]);
+    // P1-T1: the vocabulary ban on routes is removed (ADR-0003 §3.10); channel routes do not exist yet (P1-T4)
+    expect(lines.filter((l) => /channel|universit|college|subscri|billing|pricing|payment/i.test(l))).toEqual([]);
   });
 
-  it('the schema has no institution / user / subscription table; exactly one owner row is possible', () => {
+  it('the vault has no institution / user / subscription table; the account lives in the system DB', () => {
     const tables = t.ctx.db.all<{ name: string }>(`SELECT name FROM sqlite_master WHERE type = 'table'`).map((r) => r.name);
     expect(tables).toContain('owner');
     expect(tables.filter((n) => FORBIDDEN.test(n))).toEqual([]);
-    expect(t.ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM owner')!.n).toBe(1);
+    // P1-T1: the account is in system.sqlite (user_account); the vault's legacy single-owner table stays empty
+    expect(t.ctx.system.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM user_account')!.n).toBe(1);
+    expect(t.ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM owner')!.n).toBe(0);
     // the CHECK constraint keeps it at one row even for a direct write
     expect(() =>
       t.ctx.db.run(`INSERT INTO owner (id, username, password_hash, password_changed_at, created_at, updated_at) VALUES ('second', 'b', 'x', 0, 0, 0)`),

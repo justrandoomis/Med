@@ -8,8 +8,6 @@ import { mkdirSync } from 'node:fs';
 import type { AiTask } from '@medlevo/shared';
 import { buildApp } from '../../src/app';
 import { loadConfig } from '../../src/config';
-import { openDb } from '../../src/db/db';
-import { migrate } from '../../src/db/migrate';
 import type { AiProvider, ProviderRequest, ProviderResponse, ProviderUsage } from '../../src/modules/ai/types';
 
 function claimsIn(prompt: string): Array<{ index: number }> {
@@ -69,9 +67,8 @@ class GroundedFakeAi implements AiProvider {
 async function main(): Promise<void> {
   const config = loadConfig();
   mkdirSync(config.dataDir, { recursive: true, mode: 0o700 });
-  const db = openDb(config.dbPath);
-  migrate(db);
-  const app = await buildApp({ config, overrides: { db, aiProvider: new GroundedFakeAi() } });
+  // P1-T1: the context opens the system DB and the vaults itself (a fresh data dir becomes a multi-user layout)
+  const app = await buildApp({ config, overrides: { aiProvider: new GroundedFakeAi() } });
   await app.ready();
   app.ctx.jobs.start();
   await app.listen({ host: config.host, port: config.port });

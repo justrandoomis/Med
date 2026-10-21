@@ -9,6 +9,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
+import { dataDirDatabases } from '../helpers/tenancy';
 import type { JobView, ProcessingStatusResponse, UploadResponse } from '@medlevo/shared';
 import { lecturePdf, PERF_ENABLED } from './fixtures';
 import { report, RESULTS_DIR } from './measure';
@@ -57,7 +58,8 @@ describe.skipIf(!PERF_ENABLED)('resilience: kill -9 mid-processing, restart, res
     await server.kill9();
     const killedAt = Date.now();
 
-    const dbPath = join(dataDir, 'medlevo.sqlite');
+    // P1-T1 step 1: the owner's data is user #1's vault (multi-user layout), named in system.sqlite
+    const dbPath = dataDirDatabases(dataDir).primaryVault;
     const atCrash = (() => {
       const db = new DatabaseSync(dbPath);
       try {

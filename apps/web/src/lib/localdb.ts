@@ -25,6 +25,7 @@
 //        outbox op has no target = the user's vault. Repositories in the feature folders use these tables.
 import Dexie, { type EntityTable, type Table, type Transaction } from 'dexie';
 import type { LayerKind, SyncOpKind, SyncOpResult, SyncResult, SyncState } from '@medlevo/shared';
+import { legacyClaimHolder, recordLegacyClaim, storageAccount } from './userStorage';
 
 export type { SyncOpKind, SyncResult };
 
@@ -33,8 +34,8 @@ export const LOCAL_DB_NAME = 'medlevo';
 
 /**
  * One local database per signed-in user (ADR-0003 §3.7): `medlevo:<userId>`. `null`/`undefined` = the legacy single
- * owner, whose data stays in `medlevo`. Seam only (P1-T1 step 0): the app still opens LOCAL_DB_NAME until accounts
- * ship (step 3 switches getDb() to the signed-in user's name).
+ * owner, whose data stays in `medlevo`. Since P1-T1 step 3 getDb() opens the signed-in account's database
+ * (currentLocalDbName); user #1 claims the legacy one (claimLegacyLocalData).
  */
 export function localDbNameFor(userId: string | null | undefined): string {
   if (userId == null) return LOCAL_DB_NAME;
@@ -426,10 +427,69 @@ export class MedLevoDB extends Dexie {
 
 let shared: MedLevoDB | null = null;
 
-/** The app-wide database (lazily opened). Tests create their own `new MedLevoDB(uniqueName)`. */
+/**
+ * The page's local database (P1-T1 step 3): the signed-in account's own `medlevo:<userId>`; the legacy `medlevo` for
+ * user #1 once it claimed it on this device, and before the sign-in state is known (exactly today's behaviour).
+ */
+export function currentLocalDbName(): string {
+  const a = storageAccount();
+  return a && !a.legacy ? localDbNameFor(a.userId) : LOCAL_DB_NAME;
+}
+
+/** The app-wide database of the page's account (lazily opened). Tests create their own `new MedLevoDB(uniqueName)`. */
 export function getDb(): MedLevoDB {
-  if (!shared) shared = new MedLevoDB();
+  const name = currentLocalDbName();
+  if (!shared || shared.name !== name || shared.hasBeenClosed()) {
+    // another account in this page: the previous account's database is closed, never written under the new one
+    shared?.close();
+    shared = new MedLevoDB(name);
+  }
   return shared;
+}
+
+/** The local database this page has opened so far (null: none) — an account switch reloads the page when it differs. */
+export function openedLocalDbName(): string | null {
+  return shared && !shared.hasBeenClosed() ? shared.name : null;
+}
+
+/** Tests: forget the page's database instance (a fresh page). */
+export function resetSharedDb(): void {
+  shared?.close();
+  shared = null;
+}
+
+/** kv key in the legacy database `medlevo`: the account that claimed it (ADR-0003 §5 step 8) */
+export const LEGACY_OWNER_KV = 'owner_user_id';
+
+/**
+ * User #1 claims the data this device kept from before accounts (ADR-0003 §5 step 8): the IndexedDB database
+ * `medlevo` and the un-prefixed localStorage keys STAY where they are and become user #1's namespace on this device
+ * (zero copy: nothing can be lost on the way; a rollback still finds them). The claim is refused when another account
+ * already claimed this device's legacy data, or the legacy database carries another account's mark (a deployment set
+ * up again from scratch on the same address: its new user #1 is not the owner of these writes). Returns whether
+ * `userId` owns the legacy namespace now. Only the server's `owns_legacy_device_data` (user #1) may lead here.
+ */
+export async function claimLegacyLocalData(userId: string): Promise<boolean> {
+  const holder = legacyClaimHolder();
+  if (holder !== null && holder !== userId) return false;
+  try {
+    if (await Dexie.exists(LOCAL_DB_NAME)) {
+      // a short-lived connection of its own (the page's instance may belong to another account or be closed)
+      const db = new MedLevoDB(LOCAL_DB_NAME);
+      try {
+        const mark = await kvGet<string>(db, LEGACY_OWNER_KV);
+        if (typeof mark === 'string' && mark !== userId) return false;
+        if (mark === undefined) await kvSet(db, LEGACY_OWNER_KV, userId);
+      } finally {
+        db.close();
+      }
+    }
+  } catch {
+    // IndexedDB unavailable: no claim — the account's own database is used and nothing legacy is touched
+    return false;
+  }
+  recordLegacyClaim(userId);
+  return true;
 }
 
 // ─── kv helpers ─────────────────────────────────────────────────────────────────────────────

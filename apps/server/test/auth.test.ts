@@ -34,14 +34,15 @@ describe('owner setup (single owner, no registration after setup)', () => {
     expect(cookie).toContain('Path=/');
     expect(cookie).not.toContain('Secure');
 
-    const row = t.ctx.db.get<{ password_hash: string; recovery_codes_json: string }>("SELECT * FROM owner WHERE id = 'owner'")!;
+    // P1-T1: accounts live in the system DB (ARCHITECTURE_DELTA §4.1 user_account)
+    const row = t.ctx.system.db.get<{ password_hash: string; recovery_codes_json: string }>("SELECT * FROM user_account WHERE username_norm = 'owner'")!;
     expect(row.password_hash).toMatch(/^scrypt\$/);
     expect(row.password_hash).not.toContain(OWNER.password);
     for (const c of body.recovery_codes) expect(row.recovery_codes_json).not.toContain(c);
     expect(JSON.parse(row.recovery_codes_json)).toHaveLength(10);
     // the session token itself is never stored, only its sha256
     const token = cookie.split(';')[0]!.split('=')[1]!;
-    expect(t.ctx.db.get('SELECT 1 FROM auth_session WHERE token_hash = ?', [token])).toBeUndefined();
+    expect(t.ctx.system.db.get('SELECT 1 FROM auth_session WHERE token_hash = ?', [token])).toBeUndefined();
 
     const status = await t.app.inject({ method: 'GET', url: '/api/auth/status', headers: { cookie: sessionCookie(res) } });
     expect(status.json()).toMatchObject({ setup_required: false, authenticated: true, owner: { username: 'owner' }, remaining_recovery_codes: 10 });
@@ -54,7 +55,7 @@ describe('owner setup (single owner, no registration after setup)', () => {
     expect(again.json().error.code).toBe('ALREADY_SET_UP');
     const again2 = await post('/api/auth/setup', { username: 'intruder', password: 'another-password-1' }, headers);
     expect(again2.statusCode).toBe(409);
-    expect(t.ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM owner')!.n).toBe(1);
+    expect(t.ctx.system.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM user_account')!.n).toBe(1);
   });
 
   it('validates the setup body with Arabic field messages', async () => {
@@ -94,16 +95,19 @@ describe('login / logout / sessions', () => {
     expect(badPass.statusCode).toBe(401);
     expect(badUser.statusCode).toBe(401);
     expect(badPass.json().error.message).toBe(badUser.json().error.message);
-    expect(t.ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM login_attempt WHERE succeeded = 0')!.n).toBe(2);
+    expect(t.ctx.system.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM login_attempt WHERE succeeded = 0')!.n).toBe(2);
   });
 
-  it('rate-limits failed logins per IP (5/min) and then lets the owner in after the window', async () => {
+  // P1-T1 (ARCHITECTURE_DELTA §4.1 login_attempt, §7.1 LOGIN_SLOWED): after 5 failures the ACCOUNT is slowed — no
+  // per-IP 5/min rule any more (a campus NAT puts a whole class behind one address)
+  it('slows sign-in for the account after 5 failures (LOGIN_SLOWED) and then lets the owner in', async () => {
     for (let i = 0; i < 5; i++) {
       expect((await post('/api/auth/login', { username: OWNER.username, password: `wrong-${i}-xxxxxx` })).statusCode).toBe(401);
     }
     const blocked = await post('/api/auth/login', OWNER);
     expect(blocked.statusCode).toBe(429);
-    expect(blocked.json().error.code).toBe('RATE_LIMITED');
+    expect(blocked.json().error.code).toBe('LOGIN_SLOWED');
+    expect(blocked.json().error.details.retry_after_s).toBeGreaterThan(0);
     expect(Number(blocked.headers['retry-after'])).toBeGreaterThan(0);
     t.clock.advance(61_000);
     expect((await post('/api/auth/login', OWNER)).statusCode).toBe(200);
@@ -122,18 +126,24 @@ describe('login / logout / sessions', () => {
     expect((await post('/api/auth/recover', { username: OWNER.username, recovery_code: 'AAAA-BBBB-CCCC', new_password: 'whatever-password-1' })).statusCode).toBe(429);
   });
 
-  it('applies an exponential lockout after repeated failures', async () => {
+  // P1-T1: the delay grows 1 s, 2 s, 4 s … (capped at 60 s) between attempts — never a hard lockout; a recovery code
+  // always works (password change & recovery below)
+  it('applies a progressive per-account delay after repeated failures, never a lockout', async () => {
     const fail = () => post('/api/auth/login', { username: OWNER.username, password: 'definitely-wrong' });
-    for (let round = 0; round < 2; round++) {
-      for (let i = 0; i < 5; i++) expect((await fail()).statusCode).toBe(401);
-      t.clock.advance(61_000);
+    for (let i = 0; i < 5; i++) expect((await fail()).statusCode).toBe(401);
+    const waits: number[] = [];
+    for (let i = 0; i < 8; i++) {
+      const slowed = await fail();
+      expect(slowed.statusCode).toBe(429);
+      expect(slowed.json().error.message).toContain('رمز استرداد');
+      const wait = slowed.json().error.details.retry_after_s as number;
+      waits.push(wait);
+      t.clock.advance(wait * 1000);
+      expect((await fail()).statusCode).toBe(401); // allowed again once the delay passed
     }
-    // 10 consecutive failures; the 1-minute lock from the 10th already elapsed → one more failure
-    expect((await fail()).statusCode).toBe(401);
-    t.clock.advance(61_000); // per-minute window is clear now, but the lock is 2 minutes
-    const locked = await post('/api/auth/login', OWNER);
-    expect(locked.statusCode).toBe(429);
-    expect(locked.json().error.message).toContain('رمز استرداد');
+    expect(waits).toEqual([1, 2, 4, 8, 16, 32, 60, 60]);
+    // another account behind the same address is not slowed by this one
+    expect((await post('/api/auth/login', { username: 'someone-else', password: 'definitely-wrong' })).statusCode).toBe(401);
     t.clock.advance(60_000);
     expect((await post('/api/auth/login', OWNER)).statusCode).toBe(200);
   });
@@ -169,12 +179,12 @@ describe('login / logout / sessions', () => {
 
   it('has a 30-day sliding expiry', async () => {
     const h = await t.login();
-    const before = t.ctx.db.get<{ expires_at: number }>('SELECT expires_at FROM auth_session ORDER BY id DESC LIMIT 1')!;
+    const before = t.ctx.system.db.get<{ expires_at: number }>('SELECT expires_at FROM auth_session ORDER BY id DESC LIMIT 1')!;
     t.clock.advance(10 * 60_000);
     const res = await t.app.inject({ method: 'GET', url: '/api/auth/sessions', headers: h });
     expect(res.statusCode).toBe(200);
     expect(res.headers['set-cookie']).toBeDefined();
-    const after = t.ctx.db.get<{ expires_at: number }>('SELECT expires_at FROM auth_session ORDER BY id DESC LIMIT 1')!;
+    const after = t.ctx.system.db.get<{ expires_at: number }>('SELECT expires_at FROM auth_session ORDER BY id DESC LIMIT 1')!;
     expect(after.expires_at - before.expires_at).toBe(10 * 60_000);
     t.clock.advance(31 * 24 * 60 * 60_000);
     expect((await t.app.inject({ method: 'GET', url: '/api/auth/sessions', headers: h })).statusCode).toBe(401);
@@ -285,7 +295,7 @@ describe('unauthenticated access is denied', () => {
   it('test helper login() works on a fresh app (creates the owner first, ARCHITECTURE §5)', async () => {
     const h = await t.login();
     expect((await t.app.inject({ method: 'GET', url: '/api/jobs', headers: h })).statusCode).toBe(200);
-    expect(t.ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM owner')!.n).toBe(1);
+    expect(t.ctx.system.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM user_account')!.n).toBe(1);
     await t.login(); // second call does not try to set up again
   });
 

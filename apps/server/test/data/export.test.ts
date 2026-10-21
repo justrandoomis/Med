@@ -152,7 +152,7 @@ describe('export: source, notes, questions, all', () => {
     expect(raw).not.toContain('password_hash');
     expect(raw).not.toContain('recovery_codes');
     expect(raw).not.toContain('token_hash');
-    expect(raw).not.toContain(lib.t.ctx.db.get<{ password_hash: string }>('SELECT password_hash FROM owner')!.password_hash);
+    expect(raw).not.toContain(lib.t.ctx.system.db.get<{ password_hash: string }>('SELECT password_hash FROM user_account ORDER BY created_at LIMIT 1')!.password_hash);
     expect(raw).not.toContain('sk-ant-api03-VALUE-ONLY-SECRET');
     lib.t.ctx.db.run(`DELETE FROM owner_setting WHERE key = 'integration.note'`);
   });

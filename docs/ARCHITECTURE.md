@@ -14,7 +14,10 @@
 5. **Abstain with a specific reason** (unreadable page, out of scope, missing key, conflict, not found within searched scope) instead of guessing.
 6. **Never lose the owner's writing or attempts** (ink, notes, attempts, review events) — sync is idempotent and conflict-preserving.
 7. **Honesty in the product and in reporting**: no fake progress %, no "AI Verified" badge, no "100% accurate", no feature shown as working when it is not. Unfinished features are disabled with a reason via the capability registry. No demo/fake data in production paths — fixtures live only in tests.
-8. **Single owner.** No organizations, roles, cohorts, subscriptions, multi-tenancy, public sharing.
+8. **Private by default** (ADR-0003; was «single owner» up to release R1-a). Since P1-T1 step 1 the server holds
+   accounts, each with its OWN vault database; no route reads another user's vault — the platform admin included — and
+   there is no default database (`NO_TENANT_BOUND`). Subject spaces, channels and roles arrive with later tracks
+   (P1-T4/T5) under the allow-list of §3.1; no subscriptions, no public sharing.
 
 ## 1. Stack (see ADR-0001)
 
@@ -22,7 +25,7 @@
 |---|---|---|
 | Language | TypeScript (strict) everywhere | one type system across server, web, shared contracts |
 | Server | Node.js ≥ 22.13, **Fastify 5**, run with `tsx` | modular monolith; light; good plugin set (multipart, cookie, rate-limit, helmet) |
-| Database | **SQLite via built-in `node:sqlite`** (WAL), hand-written SQL migrations, FTS5 | single owner → embedded relational DB is the right size; zero native build; FTS5 for keyword search; trivially backed up with `VACUUM INTO` |
+| Database | **SQLite via built-in `node:sqlite`** (WAL), hand-written SQL migrations, FTS5 — since P1-T1 step 1 several files (ADR-0003 §3.1): `DATA_DIR/system.sqlite` (identity, sessions, devices, registry, job index; migrations 2000–2999), `DATA_DIR/vaults/<id>.sqlite` (one per user, the unchanged base schema 0001–1999), `DATA_DIR/spaces/<id>.sqlite` (base + 3000–3999, none yet), marker `DATA_DIR/.multi-user` | embedded relational DB per user is the right size; zero native build; FTS5 for keyword search; trivially backed up with `VACUUM INTO`; a user's data is a file of its own |
 | Files | content-addressed private store under `DATA_DIR/files` | never public; served only through authenticated routes / short-lived tokens |
 | Jobs | SQLite-backed in-process job queue with checkpoints | durable, resumable, idempotent; no external broker for one user |
 | PDF | `pdfjs-dist` (text + positions, page labels, operator list for images) + poppler `pdftoppm` (raster for OCR/thumbnails) | robust, verified in this environment |
@@ -132,8 +135,23 @@ export interface AppContext {
   capabilities: CapabilityRegistry;  // modules/settings/capabilities.ts
   clock: { now(): number };          // injectable for tests
   log: FastifyBaseLogger;            // structured logs (pino); never log secrets or full document text
+  // P1-T1 step 1 (ADR-0003 §3.2, docs/modules/tenancy.md)
+  system: SystemContext;             // system DB repositories (users, vaults, devices, jobIndex, securityAudit) + sessions
+  binding: TenantBinding;            // current() / run(b, fn) / runRoot(fn) — AsyncLocalStorage
+  pool: DatabasePool;                // open vault / space connections (LRU, leases, open-file limit)
+  tenancy: Tenancy;                  // accounts with their vaults; session user → own-vault binding
+  authz: Authz;                      // the one policy (deny by default; rules self-register)
+  dbs: { vault(id): Db; space(id): Db } // a second DB in one request: copy services of later tracks only
 }
 ```
+
+* **Binding.** `db`, `files`, `sync`, `audit`, `settings` (and the services built on them) keep their types and call
+  sites, but `db` is a proxy: every statement goes to the database of the current binding — the session's OWN vault
+  for a request (the binding hook, right after the auth guard), the job's own database for a job (the worker binds
+  it), nothing for public requests and background timers (the root context). **There is no default database**: an
+  unbound access throws `NO_TENANT_BOUND` (500, logged), also from timers. Work that used to run once at boot on «the»
+  database runs per database on its first open (`ctx.pool.onOpen`). Caches keyed per database use `ctx.db.raw`, never
+  the proxy `ctx.db` (one object for every vault; scan test in `test/tenancy/import-boundary.test.ts`).
 
 * `Db`: `get<T>(sql, params?)`, `all<T>(sql, params?)`, `run(sql, params?) → {changes}`, `tx<T>(fn)` (BEGIN IMMEDIATE,
   nested → SAVEPOINT), `raw` (DatabaseSync). Statements are cached. Params: positional array or named object.
@@ -143,13 +161,19 @@ export interface AppContext {
 * Validation: zod schemas for every body/query/params (`parseBody(schema, req)` helper in `lib/http.ts`).
 * Errors: throw `new AppError(code, messageAr, httpStatus, details?)` (`lib/errors.ts`). Global handler emits
   `{ error: { code, message, details } }` (`ApiErrorBody`). Never leak stack traces, file paths, SQL, or secrets.
-* Auth: every `/api/*` route requires the owner session except `GET /api/auth/status`, `POST /api/auth/setup`
-  (only while no owner exists), `POST /api/auth/login`, `POST /api/auth/recover`, `GET /api/health`.
+* Auth: every `/api/*` route requires a session except `GET /api/auth/status`, `POST /api/auth/setup`
+  (only while no account exists — it creates user #1, the platform admin, with its vault), `POST /api/auth/login`,
+  `POST /api/auth/recover`, `GET /api/health`. A session (system DB `auth_session.user_id`) resolves to a user and
+  that user's vault. Routes under `/api/spaces/:spaceId` exist only on the allow-list (`modules/authz/spaceRoutes.ts`,
+  empty in R1-b; an unlisted one stops the boot). Whole-deployment operations (`modules/authz/routes.ts`
+  `PLATFORM_ROUTES`, `/api/platform/*`) answer a non-admin with the body of a missing route.
   Session = opaque random token in an `HttpOnly; SameSite=Strict; Path=/` cookie (`Secure` when configured),
   stored hashed (sha256). Passwords: `scrypt` (node:crypto) with per-password salt.
 * CSRF: every non-GET/HEAD `/api` request must carry `x-medlevo-csrf: 1` and, when an `Origin` header is
   present, it must equal the configured origin. No CORS is enabled.
-* Rate limits: login/recover/setup strictly limited; uploads and AI endpoints limited.
+* Rate limits: setup strictly limited per address; sign-in slowed per ACCOUNT after 5 failures (1, 2, 4 … 60 s,
+  `LOGIN_SLOWED`; a valid recovery code always works) with a high per-address ceiling
+  (`MEDLEVO_LOGIN_IP_FAILURES_PER_HOUR`, a class behind one campus address); uploads and AI endpoints limited.
 * Audit: `ctx.audit.record({entityType, entityId, action, summary, before?, after?, actor?})` for owner-visible
   history (moves, renames, trash, corrections, key changes, reviews).
 * Time: store epoch ms UTC. Display in owner timezone (default `Asia/Baghdad`).
@@ -160,6 +184,19 @@ export interface AppContext {
 `read(id)` · `stat(id)` · `createToken(id, ttlMs)` / `verifyToken(token)`.
 Routes: `GET /api/files/:id` (session, Range support, `Content-Disposition: inline`, correct MIME,
 `X-Content-Type-Options: nosniff`, `Cache-Control: private`), `GET /api/files/t/:token` (short-lived signed).
+Since P1-T1 step 1 a file id resolves only in the bound database; a token carries `{file, vault, user, expiry}` and
+works only while that vault is active, still that user's, and the user active. The blob store is shared by every
+vault (content-addressed).
+P1-T1 step 2: bytes are deleted **only through the blob registry** (system `blob`, `blob_ref` hints, `blob_mark`,
+`blob_sweep`). With one database a blob whose last `stored_file` row is removed goes at once (exact); with several,
+the mark-and-sweep GC (`modules/files/gc.ts`; daily, `MEDLEVO_BLOB_GC_SCHEDULE`, and a mark pass at boot and after a
+restore) reads every live database read-only and moves a blob unreferenced in two consecutive sweeps ≥ 7 days apart
+to `DATA_DIR/quarantine/`, deleting it only 30 days later if a fresh mark still misses it. A database that cannot be
+read makes the sweep `incomplete` and decides nothing (fail-closed). A new file is checked against the user's storage
+quota (`ctx.quota`, default 2 GB per student vault; user #1 unlimited) before it is written. Large files arrive by
+resumable chunked upload (`/api/files/uploads`, per-chunk sha256, whole-file hash on completion). With
+`MEDLEVO_BLOB_STORE=r2` each blob is also kept encrypted (MLVENC01) under a content-addressed key in the object store
+and fetched back on a local miss; local disk stays the default and the cache of every file.
 
 ### 3.3 Jobs (`ctx.jobs`)
 
@@ -176,6 +213,10 @@ throw new JobError(code, messageAr, { retryable })  // retryable → backoff (ex
 States: `queued → running → (completed | partial | failed | cancelled | waiting_for_input)`. `partial` ≠ `completed`.
 Cancel never deletes completed checkpoints/outputs. On boot, `running` jobs with stale heartbeat are re-queued; a job whose
 claiming process (`processing_job.worker_id` = host/pid/boot nonce) is provably gone is re-queued at once (docs/PERFORMANCE.md).
+P1-T1 step 1: a job lives in the database it was enqueued in (`processing_job` stays the truth); the system `job_index`
+(db, job, kind, status, run_after, actor) lets the worker find due work across vaults. The worker, its heartbeat and
+`poke()` run in the root context and bind each job's own database — never the context of the request that enqueued
+or poked.
 
 ### 3.4 Sync (`ctx.sync`, routes under `/api/sync`)
 
@@ -209,6 +250,13 @@ ai.generateStructured<T>({ task, schema /* zod */, system, input /* untrusted co
 * Not configured → throws `AppError('AI_NOT_CONFIGURED', …, 409)`; UI shows the reason; nothing pretends to work.
 * Every call writes a `usage_record` (task, provider, actual model, tokens, **estimated** cost, latency, status, source
   versions, rules version). Budget exceeded → `AI_BUDGET_EXCEEDED` (never a silently degraded result).
+  P1-T1 step 2: before every provider call the estimated cost is **reserved atomically** in the system
+  `ai_budget_ledger` (one `BEGIN IMMEDIATE` transaction checks the user's — or the space's — monthly allowance and the
+  deployment ceiling together), then settled with the real cost or released (`modules/ai/budget.ts`); a call stopped
+  after it reached the provider (stream closed, job cancelled, timeout) stays charged at its worst-case estimate, since
+  the provider may already have billed it (step-2 review). Until the
+  platform admin sets caps, only user #1 (the first account) has an AI allowance (PRD Q10); other users and every
+  space start at 0 and see «غير مُفعّل لحسابك».
 * Output is schema-validated; invalid → `SCHEMA_REJECTED` (one bounded repair attempt max).
 * Uploaded content is untrusted data (§49): wrapped in delimiters, system prompt states it cannot change instructions,
   scope, or tools. The model has no tools that can exfiltrate data. Fallbacks keep the same scope/privacy constraints.
@@ -269,13 +317,21 @@ ai.generateStructured<T>({ task, schema /* zod */, system, input /* untrusted co
 * Local-first: `lib/localdb.ts` (Dexie) + `lib/sync.ts` (outbox → `/api/sync/push`, pull loop, online/offline state,
   per-entity sync state for the save indicator: محفوظ محليًا / ينتظر المزامنة / تمت المزامنة / تعارض / خطأ).
   Writing ink/notes/attempts/review events goes to IndexedDB first (never awaits the network).
+* Per-user browser storage (P1-T1 step 3, ADR-0003 §3.7): every `localStorage` / `sessionStorage` access goes through
+  `lib/userStorage.ts` (`userStorage` / `userSession` per account, `deviceStorage` for device keys such as display
+  modes; lint-enforced); `getDb()` opens the page's account database (`medlevo:<id>`; user #1 keeps the R1-a database
+  `medlevo`, claimed in place); every request carries `x-medlevo-client` and `x-medlevo-user`; a 426 `CLIENT_TOO_OLD`
+  applies the waiting PWA update. A page whose account changes reloads.
 * PWA: app shell precached; update flow is prompt-based (never auto-reload while writing); offline content is stored
   explicitly in IndexedDB by the Download Manager, not implied by the HTTP cache.
 
 ## 5. Testing conventions — §57, §58
 
-* Server: `apps/server/test/**/*.test.ts`. `createTestApp({ ai?: FakeAiProvider, now? })` → isolated temp DATA_DIR,
-  migrated DB, Fastify `inject`, helper `login()` returning cookie+csrf headers. Jobs are drained synchronously in tests.
+* Server: `apps/server/test/**/*.test.ts`. `createTestApp({ ai?: FakeAiProvider, now? })` → isolated temp DATA_DIR
+  (multi-user layout: system DB + the test user «owner», platform admin, with its vault), Fastify `inject`, helper
+  `login()` returning cookie+csrf headers. Requests bind the session's vault; test code outside a request runs in the
+  test user's vault (`withTestBinding(t, fn)`, applied by the harness by default — NODE_ENV=test only). More users:
+  `addUser(t, name)` (`test/helpers/tenancy.ts`). Jobs are drained synchronously in tests.
 * Fixtures: `fixtures/golden/*` are synthetic structural documents generated by `scripts/build-fixtures.mjs`
   (LibreOffice / pdf tools). They are clearly labelled TEST FIXTURE and contain no claims presented as medical reference.
 * Web: vitest + jsdom for logic (bidi, geometry, anchors, merge, outbox). E2E: Playwright (`e2e/`).

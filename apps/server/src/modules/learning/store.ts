@@ -465,7 +465,8 @@ function impactView(r: ImpactRow): CardImpactView {
 
 // The causes of impacts change rarely (alerts, sources, evidence, question versions, cards); a cheap signature of
 // them lets the read paths skip the full recompute when nothing changed since the last one.
-const impactMemo = new WeakMap<Db, string>();
+// keyed by the bound connection (`ctx.db.raw`): `ctx.db` is one proxy for every vault (P1-T1)
+const impactMemo = new WeakMap<object, string>();
 
 function impactSignature(db: Db): string {
   const parts = [
@@ -482,9 +483,9 @@ function impactSignature(db: Db): string {
 
 /** Recompute the impacts of every live card when one of their causes changed (memoized by a signature). */
 export function refreshAllImpacts(ctx: AppContext): void {
-  if (impactMemo.get(ctx.db) === impactSignature(ctx.db)) return;
+  if (impactMemo.get(ctx.db.raw) === impactSignature(ctx.db)) return;
   refreshImpacts(ctx, ctx.db.all<FlashcardRow>('SELECT * FROM flashcard WHERE deleted_at IS NULL'));
-  impactMemo.set(ctx.db, impactSignature(ctx.db));
+  impactMemo.set(ctx.db.raw, impactSignature(ctx.db));
 }
 
 /** Impacts as stored (no recompute) — for serialize() on pull. */

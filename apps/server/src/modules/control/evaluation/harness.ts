@@ -95,7 +95,7 @@ export async function createHarness(opts: HarnessOptions): Promise<EvalHarness> 
   const app = await buildApp({
     config,
     // scripted: the evaluation-only provider; live: whatever the configuration gives (null without a key)
-    overrides: { aiProvider: opts.mode === 'scripted' ? provider : undefined, jobs: { backoffBaseMs: 0, backoffMaxMs: 0 } },
+    overrides: { aiProvider: opts.mode === 'scripted' ? provider : undefined, jobs: { backoffBaseMs: 0, backoffMaxMs: 0 }, singleTenantTool: true },
   });
   await app.ready();
   const ctx = app.ctx;
@@ -111,6 +111,8 @@ export async function createHarness(opts: HarnessOptions): Promise<EvalHarness> 
     rmSync(dataDir, { recursive: true, force: true });
     throw new Error(`evaluation server: owner setup failed (${setup.statusCode})`);
   }
+  // P1-T1: this throwaway one-account server reads its own vault directly (jobs.drain, evaluators) — bind it
+  ctx.binding.setHarnessDefault(() => ctx.tenancy.platformVaultBinding());
   const raw = setup.headers['set-cookie'];
   const cookie = (Array.isArray(raw) ? raw : [raw ?? '']).find((c) => c.startsWith(`${SESSION_COOKIE_NAME}=`))?.split(';')[0] ?? '';
   const headers = { cookie, 'x-medlevo-csrf': '1', 'user-agent': 'medlevo-eval' };

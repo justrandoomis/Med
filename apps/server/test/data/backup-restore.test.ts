@@ -11,10 +11,12 @@ import { gunzipSync, gzipSync } from 'node:zlib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { BACKUP_FORMAT, type BackupCreateResponse, type BackupsListResponse, type SourceAnnotationsResponse, type SyncPullResponse } from '@medlevo/shared';
 import { openDb } from '../../src/db/db';
-import { createBackup, rowCounts } from '../../src/modules/data/backup';
+import { type BackupInstance, createBackup, rowCounts } from '../../src/modules/data/backup';
+import { instanceBackupSources } from '../../src/modules/data/backups';
 import { applyRestore, RestoreTargetError, verifyBackup } from '../../src/modules/data/restore';
 import { tarHeader, TarGzWriter } from '../../src/modules/data/tar';
 import { createTestApp, CSRF, OWNER, sessionCookie, type TestApp } from '../helpers/app';
+import { dataDirDatabases } from '../helpers/tenancy';
 import { dataLibrary, writeOwnerData, type DataLib, type OwnerData } from './helpers';
 
 let lib: DataLib;
@@ -64,6 +66,12 @@ afterAll(async () => {
   await lib?.t.close();
   if (work) rmSync(work, { recursive: true, force: true });
 });
+
+/** What the backup CLI snapshots (P1-T1): the system DB and every vault, opened by path next to the running server. */
+function cliInstance(): BackupInstance {
+  const inst = instanceBackupSources(lib.t.ctx);
+  return { systemPath: inst.systemPath, vaults: inst.vaults.map(({ db: _db, ...v }) => v) };
+}
 
 function tableRows(dbPath: string, table: string): unknown[] {
   const db = openDb(dbPath);
@@ -133,7 +141,10 @@ describe('AC-30 backup → restore into another directory', () => {
       names.push(name);
       off += 512 + Math.ceil(size / 512) * 512;
     }
-    expect(names).toContain('medlevo-backup/medlevo.sqlite');
+    // P1-T1: the multi-user layout — the system DB and the vault files, never a single medlevo.sqlite
+    expect(names).toContain('medlevo-backup/system.sqlite');
+    expect(names.some((n) => /^medlevo-backup\/vaults\/[0-9A-Za-z]+\.sqlite$/.test(n)), names.join(',')).toBe(true);
+    expect(names).not.toContain('medlevo-backup/medlevo.sqlite');
     expect(names).toContain('medlevo-backup/manifest.json');
     expect(names.some((n) => /secret|\.env|tmp\/|tessdata|backups\//.test(n))).toBe(false);
   });
@@ -155,7 +166,8 @@ describe('AC-30 backup → restore into another directory', () => {
     const res = await applyRestore(archive, target, { liveDataDir: lib.t.dataDir });
     expect(res.report.ok, JSON.stringify(res.report.checks.filter((c) => !c.ok))).toBe(true);
     expect(res.report.restored_to).toBe(target);
-    const restoredDb = join(target, 'medlevo.sqlite');
+    const restoredDbs = dataDirDatabases(target);
+    const restoredDb = restoredDbs.primaryVault;
 
     // row counts per key table and deep equality of the rows (owner sessions are revoked by design → compared apart)
     const live = rowCounts(lib.t.ctx.db);
@@ -167,8 +179,10 @@ describe('AC-30 backup → restore into another directory', () => {
       if (t === 'owner') continue;
       expect(tableRows(restoredDb, t), t).toEqual(lib.t.ctx.db.all(`SELECT * FROM ${t} ORDER BY rowid`));
     }
-    const ownerRow = tableRows(restoredDb, 'owner')[0] as { password_hash: string };
-    expect(ownerRow.password_hash).toBe(lib.t.ctx.db.get<{ password_hash: string }>("SELECT password_hash FROM owner")!.password_hash);
+    // the account (system DB) comes back with the same password hash; its sessions are revoked
+    const accountRow = tableRows(restoredDbs.system, 'user_account').find((r) => (r as { username: string }).username === OWNER.username) as { password_hash: string };
+    expect(accountRow.password_hash).toBe(lib.t.ctx.system.db.get<{ password_hash: string }>('SELECT password_hash FROM user_account WHERE username = ?', [OWNER.username])!.password_hash);
+    expect((tableRows(restoredDbs.system, 'auth_session') as Array<{ revoked_at: number | null }>).every((r) => r.revoked_at !== null)).toBe(true);
 
     // file store: every blob present with the recorded sha256
     for (const f of lib.t.ctx.db.all<{ storage_key: string; sha256: string; size: number }>('SELECT storage_key, sha256, size FROM stored_file')) {
@@ -311,6 +325,7 @@ describe('AC-30 backup → restore into another directory', () => {
       const res = await createBackup({
         dataDir: lib.t.dataDir,
         dbPath: lib.t.config.dbPath,
+        instance: cliInstance(),
         filesDir: lib.t.config.filesDir,
         outDir: out,
         appVersion: lib.t.config.appVersion,
@@ -340,7 +355,7 @@ describe('AC-30 backup → restore into another directory', () => {
     writeFileSync(pathOf(damaged!), flipped);
     let archivePath: string;
     try {
-      const res = await createBackup({ dataDir: lib.t.dataDir, dbPath: lib.t.config.dbPath, filesDir: lib.t.config.filesDir, outDir: out, appVersion: lib.t.config.appVersion, now: () => Date.now() });
+      const res = await createBackup({ dataDir: lib.t.dataDir, dbPath: lib.t.config.dbPath, instance: cliInstance(), filesDir: lib.t.config.filesDir, outDir: out, appVersion: lib.t.config.appVersion, now: () => Date.now() });
       expect(res.manifest.files_missing.map((m) => `${m.file_id}:${m.reason}`).sort()).toEqual([`${gone!.id}:missing`, `${damaged!.id}:hash_mismatch`].sort());
       archivePath = res.archivePath;
     } finally {
@@ -364,7 +379,7 @@ describe('AC-30 backup → restore into another directory', () => {
     const acc = ok.report.checks.find((c) => c.name === 'files_complete')!;
     expect(acc.detail_ar).toContain('--accept-missing-files');
     expect((acc.details as { file_ids: string[] }).file_ids.sort()).toEqual([gone!.id, damaged!.id].sort());
-    const rdb = openDb(join(target, 'medlevo.sqlite'));
+    const rdb = openDb(dataDirDatabases(target).primaryVault);
     try {
       expect(rdb.get<{ n: number }>('SELECT COUNT(*) AS n FROM note')!.n).toBe(lib.t.ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM note')!.n);
       expect(rdb.get<{ n: number }>('SELECT COUNT(*) AS n FROM annotation')!.n).toBe(lib.t.ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM annotation')!.n);

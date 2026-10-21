@@ -5,6 +5,7 @@
 // (the reporter must not create the noise it reports), its own failures are dropped silently, and it never retries
 // forever: offline → kept in memory for the next flush (bounded); 401 / 403 → dropped.
 import { redactClientError, type ClientErrorKind, type ClientErrorReport } from '@medlevo/shared';
+import { clientHeaders } from './api';
 
 export const ERROR_ENDPOINT = '/api/control/client-errors';
 const MAX_PENDING = 20;
@@ -85,7 +86,7 @@ export function createErrorReporter(opts: ErrorReporterOptions = {}): ErrorRepor
           method: 'POST',
           credentials: 'same-origin',
           keepalive: flushOpts.keepalive ?? false,
-          headers: { 'content-type': 'application/json', 'x-medlevo-csrf': '1' },
+          headers: { 'content-type': 'application/json', 'x-medlevo-csrf': '1', ...clientHeaders() },
           body: JSON.stringify({ errors: batch.map(([, r]) => r) }),
         });
         // 2xx: delivered · 401/403/4xx: not ours to retry (signed out / refused) · 5xx: keep for the next flush

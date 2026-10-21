@@ -13,7 +13,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { S3Client } from '../../src/lib/objectstore/s3';
 import { backupsDir } from '../../src/modules/data/backups';
 import { offsiteService } from '../../src/modules/data/offsite';
@@ -60,7 +60,8 @@ async function app(env: Record<string, string>, o: { login?: boolean } = {}): Pr
   const t = await createTestApp({ env, jobs: { backoffBaseMs: 0, backoffMaxMs: 0 } });
   apps.push(t);
   offsiteService(t.ctx).configure({ client: { sleep: noSleep, maxAttempts: 3 }, encChunkSize: 4096, partSizeBytes: PART, verifyBoot: false });
-  if (o.login !== false) await t.login();
+  if (o.login === false) return t; // P1-T1: no account yet → no vault to store files in
+  await t.login();
   await t.ctx.files.put(randomBytes(150 * 1024), { mime: 'application/pdf', originalName: 'lecture-1.pdf' });
   await t.ctx.files.put(randomBytes(120 * 1024), { mime: 'application/pdf', originalName: 'lecture-2.pdf' });
   return t;
@@ -258,9 +259,19 @@ describe('the scheduler on a fresh deploy', () => {
     const t = await app(r2Env(), { login: false });
     const svc = offsiteService(t.ctx);
     t.clock.set(Date.UTC(2026, 9, 10, 1, 0, 0)); // 04:00 in Baghdad: the 03:15 slot has passed
-    expect(svc.tick()).toBeNull();
-    expect(t.ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM data_offsite_backup')!.n).toBe(0);
-    await t.login();
-    expect(svc.tick()?.trigger).toBe('schedule');
+    // P1-T1: the real scheduler — its timers run in the root context and each tick binds the platform vault, which
+    // does not exist before the first account: the ticks skip without creating or touching anything
+    svc.configure({ firstTickMs: 1, tickMs: 5 });
+    svc.startScheduler();
+    try {
+      await new Promise((r) => setTimeout(r, 80));
+      expect(t.ctx.system.users.countInternal()).toBe(0);
+      expect(readdirSync(t.config.vaultsDir)).toEqual([]);
+      await t.login();
+      await vi.waitFor(() => expect(t.ctx.db.get<{ trigger: string }>('SELECT trigger FROM data_offsite_backup')?.trigger).toBe('schedule'), { timeout: 5_000 });
+      expect(t.ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM data_offsite_backup')!.n).toBe(1);
+    } finally {
+      svc.stopScheduler();
+    }
   });
 });

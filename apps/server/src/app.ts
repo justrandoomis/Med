@@ -7,14 +7,17 @@ import Fastify, { type FastifyError, type FastifyInstance, type FastifyReply, ty
 import { ZodError } from 'zod';
 import type { ApiErrorBody, ErrorCode, HealthResponse } from '@medlevo/shared';
 import { type AppConfig, loadConfig } from './config';
-import { type AppContext, type ContextOverrides, createContext } from './context';
+import { type AppContext, closeContextDatabases, type ContextOverrides, createContext } from './context';
 import { Errors, isAppError } from './lib/errors';
 import { validationError } from './lib/http';
 import { loggerOptions } from './lib/log';
 import { fastifyTrustProxy, registerClientIpHeader } from './lib/proxy';
 import { createStaticSite } from './lib/static';
 import { isApiRequest, registerAuthGuard } from './modules/auth/guard';
+import { registerBindingHook } from './modules/authz/hook';
+import { createSpaceRouteAllowList } from './modules/authz/routes';
 import { MODULES, type ModuleEntry } from './modules';
+import type { SpaceRouteGrant } from './system/binding';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -27,6 +30,8 @@ export interface BuildAppOptions {
   overrides?: ContextOverrides;
   /** defaults to MODULES */
   modules?: ModuleEntry[];
+  /** tests only: extra entries of the space-route allow-list (the shipped list is authz/spaceRoutes.ts) */
+  spaceRoutes?: SpaceRouteGrant[];
 }
 
 /** Strict CSP for every /api response (JSON and private files): nothing may execute or be framed. */
@@ -41,6 +46,8 @@ const MSG: Partial<Record<ErrorCode, string>> = {
 
 /** Map any thrown error to the public envelope. Never exposes stack traces, paths, SQL or secrets. */
 export function toApiError(err: unknown): { status: number; body: ApiErrorBody; headers?: Record<string, string> } {
+  // an internal bug (database access without a bound tenant): logged by the handler, never shown as such
+  if (isAppError(err) && err.code === 'NO_TENANT_BOUND') return toApiError(Errors.internal());
   if (isAppError(err)) {
     const body: ApiErrorBody = { error: { code: err.code, message: err.messageAr } };
     if (err.details !== undefined) body.error.details = err.details;
@@ -125,7 +132,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
 
   app.setErrorHandler((err, req, reply) => {
     const mapped = toApiError(err);
-    if (mapped.status >= 500) req.log.error({ err }, 'request failed');
+    if (mapped.status >= 500) req.log.error({ err, route: `${req.method} ${req.routeOptions?.url ?? ''}` }, 'request failed');
     if (mapped.headers) for (const [k, v] of Object.entries(mapped.headers)) reply.header(k, v);
     reply.code(mapped.status).send(mapped.body);
   });
@@ -151,16 +158,24 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   });
 
   registerAuthGuard(app, ctx);
+  // gate 2: binds the viewer's own vault (or an allow-listed subject space), refuses platform routes to non-admins and
+  // refuses to mount any space route that is not on the allow-list
+  registerBindingHook(app, ctx, createSpaceRouteAllowList(opts.spaceRoutes ?? []));
 
   app.get('/api/health', async (): Promise<HealthResponse> => {
     let ok = true;
     try {
-      ctx.db.get('SELECT 1 AS ok');
+      // public route: no vault is bound — the system DB answers for the deployment
+      ctx.system.db.get('SELECT 1 AS ok');
     } catch {
       ok = false;
     }
     return { ok, version: config.appVersion, time: ctx.clock.now() };
   });
+
+  // P1-T1 step 3: the owner-migration page lives at this address while the server is in maintenance
+  // (system/maintenance.ts); once the app runs, a page left open (or a bookmark) lands on the app instead
+  app.get('/api/maintenance', async (_req, reply) => reply.code(303).header('location', '/').send());
 
   for (const m of opts.modules ?? MODULES) {
     await app.register(m.plugin, { prefix: m.prefix, ctx });
@@ -168,7 +183,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
 
   app.addHook('onClose', async () => {
     await ctx.jobs.stop();
-    if (ctx.db.isOpen) ctx.db.close();
+    closeContextDatabases(ctx);
   });
 
   return app;

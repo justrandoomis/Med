@@ -7,7 +7,7 @@ import { fromJson, toJson } from '../../db/db';
 import { AppError, JobError } from '../../lib/errors';
 import { newId } from '../../lib/ids';
 import { ArchiveError } from './tar';
-import { createBackup, type BackupResult } from './backup';
+import { type BackupInstance, createBackup, type BackupResult } from './backup';
 import { verifyBackup } from './restore';
 
 export const BACKUP_JOB_KIND = 'data_backup';
@@ -144,7 +144,9 @@ export async function performBackup(
   try {
     const res = await createBackup({
       dataDir: ctx.config.dataDir,
-      dbPath: ctx.config.dbPath,
+      dbPath: ctx.db.path,
+      // P1-T1: the whole instance — the system DB and every registered vault (this one is the primary)
+      instance: instanceBackupSources(ctx),
       filesDir: ctx.config.filesDir,
       outDir: backupsDir(ctx),
       appVersion: ctx.config.appVersion,
@@ -153,6 +155,8 @@ export async function performBackup(
       db: ctx.db,
       signal: o.signal,
       onProgress: o.onProgress,
+      // P1-T1 step 2 review: a blob whose local copy is missing is fetched back from the object store first
+      ensureLocal: (sha, size) => ctx.blobs.ensureLocal(sha, size),
     });
     ctx.db.run(
       `UPDATE data_backup SET status = ?, file_name = ?, size = ?, sha256 = ?, summary_json = ?, warnings_json = ?, finished_at = ? WHERE id = ?`,
@@ -166,6 +170,31 @@ export async function performBackup(
     ctx.db.run(`UPDATE data_backup SET status = 'failed', error_detail = ?, finished_at = ? WHERE id = ?`, [reason, ctx.clock.now(), row.id]);
     throw new JobError('BACKUP_FAILED', reason, { retryable: false });
   }
+}
+
+/**
+ * The whole multi-user instance as a platform backup sees it (P1-T1): the system DB and every registered vault that
+ * still has a file. The primary is the bound vault (the platform admin's), snapshotted on its live connection; the
+ * others are opened read-consistently by path (WAL), never through the pool (a backup must not evict users' vaults).
+ */
+export function instanceBackupSources(ctx: AppContext): BackupInstance {
+  const current = ctx.binding.current() ?? ctx.binding.harnessDefault();
+  const primaryId = current && current.kind === 'vault' ? current.vaultId : (ctx.tenancy.platformVaultBinding()?.vaultId ?? null);
+  // P1-T1 step 2: a vault being deleted (or deleted) is not backed up; a missing file stops the backup with a reason
+  // instead of being created empty by opening its path (backup.ts vacuumInto)
+  const vaults = ctx.system.vaults.listInternal().filter((v) => v.status === 'active' || v.status === 'locked');
+  return {
+    systemPath: ctx.config.systemDbPath,
+    systemDb: ctx.system.db,
+    vaults: vaults.map((v) => ({
+      id: v.id,
+      userId: v.user_id,
+      dbFile: v.db_file,
+      path: ctx.pool.pathOfFile('vault', v.db_file),
+      db: v.id === primaryId ? ctx.db : undefined,
+      primary: v.id === primaryId,
+    })),
+  };
 }
 
 export function registerBackupJobs(ctx: AppContext): void {

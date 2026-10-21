@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { OffsiteConfigError, parseOffsiteConfig, type OffsiteConfig } from './lib/objectstore/offsite-config';
+import { OffsiteConfigError, parseOffsiteConfig, parseSchedule, type OffsiteConfig, type OffsiteSchedule } from './lib/objectstore/offsite-config';
 import { describeProxy, parseClientIpHeader, parseTrustProxy, ProxyConfigError, type ProxyConfig } from './lib/proxy';
 import { isValidTimeZone } from './lib/time';
 
@@ -17,7 +17,15 @@ export interface AppConfig {
   appVersion: string;
   /** absolute */
   dataDir: string;
+  /** DATA_DIR/medlevo.sqlite — the single-owner database of releases up to R1-a (read only by the layout check and
+   *  the owner migration of P1-T1 step 3; never opened as a default database) */
   dbPath: string;
+  /** DATA_DIR/system.sqlite (P1-T1): identity, sessions, devices, registry, job index */
+  systemDbPath: string;
+  /** DATA_DIR/vaults — one database per user */
+  vaultsDir: string;
+  /** DATA_DIR/spaces — one database per subject (R1-c) */
+  spacesDir: string;
   filesDir: string;
   tmpDir: string;
   host: string;
@@ -48,7 +56,11 @@ export interface AppConfig {
     scryptLogN: number;
     sessionTtlMs: number;
     passwordMinLength: number;
+    /** per-IP ceiling of failed sign-ins per hour (a campus NAT puts a whole class behind one address) */
+    loginIpFailuresPerHour: number;
   };
+  /** open vault / space connections kept in the LRU pool (lowered at boot to fit the open-file limit) */
+  dbPoolSize: number;
   jobs: {
     concurrency: number;
     pollIntervalMs: number;
@@ -67,6 +79,25 @@ export interface AppConfig {
   webDistDir: string | null;
   /** PL-0: off-site backups to Cloudflare R2 (S3 API), encrypted on this server first (lib/objectstore) */
   offsite: OffsiteConfig;
+  /** P1-T1 step 2: default storage quotas (PRD Q22) */
+  quota: {
+    /** a vault other than user #1's (MEDLEVO_USER_STORAGE_QUOTA_MB, default 2048) */
+    userStorageBytes: number;
+    /** a subject space (MEDLEVO_SPACE_STORAGE_QUOTA_MB, default 20480) */
+    spaceStorageBytes: number;
+  };
+  /** P1-T1 step 2: where blobs live — 'local' (the disk only, default) or 'r2' (the disk + an encrypted copy in R2) */
+  blobStore: { kind: 'local' | 'r2' };
+  /** P1-T1 step 2: the daily mark-and-sweep of the blob store (MEDLEVO_BLOB_GC_SCHEDULE, deployment timezone) */
+  blobGc: { schedule: OffsiteSchedule | null };
+  /** P1-T1 step 2: chunked, resumable uploads */
+  uploads: { chunkBytes: number; ttlMs: number };
+  /**
+   * P1-T1 step 3: what the boot does with a single-owner data directory (MEDLEVO_OWNER_MIGRATION) — 'off' (default):
+   * the maintenance page waits for the owner to start the migration with their password; 'apply': start it at boot;
+   * 'rollback': undo a completed (or unfinished) migration at boot, then wait for the previous release to be deployed.
+   */
+  ownerMigration: 'off' | 'apply' | 'rollback';
   /**
    * secret accessors — functions so they never serialize. Only provider adapters may call anthropicApiKey; only the
    * off-site backup module (modules/data/offsite*.ts and its CLI) may call the R2 secret and the encryption key.
@@ -106,6 +137,9 @@ const envSchema = z.object({
   MEDLEVO_TIMEZONE: z.preprocess(emptyToUndefined, z.string().default('Asia/Baghdad')),
   MEDLEVO_SCRYPT_LOG_N: z.preprocess(emptyToUndefined, z.coerce.number().int().min(10).max(20).default(15)),
   MEDLEVO_JOB_CONCURRENCY: z.preprocess(emptyToUndefined, z.coerce.number().int().min(1).max(16).default(2)),
+  // P1-T1: tenancy
+  MEDLEVO_DB_POOL_SIZE: z.preprocess(emptyToUndefined, z.coerce.number().int().min(4).max(20_000).default(500)),
+  MEDLEVO_LOGIN_IP_FAILURES_PER_HOUR: z.preprocess(emptyToUndefined, z.coerce.number().int().min(1).max(100_000).default(300)),
   ANTHROPIC_API_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
   MEDLEVO_MODEL_GENERATION: z.preprocess(emptyToUndefined, z.string().optional()),
   MEDLEVO_MODEL_VERIFICATION: z.preprocess(emptyToUndefined, z.string().optional()),
@@ -125,6 +159,14 @@ const envSchema = z.object({
   MEDLEVO_BACKUP_KEEP_DAILY: z.preprocess(emptyToUndefined, z.coerce.number().int().optional()),
   MEDLEVO_BACKUP_KEEP_WEEKLY: z.preprocess(emptyToUndefined, z.coerce.number().int().optional()),
   MEDLEVO_BACKUP_KEEP_LOCAL: z.preprocess(emptyToUndefined, z.coerce.number().int().optional()),
+  // P1-T1 step 2: quotas, blob store, blob GC, chunked uploads
+  MEDLEVO_USER_STORAGE_QUOTA_MB: z.preprocess(emptyToUndefined, z.coerce.number().positive().max(10_000_000).default(2048)),
+  MEDLEVO_SPACE_STORAGE_QUOTA_MB: z.preprocess(emptyToUndefined, z.coerce.number().positive().max(100_000_000).default(20_480)),
+  MEDLEVO_BLOB_STORE: z.preprocess(emptyToUndefined, z.enum(['local', 'r2']).default('local')),
+  MEDLEVO_BLOB_GC_SCHEDULE: z.preprocess(emptyToUndefined, z.string().optional()),
+  MEDLEVO_UPLOAD_CHUNK_MB: z.preprocess(emptyToUndefined, z.coerce.number().positive().max(64).default(8)),
+  // P1-T1 step 3: the owner migration at boot (off = the maintenance page waits for the owner)
+  MEDLEVO_OWNER_MIGRATION: z.preprocess(emptyToUndefined, z.enum(['off', 'apply', 'rollback']).default('off')),
 });
 
 export class ConfigError extends Error {
@@ -223,11 +265,27 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     throw err;
   }
 
+  let blobGcSchedule: OffsiteSchedule | null;
+  try {
+    blobGcSchedule = parseSchedule(e.MEDLEVO_BLOB_GC_SCHEDULE ?? '04:20');
+  } catch {
+    throw new ConfigError(`MEDLEVO_BLOB_GC_SCHEDULE must be HH:MM (24-hour, in MEDLEVO_TIMEZONE) or off (got "${e.MEDLEVO_BLOB_GC_SCHEDULE}")`);
+  }
+  // an explicit opt-in must be complete: blobs are never «silently local only» when r2 was asked for
+  if (e.MEDLEVO_BLOB_STORE === 'r2' && !offsite.offsite.configured) {
+    throw new ConfigError(
+      `MEDLEVO_BLOB_STORE=r2 needs the R2 settings and the encryption key of the off-site backups: ${offsite.offsite.missing.join(', ') || offsite.offsite.problems_ar.join(' ')}`,
+    );
+  }
+
   const config: AppConfig = {
     env: nodeEnv,
     appVersion: readAppVersion(),
     dataDir,
     dbPath: join(dataDir, 'medlevo.sqlite'),
+    systemDbPath: join(dataDir, 'system.sqlite'),
+    vaultsDir: join(dataDir, 'vaults'),
+    spacesDir: join(dataDir, 'spaces'),
     filesDir: join(dataDir, 'files'),
     tmpDir: join(dataDir, 'tmp'),
     host: e.MEDLEVO_HOST,
@@ -252,7 +310,9 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       scryptLogN: e.MEDLEVO_SCRYPT_LOG_N,
       sessionTtlMs: 30 * 24 * 60 * 60 * 1000,
       passwordMinLength: 10,
+      loginIpFailuresPerHour: e.MEDLEVO_LOGIN_IP_FAILURES_PER_HOUR,
     },
+    dbPoolSize: e.MEDLEVO_DB_POOL_SIZE,
     jobs: {
       concurrency: e.MEDLEVO_JOB_CONCURRENCY,
       pollIntervalMs: 1000,
@@ -272,6 +332,14 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     allowExternalFetch: e.MEDLEVO_ALLOW_EXTERNAL_FETCH,
     webDistDir,
     offsite: offsite.offsite,
+    quota: {
+      userStorageBytes: Math.floor(e.MEDLEVO_USER_STORAGE_QUOTA_MB * MB),
+      spaceStorageBytes: Math.floor(e.MEDLEVO_SPACE_STORAGE_QUOTA_MB * MB),
+    },
+    blobStore: { kind: e.MEDLEVO_BLOB_STORE },
+    blobGc: { schedule: blobGcSchedule },
+    uploads: { chunkBytes: Math.floor(e.MEDLEVO_UPLOAD_CHUNK_MB * MB), ttlMs: 24 * 60 * 60 * 1000 },
+    ownerMigration: e.MEDLEVO_OWNER_MIGRATION,
     secrets: Object.freeze({
       anthropicApiKey: () => anthropicKey,
       r2SecretAccessKey: offsite.secrets.r2SecretAccessKey,

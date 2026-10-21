@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import type { LibraryTreeResponse } from '@medlevo/shared';
 import { TREE_PATH, useQuery } from './data';
 import { buildIndex, type LibraryIndex } from './model';
+import { userStorage } from '../../lib/userStorage';
 
 /** The library tree (cached on this device for read-only offline viewing) + its index. */
 export function useLibrary(include?: 'archived' | 'trash' | 'archived,trash') {
@@ -13,7 +14,7 @@ export function useLibrary(include?: 'archived' | 'trash' | 'archived,trash') {
 const ROOT_SORT_KEY = 'medlevo.library.rootSort';
 export function readRootSort(): 'manual' | 'title' | 'updated' | 'created' {
   try {
-    const v = window.localStorage.getItem(ROOT_SORT_KEY);
+    const v = userStorage.get(ROOT_SORT_KEY);
     return v === 'title' || v === 'updated' || v === 'created' ? v : 'manual';
   } catch {
     return 'manual';
@@ -21,7 +22,7 @@ export function readRootSort(): 'manual' | 'title' | 'updated' | 'created' {
 }
 export function writeRootSort(v: string): void {
   try {
-    window.localStorage.setItem(ROOT_SORT_KEY, v);
+    userStorage.set(ROOT_SORT_KEY, v);
   } catch {
     // ignore (private mode)
   }

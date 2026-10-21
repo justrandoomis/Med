@@ -51,6 +51,26 @@ export default defineConfig(
     rules: { ...reactHooks.configs.flat.recommended.rules },
   },
   {
+    // P1-T1 step 3 (ARCHITECTURE_DELTA §4.5): every browser-storage key belongs to the signed-in account — or,
+    // explicitly, to the device — so only lib/userStorage.ts touches localStorage / sessionStorage (tests may set keys)
+    files: ['apps/web/src/**/*.{ts,tsx}'],
+    ignores: ['apps/web/src/lib/userStorage.ts', 'apps/web/src/**/*.test.{ts,tsx}'],
+    rules: {
+      'no-restricted-globals': [
+        'error',
+        { name: 'localStorage', message: 'Use userStorage / deviceStorage from lib/userStorage.ts (per-user keys, P1-T1).' },
+        { name: 'sessionStorage', message: 'Use userSession from lib/userStorage.ts (per-user keys, P1-T1).' },
+      ],
+      'no-restricted-properties': [
+        'error',
+        ...['window', 'globalThis', 'self'].flatMap((object) => [
+          { object, property: 'localStorage', message: 'Use userStorage / deviceStorage from lib/userStorage.ts (per-user keys, P1-T1).' },
+          { object, property: 'sessionStorage', message: 'Use userSession from lib/userStorage.ts (per-user keys, P1-T1).' },
+        ]),
+      ],
+    },
+  },
+  {
     // Playwright fixtures that need no other fixture are declared as `async ({}, use) => …`
     files: ['e2e/**/*.ts', 'playwright.config.ts', 'apps/web/test/ink/**/*.ts'],
     rules: { 'no-empty-pattern': ['error', { allowObjectPatternsAsParameters: true }] },

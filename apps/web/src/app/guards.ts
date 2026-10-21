@@ -1,5 +1,5 @@
 import { redirect, type LoaderFunctionArgs } from 'react-router-dom';
-import { fetchAuthStatus } from '../lib/auth';
+import { activateAccount, activateCachedAccount, fetchAuthStatus } from '../lib/auth';
 import type { OwnerGateData } from './routeTypes';
 
 /** Fallback when the server cannot be asked (the server's value always wins when online). */
@@ -29,6 +29,12 @@ export async function ownerGateLoader({ request }: LoaderFunctionArgs): Promise<
     const s = r.status;
     if (s.setup_required) throw redirect('/setup');
     if (!s.authenticated) throw redirect(`/login${nextParam(request)}`);
+    // P1-T1 step 3: the page belongs to the signed-in account (its own local database, keys and drafts); when this
+    // page had opened another account's data, it reloads so nothing of that account acts under the new session
+    if (s.user && (await activateAccount(s.user)) === 'reload') {
+      window.location.reload();
+      await new Promise<never>(() => {});
+    }
     return {
       mode: 'online',
       username: s.owner?.username ?? null,
@@ -38,6 +44,8 @@ export async function ownerGateLoader({ request }: LoaderFunctionArgs): Promise<
     };
   }
   if (r.cached?.authenticated) {
+    // offline: the account last signed in on this device (an R1-a cache is the single owner's legacy data)
+    activateCachedAccount(r.cached);
     return {
       mode: 'offline',
       username: r.cached.username,

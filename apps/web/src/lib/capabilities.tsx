@@ -5,6 +5,7 @@ import { useEffect, useSyncExternalStore, type ReactNode } from 'react';
 import { Info } from 'lucide-react';
 import type { CapabilitiesResponse, FeatureKey, FeatureState, FeatureStatus } from '@medlevo/shared';
 import { api, isApiError } from './api';
+import { onStorageAccountChange, readJson, storageAccount, userStorage, writeJson } from './userStorage';
 
 const CACHE_KEY = 'medlevo.capabilities.v1';
 
@@ -56,23 +57,14 @@ interface CapabilitiesState {
   fetchedAt: number | null;
 }
 
+// the signed-in account's keys (P1-T1 step 3): what the server allows an account (AI allowance, …) is per account
 function readCache(): { data: CapabilitiesResponse; fetchedAt: number } | null {
-  try {
-    const raw = window.localStorage.getItem(CACHE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { data: CapabilitiesResponse; fetchedAt: number };
-    return parsed?.data?.features ? parsed : null;
-  } catch {
-    return null;
-  }
+  const parsed = readJson<{ data: CapabilitiesResponse; fetchedAt: number }>(userStorage, CACHE_KEY);
+  return parsed?.data?.features ? parsed : null;
 }
 
 function writeCache(data: CapabilitiesResponse, fetchedAt: number) {
-  try {
-    window.localStorage.setItem(CACHE_KEY, JSON.stringify({ data, fetchedAt }));
-  } catch {
-    // ignore
-  }
+  writeJson(userStorage, CACHE_KEY, { data, fetchedAt });
 }
 
 class CapabilitiesStore {
@@ -81,8 +73,19 @@ class CapabilitiesStore {
   private inFlight: Promise<void> | null = null;
 
   constructor() {
+    this.state = this.initial();
+    // (P1-T1 step 3 review) the store is built when the module loads — before the page knows its account (the legacy
+    // namespace, user #1's): another account in this page reads ITS cached capabilities, never user #1's
+    onStorageAccountChange(() => {
+      this.inFlight = null;
+      this.state = this.initial();
+      this.listeners.forEach((l) => l());
+    });
+  }
+
+  private initial(): CapabilitiesState {
     const cached = typeof window !== 'undefined' ? readCache() : null;
-    this.state = cached
+    return cached
       ? { status: 'stale', data: cached.data, error: null, fetchedAt: cached.fetchedAt }
       : { status: 'loading', data: null, error: null, fetchedAt: null };
   }
@@ -100,15 +103,20 @@ class CapabilitiesStore {
   /** Fetch (deduplicated). Keeps the last known data when the server is unreachable. */
   refresh(): Promise<void> {
     if (this.inFlight) return this.inFlight;
+    const asked = storageAccount()?.userId ?? null;
+    const sameAccount = () => (storageAccount()?.userId ?? null) === asked;
     this.inFlight = api
       // background (runs on reconnect, e.g. while the owner writes): never redirect on 401
       .get<CapabilitiesResponse>('/capabilities', { timeoutMs: 20_000, skipAuthRedirect: true })
       .then((data) => {
+        // the page switched account while this was in flight: the answer belongs to the previous one
+        if (!sameAccount()) return;
         const now = Date.now();
         writeCache(data, now);
         this.set({ status: 'ready', data, error: null, fetchedAt: now });
       })
       .catch((e: unknown) => {
+        if (!sameAccount()) return;
         const msg = isApiError(e) ? e.message : 'تعذّر التحقق من الميزات المتاحة.';
         this.set({ status: this.state.data ? 'stale' : 'error', error: msg });
       })

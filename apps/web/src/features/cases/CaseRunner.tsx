@@ -14,6 +14,7 @@ import { BidiText } from '../evidence';
 import { casesApi } from './api';
 import { AppropriatenessPill, AuthoredLabel, CaseSentences, HonestyNotes } from './components';
 import './cases.css';
+import { userStorage } from '../../lib/userStorage';
 
 type EventBody = DistributiveOmit<CaseEventInput, 'event_id'> & { event_id: string };
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
@@ -22,7 +23,7 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 function useDraft(key: string): [string, (v: string) => void] {
   const [value, setValue] = useState(() => {
     try {
-      return window.localStorage.getItem(key) ?? '';
+      return userStorage.get(key) ?? ''; // the writer's own draft (P1-T1 step 3)
     } catch {
       return '';
     }
@@ -31,8 +32,7 @@ function useDraft(key: string): [string, (v: string) => void] {
     (v: string) => {
       setValue(v);
       try {
-        if (v) window.localStorage.setItem(key, v);
-        else window.localStorage.removeItem(key);
+        userStorage.set(key, v || null);
       } catch {
         // private mode: the text stays in the field
       }
