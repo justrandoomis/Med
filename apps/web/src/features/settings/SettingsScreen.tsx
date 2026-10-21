@@ -21,6 +21,7 @@ import { storageEstimate } from '../../lib/localdb';
 import { usePageTitle } from '../../lib/usePageTitle';
 import type { OwnerGateData } from '../../app/routeTypes';
 import { ChangePasswordGroup, LogoutGroup, RecoveryCodesGroup, SessionsGroup } from './SecuritySection';
+import { DisplayModeRows } from './DisplayModes';
 import './settings.css';
 
 const SECTIONS = [
@@ -237,6 +238,8 @@ export function SettingsScreen() {
                 />
                 <p className="ml-settings__help">عند التشغيل تُستبدل الحركات بانتقال تلاشٍ قصير، ويُلغى تقليب الصفحات المتحرك.</p>
               </div>
+              {/* (Academic OS P1-T2) e-ink / high contrast / lite — this device only */}
+              <DisplayModeRows />
             </div>
           </section>
 

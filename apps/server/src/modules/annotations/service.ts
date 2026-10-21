@@ -45,7 +45,8 @@ export class AnnotationsService {
   }
 
   // ───────── annotations ─────────
-  byTargets(keys: string[], includeDeleted = false): AnnotationDTO[] {
+  /** `inkFormat` 2 = the client sent `accept-ink: 2` (packed points); default v1 */
+  byTargets(keys: string[], includeDeleted = false, inkFormat: 1 | 2 = 1): AnnotationDTO[] {
     const parsed = keys.map((k) => ({ key: k, t: splitTargetKey(k) }));
     const bad = parsed.filter((p) => !p.t).map((p) => p.key);
     if (bad.length) throw new AppError('VALIDATION_FAILED', 'مفاتيح الصفحات غير صالحة. الصيغة: source_page:<id> أو note_page:<id>.', 400, { invalid: bad.slice(0, 10) });
@@ -65,7 +66,7 @@ export class AnnotationsService {
          ORDER BY a.z, a.created_at, a.id`,
         [type, ...ids],
       );
-      out.push(...rows.map(toAnnotationDTO));
+      out.push(...rows.map((r) => toAnnotationDTO(r, { inkFormat })));
     }
     return out;
   }
@@ -81,7 +82,7 @@ export class AnnotationsService {
     return this.db.all<{ id: string }>('SELECT id FROM source_version WHERE source_id = ? ORDER BY version_no', [sourceId]).map((r) => r.id);
   }
 
-  forSource(sourceId: string, versionId?: string): SourceAnnotationsResponse {
+  forSource(sourceId: string, versionId?: string, inkFormat: 1 | 2 = 1): SourceAnnotationsResponse {
     const versionIds = this.versionsOf(sourceId, versionId);
     const annotations: AnnotationDTO[] = [];
     if (versionIds.length) {
@@ -93,7 +94,7 @@ export class AnnotationsService {
          ORDER BY p.page_index, a.z, a.created_at, a.id`,
         versionIds,
       );
-      annotations.push(...rows.map(toAnnotationDTO));
+      annotations.push(...rows.map((r) => toAnnotationDTO(r, { inkFormat })));
     }
     const notePages = this.db.all<NotePageRow>('SELECT * FROM note_page WHERE source_id = ? AND deleted_at IS NULL ORDER BY sort_order, created_at', [sourceId]);
     if (notePages.length) {
@@ -103,7 +104,7 @@ export class AnnotationsService {
          ORDER BY a.z, a.created_at, a.id`,
         notePages.map((n) => n.id),
       );
-      annotations.push(...rows.map(toAnnotationDTO));
+      annotations.push(...rows.map((r) => toAnnotationDTO(r, { inkFormat })));
     }
     const notes = this.db.all<NoteRow>('SELECT * FROM note WHERE source_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC', [sourceId]).map(toNoteDTO);
     return { source_id: sourceId, version_ids: versionIds, annotations, notes, note_pages: notePages.map(toNotePageDTO) };
@@ -159,7 +160,7 @@ export class AnnotationsService {
          ORDER BY a.z, a.created_at, a.id`,
         ids,
       );
-      annotations.push(...rows.map(toAnnotationDTO));
+      annotations.push(...rows.map((r) => toAnnotationDTO(r)));
     }
     return annotations;
   }

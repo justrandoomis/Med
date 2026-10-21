@@ -12,6 +12,7 @@ export type SectionKey =
   | 'visual_sources'
   | 'intelligence'
   | 'storage'
+  | 'offsite'
   | 'profile'
   | 'capabilities'
   | 'health'
@@ -39,6 +40,8 @@ export const SECTIONS: SectionDef[] = [
   { key: 'visual_sources', label: 'المصادر البصرية المسموح بها', href: '/control/visual-sources', purpose: 'المواقع التي تقبل منها صورًا خارجية، وملاحظة ترخيص كل منها.' },
   { key: 'intelligence', label: 'الذكاء الاصطناعي', href: '/control/intelligence', purpose: 'النماذج والميزانية والاستخدام وقواعد الشرح.' },
   { key: 'storage', label: 'التخزين ودون اتصال', href: '/control/storage', purpose: 'مساحة الخادم وهذا الجهاز والتنزيلات.' },
+  // (PL-0) the off-site copy in Cloudflare R2: last copy, its size and result; «نسخ احتياطي الآن»
+  { key: 'offsite', label: 'النسخ الاحتياطي خارج الخادم', href: '/control/offsite', purpose: 'نسخة مشفّرة يومية في Cloudflare R2، وآخر نسخة وحجمها ونتيجتها.' },
   { key: 'profile', label: 'ملف التعلّم', href: '/review/profile', purpose: 'ما تستخدمه المنصة لتخصيص تعلمك، وتعديله.', external: true },
   { key: 'capabilities', label: 'القدرات', href: '/control/capabilities', purpose: 'ما يعمل الآن وما لا يعمل ولماذا.' },
   // (track F5, §56 · §57)

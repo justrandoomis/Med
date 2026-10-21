@@ -12,8 +12,10 @@ import type { AnnotationDTO } from '@medlevo/shared';
 import type { AnnotationRow, MedLevoDB, OutboxRecord } from '../../../lib/localdb';
 import { writeAndEnqueue, type SyncApplier, type SyncEngine } from '../../../lib/sync';
 import { notifySyncedRows } from './events';
+import { registerRehoming } from './layers/rehome';
+import { registerLayerApplier } from './layers/repo';
 import type { ItemChange } from './history';
-import { isEngineItem, itemFromRow, payloadFromItem, rowFromItem, type InkItem, type InkRow } from './model';
+import { isEngineItem, itemFromRow, itemFromWire, payloadFromItem, rowFromItem, type InkItem, type InkRow } from './model';
 
 export const ANNOTATION_ENTITY = 'annotation';
 
@@ -144,7 +146,8 @@ export function createAnnotationApplier(now: () => number = Date.now): SyncAppli
       // the same server revision is already here (e.g. seeded by the reader's download when the document opened):
       // nothing to write — rewriting 5 000 identical strokes one by one cost a repaint and a live-query run each (I2)
       if (existing && existing.syncState === 'synced' && existing.rev != null && dto.rev === existing.rev && !!existing.deletedAt === !!dto.deleted_at) return null;
-      const row = rowFromItem(dto, { syncState: 'synced', updatedAt: dto.updated_at ?? now(), rev: dto.rev ?? null });
+      // (P1-T2) packed ink points (accept-ink: 2) are decoded: IndexedDB and the engine keep v1
+      const row = rowFromItem(itemFromWire(dto), { syncState: 'synced', updatedAt: dto.updated_at ?? now(), rev: dto.rev ?? null });
       await db.annotations.put(row);
       const keys = new Set([row.targetKey]);
       if (existing && existing.targetKey !== row.targetKey) keys.add(existing.targetKey);
@@ -161,5 +164,8 @@ export function registerAnnotationApplier(engine: SyncEngine): void {
   if (registered.has(engine)) return;
   registered.add(engine);
   engine.registerApplier(ANNOTATION_ENTITY, createAnnotationApplier());
+  // (P1-T2) layer rows, and the re-homing of writing the server refused on a read-only layer (ADR-0004 R2)
+  registerLayerApplier(engine);
+  registerRehoming(engine);
 }
 

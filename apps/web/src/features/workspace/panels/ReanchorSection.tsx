@@ -4,6 +4,9 @@
 // its shape kept), or keeps the item detached on purpose («محفوظة دون ربط», still listed, can be placed later). Ink on
 // the same old page is one group (it moves together). The decision is one audited server call (previous anchor kept,
 // revision checked: an edit made elsewhere since is never overwritten); the returned items are merged on this device.
+// (Academic OS P1-T2 step 3) On a lecture with several versions the section starts with «من الإصدار N: تحتاج مراجعة»
+// (NoteMigration.tsx → VersionReview): items of an earlier version that could not be copied safely to this one. The same
+// place dialog is reused there AS A COPY (the original stays on its version).
 import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { Anchor, MapPin, Unlink } from 'lucide-react';
 import {
@@ -26,6 +29,7 @@ import { fetchNeedsReanchor, fetchRegions } from '../data/api';
 import { mergeServerAnnotations, mergeServerNotes } from '../data/local';
 import type { SourceDocument } from '../data/useSourceDocument';
 import { fullPageLabel } from '../model/pages';
+import { VersionReview } from './NoteMigration';
 
 const OFFLINE_REASON_AR = 'إعادة الربط قرار يُحفظ على الخادم ويُسجَّل في سجل التغييرات؛ تحتاج اتصالًا. القائمة تبقى محفوظة حتى تتصل.';
 const INK_FAMILY = new Set(['ink', 'shape', 'text', 'sticky', 'image', 'link', 'highlight', 'underline']);
@@ -202,6 +206,7 @@ export function ReanchorSection({ doc, local, online, onGoToPage, currentPageInd
 
   return (
     <>
+      {(doc.detail.versions?.length ?? 0) > 1 && <VersionReview doc={doc} online={online} onGoToPage={onGoToPage} />}
       <p className="wk-muted">
         عندما يتغير المصدر أو تخطيطه ولا يمكن إعادة ربط كتابة أو ملاحظة بثقة، تظهر هنا مع مكانها السابق. لا يُحذف شيء ولا يضعها التطبيق فوق فقرة أخرى: أنت تختار مكانها الجديد،
         أو تبقيها دون ربط. يبقى مكانها السابق محفوظًا ويُسجَّل قرارك.
@@ -209,7 +214,7 @@ export function ReanchorSection({ doc, local, online, onGoToPage, currentPageInd
       {!online && <p className="wk-muted">{OFFLINE_REASON_AR}</p>}
       {failed && <p className="wk-muted">تعذّر جلب القائمة من الخادم؛ تُعرض العناصر المحفوظة على هذا الجهاز.</p>}
       {needs.length === 0 && localOnly.length === 0 ? (
-        <EmptyState headingLevel={3} title="لا شيء يحتاج إعادة ربط" description="كل كتاباتك وملاحظاتك على هذا المصدر في مواضعها." />
+        <EmptyState headingLevel={3} title="لا شيء يحتاج إعادة ربط" description={(doc.detail.versions?.length ?? 0) > 1 ? 'كل كتاباتك وملاحظاتك على هذا الإصدار في مواضعها.' : 'كل كتاباتك وملاحظاتك على هذا المصدر في مواضعها.'} />
       ) : (
         <ul className="wk-marks" role="list" aria-label="تحتاج إعادة ربط">
           {needs.map(row)}
@@ -249,6 +254,9 @@ export function ReanchorDialog({
   onClose,
   onPlace,
   loadRegions = loadPageRegions,
+  title,
+  description,
+  submitLabel = 'اربطها هنا',
 }: {
   group: ReanchorGroup | null;
   doc: SourceDocument;
@@ -257,6 +265,10 @@ export function ReanchorDialog({
   onClose: () => void;
   onPlace: (target: NonNullable<ReanchorRequest['target']>) => void;
   loadRegions?: (pageId: string) => Promise<SourceRegionView[]>;
+  /** (P1-T2 step 3) the cross-version review reuses this dialog AS A COPY, with its own wording */
+  title?: string;
+  description?: string;
+  submitLabel?: string;
 }) {
   const [pageIndex, setPageIndex] = useState(initialPage);
   const [regions, setRegions] = useState<SourceRegionView[] | null>(null);
@@ -298,8 +310,8 @@ export function ReanchorDialog({
     <Dialog
       open={!!group}
       onClose={onClose}
-      title={group ? `أين تضع ${group.kind === 'note' ? 'الملاحظة' : group.label}؟` : ''}
-      description="لا يضعها التطبيق فوق فقرة من تلقاء نفسه؛ اختر الصفحة، ثم مكانها عليها. يبقى مكانها السابق محفوظًا."
+      title={group ? (title ?? `أين تضع ${group.kind === 'note' ? 'الملاحظة' : group.label}؟`) : ''}
+      description={description ?? 'لا يضعها التطبيق فوق فقرة من تلقاء نفسه؛ اختر الصفحة، ثم مكانها عليها. يبقى مكانها السابق محفوظًا.'}
       size="md"
       footer={
         <>
@@ -307,7 +319,7 @@ export function ReanchorDialog({
             إلغاء
           </Button>
           <Button type="submit" form={formId} variant="primary" loading={busy} disabled={!page}>
-            اربطها هنا
+            {submitLabel}
           </Button>
         </>
       }

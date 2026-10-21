@@ -84,3 +84,14 @@
   background: var(--ml-color-paper-2);
 }
 
+
+/* Academic OS P1-T3: suggestions held for the uploader after processing */
+.ml-upload__suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+  margin-block-start: var(--ml-space-2);
+  padding: var(--ml-space-2) var(--ml-space-3);
+  border-radius: var(--ml-radius-md);
+  background: var(--ml-color-paper-2);
+}

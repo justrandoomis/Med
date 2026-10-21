@@ -1,0 +1,33 @@
+# Only what the image needs (Dockerfile COPY lines) reaches the build; everything here is excluded from the context.
+.git
+.github
+**/node_modules
+**/dist
+**/.vite
+**/coverage
+# runtime data, secrets and local outputs — never in an image
+# (at any depth: a stray apps/web/.env.local would otherwise reach the build stage, and Vite reads it)
+**/.env
+**/.env.*
+!.env.example
+data
+apps/server/data
+backups
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+eval-reports
+playwright-report
+test-results
+e2e
+fixtures
+tools
+docs
+apps/web/test-screenshots
+apps/web/dev
+**/test
+**/*.test.ts
+**/*.test.tsx
+.DS_Store
+*.log

@@ -489,7 +489,7 @@ owner decision (Q9).
 | AOS-3.6 | Duplicate detection by content hash | 1 | M | have | The duplicate answer names only sources the uploader can see; blob de-duplication across vaults stays internal: uploading the bytes of another user's private file returns no title and no hint `[srv]`. | yes |
 | AOS-3.7 | Suggest the right subject per file | 1 | S | missing | Placement suggestions with reasons (matched tokens/keywords) through the review queue; accept/reject remembered; nothing moves without confirmation `[srv][web]`. | yes |
 | AOS-3.8 | Extract headings | 1 | S | have | Official lectures are processed once per space; followers' copies reference the result `[srv]`. | yes |
-| AOS-3.9 | Extract table of contents | 1 | C | have | Printed «فهرس» pages parsed into page links `[srv]`. | yes |
+| AOS-3.9 | Extract table of contents | 1 | C | partial | Printed «فهرس» pages parsed into page links `[srv]`. | yes |
 | AOS-3.10 | Extract contents (text, tables, figures) | 1 | S | have | Chunks and FTS rows of official lectures live only in the space and are never copied into vaults `[srv]` (storage assertion). | yes |
 | AOS-3.11 | Detect a new version of an existing lecture | 1 | M | partial | An upload whose page text/image fingerprints match an existing lecture above a threshold is proposed as «إصدار جديد من …»; confirmed → new `source_version` and follower notification (AOS-18.10) `[srv]` (fixtures: re-exported PDF, inserted pages). | yes |
 | AOS-3.12 | Compare new and old pages | 1 | S | missing | Page matcher (text similarity + page-image hash) yields an old↔new map with inserted and removed pages; side-by-side text and visual diff `[srv][e2e]` (Scenario 4 fixture). | yes |

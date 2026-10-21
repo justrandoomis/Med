@@ -18,12 +18,39 @@
 //   v2 (2026-10, I2 performance pass) — annotations: indexes [targetKey+kind] and anchorStatus (index-only, no data
 //        change). Highlight / bookmark / re-anchor views read only their own rows instead of every stroke of the page,
 //        and Dexie no longer re-runs them on every ink write (5 000 strokes on a page: see docs/PERFORMANCE.md).
+//   v3 (2026-10, Academic OS P1-T1 step 0) — the whole Phase 1 bump (ARCHITECTURE_DELTA §4.5, BUILD_PLAN §3.2): new
+//        tables `layers` (annotation_layer rows), `copies` (document_copy rows) and `spaceCursors` (pull cursor + epoch
+//        per target database); index `layerId` on annotations and notes. Index-only, no upgrade function: no row is
+//        rewritten. A legacy row has no layerId = the default personal layer of its document (PRD AOS-4.6); a legacy
+//        outbox op has no target = the user's vault. Repositories in the feature folders use these tables.
 import Dexie, { type EntityTable, type Table, type Transaction } from 'dexie';
-import type { SyncOpKind, SyncResult, SyncState } from '@medlevo/shared';
+import type { LayerKind, SyncOpKind, SyncOpResult, SyncResult, SyncState } from '@medlevo/shared';
 
 export type { SyncOpKind, SyncResult };
 
+/** Today's database name: the single owner's, and later the legacy database only user #1 may claim (ADR-0003 §5). */
 export const LOCAL_DB_NAME = 'medlevo';
+
+/**
+ * One local database per signed-in user (ADR-0003 §3.7): `medlevo:<userId>`. `null`/`undefined` = the legacy single
+ * owner, whose data stays in `medlevo`. Seam only (P1-T1 step 0): the app still opens LOCAL_DB_NAME until accounts
+ * ship (step 3 switches getDb() to the signed-in user's name).
+ */
+export function localDbNameFor(userId: string | null | undefined): string {
+  if (userId == null) return LOCAL_DB_NAME;
+  if (typeof userId !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(userId)) throw new Error('localDbNameFor: invalid user id');
+  return `${LOCAL_DB_NAME}:${userId}`;
+}
+
+/**
+ * Drafts belong to their writer (ARCHITECTURE_DELTA §4.5): a crash-recovery draft is tagged with the user id when it is
+ * written and recovered only for that user; an untagged draft (written before accounts existed) is recovered only by
+ * the legacy owner (user #1). Rule only (P1-T1 step 0); noteDrafts.ts and the case-editor drafts adopt it in step 3.
+ */
+export function draftBelongsTo(tagUserId: string | null | undefined, viewer: { userId: string; isLegacyOwner: boolean }): boolean {
+  if (tagUserId == null) return viewer.isLegacyOwner;
+  return tagUserId === viewer.userId;
+}
 
 // ─── row types ──────────────────────────────────────────────────────────────────────────────
 /** Fields every locally-written, synced entity row carries. */
@@ -44,6 +71,8 @@ export interface SyncedRowBase {
 export interface AnnotationRow extends SyncedRowBase {
   /** where the annotation lives: `${target_type}:${target_id}` (source_page / note_page / artifact_block) */
   targetKey: string;
+  /** authorship layer (v3); absent = the default personal layer of the document («ملاحظاتي») */
+  layerId?: string | null;
   kind: string;
   tool?: string | null;
   anchor: unknown;
@@ -57,6 +86,8 @@ export interface AnnotationRow extends SyncedRowBase {
 
 export interface NoteRow extends SyncedRowBase {
   nodeId?: string | null;
+  /** authorship layer (v3); absent = the default personal layer */
+  layerId?: string | null;
   /** optional anchor key for notes attached to a page/block */
   anchorKey?: string | null;
   title?: string | null;
@@ -112,6 +143,65 @@ export interface ExamAttemptRow extends SyncedRowBase {
   startedAt: number;
 }
 
+/** An authorship layer on a document (v3; server `annotation_layer`, ARCHITECTURE_DELTA §4.3). */
+export interface LayerRow extends SyncedRowBase {
+  /** 'source:<source_id>' (all versions of a source) | 'notebook:<library_node_id>' */
+  documentKey: string;
+  kind: LayerKind;
+  title: string;
+  /** false: followed / published snapshot — writes are refused by the server (`layer_read_only`) */
+  writable: boolean;
+  /** true: an immutable snapshot */
+  frozen: boolean;
+  /** default visibility; per-session overrides live in the study session's location */
+  visible: boolean;
+  /** the owner locked the layer against accidental edits */
+  locked: boolean;
+  color?: string | null;
+  sortOrder: number;
+  /** where a copied layer came from: {space_id, publication_id, version_no, author_user_id, author_display} */
+  origin?: unknown;
+}
+
+/** A user's study copy of a lecture (v3; server `document_copy`, ARCHITECTURE_DELTA §4.2 `0860`). */
+export interface CopyRow extends SyncedRowBase {
+  /** the stub (or a private upload) */
+  sourceId: string;
+  originSpaceId?: string | null;
+  originLectureId?: string | null;
+  mode: 'personal' | 'independent_fork' | 'followed' | 'collaborative';
+  /** fork / followed: the publication it came from */
+  publicationId?: string | null;
+  appliedVersionNo?: number | null;
+  pendingVersionNo?: number | null;
+  updatePolicy: 'preview' | 'auto';
+  personalLayerId: string;
+  copiedLayerId?: string | null;
+  collabDocRef?: string | null;
+}
+
+/**
+ * Where an outbox op is delivered (ARCHITECTURE_DELTA §4.5, §8.1): the user's vault, or one subject space. Ordered
+ * delivery per target. A stored op without `target` is a vault op (every op written before v3).
+ */
+export type SyncTarget = 'vault' | `space:${string}`;
+
+const SPACE_TARGET_RE = /^space:[A-Za-z0-9_-]{1,64}$/;
+
+export function isSyncTarget(v: unknown): v is SyncTarget {
+  return v === 'vault' || (typeof v === 'string' && SPACE_TARGET_RE.test(v));
+}
+
+/** The pull cursor and server epoch of one target database (v3; ARCHITECTURE_DELTA §8.1). */
+export interface SpaceCursorRecord {
+  target: SyncTarget;
+  /** last change sequence pulled from that database */
+  since: number;
+  /** that database's data epoch (a restore of it resets this cursor only) */
+  epoch: string | null;
+  updatedAt: number;
+}
+
 export interface StudySessionRow extends SyncedRowBase {
   sourceId?: string | null;
   versionId?: string | null;
@@ -131,6 +221,8 @@ export const SYNC_ENTITY_TYPES = [
   'question_attempt',
   'study_session',
   'exam_attempt',
+  // Academic OS (v3): authorship layers sync like the other vault entities (ARCHITECTURE_DELTA §8.3)
+  'annotation_layer',
 ] as const;
 export type SyncEntityType = (typeof SYNC_ENTITY_TYPES)[number];
 
@@ -150,6 +242,8 @@ export type OutboxStatus = 'pending' | 'synced' | 'conflict' | 'rejected';
 export interface OutboxRecord {
   seq?: number;
   op_id: string;
+  /** (v3) the database the op goes to; absent = 'vault' (never stored for vault ops, so legacy ops are unchanged) */
+  target?: SyncTarget;
   entity_type: string;
   entity_id: string;
   op: SyncOpKind;
@@ -174,6 +268,13 @@ export interface OutboxRecord {
   supersededBy?: string | null;
   /** op_id of the rejected / conflicting op this op re-sends */
   retryOf?: string | null;
+  /**
+   * (P1-T1 step 0 review) a FINAL server rejection whose `SyncEngine.onRejected` handlers have not all completed yet:
+   * the server's answer (without its copy, which stays in `resultEntity`), stored in the same transaction as the
+   * verdict. Cleared once every handler of the entity type succeeded; a handler registered later (a lazily loaded
+   * feature, the next page load) receives it. Absent on every other op, so legacy records are unchanged.
+   */
+  pendingRejection?: Omit<SyncOpResult, 'entity'> | null;
 }
 
 /** Server changes waiting for a feature applier (latest change per entity). */
@@ -254,9 +355,20 @@ export const LOCAL_SCHEMA: readonly LocalSchemaVersion[] = [
       annotations: 'id, targetKey, updatedAt, syncState, [targetKey+kind], anchorStatus',
     },
   },
+  {
+    version: 3,
+    stores: {
+      annotations: 'id, targetKey, updatedAt, syncState, [targetKey+kind], anchorStatus, layerId',
+      notes: 'id, nodeId, anchorKey, updatedAt, syncState, layerId',
+      layers: 'id, documentKey, updatedAt, syncState',
+      copies: 'id, sourceId, publicationId, updatedAt, syncState',
+      spaceCursors: 'target',
+    },
+  },
 ];
 
 export type EntityTableName =
+  | 'layers'
   | 'annotations'
   | 'notes'
   | 'notePages'
@@ -276,7 +388,13 @@ export const ENTITY_TABLE: Record<SyncEntityType, EntityTableName> = {
   question_attempt: 'questionAttempts',
   study_session: 'studySessions',
   exam_attempt: 'examAttempts',
+  annotation_layer: 'layers',
 };
+
+/** The target of a stored outbox op (legacy ops have none: they are vault ops). */
+export function outboxTarget(op: Pick<OutboxRecord, 'target'>): SyncTarget {
+  return op.target ?? 'vault';
+}
 
 export class MedLevoDB extends Dexie {
   annotations!: EntityTable<AnnotationRow, 'id'>;
@@ -293,6 +411,9 @@ export class MedLevoDB extends Dexie {
   offlineSources!: EntityTable<OfflineSourceRecord, 'sourceId'>;
   blobs!: EntityTable<BlobRecord, 'id'>;
   apiCache!: EntityTable<ApiCacheRecord, 'key'>;
+  layers!: EntityTable<LayerRow, 'id'>;
+  copies!: EntityTable<CopyRow, 'id'>;
+  spaceCursors!: EntityTable<SpaceCursorRecord, 'target'>;
 
   constructor(name: string = LOCAL_DB_NAME) {
     super(name);

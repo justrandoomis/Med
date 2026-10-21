@@ -68,6 +68,8 @@ export function noteRowFromDTO(n: NoteDTO): WorkspaceNoteRow {
     updatedAt: n.updated_at,
     deletedAt: n.deleted_at,
     syncState: 'synced',
+    // (P1-T2) the note's authorship layer (absent = «ملاحظاتي»)
+    ...(n.layer_id !== undefined ? { layerId: n.layer_id } : {}),
   };
 }
 
@@ -80,6 +82,8 @@ export function notePayload(row: WorkspaceNoteRow): Partial<NoteDTO> {
     anchor: (row.anchor as AnnotationAnchor | null | undefined) ?? null,
     origin: row.origin ?? 'owner',
     created_at: row.createdAt,
+    // (P1-T2) absent on older rows: the server keeps the note's layer
+    ...(row.layerId !== undefined ? { layer_id: row.layerId } : {}),
   };
 }
 
@@ -132,6 +136,9 @@ export function annotationRowFromDTO(a: AnnotationDTO): AnnotationRow {
     updatedAt: a.updated_at,
     deletedAt: a.deleted_at,
     syncState: 'synced',
+    // (P1-T2) authorship layer and author of the item (absent = «ملاحظاتي», the vault's user)
+    ...(a.layer_id !== undefined ? { layerId: a.layer_id } : {}),
+    ...(a.author_user_id ? { authorUserId: a.author_user_id } : {}),
   };
 }
 
@@ -146,6 +153,7 @@ export function annotationPayload(row: AnnotationRow): Partial<AnnotationDTO> {
     z: row.z ?? 0,
     locked: row.locked ?? false,
     created_at: row.createdAt,
+    ...(row.layerId !== undefined ? { layer_id: row.layerId } : {}),
   };
 }
 

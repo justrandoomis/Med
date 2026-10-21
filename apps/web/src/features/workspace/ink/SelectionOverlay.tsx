@@ -84,7 +84,9 @@ export function SelectionOverlay({
   const bbox = store.selectionBBox();
   if (!bbox || items.length === 0) return null;
   const ar = view.pageHeight / view.pageWidth;
-  const locked = items.some((i) => i.locked);
+  // (P1-T2, R5) items of a read-only layer (a followed explanation, a snapshot) are copied, never moved or changed
+  const readOnly = items.some((i) => !store.isEditable(i));
+  const locked = readOnly || items.some((i) => i.locked);
   const rect = normBoxToView(bbox, view);
   const handles = corners(bbox).map((c) => normToView(c[0], c[1], view));
   const allHighlighter = items.every((i) => isInkStroke(i) && i.data.style.tool === 'highlighter');
@@ -218,6 +220,7 @@ export function SelectionOverlay({
         style={{ left: rect.left - 4, top: rect.top - 4, width: rect.width + 8, height: rect.height + 8, transformOrigin: `${-(rect.left - 4)}px ${-(rect.top - 4)}px` }}
         data-ink-ui=""
         data-locked={locked ? '' : undefined}
+        data-read-only={readOnly ? '' : undefined}
         aria-hidden="true"
         onPointerDown={(e) => begin({ kind: 'move' }, e)}
         onPointerMove={move}
@@ -261,7 +264,24 @@ export function SelectionOverlay({
               />
             </Tooltip>
           )}
-          {locked ? (
+          {readOnly ? (
+            <>
+              <span className="ml-ink-selbar__note" role="note">
+                للقراءة فقط
+              </span>
+              <Tooltip content="ينسخ المحدد في مكانه إلى الطبقة التي تكتب عليها؛ يبقى الأصل كما هو" describe={false}>
+                <IconButton
+                  label="انسخ إلى طبقتي"
+                  icon={<CopyPlus size={18} />}
+                  size="sm"
+                  onClick={() => {
+                    const n = store.copySelectionToActiveLayer();
+                    announce(n ? `نُسخ ${n} عنصر إلى طبقتك؛ بقي الأصل كما هو.` : 'لا يوجد ما يُنسخ.');
+                  }}
+                />
+              </Tooltip>
+            </>
+          ) : locked ? (
             <Tooltip content="فك القفل" describe={false}>
               <IconButton label="فك القفل" icon={<LockOpen size={18} />} size="sm" onClick={() => store.setSelectionLocked(false)} />
             </Tooltip>

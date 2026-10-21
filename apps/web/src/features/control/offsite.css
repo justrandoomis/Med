@@ -1,0 +1,51 @@
+/* النسخ الاحتياطي خارج الخادم (PL-0). Tokens only: light, dark and e-ink follow the design system; logical
+   properties for RTL; every control keeps the 44 px touch target of the design system buttons. */
+.cc-offsite__summary {
+  margin: 0;
+  font-size: var(--ml-text-md);
+  line-height: var(--ml-leading-md);
+}
+.cc-offsite__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-3);
+}
+.cc-offsite__actions .cc-muted {
+  margin: 0;
+}
+.cc-offsite__command {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-2);
+  min-width: 0;
+}
+.cc-offsite__code {
+  flex: 1 1 14rem;
+  min-width: 0;
+  padding: var(--ml-space-2) var(--ml-space-3);
+  border-radius: var(--ml-radius-md);
+  border: 1px solid var(--ml-color-line-strong);
+  background: var(--ml-color-canvas);
+  color: var(--ml-color-ink);
+  font-family: var(--ml-font-mono);
+  font-size: var(--ml-text-sm);
+  line-height: var(--ml-leading-sm);
+  overflow-wrap: anywhere;
+  text-align: start;
+  unicode-bidi: isolate;
+}
+.cc-offsite__remote {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-3);
+}
+.cc-offsite__remote-title {
+  margin: 0 0 var(--ml-space-1);
+  font-size: var(--ml-text-sm);
+  color: var(--ml-color-ink-2);
+}

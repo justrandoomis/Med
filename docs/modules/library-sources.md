@@ -233,3 +233,164 @@ Reviewed adversarially (server + web), probed against the real modules, then fix
 * Shared `withNumberedVersion(pages)` fills the flag on a version's page list on the web (cached / older answers).
 * Tests: `srv:sources/page-labels.h1.test.ts` (guard, helper, one test per producer family), `sh:page-label.test.ts`,
   `web:test/learning/home-page-label.h1.test.tsx`. Details: `evidence-search.md` «Round 7».
+
+## Academic OS P1-T3 — lecture identity, version matching and import intelligence (2026-10-20)
+
+Track P1-T3 of [BUILD_PLAN §3.5](../academic-os/BUILD_PLAN.md) (release R1-a, single owner). Design:
+[ARCHITECTURE_DELTA §4.2 (0160, 0161), §6.1, §6.2, §6.9](../academic-os/ARCHITECTURE_DELTA.md). Covers PRD AOS-2.4, 3.2,
+3.3, 3.4, 3.5, 3.7, 3.9, 3.11, 3.12, 3.14, 3.18, 19H.2, 21.13. All three steps are built and were **adversarially
+reviewed on 2026-10-21** (findings and fixes in «Review» at the end of this section).
+
+### What it does
+* **Lecture identity** (`source.lecture_no`, `held_on` + their `*_origin`). After every processing run the versions
+  module's background job `analyze_version` reads the file name and the first two pages: «Lecture 5», «Lec 05»,
+  «lec5», «محاضرة ٥» (Arabic-Indic digits), «المحاضرة الخامسة / الحادية عشرة / الحادية والعشرون» (ordinal words),
+  «lecture five», «5th lecture»; dates with month names (English, Levantine and Egyptian Arabic), ISO and day-first
+  numeric dates. A **certain** value (every strong mention agrees, no mention names two lectures: «Lectures 5 & 6»,
+  «Lecture 5-6», «Lec 5, 6», «05 + 06», «5 to 7», «المحاضرة الأولى والثانية», «المحاضرتان …»; a date after the number,
+  «Lecture 5 - 12.10.2026», is not a second lecture) is stored with origin `detected`; anything else is an **open
+  suggestion with no downstream effect** (AOS-3.18). A stored `detected` value that a later analysis contradicts is
+  withdrawn (audited) until the owner confirms one; one the later analysis is merely unsure of stays shown as
+  «اكتُشف تلقائيًا» with that doubt, and rejecting it clears it. A value the owner set (`owner`) or rejected is never
+  changed or proposed again.
+* **Import suggestions** (`import_suggestion`, the uploader's review queue): number, date, title (first heading of the
+  first page, else the file name without «final (1)», «copy», «v2», «نهائي», «نسخة» …; the original file name stays on
+  the version), subject placement (subject/course folders named in the file name or the cover text, bilingual synonyms
+  such as Anatomy ↔ تشريح), and «إصدار جديد من …». Titles, subjects and new versions are **always** held for
+  confirmation. `(source, field, value)` is unique, so a rejected value is remembered.
+* **Page fingerprints** (`page_fingerprint`, processing/fingerprint.ts): sha256 of the normalised logical page text
+  (headers, footers and printed page numbers left out), 64 × u32 MinHash over word 3-shingles, the hash of the
+  text AND figure / diagram region geometry (`lay50f`), and a 64-bit dHash of the page image only for pages with little
+  or no text. Scheme `FINGERPRINT_ALGO = fp2:norm1:sh3:mh64:dh64:lay50f`.
+* **Page map** (`version_page_map`, `page_map_run`; versions/pagemap.ts): candidates by identical hash, MinHash
+  Jaccard ≥ 0.85, or dHash ≤ 6/64; a maximum-weight order-preserving alignment (weighted LIS); gaps paired as
+  «changed» (uncertain); crossing identical pages «moved» (uncertain); near-equal alternatives inside one gap
+  uncertain. A page with little text is identified by its picture: the same short caption («Figure 1») on a different
+  picture is never `safe`. `safe` + `layout_safe` when the region geometry (or the image) is the same. Owner decisions
+  (`confirmed`, `rejected`, method `owner`) survive recomputation and constrain it: a decided page never gets an
+  automatic counterpart, and two confirmed pairs that cross (a swap the owner confirmed) are both kept. Thresholds are
+  versioned in `PAGE_MAP_ALGO` (`pm2:…`).
+* **«إصدار جديد من …»**: a first upload whose pages match ≥ 60 % of another live lecture's pages (candidates found
+  through the page-hash index, never a scan of all pairs) is proposed, with the matched / inserted / changed counts and
+  «رقم المحاضرة نفسه» when the numbers agree. Accepting adds a `replacement` version to the existing lecture **from the
+  same stored file** (no byte copy), processes it, and moves the upload to the trash (restorable) only when nothing of
+  the owner's is on it — no writing, note, note page, flashcard or recording made while it was open. Every earlier
+  version and note stays as it was. A proposal that names a lecture which is later purged is closed with it.
+* **Link candidates** (versions/candidates.ts `matchLinkCandidates`): a pure function — sha256 or ≥ 60 % of the
+  candidate's pages — reused by P1-T5; `GET /api/versions/sources/:id/link-candidates` runs it inside this database.
+* **Printed contents → page links** (versions/toc.ts): a «Contents» / «الفهرس» page among the first 12 pages is parsed
+  (dotted leaders, Arabic-Indic digits, number-first RTL lines); each entry is resolved by the page's printed number,
+  then by a heading carrying the entry title, and only as a labelled estimate by file order. Computed on request.
+* **Ordering** «حسب الرقم» / «حسب التاريخ» (shared `orderLectures`, natural-title fallback, stable ties): shown on
+  `/lectures/order/:nodeId`; applying it is an explicit owner action that writes it as the folder's manual order.
+* **Original vs converted files** and the **DOCX display PDF** (`version_rendition`, see
+  [processing.md](processing.md)).
+
+### API (`/api/versions`, all owner-authenticated)
+| route | notes |
+|---|---|
+| `GET /sources/:id/identity` · `PATCH` | identity + suggestions + analysis state; PATCH stores the owner's number / date (origin `owner`) |
+| `POST /sources/:id/analyze` | re-run the analysis of the current version (a lecture uploaded before this track) |
+| `GET /sources/:id/link-candidates` | `LinkCandidatesResponse` (this database only) |
+| `GET /suggestions?status=` · `POST /suggestions/:id/decide {action}` | the review queue; accept applies (number, date, title through `SourcesService.patch`, subject through `SourcesService.move`, new version), reject is remembered |
+| `GET /compare?from=&to=` · `POST /maps/decide` | `VersionCompareResponse`: rows in the new order, removed pages where they were, a bounded word diff; `state: pending` (with the analysis job) until both versions have fingerprints — the request never renders |
+| `GET /versions/:id/toc` · `GET /versions/:id/files` · `POST /versions/:id/docx-display` | printed contents; original / rendered / display files with downloads; re-make the DOCX display PDF |
+| `GET /pages/:id/thumbnail` | a PDF page rendered by poppler (child process, 36 dpi; at most 3 renders at a time, the rest wait in order) or a redirect to an image page's own file |
+| `GET /order?node_id=&mode=` · `POST /order/apply` | lecture order view / apply |
+
+**THE page-map service for P1-T2 step 3:** `getPageMap(ctx, fromVersionId, toVersionId)` in
+`apps/server/src/modules/versions/pagemap.ts` → `VersionPageMap` (`packages/shared/src/academic/versions.ts`). Copy an
+item of `entry.from_page_id` to `entry.to_page_id` only when `isCopyTarget(entry)` (status `safe` or `confirmed` with a
+target); coordinate-anchored items (ink, shapes, boxes) additionally need `entry.layout_safe` or a `confirmed` entry.
+Everything else goes to «تحتاج مراجعة». The service computes missing fingerprints and a stale map, keeps the owner's
+decisions, and never moves, copies or deletes anything else. `readPageMap()` is the synchronous read of a stored map.
+
+### Purge and backup
+`page_fingerprint` (→ `source_page`), `import_suggestion` (→ `source`) and `version_rendition` (→ `source_version`) cascade
+with their parents. The versions module registers its purge extension (`versions/purgeExtension.ts`): it deletes the
+`version_page_map` / `page_map_run` rows of purged versions on either side, closes («superseded») the open «إصدار جديد من
+…» proposals of other uploads that name a purged lecture or version, adds «مقارنات صفحات بين النسخ (N)» and «نسخ
+عرض PDF … (N)» to the purge preview (bound into the confirm token), and queues `versions_release_files` inside the purge
+transaction so DOCX display PDFs are released through `files/blobs.ts` after the commit. Backups copy the whole database,
+so the new tables are in them; the JSON export (`data/export.ts`, not this track's file) does not list them —
+fingerprints and maps are derived and recomputed, the identity columns travel with `source`.
+
+### Web
+* Source screen: a new tab **«المحاضرة»** (`IdentityPanel.tsx`): number and date with «اكتُشف تلقائيًا / حددته أنت»,
+  an edit form, the suggestions with their reasons and the stated effect of «أكّد», past decisions, «حلّل هذا الملف
+  الآن» for older lectures, the printed contents as links into the reader, and the link to the lecture order.
+* **«النسخ»**: per version «ملفات هذه النسخة» (original / rendered / display PDF with downloads, the DOCX display PDF
+  state, fonts, «أعد إنشاء نسخة العرض») and «قارن مع النسخة N».
+* **`/sources/:id/compare?from=&to=`** (`CompareScreen.tsx`): both versions, the open proposal with its confirmation,
+  counts, rows with page images (lazy), the change in words («صفحة جديدة», «تغيّرت», «نُقلت من مكانها», «حُذفت»),
+  «تحتاج تأكيدك» for uncertain pairs with «نفس الصفحة» / «ليست نفس الصفحة» / «تراجع عن قراري», and the word diff.
+* Upload: after processing each accepted file shows its suggestions (bounded polling); **`/upload/suggestions`** lists
+  every open suggestion across files.
+* Arabic UI, logical properties, colours from tokens (light / dark / e-ink follow the theme), no motion, 44 px touch
+  targets (checked by the E2E probe on the phone project).
+
+### Tests (labelled TEST FIXTURES only)
+`apps/server/test/versions/{numbering,page-map,new-version-detect,link-candidates,import-intelligence}.test.ts`,
+`apps/server/test/processing/docx-display-pdf.test.ts`, `apps/web/src/features/sources/versions.test.tsx`,
+`e2e/aos-p1-versions.spec.ts`. Fixtures: `apps/server/test/fixtures/versions/` (`build.ts` generates
+`scenario4-v1.pdf` (40 pages) and `scenario4-v2.pdf` (42 pages), checked byte-identical to a fresh build;
+`subject-suggestions.json`, 30 synthetic cases).
+
+**Precision, on the labelled fixture set only:** (the 30 cases were written by the builder alongside the rules, so the
+number is an optimistic upper bound, not an estimate for real libraries) subject suggestions top-1 precision **22 / 22 = 1.000**, recall
+**22 / 24 = 0.917** (misses: «Pediatric cardiology» — singular «pediatric» is not a synonym; «Path lec 2» — «path» is not
+an abbreviation we accept). This says nothing about real course files: **Not run (no real course files in this
+container; the owner's library was not available)**. Page-map thresholds were tuned on the Scenario 4 fixtures only.
+
+### Deviations and limits (honest list)
+* Two tables beyond the design DDL: `import_suggestion` (in 0160; the Control Center review queue cannot apply these
+  decisions, so the suggestions have their own queue and screen) and `page_map_run` (in 0161); columns `held_on_origin`
+  (0160) and `layout_hash`, `text_len` (0161); and migration **`0164_version_rendition.sql`** (the next free number in
+  the sources range; 0162 / 0163 are reserved for P3-T2 / P1-T5).
+* The Control Center «قائمة المراجعة» does not list these suggestions; they are on the source's «المحاضرة» tab, after the
+  upload and on `/upload/suggestions`.
+* The DOCX display PDF is for reading and printing; **the reader still shows DOCX as paragraphs** — choosing the
+  displayed file (AOS-3.14, «moderator chooses the displayed file») needs a change in the workspace reader (P1-T2 / P1-T5
+  files) and is not offered (no decorative control).
+* Versions processed before this track get fingerprints once in the background (`fingerprint_backfill`, queued on boot
+  only when such versions exist) but **no suggestions** — the owner asks for them per lecture («حلّل هذا الملف الآن»).
+* New-version detection compares with the lecture's current (or frozen) version only, proposes at most one lecture, and
+  only for a first upload (a manual replacement is already a version).
+* Not run: anything on a real device, real course files, a PDF over a few hundred pages with many image-only pages
+  (dHash rendering is per page).
+* Online only: identity edits, suggestion decisions, page-map decisions and «اعتمد هذا الترتيب» are server actions (no
+  outbox); offline they fail with the network error and change nothing.
+* A page with plenty of text is compared by its text and region geometry only (no dHash): a picture REPLACED inside the
+  same box on an otherwise identical page is not detected (a moved / resized figure is, since `lay50f`).
+
+### Review (2026-10-21, adversarial, BUILD_PLAN §1.2)
+Each fix has a regression test in `apps/server/test/versions/review-regressions.test.ts` (25 tests) or
+`apps/web/src/features/sources/versions.test.tsx` («(review)» blocks), each failing before its fix:
+* **Major — owner decisions crashed the map.** Confirming two pages whose pairs cross (e.g. a swap of two slides, both
+  confirmed «نفس الصفحة»), or a confirmed page that no longer exists, made every recomputation fail with `UNIQUE
+  constraint failed` (HTTP 500 on «نفس الصفحة», a map stuck for `getPageMap`). Every decided page is now fixed outside the
+  automatic alignment, crossing confirmed pairs are both kept, and the insert never collides with a human row.
+* **Major — fingerprint collision on short captions.** Two picture slides with the same short caption («Figure 1») were
+  `safe` + `layout_safe` even with completely different images (ink would be copied onto another picture). The images
+  now decide for pages with little text. An uncertain pair of two different pictures no longer reads «لم تتغير».
+* **Major — a file naming two lectures was stored as certain.** «Lecture 5-6», «Lec 5, 6», «05 + 06», «5 to 7»,
+  «المحاضرة الأولى والثانية» were stored automatically as lecture 5 / 1. They are now uncertain suggestions.
+* **Major — an uncertain or rejected number kept its effect.** When a later analysis became unsure of (or contradicted) a
+  stored `detected` number, the number stayed in effect, and rejecting the (now «open») suggestion left it stored. Now
+  contradicted values are withdrawn, doubted ones stay visibly «applied», and reject clears whatever is stored.
+* **Minor:** figure / diagram regions now count for `layout_safe` (`fp2`, `lay50f`; old fingerprints are re-made by the
+  backfill job); re-making a DOCX display PDF released nothing (orphan blob) and a failed re-run hid the good PDF — now
+  the replaced file is released and a failed re-run keeps the previous one; the upload of an accepted «new version» was
+  trashed although it carried the owner's flashcards / recordings; proposals naming a purged lecture stayed open and
+  failed on accept; page images had no render bound; the identity form sent the date when only the number changed
+  (silently answering an open date suggestion and stopping date detection) and refused Arabic-Indic digits typed on an
+  Arabic keyboard; the compare breadcrumb named the upload but linked to the lecture; a decision whose page is gone read «أكّدت أنها ليست
+  نفسها»; the lecture-order screen had no
+  test (now `web:versions.test` «LectureOrderScreen»).
+* **Measured here (container, not a device):** 300 → 302 text pages: `getPageMap` 30 ms, compare 26 ms, pure alignment
+  20 ms; worst case 300 × 302 identical pages 415 ms before → ≈ 150 ms after the per-page candidate index; dHash
+  rendering ≈ 27 ms per image-only page in the background job (60 pages: 1.65 s).
+* **Not fixed (not this track's files, reported):** the JSON export (`data/export.ts`) does not carry
+  `import_suggestion` and the owner's `version_page_map` decisions (backups do); an image page's «thumbnail» is the full
+  stored image (no downscaled preview exists); the LibreOffice output's font check (`pdf-lib`) runs on the job's event
+  loop.

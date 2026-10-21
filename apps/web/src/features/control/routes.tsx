@@ -17,6 +17,7 @@ export const routes: FeatureRoutes = {
         { path: 'visual-sources', lazy: () => import('./VisualSourcesScreen').then((m) => ({ Component: m.VisualSourcesScreen })) },
         { path: 'intelligence', lazy: () => import('./IntelligenceScreen').then((m) => ({ Component: m.IntelligenceScreen })) },
         { path: 'storage', lazy: () => import('./StorageScreen').then((m) => ({ Component: m.StorageScreen })) },
+        { path: 'offsite', lazy: () => import('./OffsiteScreen').then((m) => ({ Component: m.OffsiteScreen })) },
         { path: 'capabilities', lazy: () => import('./CapabilitiesScreen').then((m) => ({ Component: m.CapabilitiesScreen })) },
         { path: 'health', lazy: () => import('./HealthScreen').then((m) => ({ Component: m.HealthScreen })) },
         { path: 'evaluation', lazy: () => import('./EvaluationScreen').then((m) => ({ Component: m.EvaluationScreen })) },

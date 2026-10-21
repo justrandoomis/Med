@@ -1,6 +1,12 @@
 // In-memory model of one open document's ink (all its pages), the write-through to IndexedDB and
 // the undo history. The UI updates synchronously from memory; persistence is queued (strictly in
 // order) and never awaited by input handling (§55: writing never waits for storage or network).
+//
+// (Academic OS P1-T2 — the parity plan's N1 Wave 0 «visibility predicate» seam, ADR-0004 R5) `setVisibility(fn)` and
+// `setEditability(fn)` decide which items are drawn, hit, erased and lassoed, and which can be moved, recoloured, re-
+// stacked or deleted (items of read-only layers can still be selected and COPIED). `setActiveLayer(id)` names the
+// layer new writing goes to (null = the default personal layer «ملاحظاتي»). Layers (ink/layers/*) set them; with
+// nothing set every item is visible and editable exactly as before.
 import { newId, stableStringify, type AnnotationAnchor, type NormBox } from '@medlevo/shared';
 import { getDb, type MedLevoDB } from '../../../lib/localdb';
 import { broadcast, onAnnotationRowsChanged, type AnnotationRowsChanged } from './events';
@@ -26,7 +32,9 @@ export type PageEvent =
   | { kind: 'items'; dirty: NormBox[] | 'all'; ids: string[] }
   | { kind: 'selection' }
   | { kind: 'hidden'; ids: string[] }
-  | { kind: 'loaded' };
+  | { kind: 'loaded' }
+  /** (P1-T2) the layer view changed (visibility / editability); `store.visibilityKey` tells whether drawing changed */
+  | { kind: 'view' };
 
 export interface PageModel {
   targetKey: string;
@@ -119,6 +127,21 @@ export class InkDocumentStore {
   private pending: (PendingStep & { cmd: Command; changes: ItemChange[] }) | null = null;
   private checking: Promise<void> | null = null;
   private pendingListeners = new Set<() => void>();
+  /** (P1-T2) visibility / editability predicates and the layer new writing goes to */
+  private visibleFn: ((it: InkItem) => boolean) | null = null;
+  private editableFn: ((it: InkItem) => boolean) | null = null;
+  private activeLayer: string | null = null;
+  private visibleKey = '';
+  private visibleSeq = 0;
+  private activeLayerScope: ((it: InkItem) => boolean) | null = null;
+  private layerViewVersion = 0;
+  private layerViewListeners = new Set<() => void>();
+  /** called when new writing lands on a layer that is hidden in this session (the host shows it again) */
+  onWriteToHiddenLayer: ((layerId: string | null) => void) | null = null;
+  /** Called when new writing lands on a layer hidden in this session (the layers view shows it again). */
+  setWriteToHiddenLayerHandler(fn: ((layerId: string | null) => void) | null): void {
+    this.onWriteToHiddenLayer = fn;
+  }
 
   constructor(
     readonly documentKey: string,
@@ -274,6 +297,63 @@ export class InkDocumentStore {
     return out;
   }
 
+  // ── (P1-T2) layers: visibility / editability predicates (render, hit-test, eraser, lasso) ──
+  /** Items for which `fn` is false are not drawn, hit, erased or lassoed. `null` = every item is visible. */
+  setVisibility(fn: ((it: InkItem) => boolean) | null, key: string | null = null): void {
+    this.visibleFn = fn;
+    // the same visible set → the same key (cached tiles of that set are reused); an anonymous predicate → a new key
+    this.visibleKey = fn ? (key ?? `anon:${++this.visibleSeq}`) : '';
+    this.layerViewChanged();
+  }
+  /** Names the current visible-layer set ('' = everything visible); the tile cache keys its grids by it. */
+  get visibilityKey(): string {
+    return this.visibleKey;
+  }
+  /** Items for which `fn` is false can be selected and copied but never moved, recoloured, restacked or deleted. */
+  setEditability(fn: ((it: InkItem) => boolean) | null): void {
+    this.editableFn = fn;
+    this.layerViewChanged();
+  }
+  /**
+   * The layer new writing goes to (`layer_id`; null = the default personal layer). `scope`: the items it applies to
+   * (another document's page in the same store — the split pane — gets its own default layer instead).
+   */
+  setActiveLayer(layerId: string | null, scope: ((it: InkItem) => boolean) | null = null): void {
+    this.activeLayerScope = scope;
+    if (this.activeLayer === layerId) return;
+    this.activeLayer = layerId;
+    this.layerViewVersion++;
+    this.layerViewListeners.forEach((l) => l());
+  }
+  getActiveLayer = (): string | null => this.activeLayer;
+  isVisible(it: InkItem): boolean {
+    return !this.visibleFn || this.visibleFn(it);
+  }
+  isEditable(it: InkItem): boolean {
+    return !this.editableFn || this.editableFn(it);
+  }
+  getLayerViewVersion = (): number => this.layerViewVersion;
+  subscribeLayerView = (l: () => void): (() => void) => {
+    this.layerViewListeners.add(l);
+    return () => this.layerViewListeners.delete(l);
+  };
+  private layerViewChanged(): void {
+    this.layerViewVersion++;
+    // a selection may now hold items that are hidden: drop those (read-only ones stay selectable for copying)
+    const sel = this.selection;
+    if (sel) {
+      const page = this.pages.get(sel.targetKey);
+      const keep = sel.ids.filter((id) => {
+        const it = page?.items.get(id);
+        return !!it && this.isVisible(it);
+      });
+      if (keep.length !== sel.ids.length) this.setSelection(keep.length ? { targetKey: sel.targetKey, ids: keep } : null);
+      else if (page) this.emit(page, { kind: 'selection' });
+    }
+    for (const page of this.pages.values()) this.emit(page, { kind: 'view' });
+    this.layerViewListeners.forEach((l) => l());
+  }
+
   nextZ(targetKey: string): number {
     return (this.pages.get(targetKey)?.maxZ ?? 0) + 1;
   }
@@ -313,8 +393,17 @@ export class InkDocumentStore {
    * `record: false` for undo/redo themselves.
    */
   commit(label_ar: string, changes: ItemChange[], opts: { record?: boolean; amend?: boolean } = {}): void {
-    const real = changes.filter((c) => c.before !== c.after);
+    let real = changes.filter((c) => c.before !== c.after);
     if (real.length === 0) return;
+    // (P1-T2) new writing goes to the active layer (an item that names its layer — an undo, a split piece — keeps it).
+    // With «ملاحظاتي» active nothing is stamped: the item stays exactly as written and lands on the default layer.
+    const isNew = (c: ItemChange) => !c.before && !!c.after && c.after.layer_id === undefined;
+    if (real.some(isNew)) {
+      const layer = this.activeLayer;
+      const scope = this.activeLayerScope;
+      if (layer) real = real.map((c) => (isNew(c) && (!scope || scope(c.after!)) ? { ...c, after: { ...c.after!, layer_id: layer } } : c));
+      if (this.visibleFn && real.some((c) => !c.before && c.after && !this.visibleFn!(c.after))) this.onWriteToHiddenLayer?.(layer);
+    }
     this.applyInMemory(real);
     if (opts.record !== false) {
       if (opts.amend) this.history.amendLast(real);
@@ -563,11 +652,14 @@ export class InkDocumentStore {
         for (const it of items) {
           if (this.busy(it.id)) continue;
           const prev = page.items.get(it.id);
+          // (P1-T2) an item that did not change (same revision and time) is left as it is: no repaint, and the tile
+          // cache of a dense page stays warm when a whole-page reload brings the same rows back
+          if (prev && sameRow(prev, it)) continue;
           if (prev) dirty.push(itemBBox(prev, page.ar));
           this.putInMemory(page, it);
           dirty.push(itemBBox(it, page.ar));
         }
-        this.emit(page, { kind: 'items', dirty, ids: [] });
+        if (dirty.length) this.emit(page, { kind: 'items', dirty, ids: [] });
         continue;
       }
       const ids = e.ids.filter((id) => !this.busy(id));
@@ -638,6 +730,8 @@ export class InkDocumentStore {
     const now = this.now();
     const changes: ItemChange[] = [];
     for (const it of this.selectedItems()) {
+      // (P1-T2, R5) items of a read-only layer are copied, never changed or deleted
+      if (!this.isEditable(it)) continue;
       if (it.locked && !opts.includeLocked) continue;
       const after = fn(it, now);
       if (after !== it) changes.push({ id: it.id, targetKey: sel.targetKey, before: it, after });
@@ -678,7 +772,7 @@ export class InkDocumentStore {
     const now = this.now();
     const changes: ItemChange[] = [];
     for (const it of items) {
-      if (it.locked) continue;
+      if (it.locked || !this.isEditable(it)) continue;
       changes.push({ id: it.id, targetKey: sel.targetKey, before: it, after: withZ(it, z++, now) });
     }
     this.commit(up ? 'إحضار إلى الأمام' : 'إرسال إلى الخلف', changes);
@@ -693,17 +787,24 @@ export class InkDocumentStore {
     return items.length;
   }
 
-  /** Paste the clipboard onto `targetKey` (another page is fine). New ids; one undo step. */
-  paste(targetKey: string | null = this.activeTargetKey): number {
+  /**
+   * Paste the clipboard onto `targetKey` (another page is fine). New ids, on the active layer (a copy of a read-only
+   * layer's item becomes the owner's own writing); one undo step.
+   */
+  paste(targetKey: string | null = this.activeTargetKey, opts: { offset?: boolean } = {}): number {
     const page = targetKey ? this.pages.get(targetKey) : undefined;
     if (!clipboard || !page || !page.anchor || !targetKey) return 0;
     const now = this.now();
-    const offset = clipboard.from === targetKey ? 0.02 : 0;
+    const offset = clipboard.from === targetKey && opts.offset !== false ? 0.02 : 0;
     const m: Mat = [1, 0, 0, 1, offset, offset * page.ar];
     let z = page.maxZ + 1;
     const changes: ItemChange[] = [];
     for (const src of clipboard.items) {
-      const copy = cloneItem(src, newId(now), page.anchor, now, z++);
+      const copy: InkItem = { ...cloneItem(src, newId(now), page.anchor, now, z++), layer_id: null };
+      if (!this.activeLayerScope || this.activeLayerScope(copy)) copy.layer_id = this.activeLayer;
+      delete copy.author_user_id;
+      delete copy.origin;
+      delete copy.migrated_from_id;
       const placed = offset ? transformItem(copy, m, page.ar, now) : copy;
       changes.push({ id: placed.id, targetKey, before: null, after: placed });
     }
@@ -717,6 +818,22 @@ export class InkDocumentStore {
     return this.paste(this.selection?.targetKey ?? null);
   }
 
+  /** (P1-T2) «انسخ إلى طبقتي»: the selection copied in place onto the active layer (read-only originals stay). */
+  copySelectionToActiveLayer(): number {
+    if (this.copySelection() === 0) return 0;
+    return this.paste(this.selection?.targetKey ?? null, { offset: false });
+  }
+
+  /** (P1-T2) the selection holds at least one item of a read-only layer (or another author's item) */
+  selectionHasReadOnly(): boolean {
+    return this.selectedItems().some((it) => !this.isEditable(it));
+  }
+
+}
+
+/** Two copies of an item that are the same row: same revision, same change time, same layer and author. */
+function sameRow(a: InkItem, b: InkItem): boolean {
+  return a.rev === b.rev && a.updated_at === b.updated_at && (a.deleted_at ?? null) === (b.deleted_at ?? null) && (a.layer_id ?? null) === (b.layer_id ?? null) && a.z === b.z && a.locked === b.locked && JSON.stringify(a.anchor) === JSON.stringify(b.anchor);
 }
 
 // ─── registry: one store per open document; survives remounts (tab switches) while the app runs ──

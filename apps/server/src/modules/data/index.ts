@@ -34,6 +34,7 @@ import {
   startVerify,
 } from './backups';
 import { currentEpoch, ensureEpoch } from './epoch';
+import { offsiteService } from './offsite';
 import { exportAll, exportArtifact, exportNotes, exportNotesDocx, exportQuestions, exportSource, type ExportFile } from './export';
 import { annotatedPdfSummary, docxToPdf, exportAnnotatedPdf, pdfConverterAvailable } from './pdf-export';
 import { buildOfflinePackage, learningForSource, resolveOfflineTarget, type Forward } from './offline';
@@ -63,6 +64,8 @@ const LIMITS = {
   exportRoute: { max: 30, timeWindow: 60_000 },
   backupCreate: { max: 3, timeWindow: 10 * 60_000 },
   backupVerify: { max: 3, timeWindow: 10 * 60_000 },
+  offsiteRun: { max: 3, timeWindow: 10 * 60_000 },
+  offsiteRemote: { max: 10, timeWindow: 60_000 },
   download: { max: 20, timeWindow: 60_000 },
   manage: { max: 60, timeWindow: 60_000 },
 } as const;
@@ -88,6 +91,13 @@ export default async function register(app: FastifyInstance, { ctx }: ModuleOpti
   ensureEpoch(ctx.db, ctx.clock.now());
   registerBackupJobs(ctx);
   markInterruptedBackups(ctx);
+  // PL-0: off-site backups to Cloudflare R2 — job, interrupted-run cleanup, and the daily scheduler, which runs only
+  // in a server that listens (never in fastify.inject tests or the restore verification boot)
+  const offsite = offsiteService(ctx);
+  offsite.register();
+  offsite.markInterrupted();
+  app.addHook('onListen', async () => offsite.startScheduler());
+  app.addHook('onClose', async () => offsite.stopScheduler());
 
   ctx.capabilities.set('offline', 'available');
   ctx.capabilities.set('backup', 'available');
@@ -177,6 +187,14 @@ export default async function register(app: FastifyInstance, { ctx }: ModuleOpti
     deleteBackup(ctx, id);
     return { ok: true };
   });
+
+  // ───────── off-site backups (PL-0) ─────────
+  // status row of the Control Center: configured or not (variable names only), last run, schedule, retention
+  app.get('/offsite', { config: { rateLimit: LIMITS.manage } }, async () => offsite.status());
+  // «نسخ احتياطي الآن»: 409 with the reason when not configured or a run is in progress
+  app.post('/offsite/run', { config: { rateLimit: LIMITS.offsiteRun } }, async () => ({ run: offsite.start('manual') }));
+  // what R2 holds, each with its one-line Render-Shell restore command (restore itself is never a web action)
+  app.get('/offsite/remote', { config: { rateLimit: LIMITS.offsiteRemote } }, async () => ({ objects: await offsite.listRemote() }));
 
   // ───────── exports ─────────
   app.get('/export/formats', async (): Promise<ExportFormatsResponse> => {

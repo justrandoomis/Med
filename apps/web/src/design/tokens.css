@@ -10,6 +10,8 @@
  *  - Paper texture: <html data-paper="on|off">. Subtle, never reduces contrast; disabled in
  *    prefers-contrast: more.
  *  - Motion: <html data-reduce-motion="on|off">; without it prefers-reduced-motion decides.
+ *  - Display modes of this device (design/themeDisplay.ts): <html data-eink="on"> (black / grey, no motion),
+ *    data-contrast="on" (stronger text and lines), data-lite="on" (flat, no grain) — see the end of this file.
  *  - Text scale: <html style="--ml-text-scale: 1.15" data-text-scale="1.15">.
  *  - Arabic is never letter-spaced (it breaks joined letterforms).
  *
@@ -268,4 +270,88 @@
   :root {
     --ml-tabbar-h: 0px;
   }
+}
+
+/* ── display modes of this device (Academic OS P1-T2; ADR-0005 B.4) — design/themeDisplay.ts sets them on <html> ──
+ * They come last so they win over the theme blocks above (same specificity, later rule).
+ * e-ink: black / grey only, nothing moves, nothing fades, no shadows or grain (every change costs a slow refresh). */
+:root[data-eink='on'] {
+  color-scheme: light;
+  --ml-color-canvas: #ffffff;
+  --ml-color-paper: #ffffff;
+  --ml-color-paper-2: #ededed;
+  --ml-color-elevated: #ffffff;
+  --ml-color-ink: #000000;
+  --ml-color-ink-2: #1a1a1a;
+  --ml-color-ink-3: #3a3a3a;
+  --ml-color-line: #6e6e6e;
+  --ml-color-line-strong: #000000;
+  --ml-color-control-border: #000000;
+  --ml-color-fill: rgba(0, 0, 0, 0.08);
+  --ml-color-fill-strong: rgba(0, 0, 0, 0.16);
+  --ml-color-scrim: rgba(0, 0, 0, 0.45);
+  --ml-color-accent: #000000;
+  --ml-color-accent-hover: #1a1a1a;
+  --ml-color-accent-pressed: #3a3a3a;
+  --ml-color-accent-ink: #ffffff;
+  --ml-color-accent-soft: #dcdcdc;
+  --ml-color-accent-soft-ink: #000000;
+  --ml-color-focus: #000000;
+  --ml-color-selection: rgba(0, 0, 0, 0.22);
+  --ml-color-success: #000000;
+  --ml-color-success-soft: #e6e6e6;
+  --ml-color-warning: #000000;
+  --ml-color-warning-soft: #e6e6e6;
+  --ml-color-danger: #000000;
+  --ml-color-danger-soft: #dcdcdc;
+  --ml-color-danger-hover: #1a1a1a;
+  --ml-color-danger-ink: #ffffff;
+  --ml-color-inverse: #000000;
+  --ml-color-inverse-ink: #ffffff;
+  --ml-color-info: #000000;
+  --ml-color-info-soft: #e6e6e6;
+  --ml-shadow-paper: 0 0 0 1px #000000;
+  --ml-shadow-raised: 0 0 0 2px #000000;
+  --ml-shadow-overlay: 0 0 0 2px #000000;
+  --ml-paper-texture-active: none;
+  --ml-motion-shift: 0px;
+  --ml-press-scale: 1;
+  --ml-duration-instant: 0ms;
+  --ml-duration-fast: 0ms;
+  --ml-duration-base: 0ms;
+  --ml-duration-slow: 0ms;
+  scroll-behavior: auto;
+}
+:root[data-eink='on'] *,
+:root[data-eink='on'] *::before,
+:root[data-eink='on'] *::after {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
+  text-shadow: none !important;
+  backdrop-filter: none !important;
+}
+
+/* high contrast: the owner's choice (the OS preference already applies through prefers-contrast above) */
+:root[data-contrast='on'] {
+  --ml-paper-texture-active: none;
+  --ml-color-ink-3: var(--ml-color-ink-2);
+  --ml-color-control-border: var(--ml-color-ink-2);
+  --ml-color-line: var(--ml-color-control-border);
+  --ml-color-line-strong: var(--ml-color-ink);
+}
+
+/* lite: for slow devices — flat surfaces, no grain, no blur, short motion (the ink tile cache is smaller too) */
+:root[data-lite='on'] {
+  --ml-paper-texture-active: none;
+  --ml-shadow-paper: 0 0 0 1px var(--ml-color-line);
+  --ml-shadow-raised: 0 0 0 1px var(--ml-color-line-strong);
+  --ml-shadow-overlay: 0 0 0 1px var(--ml-color-line-strong);
+  --ml-motion-shift: 0px;
+  --ml-press-scale: 1;
+  --ml-duration-base: 80ms;
+  --ml-duration-slow: 100ms;
+}
+:root[data-lite='on'] * {
+  backdrop-filter: none !important;
 }

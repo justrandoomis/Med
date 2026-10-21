@@ -1,0 +1,77 @@
+# MedLevo AI on Render — Blueprint (https://render.com/docs/blueprint-spec). Deployable entirely from a phone or an
+# iPad: Render dashboard → New → Blueprint → connect GitHub → choose this repository (justrandoomis/med) → Apply.
+# The step-by-step Arabic guide is docs/DEPLOY_PHONE_AR.md; the reasons behind each value are in docs/DEPLOYMENT.md §8.
+#
+# One Docker web service (the Dockerfile at the repository root) with one persistent disk:
+#   * the disk is mounted at /var/data and the data lives in /var/data/medlevo (MEDLEVO_DATA_DIR). The mount point is
+#     the PARENT of the data directory on purpose: a restore (medlevo-restore-offsite) writes a new directory BESIDE
+#     the live data on the same disk, and switching to it is one change of MEDLEVO_DATA_DIR. Anything outside
+#     /var/data is wiped by every deploy.
+#   * Render documents that a service with a disk runs as ONE instance and has no zero-downtime deploys (a few
+#     seconds offline per deploy); the disk is reachable by this service only.
+services:
+  - type: web
+    name: medlevo
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    # Region (cannot be changed after creation): Frankfurt is the closest of Render's regions to Iraq
+    # (oregon · ohio · virginia · frankfurt · singapore). Pick another only if you live elsewhere.
+    region: frankfurt
+    # 1 CPU / 2 GB RAM ($25/month, render.com/pricing read on 2026-10-20 — prices may change). OCR, LibreOffice
+    # conversions and the restore check of every backup run in this memory; the 0.5 CPU / 512 MB plan ($7) was not
+    # measured with them and may run out of memory on large files.
+    plan: 1c-2g
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit
+    # graceful stop: running jobs are re-queued and resume after the deploy
+    maxShutdownDelaySeconds: 60
+    disk:
+      name: medlevo-data
+      mountPath: /var/data
+      # 10 GB ($0.25 per GB-month). It can grow later but never shrink. Plan ≈ 3× your files: data + one local
+      # backup + room for a backup's restore check.
+      sizeGB: 10
+    # Only what the owner never edits is written here. Render documents that a Blueprint sync (each push that changes
+    # this file) OVERWRITES dashboard edits of every variable defined below, and keeps variables it does not define.
+    # So the values the owner may set in Render → Environment are deliberately NOT here; their defaults come from the
+    # image (Dockerfile ENV) and from apps/server/src/config.ts:
+    #   MEDLEVO_DATA_DIR        /var/data/medlevo — after a restore, ADD it with the restored directory (DEPLOY_PHONE_AR.md)
+    #   MEDLEVO_ORIGIN          unset = RENDER_EXTERNAL_URL (https://<name>.onrender.com); add it for your own domain
+    #   MEDLEVO_TIMEZONE        Asia/Baghdad
+    #   MEDLEVO_BACKUP_SCHEDULE 03:15 daily in MEDLEVO_TIMEZONE («off» = only «نسخ احتياطي الآن»)
+    #   MEDLEVO_BACKUP_KEEP_DAILY 7 · MEDLEVO_BACKUP_KEEP_WEEKLY 4 · MEDLEVO_BACKUP_KEEP_LOCAL 1
+    # (test: apps/server/test/deploy/render-blueprint.test.ts)
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MEDLEVO_HOST
+        value: 0.0.0.0
+      - key: MEDLEVO_PORT
+        value: "10000"
+      # Needed once, to create the owner account (Render → Environment → MEDLEVO_SETUP_TOKEN → reveal → copy).
+      - key: MEDLEVO_SETUP_TOKEN
+        generateValue: true
+      # Client address behind Render's proxies (docs/DEPLOYMENT.md §8.2): every request reaches Render through
+      # Cloudflare, which sets CF-Connecting-IP and refuses a client-sent one; X-Forwarded-For's left-most entries are
+      # client-controlled. Trust one hop (Render's own proxy) and take the address from CF-Connecting-IP.
+      - key: MEDLEVO_TRUST_PROXY
+        value: "1"
+      - key: MEDLEVO_CLIENT_IP_HEADER
+        value: cf-connecting-ip
+      # ── off-site backups to Cloudflare R2 (docs/BACKUP_RESTORE.md §6) ──
+      - key: MEDLEVO_R2_ACCOUNT_ID
+        sync: false
+      - key: MEDLEVO_R2_BUCKET
+        value: medlevo-backups
+      - key: MEDLEVO_R2_ACCESS_KEY_ID
+        sync: false
+      - key: MEDLEVO_R2_SECRET_ACCESS_KEY
+        sync: false
+      # 32 random bytes made by Render. COPY IT somewhere safe outside Render now: without this exact value no
+      # off-site backup can ever be decrypted (there is no recovery, by design).
+      - key: MEDLEVO_BACKUP_ENCRYPTION_KEY
+        generateValue: true
+      # Optional: AI features stay off (and honest about it) without a key. Never shown, logged or backed up.
+      - key: ANTHROPIC_API_KEY
+        sync: false

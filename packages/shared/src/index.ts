@@ -32,3 +32,5 @@ export * from './handwriting-api';
 export * from './study-api';
 export * from './quality-api';
 export * from './lamAlef';
+// Academic OS contracts (BUILD_PLAN §3.2): each track appends its files to academic/index.ts in its own step 0
+export * from './academic';

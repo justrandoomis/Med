@@ -1,0 +1,118 @@
+/* «انقل ملاحظاتي إلى الإصدار الجديد» (P1-T2 step 3): reader banner, preview / report dialog, cross-version review rows.
+   Tokens only (light, dark, high contrast and e-ink remap them in design/tokens.css); logical properties for RTL; the
+   controls are design-system buttons (44 px on coarse pointers). */
+.ml-migrate-banner {
+  background: var(--ml-color-accent-soft);
+  color: var(--ml-color-ink);
+}
+.ml-migrate-banner__text {
+  flex: 1 1 16rem;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.ml-migrate {
+  display: grid;
+  gap: var(--ml-space-3);
+}
+.ml-migrate__summary {
+  margin: 0;
+  font-size: var(--ml-text-md);
+  line-height: var(--ml-leading-md);
+  color: var(--ml-color-ink);
+}
+.ml-migrate__h {
+  margin: 0;
+  font-size: var(--ml-text-sm);
+  font-weight: 600;
+  color: var(--ml-color-ink-2);
+}
+.ml-migrate__counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ml-space-2) var(--ml-space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ml-migrate__counts li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ml-space-2);
+  font-variant-numeric: tabular-nums;
+}
+.ml-migrate__pages {
+  display: grid;
+  gap: var(--ml-space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-block-size: 14rem;
+  overflow-y: auto;
+}
+.ml-migrate__pages li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-2);
+  padding-block: var(--ml-space-1);
+  border-block-end: 1px solid var(--ml-color-line);
+  font-size: var(--ml-text-sm);
+}
+.ml-migrate__pages li svg {
+  flex: none;
+  color: var(--ml-color-ink-3);
+}
+.ml-migrate__last {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-2);
+  padding-block-start: var(--ml-space-2);
+  border-block-start: 1px solid var(--ml-color-line);
+}
+.ml-migrate__last p {
+  margin: 0;
+  flex: 1 1 12rem;
+}
+.ml-migrate__error {
+  margin: 0;
+  color: var(--ml-color-danger-ink);
+}
+
+.ml-migrate-review {
+  display: grid;
+  gap: var(--ml-space-2);
+  padding-block-end: var(--ml-space-3);
+  margin-block-end: var(--ml-space-3);
+  border-block-end: 1px solid var(--ml-color-line-strong);
+}
+/* the old page and the page map's candidate, side by side */
+.ml-migrate-side {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ml-space-2);
+}
+.ml-migrate-thumb {
+  display: grid;
+  gap: var(--ml-space-1);
+  margin: 0;
+  min-inline-size: 0;
+}
+.ml-migrate-thumb img,
+.ml-migrate-thumb__none {
+  inline-size: 100%;
+  aspect-ratio: 0.72;
+  object-fit: contain;
+  background: var(--ml-color-paper);
+  border: 1px solid var(--ml-color-line);
+  border-radius: var(--ml-radius-sm);
+}
+.ml-migrate-thumb__none {
+  background: var(--ml-color-fill);
+}
+.ml-migrate-thumb figcaption {
+  font-size: var(--ml-text-sm);
+  color: var(--ml-color-ink-2);
+  overflow-wrap: anywhere;
+}

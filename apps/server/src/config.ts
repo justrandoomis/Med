@@ -6,6 +6,8 @@ import { readFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
+import { OffsiteConfigError, parseOffsiteConfig, type OffsiteConfig } from './lib/objectstore/offsite-config';
+import { describeProxy, parseClientIpHeader, parseTrustProxy, ProxyConfigError, type ProxyConfig } from './lib/proxy';
 import { isValidTimeZone } from './lib/time';
 
 export type RuntimeEnv = 'development' | 'production' | 'test';
@@ -24,8 +26,13 @@ export interface AppConfig {
   origin: string;
   /** all accepted Origins (MEDLEVO_ORIGIN may be a comma-separated list; first one is canonical) */
   allowedOrigins: string[];
+  /** where the origin came from: MEDLEVO_ORIGIN, the platform's RENDER_EXTERNAL_URL (PL-0), or the local default */
+  originSource: 'MEDLEVO_ORIGIN' | 'RENDER_EXTERNAL_URL' | 'default';
   cookieSecure: boolean;
+  /** true when ANY proxy is trusted (MEDLEVO_TRUST_PROXY not false): the server is reachable through a proxy */
   trustProxy: boolean;
+  /** which proxies are trusted and how the client address is found (lib/proxy.ts) */
+  proxy: ProxyConfig;
   logLevel: string;
   timezone: string;
   limits: {
@@ -58,9 +65,16 @@ export interface AppConfig {
   allowExternalFetch: boolean;
   /** built SPA to serve in production (null → API only) */
   webDistDir: string | null;
-  /** secret accessors — functions so they never serialize. Only provider adapters may call them. */
+  /** PL-0: off-site backups to Cloudflare R2 (S3 API), encrypted on this server first (lib/objectstore) */
+  offsite: OffsiteConfig;
+  /**
+   * secret accessors — functions so they never serialize. Only provider adapters may call anthropicApiKey; only the
+   * off-site backup module (modules/data/offsite*.ts and its CLI) may call the R2 secret and the encryption key.
+   */
   secrets: {
     anthropicApiKey(): string | null;
+    r2SecretAccessKey(): string | null;
+    backupEncryptionKey(): Buffer | null;
   };
 }
 
@@ -75,9 +89,14 @@ const envSchema = z.object({
   MEDLEVO_DATA_DIR: z.preprocess(emptyToUndefined, z.string().default('./data')),
   MEDLEVO_HOST: z.preprocess(emptyToUndefined, z.string().default('127.0.0.1')),
   MEDLEVO_PORT: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).max(65535).default(8787)),
-  MEDLEVO_ORIGIN: z.preprocess(emptyToUndefined, z.string().default('http://localhost:5173')),
+  MEDLEVO_ORIGIN: z.preprocess(emptyToUndefined, z.string().optional()),
+  // set by Render for every web service (https://<name>.onrender.com); the origin when MEDLEVO_ORIGIN is unset
+  RENDER_EXTERNAL_URL: z.preprocess(emptyToUndefined, z.string().optional()),
   MEDLEVO_COOKIE_SECURE: z.preprocess(emptyToUndefined, boolish.optional()),
-  MEDLEVO_TRUST_PROXY: z.preprocess(emptyToUndefined, boolish.default(false)),
+  // false | true | <hop count 1–10> | <comma-separated addresses / CIDR ranges / loopback, linklocal, uniquelocal>
+  MEDLEVO_TRUST_PROXY: z.preprocess(emptyToUndefined, z.string().optional()),
+  // a header the platform's edge sets to the client address (Render: cf-connecting-ip); needs MEDLEVO_TRUST_PROXY
+  MEDLEVO_CLIENT_IP_HEADER: z.preprocess(emptyToUndefined, z.string().optional()),
   MEDLEVO_LOG_LEVEL: z.preprocess(emptyToUndefined, z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).optional()),
   MEDLEVO_MAX_UPLOAD_MB: z.preprocess(emptyToUndefined, z.coerce.number().positive().max(4096).default(200)),
   MEDLEVO_MAX_JSON_MB: z.preprocess(emptyToUndefined, z.coerce.number().positive().max(64).default(8)),
@@ -94,6 +113,18 @@ const envSchema = z.object({
   MEDLEVO_AI_MONTHLY_BUDGET_USD: z.preprocess(emptyToUndefined, z.coerce.number().min(0).max(100_000).default(20)),
   MEDLEVO_ALLOW_EXTERNAL_FETCH: z.preprocess(emptyToUndefined, boolish.default(false)),
   MEDLEVO_WEB_DIST: z.preprocess(emptyToUndefined, z.string().optional()),
+  // PL-0 off-site backups (lib/objectstore/offsite-config.ts). Missing R2 values never stop the server.
+  MEDLEVO_R2_ACCOUNT_ID: z.preprocess(emptyToUndefined, z.string().optional()),
+  MEDLEVO_R2_ENDPOINT: z.preprocess(emptyToUndefined, z.string().optional()),
+  MEDLEVO_R2_BUCKET: z.preprocess(emptyToUndefined, z.string().optional()),
+  MEDLEVO_R2_ACCESS_KEY_ID: z.preprocess(emptyToUndefined, z.string().optional()),
+  MEDLEVO_R2_SECRET_ACCESS_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
+  MEDLEVO_R2_PREFIX: z.preprocess(emptyToUndefined, z.string().optional()),
+  MEDLEVO_BACKUP_ENCRYPTION_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
+  MEDLEVO_BACKUP_SCHEDULE: z.preprocess(emptyToUndefined, z.string().optional()),
+  MEDLEVO_BACKUP_KEEP_DAILY: z.preprocess(emptyToUndefined, z.coerce.number().int().optional()),
+  MEDLEVO_BACKUP_KEEP_WEEKLY: z.preprocess(emptyToUndefined, z.coerce.number().int().optional()),
+  MEDLEVO_BACKUP_KEEP_LOCAL: z.preprocess(emptyToUndefined, z.coerce.number().int().optional()),
 });
 
 export class ConfigError extends Error {
@@ -115,15 +146,42 @@ function readAppVersion(): string {
   }
 }
 
-function normalizeOrigin(raw: string): string {
+function normalizeOrigin(raw: string, name = 'MEDLEVO_ORIGIN'): string {
   let u: URL;
   try {
     u = new URL(raw.trim());
   } catch {
-    throw new ConfigError(`MEDLEVO_ORIGIN is not a valid URL: ${raw}`);
+    throw new ConfigError(`${name} is not a valid URL: ${raw}`);
   }
-  if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new ConfigError('MEDLEVO_ORIGIN must be http(s)');
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new ConfigError(`${name} must be http(s)`);
   return u.origin;
+}
+
+/**
+ * MEDLEVO_ORIGIN (comma-separated, first canonical) → RENDER_EXTERNAL_URL → the local development default.
+ * `MEDLEVO_ORIGIN=auto` says the same explicitly (render.yaml): use the address Render gives the service.
+ */
+function resolveOrigins(e: { MEDLEVO_ORIGIN?: string; RENDER_EXTERNAL_URL?: string }): { origins: string[]; source: AppConfig['originSource'] } {
+  if (e.MEDLEVO_ORIGIN !== undefined && e.MEDLEVO_ORIGIN.trim().toLowerCase() === 'auto') {
+    if (e.RENDER_EXTERNAL_URL === undefined) throw new ConfigError('MEDLEVO_ORIGIN=auto needs RENDER_EXTERNAL_URL (set by Render); elsewhere set MEDLEVO_ORIGIN to the exact https address');
+    return { origins: [normalizeOrigin(e.RENDER_EXTERNAL_URL, 'RENDER_EXTERNAL_URL')], source: 'RENDER_EXTERNAL_URL' };
+  }
+  if (e.MEDLEVO_ORIGIN !== undefined) {
+    return { origins: e.MEDLEVO_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean).map((o) => normalizeOrigin(o)), source: 'MEDLEVO_ORIGIN' };
+  }
+  if (e.RENDER_EXTERNAL_URL !== undefined) return { origins: [normalizeOrigin(e.RENDER_EXTERNAL_URL, 'RENDER_EXTERNAL_URL')], source: 'RENDER_EXTERNAL_URL' };
+  return { origins: ['http://localhost:5173'], source: 'default' };
+}
+
+function resolveProxy(e: { MEDLEVO_TRUST_PROXY?: string; MEDLEVO_CLIENT_IP_HEADER?: string }): ProxyConfig {
+  try {
+    const trust = parseTrustProxy(e.MEDLEVO_TRUST_PROXY);
+    const clientIpHeader = parseClientIpHeader(e.MEDLEVO_CLIENT_IP_HEADER, trust);
+    return { trust, clientIpHeader, description: describeProxy(trust, clientIpHeader) };
+  } catch (err) {
+    if (err instanceof ProxyConfigError) throw new ConfigError(err.message);
+    throw err;
+  }
 }
 
 export interface LoadConfigOptions {
@@ -147,8 +205,9 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
 
   const cwd = opts.cwd ?? process.cwd();
   const dataDir = isAbsolute(e.MEDLEVO_DATA_DIR) ? e.MEDLEVO_DATA_DIR : resolve(cwd, e.MEDLEVO_DATA_DIR);
-  const origins = e.MEDLEVO_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean).map(normalizeOrigin);
+  const { origins, source: originSource } = resolveOrigins(e);
   if (origins.length === 0) throw new ConfigError('MEDLEVO_ORIGIN is required');
+  const proxy = resolveProxy(e);
 
   let webDistDir: string | null = null;
   if (e.MEDLEVO_WEB_DIST) webDistDir = isAbsolute(e.MEDLEVO_WEB_DIST) ? e.MEDLEVO_WEB_DIST : resolve(cwd, e.MEDLEVO_WEB_DIST);
@@ -156,6 +215,13 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
 
   const anthropicKey = e.ANTHROPIC_API_KEY?.trim() || null;
   const MB = 1024 * 1024;
+  let offsite: ReturnType<typeof parseOffsiteConfig>;
+  try {
+    offsite = parseOffsiteConfig(e);
+  } catch (err) {
+    if (err instanceof OffsiteConfigError) throw new ConfigError(err.message);
+    throw err;
+  }
 
   const config: AppConfig = {
     env: nodeEnv,
@@ -168,9 +234,11 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     port: e.MEDLEVO_PORT,
     origin: origins[0]!,
     allowedOrigins: origins,
+    originSource,
     // Secure cookies by default whenever the app is served over https; explicit env value wins.
     cookieSecure: e.MEDLEVO_COOKIE_SECURE ?? origins[0]!.startsWith('https://'),
-    trustProxy: e.MEDLEVO_TRUST_PROXY,
+    trustProxy: proxy.trust.mode !== 'none',
+    proxy,
     logLevel: e.MEDLEVO_LOG_LEVEL ?? (nodeEnv === 'test' ? 'silent' : 'info'),
     timezone: e.MEDLEVO_TIMEZONE,
     limits: {
@@ -203,7 +271,12 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     },
     allowExternalFetch: e.MEDLEVO_ALLOW_EXTERNAL_FETCH,
     webDistDir,
-    secrets: Object.freeze({ anthropicApiKey: () => anthropicKey }),
+    offsite: offsite.offsite,
+    secrets: Object.freeze({
+      anthropicApiKey: () => anthropicKey,
+      r2SecretAccessKey: offsite.secrets.r2SecretAccessKey,
+      backupEncryptionKey: offsite.secrets.backupEncryptionKey,
+    }),
   };
   // Make the secrets accessor non-enumerable as well (belt and braces for serializers/loggers).
   Object.defineProperty(config, 'secrets', { enumerable: false, writable: false, value: config.secrets });

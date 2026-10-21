@@ -6,6 +6,7 @@ import { createContext, useContext, useEffect, useInsertionEffect, useMemo, useR
 import type { AnnotationAnchor, LinkTarget } from '@medlevo/shared';
 import { useInkInternal } from './InkProvider';
 import { insertImage, startImageUploader } from './images';
+import { onRehomed } from './layers/rehome';
 
 export interface LinkChoice {
   target: LinkTarget;
@@ -59,6 +60,16 @@ export function InkHost({ links, currentPage, notify, children }: InkHostValue &
   useEffect(() => {
     startImageUploader();
   }, []);
+
+  // (P1-T2, ADR-0004 R2) writing the server refused on a read-only layer was re-created on «ملاحظاتي»: say so
+  useEffect(
+    () =>
+      onRehomed((n) => {
+        announce(n.message_ar);
+        ref.current.notify?.(n.message_ar);
+      }),
+    [announce],
+  );
 
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {

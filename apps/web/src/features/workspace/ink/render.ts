@@ -39,6 +39,11 @@ export interface RenderEnv {
   css: CSSStyleDeclaration | null;
   /** alpha for highlighter strokes (lower when the blend with the page is unavailable) */
   highlightAlpha?: number;
+  /**
+   * (P1-T2 review) the resolved ink palette (every colour token's computed value): display modes (e-ink, high contrast)
+   * and themes change it without changing `tone`, and cached ink tiles are bitmaps of these colours
+   */
+  palette?: string;
 }
 
 /** Highlighter alpha with the multiply/screen blend reaching the page: text keeps its full contrast. */
@@ -139,8 +144,8 @@ export function drawItem(ctx: CanvasRenderingContext2D, item: InkItem, env: Rend
   if (!paths) return;
   const style = isInkStroke(item) ? item.data.style : isShape(item) ? item.data.style : null;
   if (!style) return;
-  const color = resolveInkColor(style.color, env.tone, env.css);
   const highlighter = style.tool === 'highlighter';
+  const color = resolveInkColor(style.color, env.tone, env.css, highlighter ? 'highlighter' : 'pen');
   // never thinner than ~half a device pixel (stays visible when zoomed far out)
   const t = ctx.getTransform();
   const unitPx = Math.hypot(t.a, t.b) || 1;

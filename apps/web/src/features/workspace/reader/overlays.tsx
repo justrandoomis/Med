@@ -1,10 +1,12 @@
 // Overlays drawn in the page's UNROTATED layer (normalized boxes map straight to percentages; the layer
 // itself is rotated with the page). Region / evidence highlight (§11), text highlights, search hits.
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { liveQuery } from 'dexie';
 import type { NormBox, TextHighlightData } from '@medlevo/shared';
 import { cx } from '../../../design';
 import { getDb, type AnnotationRow } from '../../../lib/localdb';
+import { useLayerViewContext } from '../ink/layers/LayerViewProvider';
+import { layerPredicates } from '../ink/layers/model';
 
 function boxStyle(b: NormBox): React.CSSProperties {
   return { left: `${b.x * 100}%`, top: `${b.y * 100}%`, width: `${b.w * 100}%`, height: `${b.h * 100}%` };
@@ -67,10 +69,15 @@ export function TextHighlightsLayer({ targetKey }: { targetKey: string }) {
     ).subscribe({ next: setRows, error: () => setRows([]) });
     return () => sub.unsubscribe();
   }, [targetKey]);
-  if (rows.length === 0) return null;
+  // (Academic OS P1-T2 review) the same layer view as the ink: a highlight on a layer hidden in this study session is not
+  // drawn (a layer copy copies text highlights too); outside a reader with layers every highlight is drawn as before
+  const view = useLayerViewContext();
+  const visible = useMemo(() => (view ? layerPredicates(view.layers, view.session).visible : null), [view]);
+  const shown = visible ? rows.filter((r) => visible({ layer_id: r.layerId, anchor: r.anchor as { type: string; source_id?: string } | null })) : rows;
+  if (shown.length === 0) return null;
   return (
     <div className="wk-overlay" aria-hidden="true">
-      {rows.flatMap((r) => {
+      {shown.flatMap((r) => {
         const d = r.data as TextHighlightData;
         if (!d || !Array.isArray(d.rects)) return [];
         return d.rects.map((b, i) => (

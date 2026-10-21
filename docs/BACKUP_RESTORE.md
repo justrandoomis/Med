@@ -154,10 +154,14 @@ pulled it.
 
 ## 4. Suggested routine
 
-* Run `npm run backup -- --out <another disk>` daily (cron / systemd timer). Keep several generations.
-* Run `npm run restore:verify -- <latest archive>` weekly, or use «تحقّق» in the app.
-* Copy archives off the machine. They contain your whole study record, so treat them as private. Archives are not
-  encrypted. Use disk or transport encryption if they leave your control.
+* Hosted (Render): configure the off-site backup (§6). It runs daily, verifies each archive before uploading it,
+  encrypts it, keeps 7 daily + 4 weekly copies in Cloudflare R2, and the Control Center shows the last result.
+* Self-hosted: run `npm run backup -- --out <another disk>` daily (cron / systemd timer) and keep several generations,
+  or configure §6 there too.
+* Run `npm run restore:verify -- <latest archive>` weekly, or use «تحقّق» in the app (the off-site run does this for
+  every archive it uploads).
+* Copy archives off the machine. They contain your whole study record, so treat them as private. **Local** archives are
+  not encrypted; the off-site copies of §6 are.
 
 ## 5. Known limits
 
@@ -165,5 +169,116 @@ pulled it.
   moment (the file copy afterwards is streamed). The CLI has no such effect on the running server.
 * If a verification process is killed, its temporary `.medlevo-restore-*` directory can remain in the temp directory
   (or `--work-dir`). Delete it by hand.
-* No incremental or encrypted backups. No restore "into" a running server: restoring always means starting the
-  server on the new directory.
+* No incremental backups: every run is a full archive (R2 storage is cheap; see the guide's cost table). Local
+  archives are not encrypted (§6 encrypts the off-site copies). No restore "into" a running server: restoring always
+  means starting the server on the new directory.
+
+## 6. Off-site backups to Cloudflare R2 (PL-0)
+
+For a server you cannot touch (Render, managed from a phone) the server itself keeps an **encrypted copy outside the
+host**. Setup from a phone: [`DEPLOY_PHONE_AR.md`](DEPLOY_PHONE_AR.md). Code: `apps/server/src/modules/data/offsite*.ts`,
+`apps/server/src/lib/objectstore/*`, CLI `apps/server/src/cli/restore-offsite.ts`.
+
+### What one run does
+
+1. **Local backup** — the same archive as «أنشئ نسخة احتياطية الآن» (it appears in «بياناتك» → «النسخ الاحتياطي»).
+2. **Verification** — the same checks as `npm run restore:verify` (§2), including booting the app on the restored copy, in
+   `DATA_DIR/tmp`. A failed check stops the run: **nothing unverified is uploaded**. A backup made with warnings
+   (`files_missing`) is verified with the `--accept-missing-files` rule, and the warning is shown with the run.
+3. **Encryption on the server**, streamed (constant memory): format `MLVENC01` — a 64-byte header (magic, version, frame
+   size, key fingerprint, random 32-byte salt) then 1 MiB frames, each AES-256-GCM-sealed with its own tag. The file key
+   is HKDF-SHA256(master key, salt); frame nonces are a counter plus a «last frame» flag (the STREAM construction), and
+   the header is authenticated with every frame. A changed, reordered, dropped, duplicated, appended or truncated frame —
+   even a cut exactly at a frame boundary — fails authentication, and nothing is used.
+4. **Upload** to the bucket under `<prefix>backups/<archive name>.mlenc` (S3 API with Signature V4): one PUT for small
+   archives, otherwise a multipart upload with equal 16 MiB parts (R2's rule: every part but the last the same size,
+   ≥ 5 MiB, ≤ 10,000 parts). Each request is retried with backoff on network errors, 5xx, 429 and `SlowDown`; each
+   part's ETag is checked against its MD5. **Resume:** the upload id and the salt are stored in `data_offsite_backup`;
+   after a failed attempt or a restart the job (3 attempts) re-encrypts the same archive with the same salt — byte-
+   identical ciphertext — lists the parts R2 already holds and uploads only the missing ones. If R2 completed the upload but its answer was
+   lost, the retry finds no such upload; the object is then accepted only when it is there with exactly the announced
+   size (review fix, 2026-10-21 — before, the run was reported failed although the copy was stored). A `HEAD` then
+   confirms the stored size. Object metadata holds the key fingerprint, the backup id, the archive's sha256 and the app version
+   — never a secret.
+5. **Retention**: in R2, the newest backup of each of the last `MEDLEVO_BACKUP_KEEP_DAILY` days (default 7) and of each
+   of the last `MEDLEVO_BACKUP_KEEP_WEEKLY` ISO weeks (default 4) stays; older MedLevo objects under the prefix are
+   deleted (other objects are never touched; nothing is deleted if the new copy does not show in the listing). On the
+   server disk only the newest `MEDLEVO_BACKUP_KEEP_LOCAL` (default 1) archives **made by off-site runs** stay; manual
+   and CLI backups are never deleted by it. A run that finally **fails** also cleans up (review fix, 2026-10-21): its
+   unfinished multipart upload is aborted, and older off-site-run archives beyond the retention are deleted while its
+   own archive (a verified local copy when only the upload failed) and the newest archive whose verification passed stay
+   (a run whose verification failed never displaces it) — before, every
+   failed run (e.g. one a day with a wrong R2 secret) left a full archive on the disk the live database is on.
+   One bucket prefix per server: two servers writing to the same `MEDLEVO_R2_PREFIX` would prune each other's copies.
+
+**Schedule:** `MEDLEVO_BACKUP_SCHEDULE` = `HH:MM` in `MEDLEVO_TIMEZONE` (default `03:15`) or `off`. The scheduler runs
+inside the server once it listens; a slot missed while the server was down runs at the next start; a slot with any run
+(scheduled or manual, successful or not) does not run again; nothing runs before the owner account exists. A run whose
+job is no longer queued or running (a crash or an out-of-memory kill on its last attempt, after which the job queue
+fails the job at the next boot) is closed as interrupted on every status read, «نسخ احتياطي الآن» and scheduler tick —
+before the review fix (2026-10-21) it stayed «running» for good and blocked every later off-site backup.
+
+**Control Center → «النسخ الاحتياطي خارج الخادم»** (`GET /api/data/offsite`): configured or not (missing settings are
+named, never their values), last successful copy (time, encrypted size, result), last attempt and its reason, the next
+scheduled run, retention, recent runs, and **«نسخ احتياطي الآن»** (`POST /api/data/offsite/run`; disabled with its reason
+when R2 is not configured or a run is in progress; 3 per 10 minutes). «اعرض النسخ المحفوظة في R2»
+(`GET /api/data/offsite/remote`) lists the copies, each with its restore command.
+
+### Settings (environment only)
+
+| variable | meaning |
+|---|---|
+| `MEDLEVO_R2_ACCOUNT_ID` | Cloudflare account id → endpoint `https://<id>.r2.cloudflarestorage.com` |
+| `MEDLEVO_R2_ENDPOINT` | instead of the account id: an EU-jurisdiction endpoint or another S3-compatible store (https only) |
+| `MEDLEVO_R2_BUCKET` | the bucket (render.yaml: `medlevo-backups`) |
+| `MEDLEVO_R2_ACCESS_KEY_ID`, `MEDLEVO_R2_SECRET_ACCESS_KEY` | an R2 API token with **Object Read & Write on this bucket only** (least privilege: no admin, no other buckets) |
+| `MEDLEVO_BACKUP_ENCRYPTION_KEY` | 32 random bytes, base64 (Render generates it) or 64 hex characters |
+| `MEDLEVO_R2_PREFIX` | key prefix, default `medlevo/` |
+| `MEDLEVO_BACKUP_SCHEDULE`, `MEDLEVO_BACKUP_KEEP_DAILY`, `MEDLEVO_BACKUP_KEEP_WEEKLY`, `MEDLEVO_BACKUP_KEEP_LOCAL` | above |
+
+Missing or invalid R2 settings never stop the server (off-site backups are then «غير مُعدّ»); a malformed schedule or
+retention number does, with a message naming the variable.
+
+> **The encryption key is the only way to read the off-site copies.** It is never stored in the database, a backup,
+> a log or R2 — only its fingerprint is. Lose it and every off-site backup is unreadable: there is no recovery, by
+> design. Copy it to a password manager (or print it) the day you deploy. Changing it later is safe for new backups;
+> older copies still need the old key (the restore command says which fingerprint an archive needs).
+
+### Restoring from R2 — one command in the Render Shell
+
+```bash
+medlevo-restore-offsite --list          # what R2 holds, newest first
+medlevo-restore-offsite --latest        # restore the newest copy
+medlevo-restore-offsite --key medlevo-backup-20261020-001500Z-ab12cd34.tar.gz
+```
+
+It downloads the object (resuming a broken or timed-out download with a Range request for as long as each round brings new bytes; only rounds without progress count as failed attempts), decrypts and authenticates it, runs every
+§2 check, and restores into a **new** directory beside the live data on the same disk
+(`/var/data/medlevo-restored-<time>` on Render) — never over the live data, never on another disk unless
+`--allow-other-disk`. It prints the one setting to add: `MEDLEVO_DATA_DIR=<that directory>` in Render →
+Environment (render.yaml deliberately does not define it, so a Blueprint sync never moves the server back to the old
+directory — DEPLOYMENT.md §8.3); Render redeploys and the server starts on the restored data (new sync epoch, every session revoked,
+devices re-send what the backup lacks, §3). `--verify-only` downloads, decrypts and checks without restoring. If the
+Shell session does not carry the service's environment, the command takes MedLevo's own variables from the running
+server (PID 1). Run as root, it gives the restored files to the owner of the live data directory. Elsewhere:
+`node --import tsx apps/server/src/cli/restore-offsite.ts --latest` from the repository root.
+
+**Why a Shell command and not a button in the app.** A restore replaces everything the owner wrote since the backup.
+As a web action it would be one stolen session or one XSS away from wiping recent work, and it would have to swap the
+data directory under a running server. In the Shell it needs a second, separate login (the Render account, with its
+own 2FA), it never touches the live directory (new directory + one variable), and the running server is never switched
+underneath itself. The app shows the exact command with a copy button, which is all a phone needs.
+
+### Tests and honesty
+
+* `apps/server/test/deploy/objectstore-sigv4.test.ts` — the signer reproduces AWS's five published Signature V4 examples.
+* `apps/server/test/data/objectstore.test.ts` — encryption round trips at every frame boundary, tamper / reorder /
+  truncation / wrong-key refusals; the S3 client against `test/data/fake-s3.ts`, an in-process S3 fake that **verifies
+  every request's SigV4 signature, payload hash and clock skew as received**: retries, refusals not retried, resumed
+  downloads, multipart upload with a failing part resumed without re-sending stored parts.
+* `apps/server/test/data/offsite.test.ts`, `offsite-schedule.test.ts`, `offsite-cli.test.ts` — the whole run, honest
+  «not configured» states, retention (remote and local), the schedule (catch-up, one run per slot, DST), restore from
+  the fake (verify-only, restore beside the data, wrong key, damaged object), the CLI as a real process, and no secret
+  in the API, the database or the bucket.
+* Docker: the same flow inside the image (DEPLOYMENT.md §8.5).
+* **Not run:** Cloudflare R2 itself, Render's Shell. The fake implements R2's documented multipart rules but is not R2.

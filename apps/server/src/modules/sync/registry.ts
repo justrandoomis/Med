@@ -5,7 +5,7 @@
 //    (append-only insert-if-absent, rev-based keep-both, tombstones, ...). The engine never does blind LWW.
 //  * modules call touch(entityType, id) inside the same transaction as their write; pull reads the
 //    monotonic sync_change feed (one row per entity at its latest seq).
-import type { SyncChange, SyncOp, SyncOpResult, SyncPullResponse, SyncPushResponse, SyncResult } from '@medlevo/shared';
+import type { SyncChange, SyncDetailCode, SyncOp, SyncOpResult, SyncPullResponse, SyncPushResponse, SyncResult } from '@medlevo/shared';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/db';
 import { fromJson, toJson } from '../../db/db';
@@ -18,6 +18,16 @@ export interface SyncTx {
   deviceId: string;
   /** record a change for pull (call for every entity row you write, including conflict copies) */
   touch(entityType: string, entityId: string): void;
+  /** (P1-T2 seam) how the requesting client wants entities serialised (e.g. `accept-ink: 2`); absent = today's shape */
+  format?: SerializeOptions;
+}
+
+/**
+ * (Academic OS P1-T2 seam, ARCHITECTURE_DELTA §8.2) per-request serialisation options, taken from request headers by the
+ * sync routes. `inkFormat: 2` only when the client sent `accept-ink: 2`; every older client gets today's shape.
+ */
+export interface SerializeOptions {
+  inkFormat?: 1 | 2;
 }
 
 export interface SyncApplyResult {
@@ -26,13 +36,18 @@ export interface SyncApplyResult {
   entity?: unknown;
   /** Arabic, human-readable detail (e.g. why rejected / where the kept copy went) */
   detail?: string;
+  /**
+   * (P1-T2 seam) machine-readable reason of a FINAL rejection (`layer_read_only`, `layer_forbidden`, `use_crdt`);
+   * recorded with the verdict, so a retried op_id gets it back with its `duplicate` answer
+   */
+  detail_code?: SyncDetailCode;
 }
 
 export interface SyncEntityHandler {
   /** Apply one op synchronously inside the engine's transaction. Throw AppError to reject. */
   apply(op: SyncOp, tx: SyncTx): SyncApplyResult;
-  /** Current server representation (null when deleted/absent). */
-  serialize(id: string): unknown | null;
+  /** Current server representation (null when deleted/absent); `opts` from the request (e.g. `accept-ink: 2`). */
+  serialize(id: string, opts?: SerializeOptions): unknown | null;
 }
 
 interface SyncOperationRow {
@@ -42,6 +57,8 @@ interface SyncOperationRow {
   result: SyncResult;
   result_detail: string | null;
   server_seq: number;
+  /** migration 0271 (P1-T2) */
+  detail_code?: string | null;
 }
 
 export const MAX_PUSH_OPS = 500;
@@ -94,15 +111,15 @@ export class SyncRegistry {
     return r?.seq ?? 0;
   }
 
-  push(ops: SyncOp[]): SyncPushResponse {
+  push(ops: SyncOp[], opts?: SerializeOptions): SyncPushResponse {
     const results: SyncOpResult[] = [];
-    for (const op of ops) results.push(this.applyOne(op));
+    for (const op of ops) results.push(this.applyOne(op, opts));
     return { results, server_seq: this.headSeq() };
   }
 
-  private applyOne(op: SyncOp): SyncOpResult {
+  private applyOne(op: SyncOp, opts?: SerializeOptions): SyncOpResult {
     const seen = this.db.get<SyncOperationRow>('SELECT * FROM sync_operation WHERE op_id = ?', [op.op_id]);
-    if (seen) return this.duplicateOf(op, seen);
+    if (seen) return this.duplicateOf(op, seen, opts);
 
     const handler = this.handlers.get(op.entity_type);
     if (!handler) {
@@ -114,9 +131,9 @@ export class SyncRegistry {
       return this.db.tx(() => {
         // re-check inside the write lock (two concurrent pushes of the same op)
         const again = this.db.get<SyncOperationRow>('SELECT * FROM sync_operation WHERE op_id = ?', [op.op_id]);
-        if (again) return this.duplicateOf(op, again);
+        if (again) return this.duplicateOf(op, again, opts);
         const now = this.clock.now();
-        const tx: SyncTx = { db: this.db, now, deviceId: op.device_id, touch: (t, id) => void this.touch(t, id) };
+        const tx: SyncTx = { db: this.db, now, deviceId: op.device_id, touch: (t, id) => void this.touch(t, id), ...(opts ? { format: opts } : {}) };
         let applied: SyncApplyResult;
         try {
           // own SAVEPOINT: a handler that writes and then rejects (AppError) leaves no partial writes behind
@@ -127,8 +144,8 @@ export class SyncRegistry {
         }
         const seqAfter = this.headSeq();
         this.db.run(
-          `INSERT INTO sync_operation (op_id, device_id, entity_type, entity_id, op, base_rev, payload_json, result, result_detail, client_ts, server_seq, received_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO sync_operation (op_id, device_id, entity_type, entity_id, op, base_rev, payload_json, result, result_detail, client_ts, server_seq, received_at, detail_code)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             op.op_id,
             op.device_id,
@@ -142,12 +159,14 @@ export class SyncRegistry {
             op.client_ts ?? null,
             seqAfter,
             now,
+            applied.detail_code ?? null,
           ],
         );
         // server_seq (track D1, additive): a client keeps it with the acknowledged op (see shared SyncOpResult)
         const out: SyncOpResult = { op_id: op.op_id, result: applied.result, server_seq: seqAfter };
         if (applied.entity !== undefined) out.entity = applied.entity;
         if (applied.detail) out.detail = applied.detail;
+        if (applied.detail_code) out.detail_code = applied.detail_code;
         return out;
       });
     } catch (e) {
@@ -157,19 +176,20 @@ export class SyncRegistry {
     }
   }
 
-  private duplicateOf(op: SyncOp, row: SyncOperationRow): SyncOpResult {
+  private duplicateOf(op: SyncOp, row: SyncOperationRow, opts?: SerializeOptions): SyncOpResult {
     // server_seq (track D1, additive): where the ORIGINAL op landed in the change feed
     const out: SyncOpResult = { op_id: op.op_id, result: 'duplicate', original_result: row.result, server_seq: row.server_seq };
     if (row.result_detail) out.detail = row.result_detail;
+    if (row.detail_code) out.detail_code = row.detail_code as SyncDetailCode;
     const handler = this.handlers.get(row.entity_type);
     if (handler) {
-      const entity = handler.serialize(row.entity_id);
+      const entity = handler.serialize(row.entity_id, opts);
       if (entity !== null && entity !== undefined) out.entity = entity;
     }
     return out;
   }
 
-  pull(since: number, limit = 200): SyncPullResponse {
+  pull(since: number, limit = 200, opts?: SerializeOptions): SyncPullResponse {
     const lim = Math.min(Math.max(1, Math.floor(limit)), MAX_PULL_LIMIT);
     const rows = this.db.all<{ seq: number; entity_type: string; entity_id: string }>(
       'SELECT seq, entity_type, entity_id FROM sync_change WHERE seq > ? ORDER BY seq LIMIT ?',
@@ -178,7 +198,7 @@ export class SyncRegistry {
     const page = rows.slice(0, lim);
     const changes: SyncChange[] = page.map((r) => {
       const handler = this.handlers.get(r.entity_type);
-      return { seq: r.seq, entity_type: r.entity_type, entity_id: r.entity_id, entity: handler ? (handler.serialize(r.entity_id) ?? null) : null };
+      return { seq: r.seq, entity_type: r.entity_type, entity_id: r.entity_id, entity: handler ? (handler.serialize(r.entity_id, opts) ?? null) : null };
     });
     const last = page[page.length - 1];
     return { changes, next_since: last ? last.seq : since, has_more: rows.length > lim };

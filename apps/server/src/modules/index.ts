@@ -23,6 +23,7 @@ import dataModule from './data';
 import casesModule from './cases';
 import mediaModule from './media';
 import brainModule from './brain';
+import versionsModule from './versions';
 
 export interface ModuleEntry {
   name: string;
@@ -56,4 +57,6 @@ export const MODULES: ModuleEntry[] = [
   { name: 'media', prefix: '/api/media', plugin: mediaModule },
   // Course Brain (track F2): knowledge structure, concept corrections, maps, coverage
   { name: 'brain', prefix: '/api/brain', plugin: brainModule },
+  // Academic OS P1-T3: lecture identity, page fingerprints, version page maps, compare, link candidates
+  { name: 'versions', prefix: '/api/versions', plugin: versionsModule },
 ];

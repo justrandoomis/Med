@@ -6,6 +6,11 @@ import type { OwnerSettings } from './settings';
 // ───────── auth (/api/auth) ─────────
 export const SESSION_COOKIE_NAME = 'medlevo_session';
 export const CSRF_HEADER_NAME = 'x-medlevo-csrf';
+/**
+ * (Academic OS, ARCHITECTURE_DELTA §4.5 / §7.1) every request will carry `x-medlevo-client: <app version>`; a missing or
+ * pre-multi-user version is answered `426 CLIENT_TOO_OLD` once accounts ship (release R1-b). Not sent or checked yet.
+ */
+export const CLIENT_VERSION_HEADER_NAME = 'x-medlevo-client';
 export const RECOVERY_CODE_COUNT = 10;
 
 export interface SessionInfo {
@@ -201,7 +206,15 @@ export interface SyncOpResult {
    * in the restored data and is sent again.
    */
   server_seq?: number;
+  /**
+   * (Academic OS, ARCHITECTURE_DELTA §8.2, additive) machine-readable reason of a rejection. Transient ones
+   * (`device_unknown`, `not_a_member`, `quota_exceeded`, `op_id_taken`) come with `retryable: true` and are never
+   * recorded; final ones (`layer_read_only`, `layer_forbidden`, `use_crdt`) are. Old clients ignore it.
+   */
+  detail_code?: SyncDetailCode;
 }
+export const SYNC_DETAIL_CODES = ['layer_read_only', 'layer_forbidden', 'use_crdt', 'device_unknown', 'op_id_taken', 'not_a_member', 'quota_exceeded'] as const;
+export type SyncDetailCode = (typeof SYNC_DETAIL_CODES)[number];
 export interface SyncPushRequest {
   ops: SyncOp[];
   /**

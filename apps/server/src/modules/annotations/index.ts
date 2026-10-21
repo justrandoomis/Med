@@ -5,6 +5,31 @@
 //  * sync entity handlers: annotation, note, note_page, study_session (merge policies in ./sync.ts)
 //  * read APIs for the reader, the ink engine, offline download and Continue Studying
 //  * reading progress (pages shown) — Reading Progress only, never mastery (§45)
+//  * (Academic OS P1-T2) authorship layers: /layers (list, create, rename / show / hide / lock), /layers/copy
+//    («انسخ الطبقة», preview first), /layers/:id/history (read-only «سجل الطبقة»); sync entity `annotation_layer`;
+//    layer rules R1–R6 in ./sync.ts + ./layers.ts; history in ./history.ts; purge of layers, revisions and attribution
+//    through the purge-extension seam (./purgeExtension.ts); ink v2 (`accept-ink: 2`) on the sync and read paths
+//  * (Academic OS P1-T2 step 3) «انقل ملاحظاتي إلى الإصدار الجديد» — copy, never move (./reanchorCopy.ts):
+//    GET /reanchor-copy (read-only preview), POST /reanchor-copy (the owner's tap), POST /reanchor-copy/undo; the review
+//    list's decisions reuse Round 7's POST /reanchor with `action: 'copy' | 'keep_on_previous' | 'review_again'`
+import {
+  ACCEPT_INK_HEADER,
+  copyLayersRequestSchema,
+  documentKeySchema,
+  layerCreateSchema,
+  layerPatchSchema,
+  parseAcceptInk,
+  reanchorCopyActionSchema,
+  reanchorCopyRunSchema,
+  reanchorCopyUndoSchema,
+  type CopyLayersResponse,
+  type ReanchorCopyActionResponse,
+  type ReanchorCopyPreview,
+  type ReanchorCopyRunResponse,
+  type LayerHistoryPage,
+  type LayersResponse,
+  type LayerView,
+} from '@medlevo/shared';
 import type {
   AskContextResponse,
   RecognitionListResponse,
@@ -25,6 +50,7 @@ import type {
   SourceAnnotationsResponse,
 } from '@medlevo/shared';
 import type { FastifyInstance } from 'fastify';
+import { newId } from '@medlevo/shared';
 import { z } from 'zod';
 import type { ModuleOptions } from '../../context';
 import { AppError } from '../../lib/errors';
@@ -47,8 +73,13 @@ import {
 import { detectTools } from '../processing/tools';
 import { createPageCrop, pageCropBody } from './pageCrop';
 import { reanchor } from './reanchor';
+import { previewReanchorCopy, reanchorCopyAction, runReanchorCopy, undoReanchorCopy } from './reanchorCopy';
 import { AnnotationsService, MAX_TARGET_KEYS } from './service';
 import { registerAnnotationSync } from './sync';
+import { listLayerHistory } from './history';
+import { copyLayer } from './layerCopy';
+import { defaultLayerRow, getLayer, layerOpPayload, listLayers } from './layers';
+import { registerLayersPurge, registerReanchorCopyPurge } from './purgeExtension';
 
 const ID = z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/);
 
@@ -74,6 +105,8 @@ const nodeParams = z.object({ nodeId: ID });
 const imageParams = z.object({ key: ID });
 const reanchorQuery = z.object({ source_id: ID.optional(), limit: z.coerce.number().int().min(1).max(500).default(200) });
 const latestQuery = z.object({ source_id: ID });
+const reanchorCopyQuery = z.object({ source_id: ID, from_version_id: ID.optional(), to_version_id: ID.optional() });
+const CROSS_VERSION_ACTIONS = new Set(['copy', 'keep_on_previous', 'review_again']);
 const recentQuery = z.object({ limit: z.coerce.number().int().min(1).max(20).default(5) });
 const progressBody = z
   .object({
@@ -86,8 +119,20 @@ const progressBody = z
     message: 'حدّد رقم الصفحة التي عُرضت (page_index أو page_indexes).',
   });
 
+const layersQuery = z.object({ document_key: documentKeySchema });
+const layerParams = z.object({ id: ID });
+const historyQuery = z.object({
+  document_key: documentKeySchema.optional(),
+  before: z.string().max(120).optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+});
+
 export default async function register(app: FastifyInstance, { ctx }: ModuleOptions): Promise<void> {
   registerAnnotationSync(ctx.sync, ctx.db);
+  // (P1-T2) a purge deletes the layers of purged documents, and the history and attribution of purged items
+  registerLayersPurge(ctx);
+  // (P1-T2 step 3) a purge deletes the note-migration records of purged lectures, versions and items
+  registerReanchorCopyPurge(ctx);
   const svc = new AnnotationsService(ctx);
 
   ctx.capabilities.set('workspace.reader', 'available');
@@ -99,6 +144,10 @@ export default async function register(app: FastifyInstance, { ctx }: ModuleOpti
   // when no vision-capable AI provider is configured (FEATURE_AI_TASK / AI_DEPENDENT_FEATURES).
   ctx.capabilities.set('workspace.handwriting_recognition', 'available');
   registerRecognitionJob(ctx);
+  // (P1-T2, ADR-0005 B.4) the e-ink display mode is built (web: design/themeDisplay.ts). It is a setting of each device,
+  // suggested only when the browser reports `(update: slow)`; no device is named or detected. Native e-ink paths
+  // (BOOX pen SDK) are separate and not built (PL-3).
+  ctx.capabilities.set('ui.eink_mode', 'available');
 
   app.get('/by-targets', async (req): Promise<AnnotationsByTargetsResponse> => {
     const q = parseQuery(byTargetsQuery, req);
@@ -106,13 +155,57 @@ export default async function register(app: FastifyInstance, { ctx }: ModuleOpti
     if (keys.length > MAX_TARGET_KEYS) {
       throw new AppError('VALIDATION_FAILED', `عدد الصفحات المطلوبة في طلب واحد أكبر من الحد (${MAX_TARGET_KEYS}).`, 400);
     }
-    return { annotations: svc.byTargets(keys, q.include_deleted === '1' || q.include_deleted === 'true') };
+    return { annotations: svc.byTargets(keys, q.include_deleted === '1' || q.include_deleted === 'true', parseAcceptInk(req.headers[ACCEPT_INK_HEADER])) };
   });
 
   app.get('/source/:sourceId', async (req): Promise<SourceAnnotationsResponse> => {
     const { sourceId } = parseParams(sourceParams, req);
     const q = parseQuery(versionQuery, req);
-    return svc.forSource(sourceId, q.version_id);
+    return svc.forSource(sourceId, q.version_id, parseAcceptInk(req.headers[ACCEPT_INK_HEADER]));
+  });
+
+  // ── (P1-T2) authorship layers (ARCHITECTURE_DELTA §7.5) ──
+  app.get('/layers', async (req): Promise<LayersResponse> => {
+    const q = parseQuery(layersQuery, req);
+    return { document_key: q.document_key, layers: listLayers(ctx.db, q.document_key, ctx.clock.now()) };
+  });
+
+  /** A REST layer write is applied as a sync op of this server: same rules, recorded, in the change feed for devices. */
+  const applyLayerOp = (id: string, payload: unknown, baseRev: number | null, deviceId: string | null): LayerView => {
+    const res = ctx.sync.push([
+      { op_id: `rest_${newId(ctx.clock.now())}`, device_id: deviceId ?? 'server', entity_type: 'annotation_layer', entity_id: id, op: 'upsert', base_rev: baseRev, payload, client_ts: ctx.clock.now() },
+    ]).results[0]!;
+    if (res.result === 'rejected') {
+      throw new AppError(res.detail_code === 'layer_read_only' ? 'LAYER_READ_ONLY' : 'VALIDATION_FAILED', res.detail ?? 'تعذّر حفظ الطبقة.', res.detail_code === 'layer_read_only' ? 409 : 400, res.detail_code ? { detail_code: res.detail_code } : undefined);
+    }
+    const row = getLayer(ctx.db, id)!;
+    return listLayers(ctx.db, row.document_key, ctx.clock.now()).find((l) => l.id === id)!;
+  };
+  const deviceOf = (req: { headers: Record<string, unknown> }) => {
+    const d = req.headers['x-medlevo-device'];
+    return typeof d === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(d) ? d : null;
+  };
+
+  app.post('/layers', async (req): Promise<LayerView> => {
+    const b = parseBody(layerCreateSchema, req);
+    return applyLayerOp(b.id, { ...b }, null, deviceOf(req));
+  });
+
+  app.patch('/layers/:id', async (req): Promise<LayerView> => {
+    const { id } = parseParams(layerParams, req);
+    const patch = parseBody(layerPatchSchema, req);
+    const q = parseQuery(z.object({ document_key: documentKeySchema.optional() }), req);
+    const row = getLayer(ctx.db, id) ?? (q.document_key ? defaultLayerRow(ctx.db, q.document_key, ctx.clock.now()) : undefined);
+    if (!row || row.id !== id || row.deleted_at !== null) throw new AppError('NOT_FOUND', 'الطبقة غير موجودة.', 404);
+    return applyLayerOp(id, layerOpPayload(row, patch), getLayer(ctx.db, id) ? row.rev : null, deviceOf(req));
+  });
+
+  app.post('/layers/copy', async (req): Promise<CopyLayersResponse> => copyLayer(ctx, parseBody(copyLayersRequestSchema, req), { deviceId: deviceOf(req) }));
+
+  app.get('/layers/:id/history', async (req): Promise<LayerHistoryPage> => {
+    const { id } = parseParams(layerParams, req);
+    const q = parseQuery(historyQuery, req);
+    return listLayerHistory(ctx.db, id, { documentKey: q.document_key, before: q.before, limit: q.limit });
   });
 
   app.get('/notes', async (req): Promise<NotesResponse> => {
@@ -188,7 +281,20 @@ export default async function register(app: FastifyInstance, { ctx }: ModuleOpti
 
   // (H3 item 2) the owner's re-anchoring decision for a note / highlight / ink group: move it to a chosen place (a page,
   // a paragraph on a page, a Study Book paragraph) or keep it detached — previous anchor kept, audited, synced
-  app.post('/reanchor', async (req): Promise<ReanchorResponse> => reanchor(ctx, req));
+  // (P1-T2 step 3) the same route, reused AS A COPY for the cross-version review list: `action: 'copy'` copies the items to
+  // the page picked on the newer version (the originals stay on theirs), `keep_on_previous` / `review_again` record the
+  // owner's choice — nothing is ever moved off its version from here
+  app.post('/reanchor', async (req): Promise<ReanchorResponse | ReanchorCopyActionResponse> => {
+    const action = (req.body as { action?: unknown } | null | undefined)?.action;
+    if (typeof action === 'string' && CROSS_VERSION_ACTIONS.has(action)) return reanchorCopyAction(ctx, parseBody(reanchorCopyActionSchema, req), { deviceId: deviceOf(req) });
+    return reanchor(ctx, req);
+  });
+
+  // (P1-T2 step 3) «انقل ملاحظاتي إلى الإصدار الجديد»: the preview (read-only: nothing changes before the tap), the tap
+  // (one transaction; a second tap copies nothing) and the one-step undo (tombstones that run's copies only)
+  app.get('/reanchor-copy', async (req): Promise<ReanchorCopyPreview> => previewReanchorCopy(ctx, parseQuery(reanchorCopyQuery, req)));
+  app.post('/reanchor-copy', async (req): Promise<ReanchorCopyRunResponse> => runReanchorCopy(ctx, parseBody(reanchorCopyRunSchema, req), { deviceId: deviceOf(req) }));
+  app.post('/reanchor-copy/undo', async (req): Promise<ReanchorCopyRunResponse> => undoReanchorCopy(ctx, parseBody(reanchorCopyUndoSchema, req).run_id, { deviceId: deviceOf(req) }));
 
   // (H3 item 4) «بطاقة إخفاء في صورة» from a lasso selection: the source page area under the box, cut by the server from
   // the stored source file (pdftoppm for PDFs — refused with the reason when it is not installed)

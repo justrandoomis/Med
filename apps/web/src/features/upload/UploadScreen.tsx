@@ -20,7 +20,8 @@ import { MoveDialog } from '../library/components/FolderPicker';
 import { Bytes, countAr, formatBytes, NOUN } from '../library/labels';
 import { pathOf } from '../library/model';
 import { useLibrary } from '../library/useLibrary';
-import { ProcessingStatusView, useProcessingStatus } from '../sources/ProcessingStatus';
+import { isProcessingActive, ProcessingStatusView, useProcessingStatus } from '../sources/ProcessingStatus';
+import { ImportSuggestions } from './ImportSuggestions';
 import { batchSummary, describeItem, type QueueItem } from './results';
 import { postMultipart } from './uploadXhr';
 import '../library/library.css';
@@ -379,6 +380,7 @@ function AcceptedProcessing({ sourceId, versionId, format }: { sourceId: string;
           </Link>
         )}
       </div>
+      <ImportSuggestions sourceId={sourceId} processed={!!status && !isProcessingActive(status) && status.job?.status !== 'failed'} />
     </div>
   );
 }

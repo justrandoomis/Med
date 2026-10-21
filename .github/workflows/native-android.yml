@@ -1,0 +1,84 @@
+# MedLevo Android shell — S Pen and BOOX (Academic OS P1-T2 step 2 — skeleton; ADR-0005 B.1, B.5; PRD §5.3 PL-3).
+# Runs ONLY when started by hand (Actions → «Native Android» → Run workflow). Nothing in this file has ever been run:
+# the container this skeleton was written in has no Android SDK, emulator, device or Play signing key, so no APK / AAB
+# has been built, signed or installed («Not run (no Android SDK / device)»).
+#
+# Signing material is read from GitHub encrypted secrets by NAME only (set by the owner once the Google Play developer
+# account exists — PRD Q19, decision point D-G):
+#   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
+# Without them the build job stops after an unsigned debug build.
+name: Native Android
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Build a signed release bundle (needs the signing secrets)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  NODE_OPTIONS: --disable-warning=ExperimentalWarning
+
+jobs:
+  static-checks:
+    name: static checks (config schema, workflows)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Native skeleton static checks
+        run: node apps/native/scripts/check-native.mjs
+      - name: Native skeleton tests
+        run: node --test apps/native/test/static-checks.test.mjs
+
+  build:
+    name: Android build (Gradle)
+    needs: static-checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Build the web app (the same bundle the PWA serves)
+        run: |
+          npm ci
+          npm run build
+      - name: Install the shell and add the Android project
+        working-directory: apps/native
+        run: |
+          npm install --no-audit --no-fund
+          npx cap add android
+          npx cap sync android
+      - name: Unsigned debug build
+        working-directory: apps/native/android
+        run: ./gradlew assembleDebug
+      - name: Signed release bundle
+        if: ${{ inputs.release }}
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::error::Signing secrets are not set — no signed bundle is possible (see the header of this file)."
+            exit 1
+          fi
+          echo "Release signing is added with PL-3 (Android app); this skeleton stops here."
+          exit 1

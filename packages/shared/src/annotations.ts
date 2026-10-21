@@ -32,6 +32,16 @@ export interface InkData {
 }
 
 /**
+ * (Academic OS, P1-T2 step 2 — ADR-0004 §2.5) Ink data v2: the same stroke with its points packed
+ * (`points_packed` = base64 of zigzag-delta varints, codec in `academic/ink-codec.ts`). Sent only to clients that
+ * send `accept-ink: 2`, and accepted from them on push; the server stores and serves v1 to everyone else.
+ */
+export interface InkDataV2 extends Omit<InkData, 'v' | 'points'> {
+  v: 2;
+  points_packed: string;
+}
+
+/**
  * (track F4, §29) Time link of a pen stroke to an in-app recording: `offset_ms` from the start of the recording.
  * `auto` = set because the stroke was written while recording; `manual` = the owner changed it.
  */
@@ -96,6 +106,14 @@ export interface BookmarkData {
 
 export type AnnotationKind = 'ink' | 'highlight' | 'underline' | 'shape' | 'text' | 'sticky' | 'image' | 'bookmark' | 'link' | 'text_highlight';
 
+/**
+ * (Academic OS, ARCHITECTURE_DELTA §4.3) how an annotation row came to exist: written on a device (every row before
+ * this release), or copied by the server (`layer_copy` = «انسخ الطبقة», `reanchor_copy` = a note carried to a new
+ * version; the follow / fork / publish copies arrive with the channels release).
+ */
+export const ANNOTATION_ORIGINS = ['device', 'crdt_projection', 'publish_copy', 'follow_copy', 'fork_copy', 'layer_copy', 'reanchor_copy'] as const;
+export type AnnotationOrigin = (typeof ANNOTATION_ORIGINS)[number];
+
 export type AnnotationAnchor =
   | { type: 'page'; source_id: string; version_id: string; page_id: string; page_index: number; space: 'page_norm' }
   | { type: 'note_page'; note_page_id: string; space: 'page_norm' }
@@ -133,6 +151,17 @@ export interface AnnotationDTO {
   deleted_at: number | null;
   /** (H3 item 2) the owner chose to keep this item detached from any place (it stays listed, never deleted) */
   detached_at?: number | null;
+  /**
+   * (Academic OS, P1-T2) the authorship layer (`annotation_layer.id`). Absent or null = the default personal layer of
+   * the document («ملاحظاتي»): every row written before layers existed, and every op of an older client.
+   */
+  layer_id?: string | null;
+  /** (P1-T2) who wrote it; null in a vault = the vault's own user */
+  author_user_id?: string | null;
+  /** (P1-T2) the item a layer copy / re-anchor copy was made from (the original is never changed) */
+  migrated_from_id?: string | null;
+  /** (P1-T2) how the row came to exist (server-set; a client's value is ignored) */
+  origin?: AnnotationOrigin;
 }
 
 export interface NoteDTO {
@@ -153,6 +182,12 @@ export interface NoteDTO {
   previous_anchor?: AnnotationAnchor | null;
   /** (H3 item 2) the owner chose to keep this note detached from any place */
   detached_at?: number | null;
+  /** (P1-T2) the authorship layer; absent / null = the default personal layer of the document */
+  layer_id?: string | null;
+  /** (P1-T2) who wrote it; null in a vault = the vault's own user */
+  author_user_id?: string | null;
+  /** (P1-T2) the note a layer copy / re-anchor copy was made from */
+  migrated_from_id?: string | null;
 }
 
 export interface NotePageDTO {
@@ -182,8 +217,14 @@ export interface StudyLocation {
   rotation?: number;
   layout?: 'single' | 'double' | 'continuous';
   rail?: { open: boolean; width: number; tab: string };
-  left_panel?: { open: boolean; tab: 'thumbnails' | 'outline' | 'bookmarks' };
+  left_panel?: { open: boolean; tab: 'thumbnails' | 'outline' | 'bookmarks' | 'layers' };
   split?: { mode: string; secondary_source_id?: string; secondary_page_index?: number } | null;
+  /**
+   * (Academic OS, P1-T2 — ARCHITECTURE_DELTA §6.6) layers shown in THIS study session: the ids hidden here (the
+   * default personal layer is `default_personal_layer`'s id) and the layer new writing goes to (null = «ملاحظاتي»).
+   * Absent = every layer as its own `visible` default says.
+   */
+  layers?: { hidden?: string[]; active?: string | null };
 }
 
 export interface StudySessionDTO {

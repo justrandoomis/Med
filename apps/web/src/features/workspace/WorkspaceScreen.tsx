@@ -34,7 +34,10 @@ import type { ReaderLocation, StartDecision } from './model/session';
 import { clampZoom, zoomIn, zoomOut, zoomPercent } from './model/zoom';
 import { SourceNavigationContext, parseBbox, studyUrl, type OpenSourceLocationRequest, type SourceNavigationApi } from './nav/SourceNavigation';
 import { LeftPanel, type LeftTab } from './panels/LeftPanel';
+import { LayerViewProvider } from './ink/layers/LayerViewProvider';
+import type { LayerSession } from './ink/layers/model';
 import type { MineTabValue, NoteDraft } from './panels/MineTab';
+import { NoteMigrationBanner } from './panels/NoteMigration';
 import { StudyRail, type RailTab } from './panels/StudyRail';
 import { BookCanvas, type BookCanvasHandle, type BookLocation, type LayoutMode } from './reader/BookCanvas';
 import { stepSpread } from './reader/geometry';
@@ -249,6 +252,8 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
   const [mineTab, setMineTab] = useState<MineTabValue>('notes');
   const [leftOpen, setLeftOpen] = useState(startsOnPhone ? false : (loc0.left_panel?.open ?? defaultLeftOpen(width)));
   const [leftTab, setLeftTab] = useState<LeftTab>(loc0.left_panel?.tab ?? 'thumbnails');
+  // (P1-T2) the layers this study session hides and the layer new writing goes to (saved with the place)
+  const [layerSession, setLayerSession] = useState<LayerSession>(loc0.layers ?? {});
   const [lastPanel, setLastPanel] = useState<'rail' | 'left'>('rail');
   const rail = useResizablePanel({ initial: loc0.rail?.width ?? settings.rail_width, min: RAIL_MIN, max: RAIL_MAX, side: 'start', onCommit: (w) => void updateSettings({ rail_width: w }) });
   const [focusMode, setFocusMode] = useState(false);
@@ -361,10 +366,10 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
   const { markViewed } = useReadingProgress(sourceId, versionId, online);
 
   // ── autosave the place (debounced in the session hook) ──
-  const stateRef = useRef({ zoom, fit, effectiveZoom, viewRotation, layoutPref, railOpen, railWidth: rail.width, railTab, leftOpen, leftTab, split, splitBook, splitSide });
+  const stateRef = useRef({ zoom, fit, effectiveZoom, viewRotation, layoutPref, railOpen, railWidth: rail.width, railTab, leftOpen, leftTab, split, splitBook, splitSide, layerSession });
   // the place to save, written at commit (before any effect that saves it) rather than during render
   useInsertionEffect(() => {
-    stateRef.current = { zoom, fit, effectiveZoom, viewRotation, layoutPref, railOpen, railWidth: rail.width, railTab, leftOpen, leftTab, split, splitBook, splitSide };
+    stateRef.current = { zoom, fit, effectiveZoom, viewRotation, layoutPref, railOpen, railWidth: rail.width, railTab, leftOpen, leftTab, split, splitBook, splitSide, layerSession };
   });
   const buildLocation = useCallback((): ReaderLocation => {
     const s = stateRef.current;
@@ -379,6 +384,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
       layout: s.layoutPref,
       rail: { open: s.railOpen, width: s.railWidth, tab: s.railTab },
       left_panel: { open: s.leftOpen, tab: s.leftTab },
+      ...(s.layerSession.hidden || s.layerSession.active ? { layers: s.layerSession } : {}),
       split: s.split ? { mode: 'source', secondary_source_id: s.split.sourceId, secondary_page_index: s.split.pageIndex } : s.splitBook ? { mode: 'study_book' } : s.splitSide ? { mode: s.splitSide } : null,
       ...(noteRef.current ? { note_page_id: noteRef.current, note_page_offset: Math.round(Math.min(1, Math.max(0, noteFracRef.current)) * 1000) / 1000 } : {}),
     };
@@ -386,7 +392,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
   const save = useCallback(() => session.save(buildLocation(), versionId, stateRef.current.split || stateRef.current.splitBook || stateRef.current.splitSide ? 'split' : 'original'), [session, buildLocation, versionId]);
   useEffect(() => {
     save();
-  }, [save, zoom, fit, viewRotation, layoutPref, railOpen, rail.width, railTab, leftOpen, leftTab, split, splitBook, splitSide]);
+  }, [save, zoom, fit, viewRotation, layoutPref, railOpen, rail.width, railTab, leftOpen, leftTab, split, splitBook, splitSide, layerSession]);
 
   const onLocation = useCallback(
     (l: BookLocation) => {
@@ -1089,6 +1095,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
 
   return (
     <InkHost links={linkHost} currentPage={currentInkPage} notify={(m) => toast.show({ title: m, tone: 'warning' })}>
+    <LayerViewProvider documentKey={`source:${sourceId}`} session={layerSession} onSession={setLayerSession}>
     <HandwritingHost sourceId={sourceId} nodeId={detail.node_id ?? null} online={online} askHiddenReason={studyMode === 'exam' ? EXAM_MODE_HIDDEN_AR : null}>
     <SourceNavigationContext.Provider value={nav}>
       <ReaderPageContext.Provider value={pageCtx}>
@@ -1197,6 +1204,22 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
                 else goToPage(remote.location.page_index ?? 0, remote.location.page_offset ?? 0, { place: true });
               }}
               onDismiss={session.dismissRemote}
+            />
+          )}
+          {/* (Academic OS P1-T2 step 3) a newer version of this lecture: «انقل ملاحظاتي إلى الإصدار الجديد» — copy, never move */}
+          {!focusMode && (
+            <NoteMigrationBanner
+              sourceId={sourceId}
+              versions={detail.versions}
+              currentVersionId={versionId}
+              online={online}
+              onOpenVersion={(v) => navigate(studyUrl({ sourceId, versionId: v, pageIndex: 0 }))}
+              onOpenReview={() => {
+                setRailTab('mine');
+                setMineTab('reanchor');
+                setRailOpen(true);
+                setLastPanel('rail');
+              }}
             />
           )}
           {doc.pdfError && (
@@ -1416,6 +1439,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
       </ReaderPageContext.Provider>
     </SourceNavigationContext.Provider>
     </HandwritingHost>
+    </LayerViewProvider>
     </InkHost>
   );
 }

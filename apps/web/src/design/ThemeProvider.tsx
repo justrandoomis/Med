@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useSyncExternalStore, type ReactNode } from 'react';
+import { applyDisplay, DEFAULT_DISPLAY, displayStore, type DisplayPrefs } from './themeDisplay';
 
 /**
  * Appearance preferences (a subset of OwnerSettings). Applied as attributes on <html>:
@@ -8,6 +9,9 @@ import { createContext, useContext, useEffect, useSyncExternalStore, type ReactN
  *   data-text-scale="1.15" + style --ml-text-scale
  * Persisted locally (so the first paint is right, even offline) and synced from /api/settings by
  * lib/settings.ts when the owner is signed in.
+ *
+ * (Academic OS P1-T2) Display modes of this device (./themeDisplay.ts) override what they must, without changing the
+ * stored preference: e-ink → light colours, reduced motion, no paper grain; lite → reduced motion, no paper grain.
  */
 export interface AppearancePrefs {
   theme: 'system' | 'light' | 'dark';
@@ -82,6 +86,12 @@ class AppearanceStore {
 
 export const appearanceStore = new AppearanceStore();
 
+/** What is applied: the owner's appearance with the device's display mode on top (the stored values never change). */
+export function effectiveAppearance(p: AppearancePrefs, d: DisplayPrefs): AppearancePrefs {
+  if (!d.eink && !d.lite) return p;
+  return { ...p, ...(d.eink ? { theme: 'light' as const } : {}), reduce_motion: 'on', paper_texture: false };
+}
+
 export function resolvedTheme(p: AppearancePrefs): 'light' | 'dark' {
   if (p.theme !== 'system') return p.theme;
   try {
@@ -93,8 +103,13 @@ export function resolvedTheme(p: AppearancePrefs): 'light' | 'dark' {
 
 const THEME_COLOR = { light: '#EEF0F1', dark: '#121314' } as const;
 
-/** Writes the attributes on <html>. Safe to call repeatedly. */
-export function applyAppearance(p: AppearancePrefs, root: HTMLElement = document.documentElement): void {
+/**
+ * Writes the attributes on <html>. Safe to call repeatedly. The device's display mode (e-ink / contrast / lite) is
+ * applied with it, so the very first paint (main.tsx) is already right.
+ */
+export function applyAppearance(stored: AppearancePrefs, root: HTMLElement = document.documentElement, display: DisplayPrefs = displayStore.get()): void {
+  applyDisplay(display, root);
+  const p = effectiveAppearance(stored, display);
   if (p.theme === 'system') root.removeAttribute('data-theme');
   else root.setAttribute('data-theme', p.theme);
   root.setAttribute('data-paper', p.paper_texture ? 'on' : 'off');
@@ -144,11 +159,13 @@ function systemIsDark(): boolean {
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const prefs = useSyncExternalStore(appearanceStore.subscribe, appearanceStore.get, () => DEFAULT_APPEARANCE);
+  const display = useSyncExternalStore(displayStore.subscribe, displayStore.get, () => DEFAULT_DISPLAY);
   const systemDark = useSyncExternalStore(subscribeSystemScheme, systemIsDark, () => false);
   useEffect(() => {
-    applyAppearance(prefs);
-  }, [prefs]);
-  const resolved = prefs.theme === 'system' ? (systemDark ? 'dark' : 'light') : prefs.theme;
+    applyAppearance(prefs, document.documentElement, display);
+  }, [prefs, display]);
+  const applied = effectiveAppearance(prefs, display);
+  const resolved = applied.theme === 'system' ? (systemDark ? 'dark' : 'light') : applied.theme;
   return (
     <AppearanceContext.Provider value={{ prefs, resolved, setPrefs: (patch) => appearanceStore.set(patch) }}>{children}</AppearanceContext.Provider>
   );

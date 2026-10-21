@@ -567,6 +567,13 @@ export async function applyRestore(
           `UPDATE data_backup SET status = 'failed', error_detail = ?, finished_at = ? WHERE status = 'running'`,
           ['انقطع إنشاء هذه النسخة: البيانات استُعيدت من لقطة أُخذت أثناء إنشائها.', t],
         );
+        // (PL-0) an off-site run caught in the snapshot is over too (a backup from before migration 0751 has no table)
+        if (db.get(`SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'data_offsite_backup'`)) {
+          db.run(`UPDATE data_offsite_backup SET status = 'failed', error_detail = ?, finished_at = ? WHERE status = 'running'`, [
+            'انتهى هذا النسخ مع الاستعادة: البيانات استُعيدت من لقطة أُخذت أثناءه. النسخ التالي يبدأ من جديد.',
+            t,
+          ]);
+        }
         db.run(
           `INSERT INTO change_log (id, entity_type, entity_id, action, summary, after_json, actor, created_at) VALUES (?, 'server', 'data', 'restore', ?, ?, 'system', ?)`,
           [

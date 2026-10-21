@@ -62,7 +62,7 @@ describe('annotations at scale', () => {
     v1.close();
     const v2 = new MedLevoDB(name);
     await v2.open();
-    expect(v2.verno).toBe(2);
+    expect(v2.verno).toBeGreaterThanOrEqual(2); // later LOCAL_SCHEMA versions (v3: Academic OS P1-T1 step 0) open it too
     expect(await v2.annotations.count()).toBe(3);
     expect((await v2.annotations.where('[targetKey+kind]').equals([KEY0, 'bookmark']).toArray()).map((r) => r.id)).toEqual(['B']);
     expect((await v2.annotations.where('anchorStatus').equals('needs_reanchor').toArray()).map((r) => r.id)).toEqual(['C']);

@@ -301,6 +301,17 @@
   pointer-events: auto;
   white-space: nowrap;
 }
+/* (P1-T2) a selection of a read-only layer's items: copy only */
+.ml-ink-selbar__note {
+  display: inline-flex;
+  align-items: center;
+  padding-inline: var(--ml-space-2);
+  font-size: var(--ml-text-sm);
+  color: var(--ml-color-ink-2);
+}
+.ml-ink-selection[data-read-only] {
+  border-style: dotted;
+}
 
 /* ───────────── toolbar ───────────── */
 .ml-ink-toolbar {
@@ -696,4 +707,34 @@
 .ml-ink-link--pending {
   border-style: dotted;
   pointer-events: none;
+}
+
+/* ── e-ink display mode (Academic OS P1-T2; ADR-0005 B.4; design/themeDisplay.ts) ──
+ * Ink in black and greys only (pens darkest, highlighters light greys so text under them stays readable), and the
+ * reader pages instead of scrolling smoothly: a fling stops on a page edge, and nothing animates in between. */
+:root[data-eink='on'] .ml-ink-layer,
+:root[data-eink='on'] .ml-ink-layer[data-ink-tone] {
+  --ml-ink-c-ink-black: #000000;
+  --ml-ink-c-ink-blue: #141414;
+  --ml-ink-c-ink-red: #2e2e2e;
+  --ml-ink-c-ink-green: #3d3d3d;
+  --ml-ink-c-ink-purple: #222222;
+  --ml-ink-c-ink-orange: #4a4a4a;
+  --ml-ink-c-hl-yellow: #d6d6d6;
+  --ml-ink-c-hl-green: #c4c4c4;
+  --ml-ink-c-hl-pink: #bababa;
+  --ml-ink-c-hl-blue: #cccccc;
+  --ml-ink-c-hl-orange: #b0b0b0;
+  --ml-ink-c-laser: #000000;
+  --ml-ink-highlight-blend: multiply;
+  /* custom colours too: palette.ts maps them to greys of the same lightness (pens dark, highlighters light) */
+  --ml-ink-mono: 1;
+}
+:root[data-eink='on'] .wk-canvas {
+  scroll-snap-type: y mandatory;
+  scroll-behavior: auto;
+}
+:root[data-eink='on'] .wk-canvas .wk-page {
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
 }

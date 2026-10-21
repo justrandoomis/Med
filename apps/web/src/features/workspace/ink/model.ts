@@ -3,6 +3,7 @@
 // Rows in IndexedDB use the camelCase AnnotationRow of lib/localdb.ts (converted here).
 import {
   annotationTargetKey,
+  roundInkPoint,
   type AnnotationAnchor,
   type AnnotationDTO,
   type ImageAnnotationData,
@@ -17,6 +18,7 @@ import {
   type TextBoxData,
 } from '@medlevo/shared';
 import type { AnnotationRow } from '../../../lib/localdb';
+import { inkFromWire, inkToWire } from './codec';
 import { applyMat, bboxOf, expandBox, maxWidthFactor, roundTo, rotationOf, uniformScaleOf, type Mat, type Vec } from './math';
 
 export type InkItem = AnnotationDTO;
@@ -83,11 +85,9 @@ function coord(v: number): number {
   return clampCoord(roundTo(v, COORD_DIGITS));
 }
 
+/** The engine's stored-point rounding — one definition, shared with the ink v2 codec (`roundInkPoint`). */
 export function roundPoint(p: InkPoint): InkPoint {
-  const out: number[] = [coord(p[0]), coord(p[1]), Math.round(p[2])];
-  if (p.length > 3 && p[3] != null) out.push(roundTo(p[3], 3));
-  if (p.length > 4 && p[4] != null && p[5] != null) out.push(Math.round(p[4]), Math.round(p[5]));
-  return out as unknown as InkPoint;
+  return roundInkPoint(p);
 }
 
 function roundBox(b: NormBox): NormBox {
@@ -445,6 +445,10 @@ export function cloneItem(item: InkItem, id: string, anchor: AnnotationAnchor, n
 export interface InkRow extends AnnotationRow {
   previousAnchor?: unknown;
   deviceId?: string | null;
+  /** (P1-T2) who wrote it (null/absent = the vault's user), the item a copy came from, how the row came to exist */
+  authorUserId?: string | null;
+  migratedFromId?: string | null;
+  origin?: string;
 }
 
 export function rowFromItem(item: InkItem, extra: Pick<AnnotationRow, 'syncState' | 'updatedAt'> & { rev?: number | null }): InkRow {
@@ -467,6 +471,11 @@ export function rowFromItem(item: InkItem, extra: Pick<AnnotationRow, 'syncState
     updatedAt: extra.updatedAt,
     deletedAt: item.deleted_at,
     syncState: extra.syncState,
+    // (P1-T2) authorship layer: absent = the default personal layer; only stored when the item names one
+    ...(item.layer_id !== undefined ? { layerId: item.layer_id } : {}),
+    ...(item.author_user_id ? { authorUserId: item.author_user_id } : {}),
+    ...(item.migrated_from_id ? { migratedFromId: item.migrated_from_id } : {}),
+    ...(item.origin && item.origin !== 'device' ? { origin: item.origin } : {}),
   };
 }
 
@@ -489,7 +498,17 @@ export function itemFromRow(row: AnnotationRow): InkItem {
     created_at: r.createdAt ?? r.updatedAt,
     updated_at: r.updatedAt,
     deleted_at: r.deletedAt ?? null,
+    ...(r.layerId !== undefined ? { layer_id: r.layerId } : {}),
+    ...(r.authorUserId ? { author_user_id: r.authorUserId } : {}),
+    ...(r.migratedFromId ? { migrated_from_id: r.migratedFromId } : {}),
+    ...(r.origin && r.origin !== 'device' ? { origin: r.origin as InkItem['origin'] } : {}),
   };
+}
+
+/** A server entity (pull / push answer) as the engine keeps it: packed ink points decoded to v1. */
+export function itemFromWire(dto: InkItem): InkItem {
+  const data = inkFromWire(dto.kind, dto.data);
+  return data === dto.data ? dto : { ...dto, data };
 }
 
 /** Sync payload for append/upsert: the full current state in the AnnotationDTO shape (never a patch). */
@@ -499,7 +518,8 @@ export function payloadFromItem(item: InkItem): Record<string, unknown> {
     kind: item.kind,
     tool: item.tool,
     anchor: item.anchor,
-    data: item.data,
+    // (P1-T2) packed points (v2) once the server has shown it speaks v2; v1 otherwise
+    data: inkToWire(item.kind, item.data),
     layer: item.layer,
     z: item.z,
     locked: item.locked,
@@ -507,6 +527,8 @@ export function payloadFromItem(item: InkItem): Record<string, unknown> {
     previous_anchor: item.previous_anchor,
     input: item.input,
     created_at: item.created_at,
+    // (P1-T2) the item's layer (absent: an older row → the server keeps the item's layer; new writing names it)
+    ...(item.layer_id !== undefined ? { layer_id: item.layer_id } : {}),
   };
 }
 

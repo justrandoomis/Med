@@ -15,27 +15,29 @@ export interface InkColorToken {
   label_ar: string;
   light: string;
   dark: string;
+  /** (P1-T2) the e-ink grey (`<html data-eink="on">`; declared in ink.css too — themeDisplay.test.tsx keeps them equal) */
+  eink: string;
 }
 
 export const PEN_COLORS: readonly InkColorToken[] = [
-  { token: 'ink-black', label_ar: 'أسود', light: '#1c2230', dark: '#eceae4' },
-  { token: 'ink-blue', label_ar: 'أزرق', light: '#2346c8', dark: '#8fb0ff' },
-  { token: 'ink-red', label_ar: 'أحمر', light: '#c62828', dark: '#ff8a80' },
-  { token: 'ink-green', label_ar: 'أخضر', light: '#1e7a46', dark: '#7fd6a0' },
-  { token: 'ink-purple', label_ar: 'بنفسجي', light: '#6a3fb5', dark: '#c3a6ff' },
-  { token: 'ink-orange', label_ar: 'برتقالي', light: '#b85300', dark: '#ffb36b' },
+  { token: 'ink-black', label_ar: 'أسود', light: '#1c2230', dark: '#eceae4', eink: '#000000' },
+  { token: 'ink-blue', label_ar: 'أزرق', light: '#2346c8', dark: '#8fb0ff', eink: '#141414' },
+  { token: 'ink-red', label_ar: 'أحمر', light: '#c62828', dark: '#ff8a80', eink: '#2e2e2e' },
+  { token: 'ink-green', label_ar: 'أخضر', light: '#1e7a46', dark: '#7fd6a0', eink: '#3d3d3d' },
+  { token: 'ink-purple', label_ar: 'بنفسجي', light: '#6a3fb5', dark: '#c3a6ff', eink: '#222222' },
+  { token: 'ink-orange', label_ar: 'برتقالي', light: '#b85300', dark: '#ffb36b', eink: '#4a4a4a' },
 ];
 
 export const HIGHLIGHTER_COLORS: readonly InkColorToken[] = [
-  { token: 'hl-yellow', label_ar: 'أصفر', light: '#ffe14d', dark: '#7a6500' },
-  { token: 'hl-green', label_ar: 'أخضر فاتح', light: '#9be38d', dark: '#2f6b2a' },
-  { token: 'hl-pink', label_ar: 'وردي', light: '#ff9ccf', dark: '#7a2f58' },
-  { token: 'hl-blue', label_ar: 'سماوي', light: '#8fd3ff', dark: '#1f5675' },
-  { token: 'hl-orange', label_ar: 'برتقالي فاتح', light: '#ffc074', dark: '#7a4a10' },
+  { token: 'hl-yellow', label_ar: 'أصفر', light: '#ffe14d', dark: '#7a6500', eink: '#d6d6d6' },
+  { token: 'hl-green', label_ar: 'أخضر فاتح', light: '#9be38d', dark: '#2f6b2a', eink: '#c4c4c4' },
+  { token: 'hl-pink', label_ar: 'وردي', light: '#ff9ccf', dark: '#7a2f58', eink: '#bababa' },
+  { token: 'hl-blue', label_ar: 'سماوي', light: '#8fd3ff', dark: '#1f5675', eink: '#cccccc' },
+  { token: 'hl-orange', label_ar: 'برتقالي فاتح', light: '#ffc074', dark: '#7a4a10', eink: '#b0b0b0' },
 ];
 
 /** Laser pointer trail (never saved). */
-export const LASER_COLOR: InkColorToken = { token: 'laser', label_ar: 'مؤشر الليزر', light: '#e5281b', dark: '#ff5a4d' };
+export const LASER_COLOR: InkColorToken = { token: 'laser', label_ar: 'مؤشر الليزر', light: '#e5281b', dark: '#ff5a4d', eink: '#000000' };
 
 export const ALL_COLOR_TOKENS: readonly InkColorToken[] = [...PEN_COLORS, ...HIGHLIGHTER_COLORS, LASER_COLOR];
 const BY_TOKEN = new Map(ALL_COLOR_TOKENS.map((c) => [c.token, c]));
@@ -64,14 +66,56 @@ export function tokenVar(token: string): string {
 }
 
 /**
+ * (P1-T2 review) A signature of the ink palette as it resolves on `style` right now: the computed value of every colour
+ * token. Two renders with the same signature draw every token stroke in the same colours (the tile cache keys by it).
+ */
+export function paletteSignature(style: CSSStyleDeclaration | null | undefined): string {
+  if (!style) return einkActive(null) ? 'eink' : '';
+  return [...ALL_COLOR_TOKENS.map((c) => style.getPropertyValue(tokenVar(c.token)).trim()), einkActive(style) ? 'eink' : ''].join(',');
+}
+
+/**
+ * (P1-T2 review) Is the e-ink display mode on? From the ink layer's CSS (`--ml-ink-mono: 1`, ink.css) when a computed
+ * style is given, else from `<html data-eink="on">` (DOM objects such as text boxes resolve without the layer's CSS).
+ */
+function einkActive(style: CSSStyleDeclaration | null | undefined): boolean {
+  if (style && style.getPropertyValue('--ml-ink-mono').trim() === '1') return true;
+  try {
+    return typeof document !== 'undefined' && document.documentElement.getAttribute('data-eink') === 'on';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A custom colour on an e-ink screen: a grey of the same lightness, kept in the e-ink token ranges — pens and text dark
+ * (#000…#4a4a4a, so a pale custom pen never fades away on a white page), highlighters light (#b0b0b0…#d6d6d6, so the
+ * text under them stays readable). The order of lightness between colours is kept.
+ */
+export function einkGreyOf(hex: string, role: 'pen' | 'highlighter' = 'pen'): string {
+  const n = parseInt(hex.slice(1), 16);
+  const lin = (c: number) => {
+    const v = c / 255;
+    return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  };
+  const l = 0.2126 * lin((n >> 16) & 255) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255);
+  const g = role === 'highlighter' ? 0xb0 + Math.round(l * (0xd6 - 0xb0)) : Math.round(l * 0x4a);
+  const h = g.toString(16).padStart(2, '0');
+  return `#${h}${h}${h}`;
+}
+
+/**
  * Resolve a stored colour to a concrete CSS colour. Tokens use the computed custom property of
  * `el` when the stylesheet is present (so a reader can override per paper tone), else the
  * defaults above. Unknown values fall back to the black token (never an invisible stroke).
  */
-export function resolveInkColor(v: string, tone: PaperTone, style?: CSSStyleDeclaration | null): string {
-  if (isHexColor(v)) return v;
+export function resolveInkColor(v: string, tone: PaperTone, style?: CSSStyleDeclaration | null, role: 'pen' | 'highlighter' = 'pen'): string {
+  // (P1-T2 review) e-ink: black / grey only — a custom colour too, and tokens resolved without the ink layer's CSS
+  const eink = einkActive(style);
+  if (isHexColor(v)) return eink ? einkGreyOf(v, role) : v;
   const tok = BY_TOKEN.get(v) ?? PEN_COLORS[0]!;
   const fromCss = style?.getPropertyValue(tokenVar(tok.token)).trim();
   if (fromCss) return fromCss;
+  if (eink) return tok.eink;
   return tone === 'dark' ? tok.dark : tok.light;
 }

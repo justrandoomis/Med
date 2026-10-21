@@ -7,7 +7,7 @@ import { fromJson, toJson } from '../../db/db';
 import { AppError, JobError } from '../../lib/errors';
 import { newId } from '../../lib/ids';
 import { ArchiveError } from './tar';
-import { createBackup } from './backup';
+import { createBackup, type BackupResult } from './backup';
 import { verifyBackup } from './restore';
 
 export const BACKUP_JOB_KIND = 'data_backup';
@@ -22,7 +22,7 @@ export const BACKUP_INCLUDED_AR = [
 export const BACKUP_STORAGE_NOTE_AR =
   'تُحفظ النسخ في مجلد backups داخل مجلد بيانات الخادم، أي على القرص نفسه. نزّل نسخة واحتفظ بها خارج هذا الجهاز؛ النسخة على القرص نفسه لا تحميك من تلفه. ونسخة لم تُختبر استعادتها ليست ضمانًا: استخدم «تحقّق من الاستعادة».';
 
-interface BackupRow {
+export interface BackupRow {
   id: string;
   file_name: string;
   status: BackupStatus;
@@ -45,7 +45,7 @@ export function backupsDir(ctx: AppContext): string {
   return join(ctx.config.dataDir, 'backups');
 }
 
-function archivePath(ctx: AppContext, row: Pick<BackupRow, 'file_name'>): string | null {
+export function archivePath(ctx: AppContext, row: Pick<BackupRow, 'file_name'>): string | null {
   if (!FILE_NAME_RE.test(row.file_name)) return null;
   return join(backupsDir(ctx), row.file_name);
 }
@@ -129,6 +129,45 @@ export function startBackup(ctx: AppContext): BackupView {
   return backupView(ctx, getBackupRow(ctx, id));
 }
 
+/**
+ * Make the archive for an existing `data_backup` row (status 'running') and record the outcome on it. Used by the
+ * «أنشئ نسخة احتياطية الآن» job and by the off-site run (./offsite.ts). Throws JobError BACKUP_FAILED (not retryable)
+ * with the Arabic reason; no partial archive is ever kept.
+ */
+export async function performBackup(
+  ctx: AppContext,
+  backupId: string,
+  o: { jobId: string; signal?: AbortSignal; onProgress?: (p: { stage: string; done?: number; total?: number; unit?: string }) => void },
+): Promise<BackupResult> {
+  const row = ctx.db.get<BackupRow>('SELECT * FROM data_backup WHERE id = ?', [backupId]);
+  if (!row) throw new JobError('BACKUP_NOT_FOUND', 'سجل النسخة الاحتياطية غير موجود.', { retryable: false });
+  try {
+    const res = await createBackup({
+      dataDir: ctx.config.dataDir,
+      dbPath: ctx.config.dbPath,
+      filesDir: ctx.config.filesDir,
+      outDir: backupsDir(ctx),
+      appVersion: ctx.config.appVersion,
+      now: () => ctx.clock.now(),
+      backupId: row.id,
+      db: ctx.db,
+      signal: o.signal,
+      onProgress: o.onProgress,
+    });
+    ctx.db.run(
+      `UPDATE data_backup SET status = ?, file_name = ?, size = ?, sha256 = ?, summary_json = ?, warnings_json = ?, finished_at = ? WHERE id = ?`,
+      [res.warnings_ar.length ? 'completed_with_warnings' : 'completed', res.fileName, res.size, res.sha256, toJson(res.summary), toJson(res.warnings_ar), ctx.clock.now(), row.id],
+    );
+    ctx.audit.record({ entityType: 'backup', entityId: row.id, action: 'completed', summary: `اكتملت نسخة احتياطية (${res.summary.files} ملفًا)`, actor: 'job', jobId: o.jobId });
+    return res;
+  } catch (e) {
+    const reason =
+      e instanceof ArchiveError ? e.reasonAr : (e as NodeJS.ErrnoException)?.code === 'ENOSPC' ? 'لا توجد مساحة كافية على القرص لإنشاء النسخة.' : 'تعذّر إنشاء النسخة الاحتياطية. لم تُحفظ نسخة ناقصة.';
+    ctx.db.run(`UPDATE data_backup SET status = 'failed', error_detail = ?, finished_at = ? WHERE id = ?`, [reason, ctx.clock.now(), row.id]);
+    throw new JobError('BACKUP_FAILED', reason, { retryable: false });
+  }
+}
+
 export function registerBackupJobs(ctx: AppContext): void {
   ctx.jobs.register<{ backup_id: string }, { file_name: string; size: number }>(BACKUP_JOB_KIND, {
     version: 'backup-1',
@@ -136,33 +175,8 @@ export function registerBackupJobs(ctx: AppContext): void {
     timeoutMs: 6 * 60 * 60 * 1000,
     concurrency: 1,
     handler: async (run) => {
-      const row = ctx.db.get<BackupRow>('SELECT * FROM data_backup WHERE id = ?', [run.input.backup_id]);
-      if (!row) throw new JobError('BACKUP_NOT_FOUND', 'سجل النسخة الاحتياطية غير موجود.', { retryable: false });
-      try {
-        const res = await createBackup({
-          dataDir: ctx.config.dataDir,
-          dbPath: ctx.config.dbPath,
-          filesDir: ctx.config.filesDir,
-          outDir: backupsDir(ctx),
-          appVersion: ctx.config.appVersion,
-          now: () => ctx.clock.now(),
-          backupId: row.id,
-          db: ctx.db,
-          signal: run.signal,
-          onProgress: (p) => run.progress(p),
-        });
-        ctx.db.run(
-          `UPDATE data_backup SET status = ?, file_name = ?, size = ?, sha256 = ?, summary_json = ?, warnings_json = ?, finished_at = ? WHERE id = ?`,
-          [res.warnings_ar.length ? 'completed_with_warnings' : 'completed', res.fileName, res.size, res.sha256, toJson(res.summary), toJson(res.warnings_ar), ctx.clock.now(), row.id],
-        );
-        ctx.audit.record({ entityType: 'backup', entityId: row.id, action: 'completed', summary: `اكتملت نسخة احتياطية (${res.summary.files} ملفًا)`, actor: 'job', jobId: run.id });
-        return { file_name: res.fileName, size: res.size };
-      } catch (e) {
-        const reason =
-          e instanceof ArchiveError ? e.reasonAr : (e as NodeJS.ErrnoException)?.code === 'ENOSPC' ? 'لا توجد مساحة كافية على القرص لإنشاء النسخة.' : 'تعذّر إنشاء النسخة الاحتياطية. لم تُحفظ نسخة ناقصة.';
-        ctx.db.run(`UPDATE data_backup SET status = 'failed', error_detail = ?, finished_at = ? WHERE id = ?`, [reason, ctx.clock.now(), row.id]);
-        throw new JobError('BACKUP_FAILED', reason, { retryable: false });
-      }
+      const res = await performBackup(ctx, run.input.backup_id, { jobId: run.id, signal: run.signal, onProgress: (p) => run.progress(p) });
+      return { file_name: res.fileName, size: res.size };
     },
   });
 

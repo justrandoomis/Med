@@ -1,10 +1,13 @@
 // Versions + Source Freeze (§18) + replacement upload. The frozen version is never changed
 // automatically: a new upload becomes the latest version, study tools keep using the frozen one.
 import { useRef, useState } from 'react';
-import { FileUp, Pin, PinOff } from 'lucide-react';
-import type { SourceDetail, SourceVersionView, UploadResponse } from '@medlevo/shared';
-import { Button, ProgressBar, StatusPill, TextField, useToast } from '../../design';
+import { Link } from 'react-router-dom';
+import { Download, FileUp, GitCompare, Pin, PinOff, RefreshCw } from 'lucide-react';
+import { VERSION_FILE_ROLE_LABELS_AR, type SourceDetail, type SourceVersionView, type UploadResponse, type VersionFilesResponse } from '@medlevo/shared';
+import { Button, buttonClass, ProgressBar, StatusPill, TextField, useToast } from '../../design';
 import { api, errorMessage } from '../../lib/api';
+import { useQuery } from '../library/data';
+import { compareHref } from './versionsModel';
 import { formatDateTime } from '../../lib/time';
 import { mutate } from '../library/data';
 import { Bytes, extentLabel, formatBytes, FORMAT_LABELS_AR, IsolatedList, ProcessingPill } from '../library/labels';
@@ -38,6 +41,8 @@ export function VersionsPanel({ detail, readOnly }: { detail: SourceDetail; read
         {detail.versions.map((v) => {
           const isCurrent = v.id === detail.current_version_id;
           const extent = extentLabel(v.format, v.page_count);
+          // the version before this one (by number): «قارن مع النسخة السابقة»
+          const prev = detail.versions.filter((o) => o.version_no < v.version_no).sort((a, b) => b.version_no - a.version_no)[0];
           return (
             <li key={v.id} className="ml-upload__item">
               <div className="ml-upload__head">
@@ -68,13 +73,88 @@ export function VersionsPanel({ detail, readOnly }: { detail: SourceDetail; read
                     تثبيت هذه النسخة للدراسة
                   </Button>
                 )}
+                {prev && (
+                  <Link to={compareHref(detail.id, prev.id, v.id)} className={buttonClass({ size: 'sm', variant: 'plain' })}>
+                    <GitCompare size={16} aria-hidden="true" />
+                    قارن مع النسخة {prev.version_no}
+                  </Link>
+                )}
               </div>
+              <VersionFiles versionId={v.id} readOnly={readOnly} />
             </li>
           );
         })}
       </ul>
       {!readOnly && <ReplaceUpload sourceId={detail.id} />}
     </div>
+  );
+}
+
+/** Original vs converted files of one version (AOS-3.14), each downloadable; a DOCX's display PDF can be re-made. */
+function VersionFiles({ versionId, readOnly }: { versionId: string; readOnly: boolean }) {
+  const toast = useToast();
+  const q = useQuery<VersionFilesResponse>(`/versions/versions/${encodeURIComponent(versionId)}/files`);
+  const [busy, setBusy] = useState(false);
+  if (!q.data) return null;
+  const r = q.data.docx_rendition;
+  const remake = async () => {
+    setBusy(true);
+    try {
+      await api.post(`/versions/versions/${encodeURIComponent(versionId)}/docx-display`);
+      toast.show({ title: 'بدأ إنشاء نسخة العرض PDF.', tone: 'info' });
+      await q.refresh();
+    } catch (e) {
+      toast.show({ title: errorMessage(e), tone: 'danger' });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <details className="ml-upload__entries ml-vfiles">
+      <summary>ملفات هذه النسخة ({q.data.files.length})</summary>
+      <ul className="ml-vfiles__list" role="list">
+        {q.data.files.map((f) => (
+          <li key={`${f.role}-${f.file_id}`} className="ml-vfiles__row">
+            <span className="ml-row__text">
+              <span className="ml-row__title">{VERSION_FILE_ROLE_LABELS_AR[f.role]}</span>
+              <span className="ml-row__sub">
+                <IsolatedList parts={[f.file_name ?? '', formatBytes(f.size)].filter(Boolean)} />
+              </span>
+            </span>
+            <a href={`/api/files/${encodeURIComponent(f.file_id)}`} download={f.file_name ?? undefined} className={buttonClass({ size: 'sm', variant: 'plain' })}>
+              <Download size={16} aria-hidden="true" />
+              تنزيل
+            </a>
+          </li>
+        ))}
+      </ul>
+      {r && (
+        <div className="ml-vfiles__rendition">
+          <StatusPill tone={r.status === 'ready' ? 'success' : r.status === 'pending' ? 'info' : r.status === 'failed' ? 'danger' : 'neutral'}>
+            {r.status === 'ready' ? 'نسخة العرض PDF جاهزة' : r.status === 'pending' ? 'تُنشأ نسخة العرض PDF…' : r.status === 'failed' ? 'تعذّر إنشاء نسخة العرض' : 'نسخة العرض غير متاحة'}
+          </StatusPill>
+          {r.status === 'ready' && (
+            <span className="ml-row__sub">
+              {r.page_count} صفحة · الخطوط: {r.fonts.every((f) => f.embedded) ? 'كلها مضمّنة' : 'بعضها غير مضمّن'} ({r.fonts.map((f) => f.name).join('، ')})
+            </span>
+          )}
+          {r.reason_ar && <span className="ml-row__sub">{r.reason_ar}</span>}
+          <span className="ml-row__sub">تبقى الفقرات وأرقامها هي مرجع الاستشهاد؛ نسخة PDF للعرض والطباعة فقط.</span>
+          {!readOnly && (r.status === 'ready' || r.status === 'failed') && (
+            <div>
+              <Button size="sm" variant="plain" icon={<RefreshCw size={16} />} onClick={() => void remake()} loading={busy} loadingLabel="جارٍ الطلب…">
+                أعد إنشاء نسخة العرض
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+      {q.data.files.length === 0 && (
+        <p className="ml-row__sub">
+          <bdi>لا توجد ملفات محفوظة لهذه النسخة.</bdi>
+        </p>
+      )}
+    </details>
   );
 }
 

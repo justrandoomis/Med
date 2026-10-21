@@ -3,14 +3,14 @@
 //   GET  /api/sync/pull?since=&limit=      → change feed page
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { SYNC_OPS, type SyncPullResponse, type SyncPushResponse } from '@medlevo/shared';
+import { ACCEPT_INK_HEADER, parseAcceptInk, SYNC_OPS, type SyncPullResponse, type SyncPushResponse } from '@medlevo/shared';
 import type { ModuleOptions } from '../../context';
 import { AppError } from '../../lib/errors';
 import { parseBody, parseQuery, RATE_LIMITS } from '../../lib/http';
 import { currentEpoch } from '../data/epoch';
 import { MAX_PULL_LIMIT, MAX_PUSH_OPS } from './registry';
 
-export { SyncRegistry, type SyncEntityHandler, type SyncApplyResult, type SyncTx, MAX_PUSH_OPS, MAX_PULL_LIMIT } from './registry';
+export { SyncRegistry, type SyncEntityHandler, type SyncApplyResult, type SyncTx, type SerializeOptions, MAX_PUSH_OPS, MAX_PULL_LIMIT } from './registry';
 
 export const SYNC_NO_ENTITY_TYPES_AR =
   'محرك المزامنة جاهز على الخادم، لكن لم يُفعَّل بعدُ أي نوع من البيانات للمزامنة في هذا الإصدار. تبقى كتاباتك محفوظة على هذا الجهاز وتنتظر المزامنة.';
@@ -62,7 +62,11 @@ export default async function syncModule(app: FastifyInstance, opts: ModuleOptio
         );
       }
     }
-    const res = ctx.sync.push(body.ops.map((o) => ({ ...o, payload: o.payload ?? null })));
+    // (P1-T2) `accept-ink: 2` → ink entities in the answer carry packed points; without it, today's v1 (old clients)
+    const res = ctx.sync.push(
+      body.ops.map((o) => ({ ...o, payload: o.payload ?? null })),
+      { inkFormat: parseAcceptInk(req.headers[ACCEPT_INK_HEADER]) },
+    );
     // remember which device this session syncs from (sessions list shows it)
     const deviceId = body.ops[0]?.device_id;
     if (deviceId && req.auth?.sessionId) {
@@ -73,7 +77,7 @@ export default async function syncModule(app: FastifyInstance, opts: ModuleOptio
 
   app.get('/pull', async (req): Promise<SyncPullResponse> => {
     const q = parseQuery(pullQuery, req);
-    const res = ctx.sync.pull(q.since, q.limit);
+    const res = ctx.sync.pull(q.since, q.limit, { inkFormat: parseAcceptInk(req.headers[ACCEPT_INK_HEADER]) });
     // (track D1, additive) the server data epoch: a restore starts a new one and the client resets its cursor
     const epoch = currentEpoch(ctx.db);
     if (epoch) {

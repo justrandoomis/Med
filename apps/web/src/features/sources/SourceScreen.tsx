@@ -1,7 +1,7 @@
 // تفاصيل المصدر (§06, §07, §13, §18): metadata, versions & freeze, links, per-page processing,
 // and «open in the study workspace».
 import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { BookOpenText, FileQuestion } from 'lucide-react';
 import type { SourceDetail } from '@medlevo/shared';
 import { Breadcrumbs, Button, buttonClass, EmptyState, ErrorState, LoadingState, StatusPill, Tab, TabList, TabPanel, Tabs } from '../../design';
@@ -14,6 +14,7 @@ import { formatIcon, ProcessingPill, SourceSubtitle } from '../library/labels';
 import { OfflineNotice } from '../library/shared';
 import { useLibrary } from '../library/useLibrary';
 import { OfflineDownloadButton } from '../offline/OfflineDownloadButton';
+import { IdentityPanel } from './IdentityPanel';
 import { LinksPanel } from './LinksPanel';
 import { MetadataForm } from './MetadataForm';
 import { PagesPanel } from './PagesPanel';
@@ -27,7 +28,8 @@ export function SourceScreen() {
   const { sourceId = '' } = useParams();
   const q = useQuery<Detail>(`/sources/${sourceId}`, { cache: true });
   const lib = useLibrary();
-  const [tab, setTab] = useState('pages');
+  const [params] = useSearchParams();
+  const [tab, setTab] = useState(() => (['pages', 'meta', 'lecture', 'versions', 'links'].includes(params.get('tab') ?? '') ? params.get('tab')! : 'pages'));
   usePageTitle(q.data?.title ?? 'المصدر');
 
   if (q.loading && !q.data) return <LoadingState stage="جارٍ تحميل المصدر…" />;
@@ -113,12 +115,14 @@ export function SourceScreen() {
         <TabList label="أقسام المصدر">
           <Tab value="pages">الصفحات</Tab>
           <Tab value="meta">البيانات</Tab>
+          <Tab value="lecture">المحاضرة</Tab>
           <Tab value="versions">النسخ ({d.versions.length})</Tab>
           <Tab value="links">الروابط ({d.links.length})</Tab>
         </TabList>
         <div className="ml-source__panel">
           <TabPanel value="pages">{tab === 'pages' && <PagesPanel sourceId={d.id} versions={d.versions} activeVersionId={d.active_version_id} readOnly={readOnly} />}</TabPanel>
           <TabPanel value="meta">{tab === 'meta' && <MetadataForm detail={d} readOnly={readOnly} />}</TabPanel>
+          <TabPanel value="lecture">{tab === 'lecture' && <IdentityPanel detail={d} readOnly={readOnly} />}</TabPanel>
           <TabPanel value="versions">{tab === 'versions' && <VersionsPanel detail={d} readOnly={readOnly} />}</TabPanel>
           <TabPanel value="links">{tab === 'links' && <LinksPanel detail={d} index={lib.index} readOnly={readOnly} />}</TabPanel>
         </div>

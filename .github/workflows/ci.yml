@@ -1,6 +1,8 @@
 # MedLevo CI (track F5, §58): every push and pull request runs the same gates as a local `npm run typecheck`,
 # `npm run lint`, `npm test` and `npm run build`. The browser (Playwright) suite is an OPTIONAL job: it starts real
 # servers and processes real uploads (tens of minutes), so it runs only when asked for (manual run with e2e = true).
+# PL-0: the container image Render builds from the Dockerfile can be built and smoke-tested here too (manual run with
+# docker = true): build, start with a fresh volume, health, setup token enforced, restart, data still there.
 # No AI key is used anywhere: AI-gated features are tested with the test-only scripted providers, and the real
 # server reports them as requiring configuration.
 name: CI
@@ -19,6 +21,10 @@ on:
         description: 'Optional spec file(s) for the e2e job, e.g. e2e/smoke.spec.ts (empty = the whole suite)'
         type: string
         default: ''
+      docker:
+        description: 'Also build the Docker image (the one Render deploys) and smoke-test it'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -133,3 +139,50 @@ jobs:
             e2e/.artifacts/
           if-no-files-found: ignore
           retention-days: 14
+
+  docker:
+    name: docker image (build + smoke test)
+    if: github.event_name == 'workflow_dispatch' && inputs.docker
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the image (the same Dockerfile Render builds)
+        run: docker build --progress=plain -t medlevo:ci .
+
+      - name: Image size and tools
+        run: |
+          docker image ls medlevo:ci
+          docker run --rm --entrypoint sh medlevo:ci -c 'id node && node --version && pdftoppm -v 2>&1 | head -1 && soffice --version && fc-list :lang=ar family | sort -u | head -20'
+
+      - name: Smoke test — health, setup token, persistence across a restart
+        env:
+          SETUP_TOKEN: ci-setup-token-not-a-secret-0123456789
+        run: |
+          set -eu
+          docker volume create medlevo-ci-data
+          start() {
+            docker run -d --name medlevo-ci -p 127.0.0.1:10000:10000 -v medlevo-ci-data:/var/data \
+              -e MEDLEVO_ORIGIN=http://127.0.0.1:10000 -e MEDLEVO_SETUP_TOKEN="$SETUP_TOKEN" medlevo:ci
+            for i in $(seq 1 60); do
+              if curl -fsS http://127.0.0.1:10000/api/health >/dev/null 2>&1; then return 0; fi
+              sleep 2
+            done
+            docker logs medlevo-ci; return 1
+          }
+          start
+          curl -fsS http://127.0.0.1:10000/api/health
+          curl -fsS http://127.0.0.1:10000/api/auth/status | grep -q '"setup_token_required":true'
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:10000/api/auth/setup \
+            -H 'content-type: application/json' -H 'x-medlevo-csrf: 1' -H 'origin: http://127.0.0.1:10000' \
+            -d '{"username":"owner","password":"ci-password-12345"}')
+          test "$code" = 403
+          curl -fsS -X POST http://127.0.0.1:10000/api/auth/setup \
+            -H 'content-type: application/json' -H 'x-medlevo-csrf: 1' -H 'origin: http://127.0.0.1:10000' \
+            -d "{\"username\":\"owner\",\"password\":\"ci-password-12345\",\"setup_token\":\"$SETUP_TOKEN\"}" >/dev/null
+          docker stop -t 30 medlevo-ci && docker rm medlevo-ci
+          start
+          curl -fsS http://127.0.0.1:10000/api/auth/status | grep -q '"setup_required":false'
+          docker exec medlevo-ci sh -c 'ls -ld /var/data/medlevo && stat -c %U /var/data/medlevo/medlevo.sqlite'
+          docker stop -t 30 medlevo-ci

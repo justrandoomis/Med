@@ -25,9 +25,16 @@
 //    `server_epoch_changed`), so the engine pulls (reset + re-queue) BEFORE it pushes again — a write made while
 //    the server was being restored never lands on revisions the restored data lacks (no blind conflict copies).
 //    The owner is told through kv `sync.server.restore` (lib/offline.ts).
+//  * (Academic OS, P1-T1 step 0) Outbox targets: an op goes to the user's vault (default; `target` absent) or to one
+//    subject space (`space:<id>`). This engine pushes vault ops only; space ops wait in the outbox, counted as pending,
+//    until the space push lands — they are never sent to the vault endpoint.
+//  * (Academic OS, P1-T1 step 0) `onRejected(entityType, handler)`: a feature acts on a FINAL server rejection of one
+//    of its ops (e.g. P1-T2 re-homes a stroke refused as `layer_read_only` into «ملاحظاتي», ADR-0004 R2). Handlers run
+//    after the verdict is stored; a failing handler never breaks sync and the op stays visible as rejected.
 import Dexie, { liveQuery, type EntityTable, type Table } from 'dexie';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import {
+  ACCEPT_INK_HEADER,
   newId,
   type SyncChange,
   type SyncOp,
@@ -42,14 +49,17 @@ import { getDeviceId } from './deviceId';
 import {
   ENTITY_TABLE,
   getDb,
+  isSyncTarget,
   kvGet,
   kvSet,
+  outboxTarget,
   type MedLevoDB,
   type OutboxRecord,
   type SyncedRowBase,
   type SyncEntityType,
   type SyncOpKind,
   type SyncResult,
+  type SyncTarget,
 } from './localdb';
 
 // ─── wire types (§3.4, packages/shared/src/api.ts) ───────────────────────────────────────
@@ -73,12 +83,15 @@ export function normalizePushResponse(raw: unknown): PushResultItem[] {
 // Background requests never trigger the global "session expired → /login" redirect: sync runs on
 // timers while the owner may be mid-stroke (§55: writing never stops because of the network). A 401
 // pauses sync (`authRequired`) and the save indicator offers sign-in instead.
+// (Academic OS P1-T2 seam, ADR-0004 §2.5) `accept-ink: 2`: ink entities in the answers may carry packed points; the
+// annotation applier (features/workspace/ink) decodes them before anything stores them. Older servers ignore the header.
+const SYNC_HEADERS = { [ACCEPT_INK_HEADER]: '2' };
 export const httpTransport: SyncTransport = {
   async push(body) {
-    return normalizePushResponse(await api.post<SyncPushResponse>('/sync/push', body, { timeoutMs: 60_000, skipAuthRedirect: true }));
+    return normalizePushResponse(await api.post<SyncPushResponse>('/sync/push', body, { timeoutMs: 60_000, skipAuthRedirect: true, headers: SYNC_HEADERS }));
   },
   async pull(since, limit) {
-    const res = await api.get<SyncPullResponse>('/sync/pull', { query: { since, limit }, timeoutMs: 60_000, skipAuthRedirect: true });
+    const res = await api.get<SyncPullResponse>('/sync/pull', { query: { since, limit }, timeoutMs: 60_000, skipAuthRedirect: true, headers: SYNC_HEADERS });
     const out: PullResponse = { changes: Array.isArray(res?.changes) ? res.changes : [], next_since: Number(res?.next_since ?? since), has_more: !!res?.has_more };
     // server data epoch (track D1): passed through when the server sends it
     if (typeof res?.server_epoch === 'string') out.server_epoch = res.server_epoch;
@@ -97,6 +110,8 @@ export interface EnqueueInput {
   base_rev?: number | null;
   op_id?: string;
   client_ts?: number;
+  /** where the op is delivered; default 'vault' (ARCHITECTURE_DELTA §4.5) */
+  target?: SyncTarget;
 }
 
 type OutboxListener = (db: MedLevoDB) => void;
@@ -114,10 +129,12 @@ export async function enqueue(db: MedLevoDB, input: EnqueueInput): Promise<Outbo
   if (!tx || tx.mode !== 'readwrite' || !tx.storeNames.includes('outbox')) {
     throw new Error('enqueue() must run inside a read-write db.transaction that includes db.outbox and the entity table.');
   }
+  if (input.target !== undefined && !isSyncTarget(input.target)) throw new Error(`enqueue(): invalid sync target «${String(input.target)}».`);
+  const target: SyncTarget = input.target ?? 'vault';
   const now = input.client_ts ?? Date.now();
   if (input.op === 'upsert') {
     const ops = await db.outbox.where('[entity_type+entity_id]').equals([input.entity_type, input.entity_id]).sortBy('seq');
-    const lastPending = [...ops].reverse().find((o) => o.status === 'pending');
+    const lastPending = [...ops].reverse().find((o) => o.status === 'pending' && outboxTarget(o) === target);
     if (lastPending && lastPending.op === 'upsert' && !lastPending.sentAt && lastPending.seq != null) {
       const merged: OutboxRecord = { ...lastPending, payload: input.payload, client_ts: now };
       await db.outbox.put(merged);
@@ -138,6 +155,8 @@ export async function enqueue(db: MedLevoDB, input: EnqueueInput): Promise<Outbo
     nextAttemptAt: 0,
     sentAt: null,
     lastError: null,
+    // vault ops keep today's record shape (no target field); only space ops store their target
+    ...(target !== 'vault' ? { target } : {}),
   };
   const seq = await db.outbox.add(rec);
   tx.on('complete', () => notifyOutbox(db));
@@ -179,6 +198,15 @@ export interface ApplierContext {
   localOps: OutboxRecord[];
 }
 export type SyncApplier = (change: PullChange | (Omit<PullChange, 'seq'> & { seq: null }), ctx: ApplierContext) => Promise<void> | void;
+
+/** A final server rejection of one op (`rejected`, with or without the server's copy; never a retryable answer). */
+export interface RejectedOp {
+  /** the op as stored after the verdict (status `rejected`, or `conflict` when the server sent its copy) */
+  op: OutboxRecord;
+  /** the server's answer: `detail`, `detail_code` (e.g. 'layer_read_only'), `entity` when it sent its copy */
+  result: PushResultItem;
+}
+export type RejectionHandler = (rejected: RejectedOp, ctx: { db: MedLevoDB }) => Promise<void> | void;
 
 // ─── engine ────────────────────────────────────────────────────────────────────────────────
 export interface SyncSnapshot {
@@ -286,6 +314,10 @@ export class SyncEngine {
   private pollMs: number;
 
   private appliers = new Map<string, SyncApplier>();
+  /** entity type → handlers of final rejections (P1-T1 step 0 hook) */
+  private rejectionHandlers = new Map<string, Set<RejectionHandler>>();
+  /** rejection deliveries run one at a time (see `serialRejections`) */
+  private rejectionChain: Promise<unknown> = Promise.resolve();
   /** every applier call runs through this chain → server changes are applied strictly in order */
   private applyChain: Promise<unknown> = Promise.resolve();
   private listeners = new Set<() => void>();
@@ -536,6 +568,8 @@ export class SyncEngine {
       const taken = new Set<string>();
       const blocked = new Set<string>();
       for (const op of pending) {
+        // space ops are delivered by the space push (not built yet): never sent to the vault endpoint
+        if (outboxTarget(op) !== 'vault') continue;
         const key = entityKey(op.entity_type, op.entity_id);
         if (blocked.has(key) || taken.has(key)) {
           blocked.add(key);
@@ -595,6 +629,7 @@ export class SyncEngine {
 
     const byId = new Map(results.map((r) => [r.op_id, r]));
     const toApply: Array<{ op: OutboxRecord; res: PushResultItem }> = [];
+    const rejected: Array<{ seq: number }> = [];
     const tables = this.entityTables();
     await db.transaction('rw', [db.outbox, ...tables], async () => {
       for (const op of batch) {
@@ -631,9 +666,13 @@ export class SyncEngine {
           lastError: status === 'rejected' ? detailMessage(res.detail) : null,
           // change-feed position of the acknowledgement (track D1: re-sent if a restore goes back before it)
           ackSeq: typeof res.server_seq === 'number' ? res.server_seq : null,
+          // a final rejection waits for its onRejected handlers in the same commit as the verdict (never lost by a
+          // closed tab or a feature whose handler is not registered yet; cleared once the handlers succeeded)
+          ...(effective === 'rejected' ? { pendingRejection: withoutEntity(res) } : {}),
         } as Partial<AckedOutboxRecord>);
         if (status === 'synced') await this.rebaseFollowing(fresh, res.entity);
         if (res.entity !== undefined && res.entity !== null) toApply.push({ op: fresh, res });
+        if (effective === 'rejected') rejected.push({ seq: op.seq! });
       }
       await this.mirrorRowStates(batch.map((o) => [o.entity_type, o.entity_id] as const));
     });
@@ -646,11 +685,88 @@ export class SyncEngine {
       .delete();
 
     for (const { op, res } of toApply) await this.dispatch({ seq: null, entity_type: op.entity_type, entity_id: op.entity_id, entity: res.entity ?? null }, 'push');
+    await this.deliverRejections(rejected.map((r) => r.seq));
 
     await kvSet(db, LAST_SYNC_KEY, now);
     this.patch({ lastSyncedAt: now, lastError: null, authRequired: false });
     await this.refresh();
     return { sent: batch.length, failed: false, results };
+  }
+
+  /** Rejection deliveries run one at a time (a push and a registration never hand the same op over twice). */
+  private serialRejections<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.rejectionChain.then(fn);
+    this.rejectionChain = run.catch(() => undefined);
+    return run;
+  }
+
+  /** Hands each final rejection (already stored) to the handlers registered for its entity type, in push order. */
+  private deliverRejections(seqs: readonly number[]): Promise<void> {
+    if (seqs.length === 0) return Promise.resolve();
+    return this.serialRejections(async () => {
+      for (const seq of seqs) await this.deliverRejectionNow(seq);
+    });
+  }
+
+  /** Delivers every stored rejection of a type whose handlers have not completed yet (a handler just registered). */
+  private deliverPendingRejections(entityType: string): Promise<void> {
+    return this.serialRejections(async () => {
+      const pending = await this.db.outbox
+        .where('status')
+        .anyOf('rejected', 'conflict')
+        .filter((o) => o.entity_type === entityType && !!o.pendingRejection && !o.supersededBy)
+        .toArray();
+      pending.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+      for (const op of pending) await this.deliverRejectionNow(op.seq!);
+    });
+  }
+
+  /**
+   * At least once: the «pending» mark stored with the verdict is cleared only after EVERY handler of the type succeeded.
+   * No handler yet, or one that threw, leaves it for the next registration (handlers must be idempotent, like
+   * appliers). An op the owner already sent again (`supersededBy`) is not handed over.
+   */
+  private async deliverRejectionNow(seq: number): Promise<void> {
+    const stored = await this.db.outbox.get(seq);
+    if (!stored || !stored.pendingRejection || stored.supersededBy) return;
+    const handlers = this.rejectionHandlers.get(stored.entity_type);
+    if (!handlers || handlers.size === 0) return; // kept: delivered when a handler of this type registers
+    const result: PushResultItem = {
+      ...stored.pendingRejection,
+      ...(stored.resultEntity !== undefined && stored.resultEntity !== null ? { entity: stored.resultEntity } : {}),
+    };
+    let allDone = true;
+    for (const handler of [...handlers]) {
+      try {
+        await handler({ op: stored, result }, { db: this.db });
+      } catch {
+        // a feature's handler must never break sync: the op stays rejected and listed for the owner, and the
+        // rejection is offered again when a handler of this type registers next time
+        allDone = false;
+      }
+    }
+    if (allDone) await this.db.outbox.update(seq, { pendingRejection: undefined });
+  }
+
+  /**
+   * Register a handler for final server rejections of one entity type's ops (P1-T1 step 0 seam; ARCHITECTURE_DELTA
+   * §8.2). Several handlers per type are allowed; the returned function removes this one. Handlers should do local work
+   * only (Dexie writes, `enqueue`): the push round waits for them before it reports. Delivery is at least once: a
+   * rejection stored while no handler of its type was registered (a lazily loaded feature, another tab, a closed page)
+   * is handed to the handler when it registers, and one whose handler threw is offered again on the next registration —
+   * so handlers must be idempotent (e.g. re-home under an id derived from the rejected op).
+   */
+  onRejected(entityType: string, handler: RejectionHandler): () => void {
+    let set = this.rejectionHandlers.get(entityType);
+    if (!set) {
+      set = new Set();
+      this.rejectionHandlers.set(entityType, set);
+    }
+    set.add(handler);
+    void this.deliverPendingRejections(entityType).catch(() => undefined);
+    return () => {
+      this.rejectionHandlers.get(entityType)?.delete(handler);
+    };
   }
 
   /** After op A for entity X is acknowledged with a new rev, later ops built on A's base move to that rev. */
@@ -793,6 +909,8 @@ export class SyncEngine {
     await this.db.transaction('rw', [this.db.outbox, ...tables], async () => {
       const synced = (await this.db.outbox.where('status').equals('synced').sortBy('seq')) as AckedOutboxRecord[];
       for (const op of synced) {
+        // the vault's epoch: only vault ops were acknowledged against it
+        if (outboxTarget(op) !== 'vault') continue;
         if (typeof op.ackSeq !== 'number' || op.ackSeq <= baseSeq || op.supersededBy) continue;
         const now = this.now();
         const copy: AckedOutboxRecord = {
@@ -822,7 +940,7 @@ export class SyncEngine {
       if (keys.size) {
         const waiting = (await this.db.outbox.where('status').equals('pending').sortBy('seq')) as AckedOutboxRecord[];
         for (const w of waiting) {
-          if (w.resentAfterRestore || !keys.has(entityKey(w.entity_type, w.entity_id))) continue;
+          if (w.resentAfterRestore || outboxTarget(w) !== 'vault' || !keys.has(entityKey(w.entity_type, w.entity_id))) continue;
           const { seq: oldSeq, ...rest } = w;
           await this.db.outbox.delete(oldSeq!);
           await this.db.outbox.add(rest as AckedOutboxRecord);
@@ -957,6 +1075,7 @@ export class SyncEngine {
         sentAt: null,
         lastError: null,
         retryOf: op.op_id,
+        ...(op.target ? { target: op.target } : {}),
       };
       const seq = (await db.outbox.add(rec)) as number;
       await db.outbox.update(op.seq!, { acknowledgedAt: op.acknowledgedAt ?? now, supersededBy: rec.op_id });
@@ -973,6 +1092,13 @@ export class SyncEngine {
   async openIssues(): Promise<OutboxRecord[]> {
     return (await this.db.outbox.where('status').anyOf('conflict', 'rejected').toArray()).filter((o) => !o.acknowledgedAt);
   }
+}
+
+/** The server's answer without its copy of the entity (that copy is already stored as `resultEntity`). */
+function withoutEntity(res: PushResultItem): Omit<PushResultItem, 'entity'> {
+  const { entity: _entity, ...rest } = res;
+  void _entity;
+  return rest;
 }
 
 function isSyncResult(v: unknown): v is SyncResult {

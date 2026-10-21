@@ -509,3 +509,34 @@ full server run during the review failed only in files another track was editing
 `npm run lint`, `npm run build` → exit 0. `npm run eval -- --set=regression --compare=docs/eval/baseline.json
 --no-record` → 80 / 80, `no_regressions`, exit 0 (no catalogue change). E2E (real server, phone + desktop):
 `g1-ac02`, `g1-ac03`, `g3-ac09`, `g3-ac13`, `g4-ac10-ac11`, `g4-ac12-ac14-ac15`, `g8-security`, `smoke` → 24 / 24 passed.
+
+## Academic OS P1-T3 — page fingerprints, the analysis follow-up and DOCX display PDFs (2026-10-20)
+
+Track P1-T3 (BUILD_PLAN §3.5; ARCHITECTURE_DELTA §4.2 `0161`, §6.2). Details of the versions module are in
+[library-sources.md](library-sources.md#academic-os-p1-t3--lecture-identity-version-matching-and-import-intelligence-2026-10-20).
+
+* **The one seam in the pipeline** (`pipeline.ts`, next to the question and knowledge follow-ups):
+  `enqueueVersionAnalysisFollowUp(ctx, versionId, runId)` from `processing/fingerprint.ts`. When a processing run ends
+  (not failed) it queues the versions module's `analyze_version` job (idempotent per processing run, parent = the
+  processing job) and, for a DOCX, `docx_display_pdf` once per version. Guarded: without the versions module nothing
+  happens, and a failure there never fails processing.
+* **Fingerprints** (`processing/fingerprint.ts`, scheme `FINGERPRINT_ALGO = fp2:norm1:sh3:mh64:dh64:lay50f` — `fp2`
+  since the P1-T3 review: the layout hash also covers figure / diagram regions; `fp1` fingerprints are re-made by the
+  `fingerprint_backfill` job on the next boot):
+  `normalizePageText` keeps the regions in reading order but drops header / footer / table-cell regions and printed
+  page-number lines («Page 12», «ص ١٢», «12 / 40», «- 7 -»), then search-normalises (Arabic letter forms, Arabic-Indic
+  digits, case); `textHashOf` (sha256), `minhashOf` (64 × u32, FNV-1a + murmur finaliser, fixed seeds — identical on
+  every machine), `layoutHashOf` (text and figure / diagram region boxes on a 1/50 grid), `dhashOf` (9 × 8 grey cells). A dHash is rendered
+  (pdftoppm, 24 dpi, child process) **only for pages with fewer than 40 normalised characters**; an image page is decoded
+  with a 12 MP budget. Re-made after every processing run (`force`).
+* **DOCX display PDF** (`versions/rendition.ts`, table `version_rendition`): LibreOffice converts the DOCX through the
+  existing `convertToPdf` (no-network profile, OOXML relationship stripping). The fonts are read from the PDF's font
+  dictionaries (pdf-lib): every font must carry a `FontFile*` (Type 3 counts as embedded); a missing one is stated in
+  the rendition's reason. It is **not** `source_version.display_file_id` — every reader of that column assumes «PDF page
+  i = source page i», which is false for paragraph sections — so the DOCX paragraph pages and locators remain the
+  evidence of every citation. Without LibreOffice the rendition is `unavailable` with the reason; a failed conversion is
+  `failed` with the reason; re-making it releases the replaced PDF (through `files/blobs.ts`) and a failed re-run keeps
+  the previous ready PDF with the reason (review fix). Measured here (labelled fixture `lecture_notes_shock.docx`, Arabic + English): 1 page on
+  every run, one font (DejaVu Sans subset) embedded, about 3 s per conversion in this container.
+* Capabilities: no new key. The reasons (LibreOffice for DOCX display PDFs, poppler for page images on the compare
+  screen) are answered by the routes themselves and listed in `docs/CAPABILITY_MATRIX.md`.

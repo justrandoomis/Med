@@ -21,6 +21,11 @@ export const FEATURE_KEYS = [
   'course_brain', 'knowledge_map', 'coverage_map',
   // devices & data
   'sync', 'offline', 'backup', 'export.markdown', 'export.anki_tsv', 'export.pdf', 'export.docx',
+  // Academic OS (ADR-0005 §6) — appended only. Each key stays `not_implemented` until its track builds it; then it is
+  // probed per device (`requires_native` «يتطلب تطبيق MedLevo على الجهاز», `requires_connection`, or `available` only
+  // after the device's own probe succeeded). Never inferred from a device name.
+  'rooms.online', 'nearby.webrtc', 'nearby.lan_hub', 'nearby.native', 'nearby.relay',
+  'ink.native_surface', 'recording.background', 'ui.eink_mode',
 ] as const;
 export type FeatureKey = (typeof FEATURE_KEYS)[number];
 

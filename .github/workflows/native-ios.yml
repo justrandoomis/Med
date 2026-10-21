@@ -1,0 +1,84 @@
+# MedLevo iOS / iPadOS shell (Academic OS P1-T2 step 2 — skeleton; ADR-0005 B.1, B.5; PRD §5.3 PL-1).
+# Runs ONLY when started by hand (Actions → «Native iOS» → Run workflow). Nothing in this file has ever been run: the
+# container this skeleton was written in has no macOS runner, no Xcode and no Apple signing material, so no build,
+# signature or TestFlight upload has been made or tested («Not run (no macOS runner)»).
+#
+# Signing material is read from GitHub encrypted secrets by NAME only (set by the owner once the Apple Developer
+# account exists — PRD Q19, decision point D-A):
+#   IOS_CERTIFICATE_P12_BASE64, IOS_CERTIFICATE_PASSWORD, IOS_PROVISIONING_PROFILE_BASE64, IOS_TEAM_ID,
+#   APP_STORE_CONNECT_API_KEY_ID, APP_STORE_CONNECT_API_ISSUER_ID, APP_STORE_CONNECT_API_KEY_BASE64
+# Without them the build job stops after an unsigned simulator build.
+name: Native iOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload:
+        description: 'Upload a signed build to TestFlight (needs the signing secrets)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  NODE_OPTIONS: --disable-warning=ExperimentalWarning
+
+jobs:
+  static-checks:
+    name: static checks (config schema, workflows)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Native skeleton static checks
+        run: node apps/native/scripts/check-native.mjs
+      - name: Native skeleton tests
+        run: node --test apps/native/test/static-checks.test.mjs
+
+  build:
+    name: iOS build (Xcode)
+    needs: static-checks
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Build the web app (the same bundle the PWA serves)
+        run: |
+          npm ci
+          npm run build
+      - name: Install the shell and add the iOS project
+        working-directory: apps/native
+        run: |
+          npm install --no-audit --no-fund
+          npx cap add ios
+          npx cap sync ios
+      - name: Unsigned simulator build
+        working-directory: apps/native/ios/App
+        run: xcodebuild -workspace App.xcworkspace -scheme App -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+      - name: Signed archive and TestFlight upload
+        if: ${{ inputs.upload }}
+        env:
+          IOS_CERTIFICATE_P12_BASE64: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
+        run: |
+          if [ -z "$IOS_CERTIFICATE_P12_BASE64" ] || [ -z "$IOS_TEAM_ID" ]; then
+            echo "::error::Signing secrets are not set — no signed build is possible (see the header of this file)."
+            exit 1
+          fi
+          echo "Signing and upload steps are added with PL-1 (signed iPad shell); this skeleton stops here."
+          exit 1

@@ -696,6 +696,16 @@ const FULL_TABLES: Array<{ table: string; type: string; where?: string; rev?: st
   { table: 'figure_reading', type: 'figure_reading' },
   // Round 7 H4 (§32): the owner's registry of allowed external visual sources
   { table: 'visual_source', type: 'visual_source' },
+  // (Academic OS P1-T2) authorship layers, the version history of annotations / notes / layers, and the attribution of
+  // copied items (who wrote the original; never evidence)
+  { table: 'annotation_layer', type: 'annotation_layer', rev: 'rev' },
+  { table: 'annotation_revision', type: 'annotation_revision', rev: 'rev' },
+  { table: 'attribution', type: 'attribution' },
+  // (Academic OS P1-T2 step 3) note migration to a newer version: the runs (report + undo), the copies each wrote, and
+  // the owner's «اتركها على الإصدار السابق» choices (the copies themselves are ordinary annotation / note rows above)
+  { table: 'reanchor_copy_run', type: 'reanchor_copy_run' },
+  { table: 'reanchor_copy_item', type: 'reanchor_copy_item', columns: "entity_type || ':' || copy_id AS id, *" },
+  { table: 'reanchor_copy_decision', type: 'reanchor_copy_decision', columns: "entity_type || ':' || entity_id || ':' || to_version_id AS id, *" },
 ];
 
 /** Everything the owner created or studied, as JSON (files referenced by sha256; never secrets). */

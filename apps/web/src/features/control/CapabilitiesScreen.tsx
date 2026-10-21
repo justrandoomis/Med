@@ -54,6 +54,16 @@ const FEATURE_LABELS_AR: Record<FeatureKey, string> = {
   'export.anki_tsv': 'التصدير إلى Anki',
   'export.pdf': 'التصدير PDF',
   'export.docx': 'التصدير Word',
+  // Academic OS keys (ADR-0005 §6): registered as «لم تُبنَ بعد» and in no group below, so this screen does not list
+  // them until their track builds them and adds them to a group
+  'rooms.online': 'غرف الدراسة عبر الإنترنت',
+  'nearby.webrtc': 'الاتصال المباشر بالأجهزة القريبة (WebRTC)',
+  'nearby.lan_hub': 'محور الشبكة المحلية في القاعة',
+  'nearby.native': 'الاتصال القريب عبر تطبيق الجهاز',
+  'nearby.relay': 'التمرير بين الأجهزة دون اتصال',
+  'ink.native_surface': 'سطح الكتابة الأصلي للقلم',
+  'recording.background': 'التسجيل في الخلفية',
+  'ui.eink_mode': 'وضع شاشات الحبر الإلكتروني',
 };
 
 const GROUPS: Array<{ title: string; prefix: (k: FeatureKey) => boolean }> = [

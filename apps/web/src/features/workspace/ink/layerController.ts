@@ -14,12 +14,17 @@ import { classifyPointerDown, StrokeCapture, type InputSample } from './input';
 import { bboxOf, boxContains, expandBox, fractionInside, pointInPolygon, unionBox, type Mat, type Vec } from './math';
 import { isBoxItem, isInkStroke, isShape, isSticky, isTextBox, itemBBox, itemGeometry, lassoSamplePoints, makeInkItem, makeShapeItem, transformItem, type InkItem } from './model';
 import { audioLinkAt } from './audioLink';
-import { LASER_COLOR, resolveInkColor } from './palette';
+import { LASER_COLOR, paletteSignature, resolveInkColor } from './palette';
 import { canvasScale, deviceRectOf, drawItem, HIGHLIGHT_ALPHA, HIGHLIGHT_ALPHA_ISOLATED, highlightBlendIsolated, pageMatrix, paintOrder, paperToneOf, setMatrix, type RenderEnv } from './render';
 import { recognizeShape, type RecognizedShape } from './shapes';
 import type { InkDocumentStore, PageEvent } from './store';
 import type { InkPageView, InkToolId, InkToolState } from './types';
+import { recordInkPaint } from './tiles';
+import { TiledPainter } from './tiles/renderer';
 
+/** (P1-T2) the e-ink display mode is on (`<html data-eink="on">`, design/themeDisplay.ts) */
+const einkMode = () => typeof document !== 'undefined' && document.documentElement.getAttribute('data-eink') === 'on';
+const perfNow = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 const PEN_TOOLS: ReadonlySet<InkToolId> = new Set(['pen', 'fountain', 'ball', 'highlighter']);
 const SHAPE_TOOLS: ReadonlySet<InkToolId> = new Set(['line', 'arrow', 'rect', 'ellipse']);
 const HOLD_MS = 600;
@@ -77,11 +82,30 @@ export class PageInkController {
   private disposers: Array<() => void> = [];
   private penHovering = false;
   private viewKey = '';
+  /** (P1-T2) dense pages paint through the tile cache */
+  private painter: TiledPainter | null = null;
+  /** the pending full repaint is a content reload (tiles of the grid on screen must be redrawn) */
+  private pendingContentReset = false;
+  private visKey: string;
 
   constructor(private readonly d: LayerDeps) {
     this.hlCtx = safeContext(d.highlightCanvas);
     this.inkCtx = safeContext(d.inkCanvas);
     this.liveCtx = safeContext(d.liveCanvas, true);
+    this.visKey = d.store.visibilityKey;
+    if (this.hlCtx && this.inkCtx) {
+      this.painter = new TiledPainter({
+        store: d.store,
+        targetKey: d.targetKey,
+        hlCanvas: d.highlightCanvas,
+        inkCanvas: d.inkCanvas,
+        hlCtx: this.hlCtx,
+        inkCtx: this.inkCtx,
+        getView: () => this.d.getView(),
+        getMatrix: () => this.matrix,
+        getEnv: () => this.env,
+      });
+    }
     if (this.liveCtx) {
       const attrs = (this.liveCtx as CanvasRenderingContext2D & { getContextAttributes?: () => { desynchronized?: boolean } }).getContextAttributes?.();
       if (attrs) penProbe.noteDesynchronized(!!attrs.desynchronized);
@@ -134,7 +158,7 @@ export class PageInkController {
     this.disposers.push(unsub);
     // theme / paper tone changes → full redraw (colour tokens resolve per tone)
     const mo = new MutationObserver(() => this.refreshEnv(true));
-    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-eink', 'data-contrast'] });
     this.disposers.push(() => mo.disconnect());
     try {
       const mq = window.matchMedia('(prefers-color-scheme: dark)');
@@ -163,6 +187,9 @@ export class PageInkController {
     this.disposers = [];
     cancelAnimationFrame(this.commitFrame);
     cancelAnimationFrame(this.liveFrame);
+    // changes not painted yet leave their tiles stale (the next visit redraws them)
+    this.painter?.destroy(this.pendingDirty, this.pendingContentReset);
+    this.painter = null;
   }
 
   private isWriting(): boolean {
@@ -182,6 +209,8 @@ export class PageInkController {
     const dpr = canvasScale(width, height, typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1);
     const key = `${width}|${height}|${dpr}|${view.rotation}|${view.pageWidth}|${view.pageHeight}`;
     if (key === this.viewKey) return;
+    // a zoom step on a dense page: keep the current picture as a stand-in while the new scale re-rasters
+    if (this.viewKey) this.painter?.capturePrevious();
     this.viewKey = key;
     this.dpr = dpr;
     for (const c of [this.d.highlightCanvas, this.d.inkCanvas, this.d.liveCanvas]) {
@@ -209,8 +238,11 @@ export class PageInkController {
     } catch {
       css = null;
     }
-    const changed = tone !== this.env.tone || isolated !== (this.env.highlightAlpha === HIGHLIGHT_ALPHA_ISOLATED) || view.pageWidth !== this.env.W || view.pageHeight !== this.env.H;
-    this.env = { W: view.pageWidth, H: view.pageHeight, tone, css, highlightAlpha: isolated ? HIGHLIGHT_ALPHA_ISOLATED : HIGHLIGHT_ALPHA };
+    // (P1-T2 review) the resolved colours too: e-ink / high contrast change them with the same paper tone
+    const palette = paletteSignature(css);
+    const changed =
+      tone !== this.env.tone || isolated !== (this.env.highlightAlpha === HIGHLIGHT_ALPHA_ISOLATED) || view.pageWidth !== this.env.W || view.pageHeight !== this.env.H || palette !== (this.env.palette ?? '');
+    this.env = { W: view.pageWidth, H: view.pageHeight, tone, css, highlightAlpha: isolated ? HIGHLIGHT_ALPHA_ISOLATED : HIGHLIGHT_ALPHA, palette };
     if (redraw) this.invalidate('all');
     return changed;
   }
@@ -250,8 +282,17 @@ export class PageInkController {
 
   // ── store events ──
   private onPageEvent(e: PageEvent) {
-    if (e.kind === 'items') this.invalidate(e.dirty);
-    else if (e.kind === 'hidden') {
+    if (e.kind === 'items') {
+      if (e.dirty === 'all') this.pendingContentReset = true;
+      this.invalidate(e.dirty);
+    } else if (e.kind === 'view') {
+      // (P1-T2) the visible-layer set changed: repaint (an editability-only change draws nothing new)
+      const k = this.d.store.visibilityKey;
+      if (k !== this.visKey) {
+        this.visKey = k;
+        this.invalidate('all');
+      }
+    } else if (e.kind === 'hidden') {
       const boxes: NormBox[] = [];
       for (const id of e.ids) {
         const b = this.d.store.page(this.d.targetKey)?.index.box(id);
@@ -259,7 +300,10 @@ export class PageInkController {
       }
       this.invalidate(boxes);
       this.scheduleLive();
-    } else if (e.kind === 'loaded') this.invalidate('all');
+    } else if (e.kind === 'loaded') {
+      this.pendingContentReset = true;
+      this.invalidate('all');
+    }
     else if (e.kind === 'selection') this.d.onSelectionChanged?.();
   }
 
@@ -271,9 +315,12 @@ export class PageInkController {
 
   /** Synchronous repaint (tests / after resize). */
   paintCommitted(): void {
+    const t0 = perfNow();
     this.commitFrame = 0;
     let dirty = this.pendingDirty;
     this.pendingDirty = null;
+    const contentReset = this.pendingContentReset;
+    this.pendingContentReset = false;
     if (!dirty || !this.inkCtx || !this.hlCtx) return;
     // the page under the layer may have changed (e.g. the PDF bitmap replaced a placeholder)
     if (this.refreshEnv(false)) dirty = 'all';
@@ -282,13 +329,27 @@ export class PageInkController {
     if (!page) return;
     const cw = this.d.inkCanvas.width;
     const ch = this.d.inkCanvas.height;
+    // (P1-T2) a dense page repaints as a whole through the tile cache: warm tiles at once, cold ones in slices
+    const tiled = this.painter?.use(page) ?? false;
+    if (!tiled) this.painter?.leave();
     let items: InkItem[];
     let clip: Array<{ x: number; y: number; w: number; h: number }> | null = null;
-    if (dirty === 'all') items = [...page.items.values()];
-    else {
+    if (dirty === 'all') {
+      if (tiled) {
+        if (contentReset) this.painter!.contentReset();
+        this.painter!.full();
+        return;
+      }
+      items = [...page.items.values()];
+    } else {
       if (dirty.length === 0) return;
       clip = dirty.map((b) => deviceRectOf(b, view, this.matrix, 3));
       const area = clip.reduce((s, r) => s + r.w * r.h, 0);
+      if (area > cw * ch * 0.5 && tiled) {
+        this.painter!.contentChanged(dirty);
+        this.painter!.full();
+        return;
+      }
       if (area > cw * ch * 0.5) {
         clip = null;
         items = [...page.items.values()];
@@ -307,7 +368,9 @@ export class PageInkController {
         }
       }
     }
-    items = items.filter((it) => !this.d.store.isHidden(it.id) && (isInkStroke(it) || isShape(it))).sort(paintOrder);
+    // (P1-T2) the visibility predicate: items of a layer hidden in this session are not drawn
+    const store = this.d.store;
+    items = items.filter((it) => !store.isHidden(it.id) && (isInkStroke(it) || isShape(it)) && store.isVisible(it)).sort(paintOrder);
     for (const ctx of [this.hlCtx, this.inkCtx]) {
       ctx.save();
       ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -324,6 +387,14 @@ export class PageInkController {
       }
       ctx.restore();
     }
+    // the tiles of the grid on screen follow what was just painted
+    if (clip && this.painter?.liveGrid) this.painter.afterDirty(clip);
+    if (!clip) recordInkPaint({ targetKey: this.d.targetKey, kind: 'full', mode: 'strokes', ms: Math.round((perfNow() - t0) * 10) / 10, warmTiles: 0, coldTiles: 0, items: items.length, at: t0 });
+  }
+
+  /** (P1-T2) draw any cold tiles now (tests / harness) */
+  flushTiles(): void {
+    this.painter?.flush();
   }
 
   // ── live layer ──
@@ -561,7 +632,8 @@ export class PageInkController {
           }
           cur.capture.add(s);
         }
-        cur.predicted = predicted ? Array.from(predicted) : [];
+        // (P1-T2) e-ink mode: no prediction overlay (every extra repaint costs a slow screen refresh)
+        cur.predicted = predicted && !einkMode() ? Array.from(predicted) : [];
         if (Math.hypot(e.clientX - cur.holdAt[0], e.clientY - cur.holdAt[1]) > HOLD_SLOP_PX) {
           cur.holdAt = [e.clientX, e.clientY];
           this.armHold();
@@ -756,7 +828,9 @@ export class PageInkController {
     const ar = this.ar;
     const b = bboxOf(path.map((p) => [p[0], p[1] / ar]));
     const pad = radiusIso + 0.06;
-    return this.d.store.query(this.d.targetKey, expandBox(b, pad, pad / ar)).filter((it) => !it.locked && (isInkStroke(it) || isShape(it)));
+    const store = this.d.store;
+    // (P1-T2, R5) the eraser only touches visible items the owner may edit (never a followed / read-only layer's)
+    return store.query(this.d.targetKey, expandBox(b, pad, pad / ar)).filter((it) => !it.locked && (isInkStroke(it) || isShape(it)) && store.isVisible(it) && store.isEditable(it));
   }
 
   private eraseStrokeAlong(path: Vec[]) {
@@ -820,6 +894,8 @@ export class PageInkController {
           tiltAvailable: orig.data.tilt_available,
           pointerType: orig.input?.pointer_type ?? 'unknown',
         });
+        // (P1-T2) the pieces stay on the original's layer
+        piece.layer_id = orig.layer_id ?? null;
         // (track F4) the pieces are the same writing: they keep its time link
         if (orig.data.audio_link) piece.data.audio_link = orig.data.audio_link;
         changes.push({ id: piece.id, targetKey: this.d.targetKey, before: null, after: { ...piece, input: orig.input } });
@@ -843,6 +919,8 @@ export class PageInkController {
     const box = bboxOf(poly);
     const ids: string[] = [];
     for (const it of store.query(this.d.targetKey, box)) {
+      // (P1-T2) a hidden layer's items are not selected; read-only ones are (they can be copied, never moved)
+      if (!store.isVisible(it)) continue;
       const samples = lassoSamplePoints(it, ar);
       const inside = isBoxItem(it) || isSticky(it) ? samples.every((p) => pointInPolygon(p, poly)) : fractionInside(samples, poly) >= 0.5;
       if (inside) ids.push(it.id);
@@ -855,7 +933,12 @@ export class PageInkController {
     const ar = this.ar;
     const r = this.pxToIso(SELECT_TAP_PX);
     const iso: Vec = [n[0], n[1] * ar];
-    const cands = this.d.store.query(this.d.targetKey, expandBox({ x: n[0], y: n[1], w: 0, h: 0 }, r, r / ar)).sort(paintOrder).reverse();
+    const store = this.d.store;
+    const cands = store
+      .query(this.d.targetKey, expandBox({ x: n[0], y: n[1], w: 0, h: 0 }, r, r / ar))
+      .filter((it) => store.isVisible(it))
+      .sort(paintOrder)
+      .reverse();
     for (const it of cands) {
       const geo = itemGeometry(it, ar);
       if (geo.area && pointInPolygon(iso, geo.area)) return it;

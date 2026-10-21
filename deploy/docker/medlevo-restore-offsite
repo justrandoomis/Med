@@ -1,0 +1,7 @@
+#!/bin/sh
+# Restore MedLevo from its encrypted off-site copy in Cloudflare R2 — the ONE command for the Render Shell:
+#   medlevo-restore-offsite --latest
+# See docs/DEPLOY_PHONE_AR.md. It never writes over the live data; it prints the directory to put in MEDLEVO_DATA_DIR.
+set -eu
+cd /app/apps/server
+exec node --disable-warning=ExperimentalWarning --import tsx src/cli/restore-offsite.ts "$@"

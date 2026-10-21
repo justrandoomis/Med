@@ -2,10 +2,12 @@
 // (annotation, annotation_target, note, note_page, study_session, source_progress).
 import {
   annotationTargetKey,
+  inkDataForClient,
   normalizeForSearch,
   richTextToPlain,
   type AnnotationAnchor,
   type AnnotationDTO,
+  type AnnotationOrigin,
   type NoteDTO,
   type NotePageView,
   type RichText,
@@ -37,6 +39,11 @@ export interface AnnotationRow {
   conflict_of_id: string | null;
   /** migration 0290 (H3): kept detached by the owner */
   detached_at?: number | null;
+  /** migration 0271 (P1-T2): authorship layer (NULL = the document's default personal layer), author, copy origin */
+  layer_id?: string | null;
+  author_user_id?: string | null;
+  migrated_from_id?: string | null;
+  origin?: AnnotationOrigin;
 }
 
 export interface NoteRow {
@@ -59,6 +66,10 @@ export interface NoteRow {
   /** migration 0290 (H3): the anchor before the owner re-anchored it; kept detached by the owner */
   previous_anchor_json?: string | null;
   detached_at?: number | null;
+  /** migration 0271 (P1-T2) */
+  layer_id?: string | null;
+  author_user_id?: string | null;
+  migrated_from_id?: string | null;
 }
 
 export interface NotePageRow {
@@ -100,13 +111,27 @@ export interface StudySessionRow {
 /** parse a NOT NULL json column written by this module */
 const j = <T>(text: string | null): T => fromJson<T>(text) as T;
 
-export function toAnnotationDTO(r: AnnotationRow): AnnotationDTO {
+/**
+ * Layer fields are sent only when they say something (P1-T2): a legacy row — on «ملاحظاتي», written by the vault's user
+ * on a device — keeps exactly today's DTO, so older clients and every existing comparison see no change.
+ */
+function layerExtras(r: { layer_id?: string | null; author_user_id?: string | null; migrated_from_id?: string | null }) {
+  return {
+    ...(r.layer_id ? { layer_id: r.layer_id } : {}),
+    ...(r.author_user_id ? { author_user_id: r.author_user_id } : {}),
+    ...(r.migrated_from_id ? { migrated_from_id: r.migrated_from_id } : {}),
+  };
+}
+
+/** `inkFormat: 2` (the client sent `accept-ink: 2`) packs ink points (ADR-0004 §2.5); otherwise v1 as stored. */
+export function toAnnotationDTO(r: AnnotationRow, opts: { inkFormat?: 1 | 2 } = {}): AnnotationDTO {
+  const data = j<AnnotationDTO['data']>(r.data_json);
   return {
     id: r.id,
     kind: r.kind,
     tool: r.tool,
     anchor: j<AnnotationAnchor>(r.anchor_json),
-    data: j<AnnotationDTO['data']>(r.data_json),
+    data: opts.inkFormat === 2 ? inkDataForClient(r.kind, data, 2) : data,
     layer: r.layer,
     z: r.z,
     locked: r.locked === 1,
@@ -119,6 +144,8 @@ export function toAnnotationDTO(r: AnnotationRow): AnnotationDTO {
     updated_at: r.updated_at,
     deleted_at: r.deleted_at,
     detached_at: r.detached_at ?? null,
+    ...layerExtras(r),
+    ...(r.origin && r.origin !== 'device' ? { origin: r.origin } : {}),
   };
 }
 
@@ -139,6 +166,7 @@ export function toNoteDTO(r: NoteRow): NoteDTO {
     deleted_at: r.deleted_at,
     previous_anchor: r.previous_anchor_json ? j<AnnotationAnchor>(r.previous_anchor_json) : null,
     detached_at: r.detached_at ?? null,
+    ...layerExtras(r),
   };
 }
 

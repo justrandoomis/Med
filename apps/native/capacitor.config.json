@@ -1,0 +1,21 @@
+{
+  "appId": "ai.medlevo.app",
+  "appName": "MedLevo",
+  "webDir": "../web/dist",
+  "loggingBehavior": "debug",
+  "server": {
+    "androidScheme": "https",
+    "iosScheme": "capacitor"
+  },
+  "ios": {
+    "contentInset": "never",
+    "scheme": "MedLevo",
+    "limitsNavigationsToAppBoundDomains": true
+  },
+  "android": {
+    "allowMixedContent": false,
+    "captureInput": false,
+    "webContentsDebuggingEnabled": false
+  },
+  "plugins": {}
+}

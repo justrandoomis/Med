@@ -10,6 +10,8 @@ import type { AiProvider } from '../../src/modules/ai/types';
 import type { ModuleEntry } from '../../src/modules';
 import { MODULES } from '../../src/modules';
 
+export { withTestBinding, type TestBindingTarget } from './binding';
+
 export const TEST_ORIGIN = 'http://localhost:5173';
 export const OWNER = { username: 'owner', password: 'test-password-123' };
 export const CSRF = { 'x-medlevo-csrf': '1' } as const;

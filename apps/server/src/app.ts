@@ -11,6 +11,7 @@ import { type AppContext, type ContextOverrides, createContext } from './context
 import { Errors, isAppError } from './lib/errors';
 import { validationError } from './lib/http';
 import { loggerOptions } from './lib/log';
+import { fastifyTrustProxy, registerClientIpHeader } from './lib/proxy';
 import { createStaticSite } from './lib/static';
 import { isApiRequest, registerAuthGuard } from './modules/auth/guard';
 import { MODULES, type ModuleEntry } from './modules';
@@ -68,11 +69,14 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   const config = opts.config ?? loadConfig();
   const app = Fastify({
     logger: loggerOptions(config.logLevel),
-    trustProxy: config.trustProxy,
+    // PL-0: none | all (an overwriting nginx / Caddy) | hop count | address list — see lib/proxy.ts
+    trustProxy: fastifyTrustProxy(config.proxy.trust),
     bodyLimit: config.limits.maxJsonBodyBytes,
     // signed file tokens are ~110 chars; the default (100) would answer 414
     routerOptions: { maxParamLength: 600 },
   });
+  // first hook of all: a platform-set client-address header (MEDLEVO_CLIENT_IP_HEADER) from a trusted proxy
+  registerClientIpHeader(app, config.proxy);
   const ctx = createContext(config, app.log, opts.overrides);
   app.decorate('ctx', ctx);
 

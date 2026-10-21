@@ -2,7 +2,7 @@
 // the text visually), committed ink, and a live layer for the stroke in progress — plus DOM for
 // text boxes, sticky notes and the lasso selection. Pointer input is handled imperatively by
 // PageInkController: a pointermove never causes a React render.
-import { memo, useEffect, useInsertionEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { memo, useEffect, useInsertionEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
 import { ImageOff, Link2, StickyNote as StickyIcon } from 'lucide-react';
 import { newId, normToView, richTextFromPlain, richTextToPlain, viewSize, type ImageAnnotationData, type LinkData, type NormBox, type StickyData, type TextBoxData } from '@medlevo/shared';
 import { cx, RichTextView } from '../../../design';
@@ -135,10 +135,12 @@ export function InkLayer({ targetKey, anchor, view, interactive, onStrokeActiveC
     });
   }, [store, targetKey]);
 
+  // (P1-T2) re-render the DOM objects when the layers shown change
+  const layerView = useSyncExternalStore(store.subscribeLayerView, store.getLayerViewVersion, store.getLayerViewVersion);
   const all = useMemo(
-    () => store.items(targetKey).filter(isDomObject),
+    () => store.items(targetKey).filter((i) => isDomObject(i) && store.isVisible(i)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [store, targetKey, objectsVersion],
+    [store, targetKey, objectsVersion, layerView],
   );
   // the ids the page subscription above checks, kept with the commit (not written during render)
   useInsertionEffect(() => {
@@ -179,7 +181,7 @@ export function InkLayer({ targetKey, anchor, view, interactive, onStrokeActiveC
             item={o}
             view={view}
             hidden={store.isHidden(o.id) || editingHere?.id === o.id}
-            editable={ink.toolState.tool === 'text'}
+            editable={ink.toolState.tool === 'text' && store.isEditable(o)}
             onEdit={() => setEditing({ targetKey, kind: 'text', id: o.id, at: [o.data.box.x, o.data.box.y] })}
           />
         ) : (
@@ -188,8 +190,8 @@ export function InkLayer({ targetKey, anchor, view, interactive, onStrokeActiveC
             item={o}
             view={view}
             hidden={store.isHidden(o.id)}
-            open={editingHere?.id === o.id}
-            onOpen={() => setEditing({ targetKey, kind: 'sticky', id: o.id, at: o.data.at })}
+            open={editingHere?.id === o.id && store.isEditable(o)}
+            onOpen={() => (store.isEditable(o) ? setEditing({ targetKey, kind: 'sticky', id: o.id, at: o.data.at }) : undefined)}
           />
         ),
       )}
@@ -229,9 +231,15 @@ export function InkLayer({ targetKey, anchor, view, interactive, onStrokeActiveC
  */
 function PageSummary({ store, targetKey }: { store: ReturnType<typeof useInkInternal>['store']; targetKey: string }) {
   const [version, setVersion] = useState(0);
-  useEffect(() => store.subscribePage(targetKey, (e) => (e.kind === 'items' || e.kind === 'loaded') && setVersion((v) => v + 1)), [store, targetKey]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- `version` is the page's change counter: the store is mutable, so it is what invalidates the summary
-  const text = useMemo(() => summarize(store.items(targetKey)), [store, targetKey, version]);
+  // (P1-T2) a layer shown / hidden in this session changes what is on the page too ('view')
+  useEffect(() => store.subscribePage(targetKey, (e) => (e.kind === 'items' || e.kind === 'loaded' || e.kind === 'view') && setVersion((v) => v + 1)), [store, targetKey]);
+  const text = useMemo(() => {
+    const all = store.items(targetKey);
+    const shown = all.filter((i) => store.isVisible(i));
+    const hidden = all.length - shown.length;
+    return summarize(shown) + (hidden > 0 ? ` وفي طبقات مخفية ${hidden} عنصرًا.` : '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `version` is the page's change counter: the store is mutable, so it is what invalidates the summary
+  }, [store, targetKey, version]);
   return (
     <p className="ml-visually-hidden" dir="rtl">
       {text}

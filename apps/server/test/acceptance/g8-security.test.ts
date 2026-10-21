@@ -416,7 +416,10 @@ describe('G8 security — SSRF: nothing in an uploaded file makes the server cal
     };
     walk(SERVER_SRC);
     const NET = /\bfetch\s*\(|from ['"]node:(http|https|net|tls|dgram)['"]|require\(['"](http|https|net|tls)['"]\)|\bundici\b|\baxios\b|new\s+WebSocket\b|XMLHttpRequest/;
-    const allowed = new Set(['lib/ssrf-guard.ts']);
+    // (PL-0) lib/objectstore/s3.ts is the off-site backup client: its only destination is the operator-set R2 endpoint
+    // from the environment (lib/objectstore/offsite-config.ts: https, or http on loopback for tests), never a URL from
+    // user content. lib/proxy.ts imports node:net for address parsing only (BlockList, isIP) — it opens no socket.
+    const allowed = new Set(['lib/ssrf-guard.ts', 'lib/objectstore/s3.ts', 'lib/proxy.ts']);
     const hits = files.map((f) => relative(SERVER_SRC, f)).filter((rel) => !allowed.has(rel) && NET.test(readFileSync(join(SERVER_SRC, rel), 'utf8')));
     expect(hits).toEqual([]);
     // the production AI provider is built from the key and the model names only — no base URL / fetch override

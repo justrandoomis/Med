@@ -463,3 +463,181 @@ provider), and in the Control Center the recognition card's state pill is «تح
 reason's «كتابتك نفسها تُحفظ وتعمل كاملة دونه», which speaks of the owner's writing, not of recognition. No product
 code changed. `npx playwright test e2e/g6-ac28-pencil.spec.ts`: 6 passed (3 × phone + desktop); also green in the full
 run (`docs/TEST_LOG.md`, Round 7 final verification).
+
+## Academic OS P1-T2 — layers, packed ink, tile cache, e-ink (2026-10-21; steps 1 and 2)
+
+BUILD_PLAN §3.4, ADR-0004 R1–R6, ADR-0005 B.3–B.4. Step 3 (`reanchor_copy` between versions) is the next section.
+
+### Layers in the engine (`ink/layers/*`, store seams)
+
+* **Model.** `annotation.layer` stays the render class; `layer_id` is authorship. No `layer_id` = the document's
+  «ملاحظاتي» (default personal layer, derived id `defaultPersonalLayerId(documentKey)`, `pl_…`). Document keys:
+  `source:<id>` / `notebook:<id>`. Layers live in Dexie `layers` (T1's v3 schema) and sync as `annotation_layer`.
+* **Store seams (the N1 Wave 0 equivalents):** `setVisibility(fn, key)` — the key names the visible-layer set so the
+  tile cache can reuse grids; `setEditability(fn)`; `setActiveLayer(id, scope)` — new writing is stamped with the active
+  layer only when it is not «ملاحظاتي» and only for items of the reader's own document (the split pane's second source
+  keeps its own default); `setWriteToHiddenLayerHandler` (writing on a hidden layer shows it again);
+  `copySelectionToActiveLayer`, `selectionHasReadOnly`. A visibility change emits a page event `view` (no content
+  change: grids stay valid).
+* **Predicates** (`layers/model.ts`): `visible` — not hidden in this study session; `editable` — the owner's writable,
+  unlocked layer and no other author. Applied in render, hit-test, the stroke and point erasers (candidates must be
+  visible AND editable; point-erase pieces keep the original layer), lasso (hidden items never selected; read-only
+  items selectable for «انسخ إلى طبقتي» only), DOM objects (text / sticky edit only if editable) and the screen-reader
+  page summary (counts what is shown, and says how many items sit on hidden layers). The reader's text highlights
+  (`reader/overlays.tsx`) use the same predicate since the review.
+* **Session.** `LayerViewProvider` (mounted by the reader inside `InkProvider`) keeps the predicates in step with the
+  session's `{ hidden, active }`, which the reader saves with its place (`StudyLocation.layers`).
+* **Re-homing** (`layers/rehome.ts`, through the sync engine's `onRejected` hook): a stroke or note the server refuses
+  with `layer_read_only` / `layer_forbidden` / `use_crdt` is re-created on «ملاحظاتي» under `rh_<id>` (idempotent:
+  delivery is at least once), the original is put back as the server has it (or the local-only copy is tombstoned), the
+  op is settled, and the owner is told why. A refused ERASE simply shows the item again. (Review 2026-10-21) The copy is
+  built from the owner's LAST pending op of the item (drawn, then moved offline → the moved stroke is kept; drawn, then
+  erased → nothing is re-homed), and the notice names the real reason: «للقراءة فقط» only for `layer_read_only`, «لم
+  تعد موجودة أو لا يُكتب فيها من هذا الجهاز» for a layer that is gone (`layer_forbidden`) or CRDT-only.
+
+### Packed ink v2 (`ink/codec.ts`, shared `academic/ink-codec.ts`)
+
+The transport sends `accept-ink: 2`; the applier decodes v2 to v1 (memory and IndexedDB keep v1); pushes use v2 only
+after a v2 entity was received in this page lifetime (an old server never sees v2). The codec refuses a lossy
+encoding (stays v1).
+
+### Dense-page tile cache (`ink/tiles/*`)
+
+* **When:** a page with ≥ `TILE_MIN_ITEMS` (400) committed items repaints its committed layer through tiles; lighter
+  pages paint stroke by stroke exactly as before. `localStorage['medlevo.ink.tiles'] = 'off'` turns tiles off (the
+  harness measures «before» this way).
+* **Grids** of 512 px tiles per page × view (canvas size, transform, paper tone, **resolved ink palette**) ×
+  visible-layer set; a tile holds a
+  highlight and an ink bitmap (or none). Warm repaint = copy the tiles. Cold tiles are drawn in **raster-timed slices**
+  (≈ 8 ms per frame, a 1 px read-back after each chunk so the clock includes the rasterization) into the tile's own CPU
+  surface, then copied onto the page; during a zoom step the previous picture, scaled, stands in.
+* **Correctness:** the grid on screen follows every dirty-rectangle repaint (the touched valid tiles are refreshed from
+  the page canvases; a tile being drawn restarts); grids not on screen follow the store's page events (stale where
+  changed, dropped on a reload); unchanged rows of a whole-page reload are no longer reported as changes. (Review
+  2026-10-21) The view key includes `paletteSignature()` — the computed value of every colour token plus the e-ink flag
+  — because a tile is a bitmap of resolved colours: before the fix, switching e-ink (or high contrast) on with the paper
+  tone unchanged copied the previous palette's warm tiles, so a dense page kept coloured ink in e-ink mode
+  (`test/ink/tiles.test.ts` «display modes and tiles»).
+* **Memory:** LRU by bytes, 96 MB (48 MB when the device reports ≤ 4 GB, 24 MB in «خفيف»); grids on screen stay.
+* **Measured** (docs/PERFORMANCE.md, Academic OS P1-T2): realistic 1.13 M-point page over 5 layers — warm repaint
+  8 ms / 0.1 ms (was 1.6–1.7 s in one 2–2.6 s long task); cold re-raster in slices with no ink long task > 100 ms.
+
+### E-ink mode (`design/themeDisplay.ts`, tokens.css, ink.css)
+
+`<html data-eink="on">`: black / grey tokens, ink tokens in greys (`--ml-ink-c-*` overridden; the same greys are the
+`eink` value of each token in `palette.ts`, for text boxes and sticky notes that resolve without the layer's CSS, and a
+**custom pen colour** becomes a grey of its lightness — pens #000…#4a4a4a, highlighters #b0b0b0…#d6d6d6, `einkGreyOf`;
+review 2026-10-21: before, custom colours and DOM objects stayed in colour), no animation or
+transition, `scroll-behavior: auto`, the reader's `.wk-canvas` snaps per page (paging instead of smooth scrolling), and
+no live-stroke prediction overlay (`getPredictedEvents()` ignored). It is a per-device setting (Settings → المظهر),
+suggested only when the browser reports `(update: slow)`. High contrast (`data-contrast`) and lite (`data-lite`) modes
+sit next to it.
+
+### Tests (all passing)
+
+`test/ink/layers-visibility.test.ts` (13), `test/ink/rehome.test.ts` (11 after the review), `test/ink/tiles.test.ts`
+(13 after the review), `src/design/themeDisplay.test.tsx` (7 after the review); e2e `aos-p1-layers.spec.ts`, `aos-eink.spec.ts`, and the dense-page scenario of
+`perf.spec.ts` (MEDLEVO_PERF=1).
+
+### Limits (honest)
+
+* Layer «lock» is a client-side guard (the server does not know it); read-only layers (followed, snapshot, frozen) are
+  enforced by the server.
+* Notes and text highlights created from the reader go to «ملاحظاتي» (the active layer applies to ink items).
+* A lasso copy of a followed item becomes the owner's own writing with no attribution row (the server-side «انسخ الطبقة»
+  writes attribution).
+* Cross-layer paint order is still the items' z order (layers are not separate composited sheets); hidden layers'
+  highlights are simply not drawn.
+* Cold tile re-raster takes 3–4× the old wall time on the realistic page (the frame stays responsive meanwhile); a
+  GPU-backed page canvas was not available to measure.
+* Nothing here was run on an iPad, S Pen tablet or BOOX (NFR-P1, OC.5, OC.8 «Not run (no device)»).
+* The layers panel's per-layer counts cover the pages of the current version in view; «احذف الطبقة» checks every item
+  of the layer this device holds (`countLayerItems`, all versions and note pages) before it asks, and the server still
+  refuses a layer with items this device never loaded (the device then shows the layer again as the server has it).
+* Undo / redo is not checked against a layer the owner locked after the change (lock is a guard against accidental
+  writing, not a permission).
+* Text boxes and sticky notes resolve their colour when they render: switching e-ink on while a page is open recolours
+  ink at once, DOM objects at their next render (Settings is another screen, so in practice on return).
+
+## Academic OS P1-T2 step 3 — «انقل ملاحظاتي إلى الإصدار الجديد» (`reanchor_copy`, 2026-10-21)
+
+BUILD_PLAN §3.4 step 3; ARCHITECTURE_DELTA §6.3; PRD AOS-3.13, 4.17, 4.20, Q35; Scenario 4 (the note side, inside one
+vault). **Copy, never move**: the owner's items on an earlier version stay there unchanged; copies are written on the
+new version where P1-T3's page map says the page is the same; everything else waits for the owner's decision.
+
+### Server (`modules/annotations/reanchorCopy.ts`, migration `0273_reanchor_copy.sql`)
+
+* **What is copied without asking** (pure `planItem`, over P1-T3's `PageMapEntry`; nothing is guessed):
+
+  | item | copied to `to_page_id` when | how |
+  |---|---|---|
+  | ink, pen highlight / underline, shape, text box, sticky, picture, page link | `isCopyTarget(entry)` **and** (`layout_safe` **or** the owner confirmed the pair) | same normalised coordinates on the new page |
+  | text highlight / underline (`text_highlight`) | `isCopyTarget(entry)` **and** the quote is found again on the new page (letters only — spacing, line breaks, bidi marks and tatweel ignored; a repeated quote needs its prefix / suffix unless the layout is identical) | same rectangles on an identical layout; on a re-laid-out page only when every rectangle sits in a paragraph found once, identical and of the same size, on the new page (translated with it); otherwise review |
+  | bookmark, page note | `isCopyTarget(entry)` | page anchor only |
+
+  Anything else — page `uncertain` (rewritten: «page_changed»; crossing move: «page_moved»), `none` / `rejected`
+  («page_removed»), a re-laid-out page for coordinate items («layout_changed»), a quote not found — is listed for
+  review with the page map's candidate page. Items of a read-only layer (a followed copy) and items the owner chose to
+  keep are counted «بقيت على الإصدار السابق» and never copied.
+* **A copy** = a new row with the deterministic id `reanchorCopyId(old_id, to_version_id)` (`rc_` + sha256), the same
+  layer, author, kind and data; `migrated_from_id` = the original, `previous_anchor_json` = the old anchor,
+  `anchor_status = 'reanchored'`, `origin = 'reanchor_copy'` (notes: the same columns that exist on `note`); an
+  attribution row only when the original has one (its chain + this hop); pictures' `annotation_image` marked referenced;
+  the sync feed is touched, so every device receives the copies. The original row is never written (tests hash it).
+* **Bookkeeping (0273, additive):** `reanchor_copy_run` (one row per tap — kind `run` — or per review copy — kind
+  `manual`: versions, algorithm, counts, undo), `reanchor_copy_item` (original → copy, the copy's rev when written,
+  `undone_at`), `reanchor_copy_decision` («اتركها على الإصدار السابق»). An original with a live item row is «carried
+  forward» and never copied twice (a second tap copies nothing and records nothing).
+* **Routes** (`/api/annotations`):
+  * `GET /reanchor-copy?source_id=&from_version_id=&to_version_id=` → `ReanchorCopyPreview` — read-only. Defaults: the
+    newest version, and the newest earlier version with pending items. The map is read or computed from stored
+    fingerprints (cheap); missing fingerprints answer `pending` and queue P1-T3's analysis job (never rendering on the
+    request). Counts: `total = already_moved + copy + needs_review + kept`; the will-copy pages, the review list (≤ 500)
+    with old page and candidate, kept items, every earlier version with items, the last tap.
+  * `POST /reanchor-copy {source_id, from_version_id, to_version_id, map_computed_at?}` → `{ report }` — the tap: one
+    transaction; a map that changed since the preview → 409 and nothing copied; a version still processing → 409.
+  * `POST /reanchor-copy/undo {run_id}` — tombstones that run's copies only (a before-image in `annotation_revision`
+    each); a copy the owner changed since is kept and reported (`kept_edited`); idempotent. A later tap revives the same
+    ids; a copy the owner erased is never revived.
+  * `POST /reanchor` (Round 7's route, reused AS A COPY) with `action: 'copy'` (to a page — optionally a paragraph — of
+    the newer version; Round 7's group geometry; the revision the list saw is checked; refused for read-only layers),
+    `'keep_on_previous'` or `'review_again'`. `move` / `keep_detached` are unchanged (`reanchor.ts`, Round 7; this step
+    only exported its three geometry helpers).
+* **Purge** (`purgeExtension.ts`, `annotations.reanchor_copy`): runs of a purged lecture / version, item rows and
+  decisions of purged originals or copies; the preview line names them. **Export:** the three tables are in the full
+  JSON export (seam lines in `data/export.ts`); backups copy the whole database.
+
+### Web (`features/workspace/panels/NoteMigration.tsx`, `noteMigration.ts`, `noteMigration.css`)
+
+* **Banner** in the reader (`WorkspaceScreen.tsx`, one mount) when the lecture has a newer version and personal items
+  wait on an earlier one: «يوجد إصدار أحدث من المحاضرة. لديك ملاحظات على الإصدار 1: سيُنقل 2 · يحتاج مراجعة 1 · يبقى على
+  الإصدار 1: 0» → «معاينة النقل…» opens the preview (nothing changes before the tap) → **one tap** «انقل ملاحظاتي إلى
+  الإصدار 2» → the report («نُقل … إلى … صفحات؛ … يحتاج مراجعتك؛ … بقي على الإصدار السابق», the three counts and their sum)
+  with «تراجع عن النقل» and «راجع العناصر». On an earlier version the banner says so and opens the newest one. Online
+  only (the controls say why offline). The copies arrive through the sync pull right after the tap.
+* **Review list** — the top of «ملاحظاتي ← إعادة ربط» (`ReanchorSection.tsx`, extended): each item with its old page
+  and the candidate page side by side (page images from P1-T3's thumbnail route) and the reason; «انسخها إلى ص …» (one
+  tap on the candidate — a moved page follows only this way), «اختر مكانها…» (Round 7's place dialog, worded as a copy:
+  «انسخها هنا»), «اتركها على الإصدار 1»; kept items can go back to review. A link opens P1-T3's compare screen.
+* **Default (Q35):** one tap with a preview. The automatic variant («انقل ملاحظاتي تلقائيًا») is **not built**.
+
+### Tests
+
+`apps/server/test/annotations/reanchor-copy.test.ts` (20: the pure planner, quotes, deterministic ids; Scenario 4 —
+preview writes nothing, the tap, v1 rows hashed byte-identical, the sync feed, second tap no-op, a changed map → 409,
+review copy / keep / review again, undo keeps an edited copy and a new tap revives, an erased copy is never revived,
+refusals; inserted + reordered fixture — moved page suggested, owner confirmation turns it into a copy target; layers,
+read-only layer kept, a pending version, export, purge, 0273 on an existing database),
+`apps/web/src/features/workspace/panels/noteMigration.test.tsx` (9), `e2e/aos-p1-note-migration.spec.ts` (phone +
+desktop). Fixture: `apps/server/test/fixtures/note-migration/build.ts` (TEST FIXTURE, built from P1-T3's generator).
+
+### Limits (honest)
+
+* The automatic migration (Q35 variant) and the follower fan-out of an official version (`lecture_copy`, P1-T5) are
+  not built; here the owner taps.
+* Rectangles of a highlight on a re-laid-out page are re-derived only from an identical, same-size paragraph; anything
+  else goes to review. Page notes carry no paragraph, so a page note on a safe page is copied to the page only.
+* Inserted note pages (`note_page`) are not version-anchored and are not touched; Study Book anchors keep their own
+  re-anchoring (`computeReanchor`); citations, evidence and Source Lock pins stay on their version.
+* Decisions are online, audited server calls (like Round 7's re-anchoring); offline the banner and list wait.
+

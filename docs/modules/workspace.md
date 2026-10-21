@@ -550,3 +550,54 @@ without the count, and the front-matter label is ellipsised (known limit — its
 save state was a row item, the count repeated the file position); `e2e:g1-ac04-printed-page.spec.ts` now also checks on
 the phone that no control of the bar overlaps the indicator and that its centre hits it — at 390 px on «ص 12» and at
 390 / 375 / 360 px on the unnumbered cover — before tapping it. Both projects pass (`docs/TEST_LOG.md`).
+
+## Academic OS P1-T2 — the layers panel and display modes in the reader (2026-10-21)
+
+* **«الطبقات»** is a fourth tab of the page panel (`panels/LeftPanel.tsx`, `panels/LayersTab.tsx`; styles in
+  `ink/layers/layers.css`). Per layer: an eye toggle (`aria-pressed`, «أخفِ / أظهر طبقة «…»» — this study session only),
+  «اكتب هنا» (radio, only for layers the owner can write and has not locked), badges «للقراءة فقط» / «مقفلة», where a
+  followed layer came from («من شرح سارة — الإصدار 3»), the item count on this source's pages, and a menu: rename,
+  lock / unlock, «سجل الطبقة» (read-only history, needs the network), «انسخ الطبقة…» (preview counts per kind and page,
+  pictures, already-copied, skipped with reasons, attribution — nothing is written before «انسخ N عنصرًا»; target: a new
+  layer here, an existing own layer here, or a new layer in a linked / recently studied copy of the lecture), and delete
+  (empty own layers only). «طبقة جديدة» creates a layer on the device at once (synced later) and writes to it.
+  (Review 2026-10-21) The count shown is for the pages of the version in view; «احذف الطبقة» first counts every item of
+  the layer this device holds (all versions, note pages — `countLayerItems`) and says so instead of asking when there
+  are any. A copy into a document that does not exist answers 404 and writes nothing (it used to leave an orphan layer).
+* **Session.** The reader keeps `{ hidden, active }` in its saved place (`StudyLocation.layers`) through
+  `LayerViewProvider`; hidden layers stay hidden while the panel is closed and after a reload.
+* **Text highlights follow the layer view too** (review 2026-10-21): `reader/overlays.tsx` `TextHighlightsLayer` draws
+  only the highlights / underlines whose layer is shown (the same `layerPredicates(...).visible` as the ink; a split
+  pane's other source is left alone). Before, hiding a layer that «انسخ الطبقة» had filled left its text highlights on
+  the page (`test/ink/text-highlights-layers.test.tsx`). Bookmarks of a hidden layer are still listed in «العلامات»
+  (a list, not drawn on the page).
+* **Seam changes outside this track's files (minimal, reported):** `WorkspaceScreen.tsx` holds the layer session state,
+  saves it with the place and mounts `<LayerViewProvider documentKey="source:<id>">` around the reader (≈ 10 lines).
+* **Display modes** (Settings → المظهر → «وضع العرض على هذا الجهاز», `features/settings/DisplayModes.tsx`): e-ink,
+  high contrast, lite — this device only. In e-ink mode the reader pages (scroll-snap per page) instead of scrolling
+  smoothly and nothing animates.
+* **Tests:** `e2e/aos-p1-layers.spec.ts` (desktop: the full Scenario 2 step 4 flow on a fixture followed layer; phone:
+  the panel at 390 px), `e2e/aos-eink.spec.ts` (390 + 1280).
+
+## Academic OS P1-T2 step 3 — «انقل ملاحظاتي إلى الإصدار الجديد» in the reader (2026-10-21)
+
+Copy, never move (server, routes and rules: `docs/modules/ink.md`, «P1-T2 step 3»).
+
+* **Banner** (`panels/NoteMigration.tsx` → `NoteMigrationBanner`, mounted once in `WorkspaceScreen.tsx` under the remote
+  position banner; hidden in focus mode): on the newest version, when items wait on an earlier one — the counts, then
+  «معاينة النقل…» → the preview dialog (pages «ص 12 في الإصدار 1 ⇆ ص 14 في الإصدار 2», what needs review, what stays;
+  the tap button names the version) → the report with «تراجع عن النقل» and «راجع العناصر (N)», which opens the rail on
+  «ملاحظاتي ← إعادة ربط». After the tap the banner keeps the report reachable («التقرير…») until hidden. On an earlier
+  version: «تقرأ الإصدار 1 — ملاحظاتك هنا على إصدار سابق» + «افتح الإصدار 2». «لاحقًا» hides it for this view.
+* **Review** (`VersionReview`, at the top of `panels/ReanchorSection.tsx` when the source has several versions): rows
+  with the old page and the candidate page side by side, the reason, «انسخها إلى ص …», «اختر مكانها…» (the Round 7 place
+  dialog with copy wording — `ReanchorDialog` gained optional `title` / `description` / `submitLabel`), «اتركها على
+  الإصدار 1», and «بقيت على الإصدار 1 باختيارك» with «أعدها إلى المراجعة». The section's empty state now says «هذا
+  الإصدار» on multi-version sources (items of an earlier version are listed above it).
+* **Refresh** between banner and list: a small change signal in `panels/noteMigration.ts` (`bumpMigration`,
+  `useMigrationVersion`) after every tap, undo or decision; copies reach this device through `syncNow({ pull: true })`.
+* **Phone:** the review list is in the rail sheet; the banner and dialogs are full-width; controls are design-system
+  buttons (44 px on touch, asserted by `e2e/aos-p1-note-migration.spec.ts` on the phone project). Light, dark and e-ink
+  through tokens only (`noteMigration.css`).
+* **Seam changes outside this track's own new files:** `WorkspaceScreen.tsx` (+15 lines: the banner mount),
+  `ReanchorSection.tsx` (the review block, dialog wording props, empty-state text).

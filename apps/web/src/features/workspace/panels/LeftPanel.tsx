@@ -1,5 +1,6 @@
-// Page panel (§23, §26): thumbnails (rendered lazily as they scroll into view), the document outline and
-// bookmarks. Opens on the end side (left in Arabic) and only when there is room for it next to the book.
+// Page panel (§23, §26): thumbnails (rendered lazily as they scroll into view), the document outline,
+// bookmarks and (Academic OS P1-T2) the document's authorship layers. Opens on the end side (left in Arabic) and only
+// when there is room for it next to the book.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ListTree } from 'lucide-react';
 import type { AnnotationAnchor, SourcePageView } from '@medlevo/shared';
@@ -8,9 +9,12 @@ import { useFileSrc } from '../../../lib/offline';
 import { fetchRegions } from '../data/api';
 import type { SourceDocument } from '../data/useSourceDocument';
 import { folio, fullPageLabel } from '../model/pages';
+import { useLayerViewContext } from '../ink/layers/LayerViewProvider';
+import { useOnline } from '../../../lib/useOnline';
+import { LayersTab } from './LayersTab';
 import { BookmarksSection } from './MineTab';
 
-export type LeftTab = 'thumbnails' | 'outline' | 'bookmarks';
+export type LeftTab = 'thumbnails' | 'outline' | 'bookmarks' | 'layers';
 
 export interface LeftPanelProps {
   doc: SourceDocument;
@@ -23,12 +27,17 @@ export interface LeftPanelProps {
 
 export function LeftPanel(p: LeftPanelProps) {
   const pageKeys = useMemo(() => p.doc.pages.map((pg) => `source_page:${pg.id}`), [p.doc.pages]);
+  // the layers tab exists only where the reader provides a layer view (P1-T2)
+  const hasLayers = useLayerViewContext() != null;
+  const online = useOnline();
+  const tab = p.tab === 'layers' && !hasLayers ? 'thumbnails' : p.tab;
   return (
-    <Tabs value={p.tab} onValueChange={(v) => p.onTab(v as LeftTab)} className="wk-left-tabs">
+    <Tabs value={tab} onValueChange={(v) => p.onTab(v as LeftTab)} className="wk-left-tabs">
       <TabList label="تنقّل في المصدر" className="wk-rail-tablist">
         <Tab value="thumbnails">الصفحات</Tab>
         <Tab value="outline">الفهرس</Tab>
         <Tab value="bookmarks">العلامات</Tab>
+        {hasLayers && <Tab value="layers">الطبقات</Tab>}
       </TabList>
       <TabPanel value="thumbnails" className="wk-left-panel">
         <Thumbnails {...p} />
@@ -39,6 +48,11 @@ export function LeftPanel(p: LeftPanelProps) {
       <TabPanel value="bookmarks" className="wk-left-panel">
         <BookmarksSection doc={p.doc} pageIndex={p.pageIndex} pageKeys={pageKeys} anchorFor={p.anchorFor} onGoToPage={(i) => p.onGoToPage(i)} />
       </TabPanel>
+      {hasLayers && (
+        <TabPanel value="layers" className="wk-left-panel">
+          <LayersTab doc={p.doc} pageKeys={pageKeys} online={online} />
+        </TabPanel>
+      )}
     </Tabs>
   );
 }

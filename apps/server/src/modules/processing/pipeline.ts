@@ -32,6 +32,7 @@ import { markPageFailed, persistPage, RegionsInUseError, type FigureAsset, type 
 import { decodeDisplayed, displayedImageSize, exifWordToDisplayed, ImageDecodeError, isJpeg, jpegOrientation, rawImageSize, rotateImage, stripJpegExif } from './image';
 import { chooseOrientation, orientationTrials, quarter, readingScore, type QuarterTurn } from './orientation';
 import { decodePng, encodePng, isPng, measureImageQuality, type ImageQuality, type RgbaImage } from './png';
+import { enqueueVersionAnalysisFollowUp } from './fingerprint';
 import { applyLectureKind, linkFiguresAcrossPages } from './structure';
 import { writeSummary } from './summary';
 import { hasReversedLamAlef, prepareRegionText, suspicionReasonAr, type SuspicionContext } from './text';
@@ -392,6 +393,8 @@ class VersionRun {
       });
       if (final.status !== 'failed') enqueueQuestionFollowUp(ctx, version.id, run.id);
       if (final.status !== 'failed') enqueueKnowledgeFollowUp(ctx, version.id, run.id);
+      // Academic OS P1-T3: fingerprints, lecture identity, page maps, new-version detection (versions module)
+      if (final.status !== 'failed') enqueueVersionAnalysisFollowUp(ctx, version.id, run.id);
       const output: ProcessOutput = {
         version_id: version.id,
         status: final.status,

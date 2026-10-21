@@ -337,6 +337,134 @@ test('5 000 ink strokes on one page: load + paint, a new stroke, zoom repaint', 
   };
 });
 
+// (Academic OS P1-T2 step 2; PRD NFR-P2, ADR-0005 B.3) the dense-page ink tile cache, before / after in the SAME harness:
+// the same 5 000 realistic strokes, spread over 5 layers, the same build — once with tiles off
+// (`localStorage['medlevo.ink.tiles'] = 'off'`, the old stroke-by-stroke repaint) and once with tiles on. Paint times come
+// from the ink layer's own paint log (`window.__medlevoInkPaints`, written only when the page opts in).
+test('dense page, 5 layers: ink repaint before / after the tile cache (zoom, warm zoom back, layer hide / show, writing while re-rastering)', async ({ page, api }) => {
+  test.setTimeout(40 * 60_000);
+  await installLongTasks(page);
+  await page.addInitScript(() => {
+    (window as unknown as { __medlevoInkPerf: boolean }).__medlevoInkPerf = true;
+  });
+  await setupOwner(page);
+  const { course } = await api.createNotebookAndCourse();
+  const up = await api.uploadFixture(course.id, 'lecture_appendicitis.pdf', { sourceType: 'lecture', onDuplicate: 'create' });
+  await api.waitForProcessing(up.version_id);
+  const ids = await pageIds(api, up.source_id, up.version_id);
+  const documentKey = `source:${up.source_id}`;
+  const layerIds = [1, 2, 3, 4].map(() => id());
+  await pushAll(
+    api,
+    layerIds.map((lid, k) => ({
+      op_id: id(),
+      device_id: 'perf-seed',
+      entity_type: 'annotation_layer',
+      entity_id: lid,
+      op: 'upsert',
+      client_ts: Date.now(),
+      payload: { id: lid, document_key: documentKey, kind: k % 2 ? 'answers' : 'explanation', title: `طبقة ${k + 2}`, visible: true, locked: false, color: null, sort_order: k + 1, created_at: Date.now() },
+    })) as SyncOp[],
+  );
+  const anchor = { type: 'page', source_id: up.source_id, version_id: up.version_id, page_id: ids[0]!, page_index: 0, space: 'page_norm' };
+  // the «realistic» page of ADR-0005 spike 4a: 5 000 pressure strokes, 226 samples each (1.13 M points)
+  const PTS = Number(process.env.MEDLEVO_PERF_TILE_POINTS || 226);
+  const ops: SyncOp[] = Array.from({ length: STROKES }, (_, s) => {
+    const sid = id();
+    const x0 = 0.05 + ((s * 37) % 80) / 100;
+    const y0 = 0.05 + ((s * 53) % 85) / 100;
+    const points = Array.from({ length: PTS }, (_, k) => [
+      Math.round((x0 + k * (0.09 / PTS)) * 1e5) / 1e5,
+      Math.round((y0 + Math.sin(k / 9) * 0.004) * 1e5) / 1e5,
+      k * 8,
+      Math.round((0.35 + 0.3 * Math.abs(Math.sin(k / 13 + s))) * 1e3) / 1e3,
+    ]);
+    const layer_id = s % 5 === 0 ? null : layerIds[(s % 5) - 1]!;
+    return {
+      op_id: id(),
+      device_id: 'perf-seed',
+      entity_type: 'annotation',
+      entity_id: sid,
+      op: 'append',
+      client_ts: Date.now(),
+      payload: { kind: 'ink', tool: 'fountain', anchor, layer: 'ink', layer_id, z: s, locked: false, data: { v: 1, points, style: { tool: 'fountain', color: 'ink-blue', width: 0.0025 }, bbox: { x: x0, y: y0 - 0.004, w: 0.09, h: 0.008 }, pressure_available: true, tilt_available: false } },
+    } as SyncOp;
+  });
+  // smaller batches: a realistic stroke is ≈ 7 KB of JSON
+  for (let i = 0; i < ops.length; i += 100) await pushAll(api, ops.slice(i, i + 100));
+  const target = `source_page:${ids[0]}`;
+
+  type Paint = { targetKey: string; kind: string; mode: string; ms: number; warmTiles: number; coldTiles: number; items: number; at: number };
+  const paintsSince = (since: number) => page.evaluate(([t, s]) => ((window as unknown as { __medlevoInkPaints?: Paint[] }).__medlevoInkPaints ?? []).filter((p) => p.targetKey === t && p.at >= (s as number)), [target, since] as const);
+  /** waits for the first full repaint that STARTED after `since` and returns it with the long tasks of that window */
+  async function fullPaintAfter(since: number) {
+    let rec: Paint | undefined;
+    await expect.poll(async () => (rec = (await paintsSince(since)).find((p) => p.kind === 'full')) !== undefined, { timeout: 60_000 }).toBe(true);
+    await page.waitForTimeout(300);
+    return { ms: rec!.ms, mode: rec!.mode, warm_tiles: rec!.warmTiles, cold_tiles: rec!.coldTiles, strokes_drawn: rec!.items, view: (rec as Paint & { view?: string }).view ?? null, long_tasks: await longTasksSince(page, since) };
+  }
+  const press = async (key: string) => {
+    await page.locator('.wk-canvas').first().focus();
+    const at = await now(page);
+    await page.keyboard.press(key);
+    return at;
+  };
+  async function toggleLayer(title: string) {
+    const tab = page.getByRole('tab', { name: 'الطبقات' });
+    if (!(await tab.isVisible())) await page.getByRole('button', { name: 'الصفحات والفهرس والعلامات' }).first().click();
+    await tab.click();
+    const at = await now(page);
+    await page.getByRole('button', { name: new RegExp(`^(أخفِ|أظهر) طبقة «${title}»`) }).click();
+    return at;
+  }
+
+  const runs: Record<string, unknown> = {};
+  for (const mode of ['before_strokes', 'after_tiles'] as const) {
+    await page.evaluate((m) => {
+      if (m === 'before_strokes') localStorage.setItem('medlevo.ink.tiles', 'off');
+      else localStorage.removeItem('medlevo.ink.tiles');
+    }, mode);
+    await page.goto('/library');
+    await openWorkspace(page, up.source_id, { pageIndex: 0 });
+    const summary = page.locator('.wk-page[data-page-index="0"] .ml-ink-layer p.ml-visually-hidden');
+    // ≥ 5 000 (the first run adds one stroke of its own)
+    await expect.poll(async () => Number(/خطوط بالقلم (\d+)/.exec((await summary.textContent()) ?? '')?.[1] ?? 0), { timeout: 600_000 }).toBeGreaterThanOrEqual(STROKES);
+    await page.waitForTimeout(1500);
+    const opened = (await paintsSince(0)).filter((p) => p.kind === 'full');
+    const open = { full_paints: opened.length, max_ms: Math.max(0, ...opened.map((p) => p.ms)), last: opened.at(-1) ?? null };
+    // one zoom step in (a new scale: cold), back out, and in again (a scale seen before: warm with tiles)
+    const zoomIn1 = await fullPaintAfter(await press('+'));
+    await page.waitForTimeout(800);
+    const zoomOut = await fullPaintAfter(await press('-'));
+    await page.waitForTimeout(800);
+    const zoomInWarm = await fullPaintAfter(await press('+'));
+    await page.waitForTimeout(800);
+    // hide one of the 5 layers, show it again (the second is warm with tiles)
+    const hide = await fullPaintAfter(await toggleLayer('طبقة 3'));
+    await page.waitForTimeout(500);
+    const show = await fullPaintAfter(await toggleLayer('طبقة 3'));
+    await page.keyboard.press('Escape');
+    // writing while the page re-rasters after a zoom step: long tasks during the stroke
+    await page.keyboard.press('KeyP');
+    const layer = page.locator('.wk-page[data-page-index="0"] .ml-ink-layer');
+    await press('-');
+    const box = (await layer.boundingBox())!;
+    const strokeAt = await now(page);
+    await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.3);
+    await page.mouse.down();
+    for (let k = 1; k <= 30; k++) await page.mouse.move(box.x + box.width * (0.3 + k * 0.01), box.y + box.height * (0.3 + Math.sin(k / 3) * 0.02));
+    await page.mouse.up();
+    await page.waitForTimeout(1500);
+    const writing = await longTasksSince(page, strokeAt);
+    await page.keyboard.press('KeyH').catch(() => undefined);
+    runs[mode] = { open, zoom_in_new_scale: zoomIn1, zoom_out: zoomOut, zoom_in_again_warm: zoomInWarm, hide_layer: hide, show_layer_again: show, long_tasks_while_writing_during_rerasters: writing };
+  }
+  results.ink_tiles = {
+    scenario: `${STROKES} fountain-pen strokes with pressure × ${PTS} samples (${((STROKES * PTS) / 1e6).toFixed(2)} M points) on one page over 5 layers (1 default + 4), same build and harness; before = tiles off (localStorage), after = tiles on`,
+    ...runs,
+  };
+});
+
 test('review hub: 3 000 cards + 12 000 review events — first sync, then the local fold', async ({ page, api }) => {
   test.setTimeout(20 * 60_000);
   await installLongTasks(page);

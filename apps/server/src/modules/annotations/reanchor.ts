@@ -32,6 +32,9 @@ import { AppError } from '../../lib/errors';
 import { parseBody } from '../../lib/http';
 import type { FastifyRequest } from 'fastify';
 import { describeAnchorAr, getAnnotation, getNote, pageAnchorResolves, toAnnotationDTO, toNoteDTO, writeAnnotationTarget, type AnnotationRow, type NoteRow } from './repo';
+// (Academic OS P1-T2, minimal seam) layer rule R5 and the version history apply here too
+import { recordAnnotationRevision, recordNoteRevision } from './history';
+import { checkExistingItem } from './layers';
 
 const ID = z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/);
 export const reanchorBody = z
@@ -165,7 +168,7 @@ export function reanchorLists(ctx: AppContext, sourceId: string | undefined, lim
 // ───────── geometry of an annotation group (page-normalized, unrotated) ─────────
 type Pt = [number, number];
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
-function boxOf(v: unknown): NormBox | null {
+export function boxOf(v: unknown): NormBox | null {
   const b = v as Partial<NormBox> | null;
   const x = num(b?.x);
   const y = num(b?.y);
@@ -176,7 +179,7 @@ function boxOf(v: unknown): NormBox | null {
 const ptOf = (v: unknown): Pt | null => (Array.isArray(v) && num(v[0]) !== null && num(v[1]) !== null ? [v[0] as number, v[1] as number] : null);
 
 /** The bounding box of one annotation's drawing (null when it has no page geometry, e.g. a bookmark). */
-function bboxOf(kind: string, data: Record<string, unknown>): NormBox | null {
+export function bboxOf(kind: string, data: Record<string, unknown>): NormBox | null {
   if (kind === 'ink' || kind === 'highlight' || kind === 'underline') return boxOf(data.bbox);
   if (kind === 'text' || kind === 'image' || kind === 'link') return boxOf(data.box);
   if (kind === 'sticky') {
@@ -213,7 +216,7 @@ function shiftInk(d: Record<string, unknown>, dx: number, dy: number): Record<st
 }
 
 /** The same drawing moved by (dx, dy) of the page — every stored coordinate, nothing else. */
-function translateData(kind: string, data: Record<string, unknown>, dx: number, dy: number): Record<string, unknown> {
+export function translateData(kind: string, data: Record<string, unknown>, dx: number, dy: number): Record<string, unknown> {
   if (dx === 0 && dy === 0) return data;
   if (kind === 'ink' || kind === 'highlight' || kind === 'underline') return shiftInk(data, dx, dy);
   if (kind === 'text' || kind === 'image' || kind === 'link') return { ...data, box: shiftBox(data.box, dx, dy) };
@@ -240,6 +243,9 @@ function load(ctx: AppContext, items: Array<{ kind: 'annotation' | 'note'; id: s
     if (row.rev !== it.rev) {
       throw new AppError('CONFLICT', 'تغيّر أحد العناصر على جهاز آخر بعد أن فتحت هذه القائمة؛ لم يتغير شيء. حدّث القائمة ثم أعد الاختيار.', 409, { id: it.id, rev: row.rev });
     }
+    // (P1-T2, R5) an item of a read-only layer (a followed copy) or another author's item is never moved from here
+    const own = checkExistingItem(ctx.db, row, null);
+    if (!own.ok) throw new AppError(own.code === 'layer_read_only' ? 'LAYER_READ_ONLY' : 'FORBIDDEN', `${own.detail} لم يتغير شيء.`, own.code === 'layer_read_only' ? 409 : 403, { id: it.id, detail_code: own.code });
     if (it.kind === 'annotation') out.annotations.push(row as AnnotationRow);
     else out.notes.push(row as NoteRow);
   }
@@ -308,7 +314,9 @@ export function reanchor(ctx: AppContext, req: FastifyRequest): ReanchorResponse
     const what = items.notes.length && !items.annotations.length ? (count === 1 ? 'الملاحظة' : 'الملاحظات') : count === 1 ? 'العنصر' : count === 2 ? 'عنصرين' : count <= 10 ? `${count} عناصر` : `${count} عنصرًا`;
 
     if (body.action === 'keep_detached') {
+      const rtx = { db: ctx.db, now, deviceId: 'server' };
       for (const r of items.annotations) {
+        recordAnnotationRevision(rtx, r as unknown as Record<string, unknown> & AnnotationRow, 'update', null);
         ctx.db.run('UPDATE annotation SET detached_at = ?, rev = rev + 1, updated_at = ? WHERE id = ?', [now, now, r.id]);
         ctx.sync.touch('annotation', r.id);
         const after = toAnnotationDTO(getAnnotation(ctx.db, r.id)!);
@@ -316,6 +324,7 @@ export function reanchor(ctx: AppContext, req: FastifyRequest): ReanchorResponse
         annOut.push(after);
       }
       for (const r of items.notes) {
+        recordNoteRevision(rtx, r as unknown as Record<string, unknown> & NoteRow, 'update', null);
         ctx.db.run('UPDATE note SET detached_at = ?, rev = rev + 1, updated_at = ? WHERE id = ?', [now, now, r.id]);
         ctx.sync.touch('note', r.id);
         const after = toNoteDTO(getNote(ctx.db, r.id)!);
@@ -357,10 +366,12 @@ export function reanchor(ctx: AppContext, req: FastifyRequest): ReanchorResponse
         dy = Math.round((ny - gy) * 1e5) / 1e5;
       }
     }
+    const mtx = { db: ctx.db, now, deviceId: 'server' };
     for (const r of items.annotations) {
       const before = fromJson<AnnotationAnchor>(r.anchor_json)!;
       const data = translateData(r.kind, fromJson<Record<string, unknown>>(r.data_json) ?? {}, dx, dy);
       const resolved = pageAnchorResolves(ctx.db, target.anchor);
+      recordAnnotationRevision(mtx, r as unknown as Record<string, unknown> & AnnotationRow, 'update', null);
       ctx.db.run(
         `UPDATE annotation SET anchor_json = ?, data_json = ?, anchor_status = ?, previous_anchor_json = ?, detached_at = NULL, rev = rev + 1, updated_at = ? WHERE id = ?`,
         [toJson(target.anchor), toJson(data), resolved ? 'reanchored' : 'needs_reanchor', toJson(before), now, r.id],
@@ -381,6 +392,7 @@ export function reanchor(ctx: AppContext, req: FastifyRequest): ReanchorResponse
     for (const r of items.notes) {
       const before = fromJson<AnnotationAnchor | null>(r.anchor_json);
       const sourceId = target.anchor.type === 'page' ? target.anchor.source_id : (r.source_id ?? null);
+      recordNoteRevision(mtx, r as unknown as Record<string, unknown> & NoteRow, 'update', null);
       ctx.db.run(
         `UPDATE note SET anchor_json = ?, anchor_target_key = ?, source_id = ?, previous_anchor_json = ?, detached_at = NULL, rev = rev + 1, updated_at = ? WHERE id = ?`,
         [toJson(target.anchor), annotationTargetKey(target.anchor), sourceId, before ? toJson(before) : (r.previous_anchor_json ?? null), now, r.id],

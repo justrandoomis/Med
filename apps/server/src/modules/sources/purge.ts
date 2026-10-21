@@ -17,8 +17,16 @@
 //    purged subject/course node.
 //  * Every delete happens in ONE transaction. Any other table (e.g. added later by another module)
 //    that still references the purge set without ON DELETE CASCADE/SET NULL aborts the purge before
-//    anything is deleted. Stored files referenced by nothing else are removed AFTER the commit.
-import { rmSync } from 'node:fs';
+//    anything is deleted. Stored files referenced by nothing else are removed AFTER the commit, through
+//    the files module (`files/blobs.ts`), which owns blob deletion.
+//  * Purge extensions (Academic OS, P1-T1 step 0, BUILD_PLAN §3.2): a module that adds tables tied to the
+//    purge set registers its own purge step from its own plugin with `registerPurgeExtension(ctx, …)`
+//    instead of editing this file (P1-T2: layers and revisions; P1-T3: fingerprints and page maps). An
+//    extension may add ids to a purge set, adds its counts to the preview (bound into the confirm token)
+//    and deletes its rows inside the same transaction: before the core deletes (`apply`, rows that point at
+//    core rows) and/or after them (`afterCore`, rows that core rows point at, e.g. layers). It can never
+//    remove ids from a core set or change the sets after the token check (verified; a violation aborts
+//    the purge). With no extension registered the preview, the token and the purge are exactly as before.
 import { createHmac } from 'node:crypto';
 import { PROCESS_JOB_KIND, stableStringify, type ImpactReport } from '@medlevo/shared';
 import type { AppContext } from '../../context';
@@ -27,6 +35,10 @@ import { safeEqual, sha256 } from '../../lib/hash';
 import { newId } from '../../lib/ids';
 import { deriveKey, loadOrCreateServerSecret } from '../../lib/secret';
 import { pruneAnnotationImages } from '../annotations/images';
+import { removeStoredFileIfUnreferenced } from '../files/blobs';
+
+/** Blob deletion belongs to the files module; re-exported for existing callers (annotations/images.ts, sources/upload.ts). */
+export { removeStoredFileIfUnreferenced };
 
 /** temp table → id source */
 const SETS = [
@@ -52,7 +64,7 @@ const SETS = [
   'audio',
   'segment',
 ] as const;
-type PurgeSetName = (typeof SETS)[number];
+export type PurgeSetName = (typeof SETS)[number];
 
 const T = (s: PurgeSetName) => `temp.purge_${s}`;
 const IN = (s: PurgeSetName) => `(SELECT id FROM ${T(s)})`;
@@ -190,6 +202,120 @@ export interface ImpactCounts {
   note_pages: number;
   /** derived things OUTSIDE the purge set that cite it (kept, marked for review) */
   external_dependents: number;
+  /**
+   * counts of the registered purge extensions, by extension name (present only when at least one extension is
+   * registered, so the preview, the confirm token and the purge answer of today keep their exact shape)
+   */
+  extensions?: Record<string, Record<string, number>>;
+}
+
+// ───────── purge extensions (P1-T1 step 0 seam) ─────────
+/** What an extension sees of the purge set while the purge transaction runs. */
+export interface PurgeSetView {
+  /** SQL subquery `(SELECT id FROM temp.purge_<set>)`: the ids the purge deletes from that set's table */
+  in(set: PurgeSetName): string;
+  /**
+   * the TEMP table holding a set (`INSERT OR IGNORE INTO ${table('note')} (id) …` adds ids to it in `fill`). The
+   * sets are checked around every extension step: `fill` may only add ids, `apply` / `afterCore` may not change them
+   */
+  table(set: PurgeSetName): string;
+}
+
+export interface PurgeExtension {
+  /** unique per app (the module's name); registering the same name again replaces the earlier extension */
+  name: string;
+  /**
+   * `child_table.column` foreign keys into the purge-set tables (library_node, source, source_version, source_page,
+   * annotation, note, …) that this extension deletes or unlinks in `apply`; any other non-cascading reference still
+   * aborts the purge before anything is deleted
+   */
+  handledForeignKeys?: readonly string[];
+  /**
+   * adds ids to the core sets (runs at the end of the set computation, inside the preview and purge transactions).
+   * Sets derived from the one it adds to are NOT recomputed: add the dependent ids too (e.g. annotations, not a source)
+   */
+  fill?(ctx: AppContext, set: PurgeSetView): void;
+  /** read-only counts for the preview; they are bound into the confirm token (a change after the preview → 409) */
+  count?(ctx: AppContext, set: PurgeSetView): Record<string, number>;
+  /** Arabic preview lines for its counts (purge or trash preview); return [] for nothing to say */
+  linesAr?(counts: Readonly<Record<string, number>>, mode: 'purge' | 'trash'): string[];
+  /**
+   * deletes or unlinks its rows; runs inside the purge transaction, after the confirm-token check and before the core
+   * deletes (so its rows that reference core rows go first). Throwing rolls the whole purge back. Returns the
+   * `[entity_type, id]` pairs to announce to sync clients as changed.
+   */
+  apply(ctx: AppContext, set: PurgeSetView): void | ReadonlyArray<readonly [string, string]>;
+  /**
+   * optional second step: runs inside the purge transaction AFTER the core deletes, for rows that core rows reference
+   * (parents of core rows, e.g. P1-T2's `annotation_layer`, referenced by `annotation.layer_id` / `note.layer_id`,
+   * which cannot be deleted while the purged annotations and notes still exist). The purge sets are still readable.
+   * Throwing rolls the whole purge back. Returns the `[entity_type, id]` pairs to announce to sync clients.
+   */
+  afterCore?(ctx: AppContext, set: PurgeSetView): void | ReadonlyArray<readonly [string, string]>;
+}
+
+/** One registry per app context (tests build many apps in one process). */
+const EXTENSIONS = new WeakMap<AppContext, Map<string, PurgeExtension>>();
+
+/**
+ * Called by a module from its own plugin. Returns a function that unregisters THIS registration (a no-op once the name
+ * was registered again by someone else).
+ */
+export function registerPurgeExtension(ctx: AppContext, ext: PurgeExtension): () => void {
+  if (!ext || typeof ext.name !== 'string' || !/^[a-z0-9][a-z0-9_.-]{0,63}$/i.test(ext.name) || typeof ext.apply !== 'function') {
+    throw new Error('registerPurgeExtension: an extension needs a name (letters, digits, «_ . -») and an apply() step.');
+  }
+  let byName = EXTENSIONS.get(ctx);
+  if (!byName) {
+    byName = new Map();
+    EXTENSIONS.set(ctx, byName);
+  }
+  byName.set(ext.name, ext);
+  return () => {
+    if (byName.get(ext.name) === ext) byName.delete(ext.name);
+  };
+}
+
+/** The extensions registered on this app, in registration order. */
+export function purgeExtensions(ctx: AppContext): readonly PurgeExtension[] {
+  return [...(EXTENSIONS.get(ctx)?.values() ?? [])];
+}
+
+const SET_VIEW: PurgeSetView = { in: (set) => IN(set), table: (set) => T(set) };
+
+// The core purge set is the contract between the preview the owner confirmed and what is deleted. An extension may
+// only ADD ids in `fill()` (so no core step is skipped) and may not change the sets at all in `apply()` / `afterCore()`
+// (which run after the confirm token was checked). Both are verified against a snapshot; a violation aborts the purge.
+const SNAP = (s: PurgeSetName) => `temp.purge_snap_${s}`;
+
+function snapshotSets(ctx: AppContext): void {
+  for (const s of SETS) {
+    ctx.db.exec(`CREATE TEMP TABLE IF NOT EXISTS purge_snap_${s} (id TEXT PRIMARY KEY)`);
+    ctx.db.run(`DELETE FROM ${SNAP(s)}`);
+    ctx.db.run(`INSERT INTO ${SNAP(s)} (id) SELECT id FROM ${T(s)}`);
+  }
+}
+
+/** Empties the snapshots (only extensions create them: with none registered nothing changes for today's purge). */
+function clearSnapshots(ctx: AppContext): void {
+  if (purgeExtensions(ctx).length === 0) return;
+  for (const s of SETS) {
+    ctx.db.exec(`CREATE TEMP TABLE IF NOT EXISTS purge_snap_${s} (id TEXT PRIMARY KEY)`);
+    ctx.db.run(`DELETE FROM ${SNAP(s)}`);
+  }
+}
+
+function assertSetsKept(ctx: AppContext, ext: PurgeExtension, step: 'fill' | 'apply' | 'afterCore'): void {
+  for (const s of SETS) {
+    const removed = ctx.db.get(`SELECT 1 AS x FROM ${SNAP(s)} WHERE id NOT IN ${IN(s)} LIMIT 1`);
+    const added = step !== 'fill' && ctx.db.get(`SELECT 1 AS x FROM ${T(s)} WHERE id NOT IN (SELECT id FROM ${SNAP(s)}) LIMIT 1`);
+    if (removed || added) {
+      throw new Error(
+        `purge extension «${ext.name}» ${removed ? 'removed ids from' : 'added ids to'} the core purge set «${s}» in ${step}(): ` +
+          'an extension may only add ids in fill() and must not change the purge sets in apply() / afterCore(). Nothing was deleted.',
+      );
+    }
+  }
 }
 
 // ───────── Arabic copy ─────────
@@ -353,6 +479,12 @@ function fillPurgeSet(ctx: AppContext, target: PurgeTarget): void {
   );
   db.run(`INSERT INTO ${T('audio')} (id) SELECT id FROM audio_asset WHERE source_id IN ${IN('source')}`);
   db.run(`INSERT INTO ${T('segment')} (id) SELECT id FROM transcript_segment WHERE audio_id IN ${IN('audio')}`);
+  for (const ext of purgeExtensions(ctx)) {
+    if (!ext.fill) continue;
+    snapshotSets(ctx);
+    ext.fill(ctx, SET_VIEW);
+    assertSetsKept(ctx, ext, 'fill'); // may only add: every core step still runs for every id the core found
+  }
 }
 
 interface ExternalDependent {
@@ -403,7 +535,24 @@ function computeCounts(ctx: AppContext): ImpactCounts {
     threads: count(ctx, `SELECT COUNT(*) AS n FROM ${T('thread')}`),
     note_pages: count(ctx, `SELECT COUNT(*) AS n FROM note_page WHERE id IN ${IN('note_page')} AND deleted_at IS NULL`),
     external_dependents: externalDependents(ctx).length,
+    ...extensionCounts(ctx),
   };
+}
+
+function extensionCounts(ctx: AppContext): Pick<ImpactCounts, 'extensions'> {
+  const exts = purgeExtensions(ctx);
+  if (exts.length === 0) return {};
+  const extensions: Record<string, Record<string, number>> = {};
+  for (const ext of exts) extensions[ext.name] = ext.count ? { ...ext.count(ctx, SET_VIEW) } : {};
+  return { extensions };
+}
+
+function extensionLinesAr(ctx: AppContext, c: ImpactCounts, mode: 'purge' | 'trash'): string[] {
+  const lines: string[] = [];
+  for (const ext of purgeExtensions(ctx)) {
+    if (ext.linesAr) lines.push(...ext.linesAr(c.extensions?.[ext.name] ?? {}, mode));
+  }
+  return lines;
 }
 
 // ───────── confirm token ─────────
@@ -460,6 +609,7 @@ export function computeImpact(ctx: AppContext, target: PurgeTarget): ImpactCount
     fillPurgeSet(ctx, target);
     const c = computeCounts(ctx);
     for (const s of SETS) ctx.db.run(`DELETE FROM ${T(s)}`);
+    clearSnapshots(ctx);
     return c;
   });
 }
@@ -476,7 +626,7 @@ export function buildImpactReport(ctx: AppContext, kind: PurgeKind, id: string, 
     questions: c.questions,
     flashcards: c.flashcards,
     artifacts: c.artifacts,
-    lines_ar: impactLinesAr(c, mode),
+    lines_ar: [...impactLinesAr(c, mode), ...extensionLinesAr(ctx, c, mode)],
   };
   if (mode === 'purge') report.confirm_token = createConfirmToken(ctx, kind, id, c);
   return report;
@@ -499,10 +649,11 @@ function foreignKeys(ctx: AppContext): FkRow[] {
 
 /** Any FK into the purge set that this purge does not handle (e.g. a table added later) blocks the purge. */
 function assertNoUnhandledReferences(ctx: AppContext): void {
+  const handledByExtensions = new Set(purgeExtensions(ctx).flatMap((e) => e.handledForeignKeys ?? []));
   for (const fk of foreignKeys(ctx)) {
     const set = PARENT_SET[fk.parent];
     if (!set) continue;
-    if (HANDLED_FKS.has(`${fk.tbl}.${fk.col}`)) continue;
+    if (HANDLED_FKS.has(`${fk.tbl}.${fk.col}`) || handledByExtensions.has(`${fk.tbl}.${fk.col}`)) continue;
     if (['CASCADE', 'SET NULL', 'SET DEFAULT'].includes(fk.on_delete.toUpperCase())) continue;
     const hit = ctx.db.get(`SELECT 1 AS x FROM "${fk.tbl}" WHERE "${fk.col}" IN ${IN(set)} LIMIT 1`);
     if (hit) {
@@ -570,6 +721,15 @@ export function executePurge(
          AND id NOT IN ${IN('artifact')} AND status NOT IN ('superseded', 'failed')`,
       ['حُذف مصدر يعتمد عليه هذا المحتوى نهائيًا.', now],
     );
+
+    // registered module steps (P1-T1 step 0 seam): their rows go before the core rows they may reference
+    const extensions = purgeExtensions(ctx);
+    if (extensions.length > 0) snapshotSets(ctx);
+    for (const ext of extensions) {
+      const announced = ext.apply(ctx, SET_VIEW);
+      assertSetsKept(ctx, ext, 'apply'); // the confirmed purge set: nothing skipped, nothing added after the token check
+      if (announced) for (const [type, entityId] of announced) touches.push([type, entityId]);
+    }
 
     // evidence graph
     db.run(`DELETE FROM verification_result WHERE subject_type = 'claim' AND subject_id IN ${IN('claim')}`);
@@ -695,6 +855,14 @@ export function executePurge(
     db.run(`DELETE FROM source WHERE id IN ${IN('source')}`);
     db.run(`DELETE FROM library_node WHERE id IN ${IN('node')}`);
 
+    // registered module steps that must follow the core deletes (rows the purged core rows referenced)
+    for (const ext of extensions) {
+      if (!ext.afterCore) continue;
+      const announced = ext.afterCore(ctx, SET_VIEW);
+      assertSetsKept(ctx, ext, 'afterCore');
+      if (announced) for (const [type, entityId] of announced) touches.push([type, entityId]);
+    }
+
     if (external.length > 0) {
       db.run(
         `INSERT INTO content_alert (id, kind, severity, source_id, source_version_id, summary, affected_json, status, created_at)
@@ -719,6 +887,7 @@ export function executePurge(
       after: { counts },
     });
     for (const s of SETS) db.run(`DELETE FROM ${T(s)}`);
+    clearSnapshots(ctx);
     return { counts, fileIds: [...new Set(fileIds)], versionIds };
   });
 
@@ -753,31 +922,4 @@ function cancelProcessingOf(ctx: AppContext, versionIds: readonly string[]): voi
       ctx.log.warn({ err: e, jobId: j.id }, 'could not cancel processing of a purged version');
     }
   }
-}
-
-/**
- * Delete a stored_file row + its blob when NO table references it any more (checked through every
- * foreign key into stored_file, so tables added by other modules are covered). Runs after commit.
- */
-export function removeStoredFileIfUnreferenced(ctx: AppContext, fileId: string): boolean {
-  const refs = foreignKeys(ctx).filter((fk) => fk.parent === 'stored_file');
-  let path: string | null = null;
-  const removed = ctx.db.tx(() => {
-    for (const fk of refs) {
-      if (ctx.db.get(`SELECT 1 AS x FROM "${fk.tbl}" WHERE "${fk.col}" = ? LIMIT 1`, [fileId])) return false;
-    }
-    const file = ctx.files.stat(fileId);
-    if (!file) return false;
-    path = ctx.files.path(fileId);
-    ctx.db.run('DELETE FROM stored_file WHERE id = ?', [fileId]);
-    return true;
-  });
-  if (removed && path) {
-    try {
-      rmSync(path, { force: true });
-    } catch (e) {
-      ctx.log.warn({ err: e, fileId }, 'could not remove purged blob');
-    }
-  }
-  return removed;
 }

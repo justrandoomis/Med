@@ -6,6 +6,10 @@ setup: reverse proxy and TLS, the environment, the first-run setup token, backup
 sources, models and the database schema. The setup below is **exercised by an automated test**
 (`apps/server/test/deploy/tls-proxy.test.ts`, §7) — on this container, not on a real host or a public certificate.
 
+> **No computer?** The owner's own setup is a hosted one, done entirely from a phone or an iPad: Render (Docker image
+> from this repository + a persistent disk) and Cloudflare R2 for encrypted off-site backups. Step-by-step Arabic guide:
+> [`DEPLOY_PHONE_AR.md`](DEPLOY_PHONE_AR.md); the technical side (image, blueprint, proxy trust, restore design) is §8.
+
 ## 1. Requirements
 
 * Node.js ≥ 22.13 (built-in `node:sqlite`), npm.
@@ -73,7 +77,19 @@ The proxy terminates TLS and forwards to `127.0.0.1:8787`. It must:
 * **overwrite** `X-Forwarded-For` with the real client address (never append a client-supplied value), and set
   `X-Forwarded-Proto: https` and the original `Host`. With `MEDLEVO_TRUST_PROXY=true` the server trusts these headers
   (Fastify `trustProxy`): the client address is what sessions and the login rate limiter record. That is safe **only**
-  when nothing but the proxy can reach the app — keep `MEDLEVO_HOST=127.0.0.1` (or a firewall);
+  when nothing but the proxy can reach the app — keep `MEDLEVO_HOST=127.0.0.1` (or a firewall). `true` takes the
+  **left-most** `X-Forwarded-For` entry, which is the proxy's own observation only because the proxy overwrote the
+  header. Behind a proxy that **appends** (a platform, a CDN) use a hop count or an address list instead (§8.2):
+
+  | `MEDLEVO_TRUST_PROXY` | the client address is | use it for |
+  |---|---|---|
+  | `false` (default) | the TCP peer | direct exposure, or no proxy |
+  | `true` | the left-most `X-Forwarded-For` entry | your own nginx / Caddy that overwrites the header (this section) |
+  | `1`…`10` | the entry that many places from the right | a known number of proxies that each append one entry (Render: `1`, together with the header below) |
+  | `10.0.0.0/8,…` (addresses, CIDR ranges, `loopback`, `linklocal`, `uniquelocal`) | the right-most entry not in the list | proxies whose addresses you know |
+
+  `MEDLEVO_CLIENT_IP_HEADER` (e.g. `cf-connecting-ip`) additionally names a header that the platform's edge sets to the
+  client address; it is honoured only from a trusted proxy and only when it holds exactly one IP address;
 * allow uploads up to `MEDLEVO_MAX_UPLOAD_MB` (default 200 MB) and long requests (processing is asynchronous, but an
   upload of a large PDF takes time);
 * not cache `/api/*` (the server sends `Cache-Control: no-store` and a strict CSP on every API response).
@@ -139,8 +155,11 @@ The setup screen asks for it. Recovery codes are shown once at setup — store t
 
 ## 5. Backups on a schedule
 
-Backups are consistent while the server runs (SQLite `VACUUM INTO` + the content-addressed file store). Archives are
-**not encrypted**; the offline copy on a device is not a backup. Full procedure: [`BACKUP_RESTORE.md`](BACKUP_RESTORE.md).
+Backups are consistent while the server runs (SQLite `VACUUM INTO` + the content-addressed file store). Local archives
+are **not encrypted**; the offline copy on a device is not a backup. Full procedure: [`BACKUP_RESTORE.md`](BACKUP_RESTORE.md).
+With Cloudflare R2 configured, the server itself runs a daily, verified, **encrypted** off-site backup with retention
+and shows it in the Control Center («النسخ الاحتياطي خارج الخادم») — [`BACKUP_RESTORE.md`](BACKUP_RESTORE.md) §6; the
+timer and copy steps below are then only needed for a second, independent copy.
 
 | when | what |
 |---|---|
@@ -224,3 +243,114 @@ overwrites `X-Forwarded-For` / `X-Forwarded-Proto` like the nginx block above. O
 a browser's handling of the Secure cookie over the network, and a real upgrade between two released versions (the
 migration runner's refusal paths are unit-tested in `apps/server/test/migrations.test.ts`; the restore path in
 `apps/server/test/acceptance/g7-ac30.test.ts`).
+
+## 8. Platform hosting from a phone: Render + Cloudflare R2 (PL-0)
+
+The owner has no computer, so the supported hosted setup is operable from a phone or tablet browser: GitHub holds the
+code, **Render** builds the root `Dockerfile` and runs it with a persistent disk (blueprint `render.yaml`), and
+**Cloudflare R2** keeps encrypted off-site backups. The Arabic, step-by-step guide is
+[`DEPLOY_PHONE_AR.md`](DEPLOY_PHONE_AR.md); prices there were read from the providers' public pages on 2026-10-20.
+This section is the technical record.
+
+### 8.1 The image (`Dockerfile`, `.dockerignore`, `deploy/docker/*`)
+
+| choice | why |
+|---|---|
+| `node:22-bookworm-slim` | Node ≥ 22.13 for `node:sqlite`; Debian bookworm ships poppler and a GUI-less LibreOffice as maintained packages |
+| three stages: build → deps → runtime | the runtime has only the server's and the shared package's **production** dependencies (no Vite, Vitest, TypeScript, React, Playwright) plus the built PWA; prebuilt musl binaries are removed (never loaded on glibc) |
+| `poppler-utils`, `libreoffice-writer-nogui`, `libreoffice-impress-nogui` | page renders for OCR and figure crops (`pdftoppm`); `.doc` / `.docx` → PDF and PPTX display copies, Word → PDF exports. No GUI, no Calc / Draw / Base front-ends, no Java |
+| `fonts-noto-core`, `fonts-liberation2`, `fonts-crosextra-carlito` | Arabic in LibreOffice output and exports (Noto Naskh / Kufi / Sans Arabic); metric-compatible Arial / Times and Calibri so Word layouts keep their line breaks. The web reader ships its own fonts |
+| `tini` as PID 1 | forwards SIGTERM (graceful stop: running jobs are re-queued) and reaps LibreOffice / poppler children |
+| non-root | the server runs as `node` (uid 1000). The entrypoint runs as root only to create `MEDLEVO_DATA_DIR` and hand it (and the disk root) to `node` — a persistent disk can be mounted root-owned — then drops privileges with `setpriv` for good |
+| `node --import tsx src/index.ts` | the same entry point as `npm start`, without npm or a tsx parent process between tini and the server |
+| `HEALTHCHECK` on `/api/health` | for `docker run`; Render uses the blueprint's `healthCheckPath` |
+| `ENV MEDLEVO_HOST=0.0.0.0 MEDLEVO_PORT=10000 MEDLEVO_DATA_DIR=/var/data/medlevo` | Render routes to port 10000 by default; inside a container the app must listen on every interface, so the first-run setup token is always required |
+
+Measured here (Docker 29 in this container, 2026-10-20): 1.27 GB on disk, 332 MB compressed; the largest parts are
+LibreOffice (≈ 210 MB), `node_modules` (≈ 241 MB: pdf.js, its optional `@napi-rs/canvas`, tesseract.js and its eng+ara
+models, pdf-lib, the Anthropic SDK, esbuild for tsx) and the Noto fonts (≈ 42 MB).
+
+### 8.2 Proxy trust on Render — what is actually correct, and why
+
+What Render and Cloudflare publish (read 2026-10-20): every request to a Render web service passes through Cloudflare and
+then Render's load balancers; Render tells apps to read the client address from `X-Forwarded-For` and to trust one
+proxy hop (Render article «How Render handles DDoS attacks», 2026-04-01). Cloudflare documents that
+`CF-Connecting-IP` carries the address of the client that connected to Cloudflare and recommends it over
+`X-Forwarded-For`, to which Cloudflare **appends** (developers.cloudflare.com, «Cloudflare HTTP headers»). A public
+third-party test on Render (github.com/johnbeynon/header-test) observed `X-Forwarded-For: <client-supplied>, <client>,
+<Cloudflare edge>, <Render LB>`, and Cloudflare refusing a request that already carries `CF-Connecting-IP`.
+
+Consequences:
+
+* `MEDLEVO_TRUST_PROXY=true` (left-most entry) would let any client choose its address — and with it its login rate-limit
+  bucket and the address the session list shows. Not used on Render.
+* A hop count alone depends on how many proxies append, which Render does not document (the test above saw three).
+  Too small a count is safe but makes every client share one address; too large a count is spoofable.
+* **Chosen for Render:** `MEDLEVO_TRUST_PROXY=1` + `MEDLEVO_CLIENT_IP_HEADER=cf-connecting-ip`. The app takes the
+  address from `CF-Connecting-IP` (set by Cloudflare at the edge, one address). If the header is ever missing or
+  malformed, the fallback is the right-most `X-Forwarded-For` entry — written by Render's own proxy, never by the
+  client — so the worst case is a shared bucket, never a client-chosen one. A Render web service is reachable only
+  through Render's proxy, which is what makes trusting the TCP peer acceptable.
+* Residual risk, stated plainly: this relies on Render keeping Cloudflare in front (Render's own article says it does).
+  Were a request ever to reach the service without Cloudflare, a client-sent `CF-Connecting-IP` would be believed.
+  Not verified on Render itself (no account here). The same holds for another service of the same Render workspace
+  reaching this one over Render's private network (it connects to the container directly, as a trusted hop): run no
+  other service in that workspace, or set `MEDLEVO_TRUST_PROXY` to Render's load-balancer ranges once they are known.
+
+Tests (`apps/server/test/deploy/client-ip.test.ts`): five failed logins from one client, each with a different forged
+`X-Forwarded-For` head, are followed by a 429 for the sixth; every attempt is recorded under the client's real address;
+a second client is not affected; the session lists the real address; the hop-count and address-list forms ignore the
+forged head too; a peer outside the address list cannot use the header; `true` keeps today's behaviour for the
+nginx / Caddy setup above (`tls-proxy.test.ts` still passes unchanged).
+
+### 8.3 Origin, setup token, port
+
+* An unset `MEDLEVO_ORIGIN` (the blueprint leaves it unset) or `MEDLEVO_ORIGIN=auto` → the address Render gives the
+  service, `RENDER_EXTERNAL_URL` (Render docs: «the service's full onrender.com URL»). An https origin turns on Secure
+  cookies and HSTS. With a custom domain, add `MEDLEVO_ORIGIN` in Render → Environment with the exact address (the
+  onrender.com one may follow, comma-separated). Tests: `apps/server/test/deploy/paas-config.test.ts`.
+* **The blueprint pins nothing the owner edits** (review fix, 2026-10-21). Render documents that a Blueprint sync — by
+  default every push that changes `render.yaml` — overwrites dashboard edits of any variable the Blueprint defines and
+  keeps the ones it does not define. `render.yaml` therefore does not define `MEDLEVO_DATA_DIR`, `MEDLEVO_ORIGIN`,
+  `MEDLEVO_TIMEZONE`, `MEDLEVO_BACKUP_SCHEDULE` or `MEDLEVO_BACKUP_KEEP_*`; their defaults come from the image
+  (`Dockerfile` ENV: `/var/data/medlevo`, `Asia/Baghdad`) and `config.ts` (03:15, 7 / 4 / 1). Before the fix, the
+  restore switch (`MEDLEVO_DATA_DIR` set in the dashboard) was undone by the next release that touched `render.yaml`,
+  silently moving the server back to the pre-restore directory. Test: `apps/server/test/deploy/render-blueprint.test.ts`.
+* `MEDLEVO_SETUP_TOKEN` is generated by Render (`generateValue: true`); the owner copies it from Render → Environment
+  once, when creating the account.
+
+### 8.4 Disk layout and restore
+
+The disk is mounted at `/var/data`; the data directory is `/var/data/medlevo`. The mount point is deliberately the
+**parent** of the data directory: a restore from the off-site copy (`medlevo-restore-offsite --latest` in the Render
+Shell, [`BACKUP_RESTORE.md`](BACKUP_RESTORE.md) §6) writes a new directory **beside** the live data on the same disk,
+and the switch is one variable, `MEDLEVO_DATA_DIR`, **added** in Render → Environment (Render redeploys; the blueprint
+does not define it, so a Blueprint sync never undoes it — §8.3). Anything outside the
+disk is wiped by every deploy, so the restore command refuses a target on another filesystem. Render also takes its own
+daily disk snapshots (kept ≥ 7 days, per Render's docs) — a second, provider-side safety net, not a replacement for the
+encrypted off-site copy.
+
+### 8.5 What was verified, and what was not
+
+Verified **in this container** with Docker (the committed `Dockerfile` built unmodified by `docker build`, except that
+this sandbox needs its TLS-intercepting proxy's CA during `npm ci`, injected through a build context for the local
+build only):
+
+* the image starts as `tini` → entrypoint → `node` (uid 1000) on a **root-owned** volume, which it hands to `node`;
+  `/api/health` is healthy and Docker's HEALTHCHECK reports «healthy»;
+* first-run setup: `setup_token_required`, 403 without the token, 200 with it;
+* uploads processed inside the image: a text PDF, a scanned PDF (pdftoppm + OCR: 1 OCR page), a PPTX (LibreOffice
+  display copy, 3/3 pages); the server reports poppler, LibreOffice and tesseract available;
+* graceful stop (SIGTERM through tini: «shutting down» logged), start again: the owner, the library and every processed
+  version are still there;
+* a Render-like environment (`MEDLEVO_ORIGIN=auto` + `RENDER_EXTERNAL_URL`, `MEDLEVO_TRUST_PROXY=1`,
+  `MEDLEVO_CLIENT_IP_HEADER=cf-connecting-ip`): Secure cookie, the session records the `CF-Connecting-IP` address
+  despite a forged `X-Forwarded-For` head, a foreign Origin is refused;
+* «نسخ احتياطي الآن» → local backup → restore verification → encrypted upload to the **test-only S3 fake** (which checks
+  every SigV4 signature) → `medlevo-restore-offsite --latest` from a shell **without** the service environment (it takes
+  MedLevo's variables from the running server) → every check PASS → a new container started on the restored directory:
+  old sessions revoked, data present.
+
+**Not run** (no accounts / no device here): Render itself (build, disk mount ownership, Shell, `RENDER_EXTERNAL_URL`,
+the proxy chain), Cloudflare R2 itself, a phone or iPad browser, a custom domain. CI can build and smoke-test the image
+on GitHub's runners: Actions → CI → «Run workflow» → `docker` = true (`.github/workflows/ci.yml`).

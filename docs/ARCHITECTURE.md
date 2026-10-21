@@ -85,10 +85,10 @@ base schema is `0001_core.sql`; the «files» column lists the migration files t
 |---|---|---|---|
 | `auth` | owner, auth_session, login_attempt | 0010–0019 · — | `features/auth` |
 | `settings` | owner_setting | 0020–0029 · — | `features/settings`, `features/control` |
-| `audit` | change_log | — | (control center history) |
+| `audit` | change_log | 0050–0059 · `0050_change_log_actor` (Academic OS P1-T1 step 0: `actor_user_id`, `actor_role`, NULL until accounts exist) | (control center history) |
 | `files` | stored_file | — | — |
 | `jobs` | processing_job (+ `worker_id`), job_checkpoint | 0030–0039 · `0030_job_worker` | (control → processing) |
-| `sync` | sync_operation, sync_change | 0040–0049 · — | `lib/sync.ts`, `features/offline` |
+| `sync` | sync_operation, sync_change | 0040–0049 · `0041_sync_actor_visibility` (Academic OS P1-T1 step 0: `sync_operation.actor_user_id`, `sync_change.visibility_key`, NULL until accounts and spaces exist) | `lib/sync.ts`, `features/offline` |
 | `library` | library_node, tag, tag_link, topic, topic_link | 0100–0149 · `0100_library_trash` | `features/library`, `features/home` |
 | `sources` | source, source_link, source_version, source_page, source_region | 0150–0199 · `0150_sources_registry` | `features/upload`, `features/sources` |
 | `processing` | document_chunk, chunk_fts, image_asset, figure_reading (track F3: derived vision reading of a figure, uncertain until the owner reviews it) | 0200–0249 · `0200_processing`, `0210_figure_reading` (track F3), `0220_page_orientation` (Round 7 H2: `source_page.content_rotation` / `content_rotation_origin` / `image_orientation`) | (processing status: sources page, control → processing) |

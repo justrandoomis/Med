@@ -3,7 +3,7 @@
 // Server-managed fields (rev, created_at/updated_at, deleted_at, conflict ids) sent by a client are ignored.
 // `data` objects are validated for the fields the contract defines and keep any extra keys (forward
 // compatible ink formats); free-form records are size-limited.
-import { ANNOTATION_IMAGE_MAX_BYTES, ANNOTATION_IMAGE_MAX_SIDE, ANNOTATION_IMAGE_MIMES, COVER_COLORS, NOTE_PAGE_KINDS, richTextSchema } from '@medlevo/shared';
+import { ANNOTATION_IMAGE_MAX_BYTES, ANNOTATION_IMAGE_MAX_SIDE, ANNOTATION_IMAGE_MIMES, COVER_COLORS, decodeInkPoints, NOTE_PAGE_KINDS, richTextSchema } from '@medlevo/shared';
 import { z } from 'zod';
 
 const ID = z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/, 'معرّف غير صالح.');
@@ -67,6 +67,35 @@ export const inkDataSchema = z.looseObject({
   tilt_available: z.boolean(),
   audio_link: audioLinkSchema.optional(),
 });
+/**
+ * (P1-T2, ADR-0004 §2.5) ink data v2 from a client that sends `accept-ink: 2`: the same stroke with packed points. The
+ * points are decoded and held to exactly the v1 rules (count, range); the server stores the decoded v1 (one stored
+ * format, so re-anchoring, export and recognition keep reading `points`).
+ */
+export const MAX_PACKED_CHARS = 1_200_000;
+export const inkDataV2Schema = z
+  .looseObject({
+    v: z.literal(2),
+    points_packed: z.string().min(4).max(MAX_PACKED_CHARS),
+    style: inkStyleSchema,
+    bbox: normBoxSchema,
+    pressure_available: z.boolean(),
+    tilt_available: z.boolean(),
+    audio_link: audioLinkSchema.optional(),
+  })
+  .superRefine((d, ctx) => {
+    let pts: unknown;
+    try {
+      pts = decodeInkPoints(d.points_packed);
+    } catch {
+      ctx.addIssue({ code: 'custom', path: ['points_packed'], message: 'النقاط المضغوطة تالفة؛ لم تُقرأ الكتابة.' });
+      return;
+    }
+    const r = z.array(inkPoint).min(1).max(20_000).safeParse(pts);
+    if (!r.success || !r.data.every((p) => p[0]! >= -1 && p[0]! <= 2 && p[1]! >= -1 && p[1]! <= 2)) {
+      ctx.addIssue({ code: 'custom', path: ['points_packed'], message: 'نقطة خارج نطاق الصفحة.' });
+    }
+  });
 const shapeDataSchema = z.looseObject({
   v: z.literal(1),
   shape: z.enum(['line', 'arrow', 'rect', 'ellipse']),
@@ -133,7 +162,7 @@ const freeDataSchema = z.record(z.string(), z.unknown());
 export const ANNOTATION_KINDS = ['ink', 'highlight', 'underline', 'shape', 'text', 'sticky', 'image', 'bookmark', 'link', 'text_highlight'] as const;
 
 const DATA_BY_KIND: Record<(typeof ANNOTATION_KINDS)[number], z.ZodType> = {
-  ink: inkDataSchema,
+  ink: z.union([inkDataSchema, inkDataV2Schema]),
   // not fixed by the shared contract (the ink engine decides): any JSON object, size-limited
   highlight: freeDataSchema,
   underline: freeDataSchema,
@@ -162,6 +191,8 @@ export const annotationPayloadSchema = z
       .object({ pointer_type: z.string().max(20).optional(), pressure: z.boolean().optional(), tilt: z.boolean().optional() })
       .nullish(),
     created_at: z.number().int().nonnegative().optional(),
+    /** (P1-T2) the authorship layer; absent / null = the document's default personal layer («ملاحظاتي») */
+    layer_id: ID.nullish(),
   })
   .superRefine((v, ctx) => {
     const r = DATA_BY_KIND[v.kind].safeParse(v.data);
@@ -180,6 +211,8 @@ export const notePayloadSchema = z.object({
   origin: z.enum(['owner', 'ai_answer', 'handwriting_recognition']).optional(),
   ai_record: z.record(z.string(), z.unknown()).nullish(),
   created_at: z.number().int().nonnegative().optional(),
+  /** (P1-T2) the authorship layer; absent / null = the document's default personal layer */
+  layer_id: ID.nullish(),
 });
 export type NotePayload = z.infer<typeof notePayloadSchema>;
 
@@ -221,7 +254,9 @@ export const studyLocationSchema = z.looseObject({
   rotation: z.number().int().refine((n) => n % 90 === 0, 'الدوران يجب أن يكون من مضاعفات 90.').optional(),
   layout: z.enum(['single', 'double', 'continuous']).optional(),
   rail: z.object({ open: z.boolean(), width: finite, tab: z.string().max(40) }).optional(),
-  left_panel: z.object({ open: z.boolean(), tab: z.enum(['thumbnails', 'outline', 'bookmarks']) }).optional(),
+  left_panel: z.object({ open: z.boolean(), tab: z.enum(['thumbnails', 'outline', 'bookmarks', 'layers']) }).optional(),
+  /** (P1-T2) layers hidden in this study session and the layer new writing goes to */
+  layers: z.object({ hidden: z.array(ID).max(200).optional(), active: ID.nullish() }).optional(),
   split: z
     .looseObject({ mode: z.string().max(40), secondary_source_id: ID.optional(), secondary_page_index: z.number().int().min(0).optional() })
     .nullish(),

@@ -1,0 +1,156 @@
+/* «الطبقات» in the page panel (Academic OS P1-T2). Logical properties only (RTL first); 44 px targets. */
+.ml-layers {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-3);
+  padding: var(--ml-space-3);
+}
+.ml-layers__intro {
+  margin: 0;
+  font-size: var(--ml-text-sm);
+}
+.ml-layers__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ml-layer {
+  display: flex;
+  align-items: center;
+  gap: var(--ml-space-2);
+  min-height: var(--ml-touch-target);
+  padding: var(--ml-space-1) var(--ml-space-2);
+  border: 1px solid transparent;
+  border-radius: var(--ml-radius-md);
+}
+.ml-layer--active {
+  border-color: var(--ml-color-accent);
+  background: var(--ml-color-accent-soft);
+}
+.ml-layer--hidden .ml-layer__title {
+  color: var(--ml-color-ink-3);
+}
+.ml-layer__eye,
+.ml-layer .ml-icon-btn {
+  min-width: var(--ml-touch-target);
+  min-height: var(--ml-touch-target);
+}
+.ml-layer__main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.ml-layer__title {
+  overflow: hidden;
+  color: var(--ml-color-ink);
+  font-size: var(--ml-text-sm);
+  font-weight: var(--ml-weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ml-layer__meta,
+.ml-layer__origin {
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-xs);
+  line-height: var(--ml-leading-xs);
+}
+.ml-layer__badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-1);
+}
+.ml-layer__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 var(--ml-space-1);
+  border: 1px solid var(--ml-color-line-strong);
+  border-radius: var(--ml-radius-xs);
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-xs);
+}
+.ml-layer__active {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ml-space-1);
+  min-height: var(--ml-touch-target);
+  padding-inline: var(--ml-space-1);
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-xs);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ml-layer__active input {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  accent-color: var(--ml-color-accent);
+}
+.ml-layer__active--off {
+  color: var(--ml-color-ink-3);
+  cursor: default;
+}
+.ml-layers__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-3);
+}
+.ml-layers__error {
+  margin: 0;
+  color: var(--ml-color-danger);
+  font-size: var(--ml-text-sm);
+}
+.ml-layer-history {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ml-layer-history__row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--ml-space-2) 0;
+  border-block-end: 1px solid var(--ml-color-line);
+}
+.ml-layer-history__summary {
+  color: var(--ml-color-ink);
+  font-size: var(--ml-text-sm);
+}
+.ml-layer-history__meta {
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-xs);
+}
+.ml-copy-preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-1);
+  padding: var(--ml-space-3);
+  border-radius: var(--ml-radius-md);
+  background: var(--ml-color-paper-2);
+  color: var(--ml-color-ink);
+  font-size: var(--ml-text-sm);
+}
+.ml-copy-preview p {
+  margin: 0;
+}
+.ml-copy-preview__list,
+.ml-copy-preview__pages ul {
+  margin: 0;
+  padding-inline-start: var(--ml-space-4);
+}
+.ml-copy-preview__skipped {
+  color: var(--ml-color-ink-2);
+}
+.ml-copy-preview__pages summary {
+  min-height: var(--ml-touch-target);
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}

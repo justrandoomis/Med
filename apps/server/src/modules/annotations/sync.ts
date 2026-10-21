@@ -14,19 +14,31 @@
 //  study_session  upsert only; a stale base_rev means another device saved a position since → rejected with
 //              the server copy (never overwritten silently, §46); the client asks the owner.
 // Every write touches the change feed in the same transaction; page anchors maintain annotation_target.
+//
+// Academic OS P1-T2 (ADR-0004 §2.1, ARCHITECTURE_DELTA §4.3, §5.4): annotation and note ops may name a `layer_id`
+// (absent → an insert goes to the default personal layer «ملاحظاتي», an edit keeps the item's layer, so an older client
+// never moves anything). Layer rules R2–R5 are checked before any write (see ./layers.ts): an op on a read-only,
+// collaborative or foreign layer, or on another author's item, is `rejected` with a `detail_code` and the server's
+// copy; a conflict copy stays on the actor's own layer (R3). Every update, delete and restore writes a before-image
+// into `annotation_revision` in the same transaction (./history.ts). Ink v2 (packed points) is accepted and stored as
+// v1; answers carry v2 only for clients that sent `accept-ink: 2`.
 import {
   annotationTargetKey,
   newId,
   parseRichText,
   stableStringify,
+  toInkV1,
   type AnnotationAnchor,
+  type InkDataV2,
   type SyncOp,
 } from '@medlevo/shared';
 import type { z } from 'zod';
 import { fromJson, type Db } from '../../db/db';
 import { AppError } from '../../lib/errors';
 import { zodIssuesToFields } from '../../lib/http';
-import type { SyncApplyResult, SyncEntityHandler, SyncTx } from '../sync/registry';
+import type { SerializeOptions, SyncApplyResult, SyncEntityHandler, SyncTx } from '../sync/registry';
+import { recordAnnotationRevision, recordNoteRevision } from './history';
+import { actorOf, annotationLayerHandler, checkExistingItem, documentKeyOfAnchor, documentKeyOfNote, layerRejection, resolveTargetLayer } from './layers';
 import {
   getAnnotation,
   getNote,
@@ -135,7 +147,8 @@ function annotationFields(db: Db, p: AnnotationPayload): { fields: AnnotationFie
       kind: p.kind,
       tool: toolFor(p),
       anchor,
-      data: p.data,
+      // ink v2 (packed points) is stored as v1: one stored format for every reader (re-anchoring, export, recognition)
+      data: p.kind === 'ink' && (p.data as { v?: unknown }).v === 2 ? (toInkV1(p.data as unknown as InkDataV2) as unknown as Record<string, unknown>) : p.data,
       layer: layerFor(p),
       z: p.z ?? 0,
       locked: p.locked ?? false,
@@ -146,13 +159,13 @@ function annotationFields(db: Db, p: AnnotationPayload): { fields: AnnotationFie
   };
 }
 
-function annotationContentKey(f: Pick<AnnotationFields, 'kind' | 'tool' | 'anchor' | 'data' | 'layer' | 'z' | 'locked'>): string {
-  return stableStringify({ kind: f.kind, tool: f.tool, anchor: f.anchor, data: f.data, layer: f.layer, z: f.z, locked: f.locked });
+function annotationContentKey(f: Pick<AnnotationFields, 'kind' | 'tool' | 'anchor' | 'data' | 'layer' | 'z' | 'locked'>, layerId: string | null): string {
+  return stableStringify({ kind: f.kind, tool: f.tool, anchor: f.anchor, data: f.data, layer: f.layer, z: f.z, locked: f.locked, layer_id: layerId });
 }
 
 function rowContentKey(r: AnnotationRow): string {
   const d = toAnnotationDTO(r);
-  return annotationContentKey({ kind: d.kind, tool: d.tool, anchor: d.anchor, data: d.data as Record<string, unknown>, layer: d.layer, z: d.z, locked: d.locked });
+  return annotationContentKey({ kind: d.kind, tool: d.tool, anchor: d.anchor, data: d.data as Record<string, unknown>, layer: d.layer, z: d.z, locked: d.locked }, r.layer_id ?? null);
 }
 
 /**
@@ -167,11 +180,11 @@ function markImageReferenced(tx: SyncTx, f: AnnotationFields): void {
   }
 }
 
-function insertAnnotation(tx: SyncTx, id: string, f: AnnotationFields, createdAt: number, conflictOf: string | null): void {
+function insertAnnotation(tx: SyncTx, id: string, f: AnnotationFields, createdAt: number, conflictOf: string | null, layerId: string | null): void {
   tx.db.run(
     `INSERT INTO annotation (id, kind, tool, anchor_json, data_json, layer, z, locked, anchor_status, previous_anchor_json, input_json,
-                             device_id, rev, created_at, updated_at, deleted_at, conflict_of_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, NULL, ?)`,
+                             device_id, rev, created_at, updated_at, deleted_at, conflict_of_id, layer_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, NULL, ?, ?)`,
     [
       id,
       f.kind,
@@ -188,6 +201,7 @@ function insertAnnotation(tx: SyncTx, id: string, f: AnnotationFields, createdAt
       createdAt,
       tx.now,
       conflictOf,
+      layerId,
     ],
   );
   writeAnnotationTarget(tx.db, id, f.anchor);
@@ -195,10 +209,10 @@ function insertAnnotation(tx: SyncTx, id: string, f: AnnotationFields, createdAt
   tx.touch('annotation', id);
 }
 
-function updateAnnotation(tx: SyncTx, id: string, f: AnnotationFields, restore: boolean): void {
+function updateAnnotation(tx: SyncTx, id: string, f: AnnotationFields, restore: boolean, layerId: string | null): void {
   tx.db.run(
     `UPDATE annotation SET kind = ?, tool = ?, anchor_json = ?, data_json = ?, layer = ?, z = ?, locked = ?, anchor_status = ?,
-            previous_anchor_json = ?, input_json = ?, device_id = ?, rev = rev + 1, updated_at = ?${restore ? ', deleted_at = NULL' : ''}
+            previous_anchor_json = ?, input_json = ?, device_id = ?, rev = rev + 1, updated_at = ?, layer_id = ?${restore ? ', deleted_at = NULL' : ''}
      WHERE id = ?`,
     [
       f.kind,
@@ -213,6 +227,7 @@ function updateAnnotation(tx: SyncTx, id: string, f: AnnotationFields, restore: 
       f.input ? toJson(f.input) : null,
       tx.deviceId,
       tx.now,
+      layerId,
       id,
     ],
   );
@@ -224,79 +239,99 @@ function updateAnnotation(tx: SyncTx, id: string, f: AnnotationFields, restore: 
 const UNRESOLVED_AR = 'الصفحة التي كُتب عليها غير موجودة في هذا الإصدار على الخادم؛ حُفظت الكتابة كما هي في قائمة «تحتاج إعادة ربط».';
 
 export function annotationHandler(db: Db): SyncEntityHandler {
-  const serialize = (id: string) => {
+  const serialize = (id: string, opts?: SerializeOptions) => {
     const r = getAnnotation(db, id);
-    return r ? toAnnotationDTO(r) : null;
+    return r ? toAnnotationDTO(r, { inkFormat: opts?.inkFormat }) : null;
   };
   return {
     serialize,
     apply(op, tx): SyncApplyResult {
       requireOps(op, ['upsert', 'append', 'delete']);
+      const fmt = { inkFormat: tx.format?.inkFormat };
       const existing = getAnnotation(tx.db, op.entity_id);
+      const actor = actorOf(tx);
 
       if (op.op === 'delete') {
         if (!existing) return { result: 'applied', detail: 'لا توجد هذه الكتابة على الخادم؛ لا شيء يُحذف.' };
-        if (existing.deleted_at !== null) return { result: 'duplicate', entity: toAnnotationDTO(existing) };
+        if (existing.deleted_at !== null) return { result: 'duplicate', entity: toAnnotationDTO(existing, fmt) };
+        // R2 / R5: an item of a read-only layer, or another author's item, is never tombstoned (the server's copy is
+        // returned so the device shows it again)
+        const own = checkExistingItem(tx.db, existing, actor);
+        if (!own.ok) return layerRejection(own, toAnnotationDTO(existing, fmt));
         if (op.base_rev != null && op.base_rev < existing.rev) {
           // edited on another device after this device last saw it: keep the edited stroke
           return {
             result: 'conflict_kept_both',
-            entity: toAnnotationDTO(existing),
+            entity: toAnnotationDTO(existing, fmt),
             detail: 'لم تُحذف هذه الكتابة لأنها عُدّلت من جهاز آخر بعد آخر مزامنة؛ احتُفظ بالنسخة المعدّلة.',
           };
         }
+        recordAnnotationRevision(tx, existing as unknown as Record<string, unknown> & AnnotationRow, 'delete', op, actor);
         tx.db.run('UPDATE annotation SET deleted_at = ?, updated_at = ?, rev = rev + 1, device_id = ? WHERE id = ?', [tx.now, tx.now, tx.deviceId, op.entity_id]);
         tx.touch('annotation', op.entity_id);
-        return { result: 'applied', entity: serialize(op.entity_id) };
+        return { result: 'applied', entity: serialize(op.entity_id, tx.format) };
       }
 
       const p = parsePayload(annotationPayloadSchema, op);
       const { fields, unresolved } = annotationFields(tx.db, p);
       const detail = unresolved ? UNRESOLVED_AR : undefined;
+      // the layer the op names (absent: an insert → «ملاحظاتي»; an edit keeps the item's layer — an older client never
+      // moves an item off its layer)
+      const requested = p.layer_id === undefined ? (existing?.layer_id ?? null) : p.layer_id;
+      const target = resolveTargetLayer(tx.db, requested, documentKeyOfAnchor(tx.db, fields.anchor));
 
       if (!existing) {
-        insertAnnotation(tx, op.entity_id, fields, clampCreated(p.created_at, tx.now), null);
-        return { result: 'applied', entity: serialize(op.entity_id), ...(detail ? { detail } : {}) };
+        if (!target.ok) return layerRejection(target);
+        insertAnnotation(tx, op.entity_id, fields, clampCreated(p.created_at, tx.now), null, target.layerId);
+        return { result: 'applied', entity: serialize(op.entity_id, tx.format), ...(detail ? { detail } : {}) };
       }
       if (op.op === 'append') {
         // append-only by id: the stroke already exists → counted once
-        return { result: 'duplicate', entity: toAnnotationDTO(existing) };
+        return { result: 'duplicate', entity: toAnnotationDTO(existing, fmt) };
       }
+      // R2 / R5: an item of a read-only layer or another author's item is not moved, recoloured or re-layered
+      const own = checkExistingItem(tx.db, existing, actor);
+      if (!own.ok) return layerRejection(own, toAnnotationDTO(existing, fmt));
+      if (!target.ok) return layerRejection(target, toAnnotationDTO(existing, fmt));
+      const layerId = target.layerId;
       // (H3 item 2) an item the owner re-anchored keeps its previous anchor and its «reanchored» status through later
       // edits from devices whose local copy does not carry them
       if (!fields.previous_anchor && existing.previous_anchor_json) fields.previous_anchor = fromJson<AnnotationAnchor>(existing.previous_anchor_json);
       if (fields.anchor_status === 'ok' && existing.anchor_status === 'reanchored') fields.anchor_status = 'reanchored';
       if (existing.deleted_at !== null) {
         // edit concurrent with a delete (or an undo of an erase): the edited stroke is kept
-        updateAnnotation(tx, op.entity_id, fields, true);
+        recordAnnotationRevision(tx, existing as unknown as Record<string, unknown> & AnnotationRow, 'restore', op, actor);
+        updateAnnotation(tx, op.entity_id, fields, true, layerId);
         return {
           result: 'merged',
-          entity: serialize(op.entity_id),
+          entity: serialize(op.entity_id, tx.format),
           detail: 'كانت هذه الكتابة محذوفة على الخادم، وأعادها تعديلك الأحدث كي لا تضيع الكتابة المعدّلة.',
         };
       }
       if (op.base_rev != null && op.base_rev === existing.rev) {
-        updateAnnotation(tx, op.entity_id, fields, false);
-        return { result: 'applied', entity: serialize(op.entity_id), ...(detail ? { detail } : {}) };
+        recordAnnotationRevision(tx, existing as unknown as Record<string, unknown> & AnnotationRow, 'update', op, actor);
+        updateAnnotation(tx, op.entity_id, fields, false, layerId);
+        return { result: 'applied', entity: serialize(op.entity_id, tx.format), ...(detail ? { detail } : {}) };
       }
-      if (annotationContentKey(fields) === rowContentKey(existing)) {
-        return { result: 'duplicate', entity: toAnnotationDTO(existing) };
+      const incomingKey = annotationContentKey(fields, layerId);
+      if (incomingKey === rowContentKey(existing)) {
+        return { result: 'duplicate', entity: toAnnotationDTO(existing, fmt) };
       }
       // the same stale edit arriving again under a new op id (G7 / AC-24: a «retry» re-built on the device) is
       // already kept as a copy next to the original — never a second identical copy
-      const incomingKey = annotationContentKey(fields);
       const sameCopy = tx.db
         .all<AnnotationRow>('SELECT * FROM annotation WHERE conflict_of_id = ? AND deleted_at IS NULL', [existing.id])
         .find((c) => rowContentKey(c) === incomingKey);
       if (sameCopy) {
-        return { result: 'duplicate', entity: toAnnotationDTO(existing), detail: 'هذا التعديل محفوظ مسبقًا كعنصر منفصل بجانب نسخة الخادم؛ لم تُنشأ نسخة مكررة.' };
+        return { result: 'duplicate', entity: toAnnotationDTO(existing, fmt), detail: 'هذا التعديل محفوظ مسبقًا كعنصر منفصل بجانب نسخة الخادم؛ لم تُنشأ نسخة مكررة.' };
       }
-      // stale edit: keep both — the incoming edit becomes a new annotation next to the server version
+      // stale edit: keep both — the incoming edit becomes a new annotation next to the server version, on the layer the
+      // actor's op named (validated writable for the actor above: R3, a conflict copy stays with its author)
       const copyId = newId(tx.now);
-      insertAnnotation(tx, copyId, fields, tx.now, existing.id);
+      insertAnnotation(tx, copyId, fields, tx.now, existing.id, layerId);
       return {
         result: 'conflict_kept_both',
-        entity: toAnnotationDTO(existing),
+        entity: toAnnotationDTO(existing, fmt),
         detail: 'عُدّلت هذه الكتابة من جهاز آخر في الوقت نفسه؛ احتُفظ بالنسختين: نسخة الخادم ونسختك كعنصر منفصل بجانبها.',
       };
     },
@@ -305,6 +340,8 @@ export function annotationHandler(db: Db): SyncEntityHandler {
 
 // ───────────────────────────── note ─────────────────────────────
 interface NoteFields {
+  /** (P1-T2) authorship layer; resolved by the handler (NULL = «ملاحظاتي») */
+  layer_id?: string | null;
   node_id: string | null;
   title: string | null;
   body: NotePayload['body'];
@@ -346,20 +383,20 @@ function noteFields(db: Db, p: NotePayload): { fields: NoteFields; notes: string
   };
 }
 
-function noteContentKey(f: Pick<NoteFields, 'node_id' | 'title' | 'body' | 'anchor' | 'origin' | 'ai_record'>): string {
-  return stableStringify({ node_id: f.node_id, title: f.title, body: f.body, anchor: f.anchor, origin: f.origin, ai_record: f.ai_record });
+function noteContentKey(f: Pick<NoteFields, 'node_id' | 'title' | 'body' | 'anchor' | 'origin' | 'ai_record'>, layerId: string | null): string {
+  return stableStringify({ node_id: f.node_id, title: f.title, body: f.body, anchor: f.anchor, origin: f.origin, ai_record: f.ai_record, layer_id: layerId });
 }
 
 function noteRowContentKey(r: NoteRow): string {
   const d = toNoteDTO(r);
-  return noteContentKey({ node_id: d.node_id, title: d.title, body: d.body, anchor: d.anchor, origin: d.origin, ai_record: d.ai_record });
+  return noteContentKey({ node_id: d.node_id, title: d.title, body: d.body, anchor: d.anchor, origin: d.origin, ai_record: d.ai_record }, r.layer_id ?? null);
 }
 
 function insertNote(tx: SyncTx, id: string, f: NoteFields, createdAt: number, baseRev: number | null, conflictOf: string | null): void {
   tx.db.run(
     `INSERT INTO note (id, node_id, title, body_json, anchor_json, origin, ai_record_json, rev, base_rev, conflict_of_id, device_id,
-                       created_at, updated_at, deleted_at, source_id, anchor_target_key)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+                       created_at, updated_at, deleted_at, source_id, anchor_target_key, layer_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, NULL, ?, ?, ?)`,
     [
       id,
       f.node_id,
@@ -375,6 +412,7 @@ function insertNote(tx: SyncTx, id: string, f: NoteFields, createdAt: number, ba
       tx.now,
       f.source_id,
       f.anchor_target_key,
+      f.layer_id ?? null,
     ],
   );
   indexNote(tx.db, { id, title: f.title, body: f.body, origin: f.origin, deleted: false });
@@ -384,7 +422,7 @@ function insertNote(tx: SyncTx, id: string, f: NoteFields, createdAt: number, ba
 function updateNote(tx: SyncTx, id: string, f: NoteFields, baseRev: number | null, restore: boolean): void {
   tx.db.run(
     `UPDATE note SET node_id = ?, title = ?, body_json = ?, anchor_json = ?, origin = ?, ai_record_json = ?, rev = rev + 1, base_rev = ?,
-            device_id = ?, updated_at = ?, source_id = ?, anchor_target_key = ?${restore ? ', deleted_at = NULL' : ''}
+            device_id = ?, updated_at = ?, source_id = ?, anchor_target_key = ?, layer_id = ?${restore ? ', deleted_at = NULL' : ''}
      WHERE id = ?`,
     [
       f.node_id,
@@ -398,6 +436,7 @@ function updateNote(tx: SyncTx, id: string, f: NoteFields, baseRev: number | nul
       tx.now,
       f.source_id,
       f.anchor_target_key,
+      f.layer_id ?? null,
       id,
     ],
   );
@@ -415,9 +454,12 @@ export function noteHandler(db: Db): SyncEntityHandler {
     apply(op, tx): SyncApplyResult {
       requireOps(op, ['upsert', 'delete']);
       const existing = getNote(tx.db, op.entity_id);
+      const actor = actorOf(tx);
       if (op.op === 'delete') {
         if (!existing) return { result: 'applied', detail: 'لا توجد هذه الملاحظة على الخادم؛ لا شيء يُحذف.' };
         if (existing.deleted_at !== null) return { result: 'duplicate', entity: toNoteDTO(existing) };
+        const own = checkExistingItem(tx.db, existing, actor);
+        if (!own.ok) return layerRejection(own, toNoteDTO(existing));
         if (op.base_rev != null && op.base_rev < existing.rev) {
           return {
             result: 'conflict_kept_both',
@@ -425,6 +467,7 @@ export function noteHandler(db: Db): SyncEntityHandler {
             detail: 'لم تُحذف الملاحظة لأنها عُدّلت من جهاز آخر بعد آخر مزامنة؛ احتُفظ بالنص المعدّل.',
           };
         }
+        recordNoteRevision(tx, existing as unknown as Record<string, unknown> & NoteRow, 'delete', op, actor);
         tx.db.run('UPDATE note SET deleted_at = ?, updated_at = ?, rev = rev + 1, device_id = ? WHERE id = ?', [tx.now, tx.now, tx.deviceId, op.entity_id]);
         indexNote(tx.db, { id: op.entity_id, title: null, body: { v: 1, paragraphs: [] }, origin: existing.origin, deleted: true });
         tx.touch('note', op.entity_id);
@@ -435,12 +478,20 @@ export function noteHandler(db: Db): SyncEntityHandler {
       const { fields, notes } = noteFields(tx.db, p);
       const baseRev = op.base_rev ?? null;
       const extra = notes.length ? { detail: notes.join(' ') } : {};
+      // the layer the op names (absent: an insert → «ملاحظاتي»; an edit keeps the note's layer)
+      const requested = p.layer_id === undefined ? (existing?.layer_id ?? null) : p.layer_id;
+      const target = resolveTargetLayer(tx.db, requested, documentKeyOfNote(tx.db, fields));
+      if (!target.ok) return layerRejection(target, existing ? toNoteDTO(existing) : undefined);
+      fields.layer_id = target.layerId;
 
       if (!existing) {
         insertNote(tx, op.entity_id, fields, clampCreated(p.created_at, tx.now), baseRev, null);
         return { result: notes.length ? 'merged' : 'applied', entity: serialize(op.entity_id), ...extra };
       }
+      const own = checkExistingItem(tx.db, existing, actor);
+      if (!own.ok) return layerRejection(own, toNoteDTO(existing));
       if (existing.deleted_at !== null) {
+        recordNoteRevision(tx, existing as unknown as Record<string, unknown> & NoteRow, 'restore', op, actor);
         updateNote(tx, op.entity_id, fields, baseRev, true);
         return {
           result: 'merged',
@@ -449,21 +500,22 @@ export function noteHandler(db: Db): SyncEntityHandler {
         };
       }
       if (baseRev !== null && baseRev === existing.rev) {
+        recordNoteRevision(tx, existing as unknown as Record<string, unknown> & NoteRow, 'update', op, actor);
         updateNote(tx, op.entity_id, fields, baseRev, false);
         return { result: notes.length ? 'merged' : 'applied', entity: serialize(op.entity_id), ...extra };
       }
-      if (noteContentKey(fields) === noteRowContentKey(existing)) {
+      const incomingKey = noteContentKey(fields, target.layerId);
+      if (incomingKey === noteRowContentKey(existing)) {
         return { result: 'duplicate', entity: toNoteDTO(existing) };
       }
       // the same concurrent edit arriving again under a new op id (G7 / AC-24) is already saved as a separate note
-      const incomingKey = noteContentKey(fields);
       const sameCopy = tx.db
         .all<NoteRow>('SELECT * FROM note WHERE conflict_of_id = ? AND deleted_at IS NULL', [existing.id])
         .find((c) => noteRowContentKey(c) === incomingKey);
       if (sameCopy) {
         return { result: 'duplicate', entity: toNoteDTO(existing), detail: 'نصك محفوظ مسبقًا كملاحظة منفصلة بجانب الأصل؛ لم تُنشأ نسخة مكررة.' };
       }
-      // concurrent edit: the incoming text is saved as a separate note that points at the original
+      // concurrent edit: the incoming text is saved as a separate note that points at the original (on the actor's layer, R3)
       const copyId = newId(tx.now);
       insertNote(tx, copyId, fields, tx.now, baseRev, existing.id);
       return {
@@ -683,4 +735,6 @@ export function registerAnnotationSync(sync: { registerEntity(type: string, hand
   sync.registerEntity('note', noteHandler(db));
   sync.registerEntity('note_page', notePageHandler(db));
   sync.registerEntity('study_session', studySessionHandler(db));
+  // (P1-T2) authorship layers: a client creates personal / answers / explanation layers and edits their presentation
+  sync.registerEntity('annotation_layer', annotationLayerHandler(db));
 }

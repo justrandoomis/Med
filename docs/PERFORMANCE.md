@@ -141,6 +141,75 @@ course (the coverage/knowledge numbers do not include question matching at scale
 the background job shares the one Node process with requests, so a request arriving mid-recompute can wait up to one
 slice (≤ 172 ms measured).
 
+## Academic OS P1-T2 (2026-10-21) — dense-page ink tile cache, packed ink, layer copy
+
+PRD NFR-P2 / ADR-0005 B.3: «warm repaint of a realistic 5,000-stroke page < 200 ms in the CI harness, and no long task
+> 100 ms while writing». Measured with **one harness, one build**: `e2e/perf.spec.ts` › «dense page, 5 layers»
+(`MEDLEVO_PERF=1 npx playwright test e2e/perf.spec.ts --project=desktop -g "dense page, 5 layers"`). The page is the
+«realistic» page of spike 4a: **5 000 fountain-pen strokes with pressure × 226 samples = 1.13 M points**, spread over
+**5 layers** («ملاحظاتي» + 4 own layers, 1 000 strokes each), seeded through the sync API. The same run measures
+**before** (tiles off: `localStorage['medlevo.ink.tiles'] = 'off'`, i.e. the old stroke-by-stroke repaint) and **after**
+(tiles on). Paint times come from the ink layer's own paint log (`window.__medlevoInkPaints`, written only when the page
+opts in); long tasks from a `PerformanceObserver('longtask')`. Headless Chromium 141, desktop 1280 × 800, software
+raster, 2026-10-21 00:15 UTC. Single run; other agents' suites were running on the VM.
+
+| step on the dense page | before — stroke by stroke | after — tiles |
+|---|---|---|
+| zoom in to a **new** scale | ink repaint 1 595 ms, **one long task of 2 364 ms** | cold tiles drawn in raster-timed slices behind a scaled stand-in: 6.4 s until the last tile, long tasks 3 (max 296 ms — the zoom step's PDF re-render and React work, also present before; the ink slices themselves stay ≈ 8 ms) |
+| zoom back out | 1 572 ms, long task 2 302 ms | cold (that scale's grid had not finished at open): 5.2 s in slices, 1 long task of 50 ms |
+| zoom in again to a scale **seen before** (warm) | 1 630 ms, long task 2 408 ms | **8 ms**, warm 6/6 tiles, no stroke drawn, **0 long tasks** |
+| hide one of the 5 layers | 1 663 ms (4 000 strokes), long task 1 962 ms | cold grid for the new visible set: 4.5 s in slices, **0 long tasks** |
+| show it again (warm) | 1 748 ms, long task 2 580 ms | **0.1 ms**, warm 6/6, **0 long tasks** |
+| a pen stroke (mouse) while the page re-rasters after a zoom step | 1 long task of 69 ms | 1 long task of 90 ms (< 100 ms) |
+
+So: **warm repaint 8 ms / 0.1 ms (budget < 200 ms — met)**; writing during a re-raster: longest task 90 ms (budget
+100 ms — met in this single run). The price is wall time for COLD scales: about 3–4× longer than the old single block
+(slices of 8 ms per frame, a 1 px read-back per chunk so the clock includes the raster, and strokes crossing tile edges
+drawn once per tile: 5 826 draws for 5 000 strokes), during which a scaled copy of the previous picture is shown.
+
+Found while measuring (the first tile design failed its own budget; fixed before these numbers):
+
+| # | what was measured | cause | fix | before → after | test |
+|---|---|---|---|---|---|
+| 10 | first tile build: hide a layer on the realistic page | canvas drawing is **recorded** cheaply and **rasterized** at the end of the frame or on a read (micro-benchmark in the same Chromium: 1 000 realistic strokes record in 14 ms, rasterize in 448 ms). Slices timed by the drawing calls queued seconds of raster per frame | each cold tile is drawn into its own CPU surface (`willReadFrequently`) and read back (1 px) after every chunk, so the slice clock includes the raster; the chunk size adapts to the measured cost per stroke; the page canvases receive a tile only when it is complete | longest task while hiding a layer: 425 ms → **0** | `test/ink/tiles.test.ts` («cold tiles are drawn in slices …») |
+| 11 | warm grids lost after an unrelated page reload | a whole-page reload from IndexedDB (`onExternalChange` with no ids) reported EVERY item as changed, even identical rows, so every off-screen grid went stale (and light pages repainted fully) | unchanged rows (same rev, change time, layer, z, anchor) are left as they are and not reported | — | `test/ink/tiles.test.ts` («a page changed while off screen …») |
+
+The 40-sample fixture of the I2 table above (5 000 × 40 points, no pressure) paints in ≈ 25 ms stroke by stroke in this
+Chromium; it is not where the problem is, and below `TILE_MIN_ITEMS` (400 committed items) a page never uses tiles.
+
+**Packed ink (NFR-P3).** `apps/server/test/annotations/ink-v2.test.ts`: a 5 000-stroke page answers **19.86 MB** of JSON
+with v1 points and **7.84 MB** with `accept-ink: 2` (base64 packed points inside JSON, no HTTP compression — the server
+has none). Storage stays v1 (one stored format; the server decodes v2 on write).
+
+**Layer copy.** `apps/server/test/annotations/layer-copy.test.ts`: copying a 5 000-stroke layer (preview + write, with
+attribution rows) took **392 ms** in the server suite; it runs inside the request (no background job yet).
+
+**Note migration to a newer version (step 3, `reanchor_copy`).** `apps/server/test/annotations/reanchor-copy.test.ts`
+«performance»: 5 000 strokes on one page of the Scenario 4 fixture (v1 → v2, page map already stored): preview
+**97 ms**, the tap (5 000 copies, their targets and item rows, one transaction) **487 ms**, a second tap (no-op)
+**83 ms**, undo (5 000 tombstones with before-images) **379 ms** — one run in this container, server suite, not a
+device number. Like the layer copy it runs inside the request: the event loop is busy for about half a second on such a
+page (NFR-OP2 would want a job above that; not needed at the sizes measured). The page map itself is never computed by
+rendering on the request: missing fingerprints answer «pending» and queue P1-T3's analysis job.
+
+Not measured: any device (iPad, S Pen, BOOX), GPU-accelerated canvases (the read-back per chunk may cost more where the
+canvas lives on a GPU — the tiles use CPU surfaces for that reason), Safari and Firefox.
+
+**Review (2026-10-21) — measured, not estimated.**
+
+* **History growth.** A probe of the server suite (1 000 strokes × 120 points with pressure, then one lasso move of all
+  of them through the sync API): the strokes' `data_json` is 2.94 MB; the move adds 1 000 `annotation_revision` rows,
+  **3.58 MB, 3.58 KB per stroke edit** — 1.2 × the stored stroke, because a before-image is the full stored row with v1
+  points (JSON inside JSON). ADR-0004 §2.8's «≈ 1.2 KB per stroke edit» assumed packed points in the snapshot, which
+  this release does not do (the before-image stays byte-identical to the stored row, an acceptance criterion of
+  `history.test.ts`). Nothing thins the history yet (retention = PRD Q29, Phase 2): a page re-arranged ten times keeps
+  ten copies of every moved stroke.
+* **Codec.** 3 000 random strokes (1–400 points, mixed 3–6 channels, coordinates at the clamp edges, times up to hours)
+  rounded by `roundInkPoint` all packed and decoded back exactly; packed size 0.40 × the v1 JSON of the points.
+* **Tiles after a display-mode switch.** The grid key now includes the resolved ink palette; switching e-ink on redraws
+  a dense page once in greys (cold), and both palettes' grids stay warm afterwards (`test/ink/tiles.test.ts`). The
+  warm-repaint numbers above are unaffected (same key within one palette); re-run in the review's E2E (see TEST_LOG).
+
 ## Resilience (§58)
 
 | scenario | result |
