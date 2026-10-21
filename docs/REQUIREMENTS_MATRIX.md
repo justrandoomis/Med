@@ -337,7 +337,7 @@ The whole tree was re-verified after P1-T1 steps 1–3 and parity N1 waves 1–2
 (`docs/TEST_LOG.md`, «Release R1-b + N1 — final verification»; what shipped and what is «Not run»: BUILD_PLAN §1.3
 «Release R1-b»). **No status below was changed by this verification** — each row keeps the status its track's reviewer
 set. What it adds is evidence only: the test files the P1-T1 and N1 rows name were run again on the final tree
-(@@COUNTS@@ — 0 failed; per-file counts in the TEST_LOG entry), the full suites and the E2E specs passed on phone and
+(server 34 files, 294 passed; web 22 files, 189 passed — 0 failed; per-file counts in the TEST_LOG entry), the full suites and the E2E specs passed on phone and
 desktop, the owner migration ran end to end against the **real R1-a release**, and seven release-critic defects and the
 open N1 review finding R10 were fixed with tests that failed first.
 
@@ -351,7 +351,7 @@ open N1 review finding R10 were fixed with tests that failed first.
 | G03, G01, G09 (settings) | as set by the N1 reviewers | on a coarse pointer the colour-meaning fields and every writing slider (width, pen feel, alignment / zoom) were 40 px → 44 px · `web:ink/ink-css.critic` |
 | G66 | Implemented & Tested (env) (N1 wave-1 reviewer) | the wave-1 review's open minor (writing bar over the reader's zoom group on a wide screen) fixed in the reader's top bar; checked at 1280 / 1180 / 1024 px with the study rail open and closed · `e2e:r1b-final-critic` (failed before) |
 | 20.2, OC.5, 19L.3 | Implemented & Tested (env); OC.5 **Blocked part:** BOOX (no device) | the N1 writing screens (toolbar, every tool's options, «إعدادات الكتابة», legend, bulk erase, ruler, measurement, zoom strip, neat copy, page menu, capability panel) checked with `data-eink` on at 390 / 1280 px beside light and dark: no contrast under 4.5:1 after the fixes above, no overflow, every control named |
-| 23.5 | Partial (step-3 reviewer) | every existing suite passes on the whole R1-b tree (unit, typecheck, lint, build, evaluation 80 / 80 `no_regressions`, E2E @@E2E@@); the 44 base migration files are byte-identical to R1-a (`d0c8ab4`), as the owner-migration rule requires; the baseline re-check of every covered row is still not done |
+| 23.5 | Partial (step-3 reviewer) | every existing suite passes on the whole R1-b tree (unit, typecheck, lint, build, evaluation 80 / 80 `no_regressions`, E2E 146 passed / 0 failed / 16 skipped on phone + desktop); the 44 base migration files are byte-identical to R1-a (`d0c8ab4`), as the owner-migration rule requires; the baseline re-check of every covered row is still not done |
 
 ### Release R1-a — final verification (2026-10-21)
 

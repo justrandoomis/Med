@@ -1126,7 +1126,7 @@ local storage, sync, offline, restore and security, plus smoke), `e2e/aos-p1-two
 register route, P1-T4), Render, Cloudflare R2 (S3 fake only), the Docker image (no daemon), any phone / iPad / pen, an
 installed R1-a PWA updating itself, a second browser engine.
 
-## Release R1-b + N1 — final verification (2026-10-21, 15:42 → @@END@@ UTC, run in this container)
+## Release R1-b + N1 — final verification (2026-10-21, 15:42 → 17:10 UTC, run in this container)
 
 The whole tree at the end of release R1-b «multi-user foundation» (P1-T1 steps 1–3) with parity N1 waves 1–2 beside it,
 each built and reviewed adversarially (entries above). `HEAD` d0c8ab4 (the R1-a release) plus the uncommitted R1-b and N1
@@ -1216,7 +1216,7 @@ the upgrade page on both projects (no overflow, contrast ≥ 4.5:1).
 | 3 | `npm test` | 0 | 464 s (vitest) | shared 11 files · **109 passed** · server 199 files passed, 7 skipped · **2 007 passed**, 7 skipped (1 997 + 6 + 4) · web 165 files passed, 1 skipped · **1 076 passed**, 1 skipped (1 073 + 3) |
 | 4 | `npm run build` | 0 | 4 s | built in 1.8 s; PWA **283 precache entries** (4 913 KiB) |
 | 5 | `npm run eval -- --set=regression --compare=docs/eval/baseline.json --no-record` | 0 | 11 s | regression **80 / 80**, `no_regressions` (`eval-20261021T164055-06d72a29`) |
-| 6 | `E2E_BUILD=0 npx playwright test --output <scratch>` (full suite, phone + desktop, on the build of row 4) | @@E2EEXIT@@ | @@E2EDUR@@ | @@E2ERES@@ |
+| 6 | `E2E_BUILD=0 npx playwright test --output <scratch>` (full suite, phone + desktop, on the build of row 4) | 0 | 1 607 s (26.8 min) | 162 tests: **146 passed, 0 failed, 16 skipped** (the 15 of section 1 + the phone project of `r1b-final-critic`, which is desktop-only); no retry (`retries: 0`) |
 | 7 | critic spec re-runs (scratch) | — | — | after the CSS fixes: desktop 2 / 2 clean, phone only the known 44 px items; the upgrade page after its fixes: desktop clean, phone only the 24 px checkbox inside its 44 px label |
 
 Targeted runs while fixing: `npx vitest run test/annotations/r1b-old-client-shapes.test.ts` 4 failed / 2 passed before,
@@ -1224,13 +1224,25 @@ Targeted runs while fixing: `npx vitest run test/annotations/r1b-old-client-shap
 (with `maintenance.test.ts`: 16 passed); `test/ink/ink-css.critic.test.ts` 3 failed against the old `ink.css` (swapped in
 and restored), 3 passed after; `e2e/r1b-final-critic.spec.ts` failed on the build before the top-bar fix, passed after.
 
-@@E2EPERSPEC@@
+E2E per spec (run 6; phone + desktop): `aos-eink` 4 · `aos-p1-layers` 2 (+2 skipped) · `aos-p1-note-migration` 2 ·
+`aos-p1-versions` 2 · `critic-screens` 4 · `f1-notebook-pages` 6 · `f2-course-brain` 4 · `f3-study-modes` 4 ·
+`f4-handwriting-audio` 6 · `f5-quality-ops` 6 · `g1-ac01` 4 · `g1-ac02` 2 · `g1-ac03` 2 · `g1-ac04` 4 · `g2-ac05` 2 · `g2-ac06` 2 ·
+`g2-ac29` 2 · `g3-ac08` 2 · `g3-ac09` 2 · `g3-ac13` 2 · `g4-ac10-ac11` 2 · `g4-ac12-ac14-ac15` 2 · `g5-ac16` 6 · `g5-ac17-ac19` 6 ·
+`g6-ac20` 4 · `g6-ac21` 4 · `g6-ac22` 6 · `g6-ac28` 6 · `g7-ac23` 2 · `g7-ac24` 4 · `g7-ac30` 2 · `g8-ac26` 2 · `g8-ac27` 2 ·
+`g8-security` 8 · `h3-reader-notes` 5 (+1 skipped) · `h4-exports-sources` 4 · `n1-writing` 12 · `r1b-final-critic` 1 (+1
+skipped) · `smoke` 4 — all passed; `perf` 12 skipped (opt-in).
 
 ### 5. The P1-T1 and N1 rows' named tests, file by file (final tree, `vitest --reporter=json`)
 
 For `docs/REQUIREMENTS_MATRIX.md` (part AOS / C-PAR, «Release R1-b + parity N1 — final verification»):
 
-@@COUNTSTABLE@@
+| suite | files and passed tests |
+|---|---|
+| server (34 files, **294 passed**, 0 failed) | `tenancy/` accounts 8 · authz 12 · binding-harness 5 · blob-gc 14 · blob-r2 5 · capabilities-step0 3 · client-gate 7 · import-boundary 6 · isolation 12 · layout-and-tokens 11 · maintenance 12 · **maintenance-form.r1b 4** · migrations-0041-0050 4 · migrations-system 6 · owner-migration 38 · owner-migration.review 11 · platform-routes 5 · pool 8 · purge-extension 7 · purge-extension.review 5 · step1.review 6 · step2.review 12 · storage-quota 4 · uploads 8 · vault-backup 9; `accounts/export-delete` 5; `ai/allowance` 8; `data/encrypted-cli` 1; `acceptance/` ac01a 7 · g7-ac30 9; `auth` 19; `annotations/` n1-ink 8 · n1-wave2 9 · **r1b-old-client-shapes 6** |
+| web (22 files, **189 passed**, 0 failed) | `test/ink/` gestures 15 · n1-colours 11 · n1-gestures-erase 14 · n1-seams 8 · n1-select-resize 14 · n1-toolbar-palm-feel 18 · n1w2-layer 13 · n1w2-logic 22 · n1w2-review 13 · n1w2-review-neat 1 · n1w2-shapes 6 · **ink-css.critic 3**; `test/tenancy/` auth-switch.review 3 · capabilities-screen-step0 1 · client-headers 5 · localdb-old-tab.review 1 · localdb-per-user 7 · localdb-phase1-schema 6 · noteDrafts-per-user 4 · sync-onrejected 10 · sync-onrejected.review 5 · userStorage 9 |
+
+The E2E specs these rows name (`n1-writing`, `g7-ac30-restore`, `g7-ac24-two-devices`, `g7-ac23-offline`, `g8-security`,
+`r1b-final-critic`) passed in run 6. New in this task (bold): 13 tests in 3 files, plus the desktop E2E.
 
 ### Files changed by this task
 

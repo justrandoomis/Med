@@ -164,6 +164,10 @@ N1 review finding R10 were fixed, each with a test that failed first:
 * the upgrade page at 390 px: a long variable name ran off the «blocked» page, the confirmation checkbox squeezed to
   14 px — `maintenance-form.r1b.test.ts`.
 
+Final gates on the final tree (all exit 0): typecheck; lint (0 problems); unit tests shared **109**, server **2 007**
+(+7 skipped), web **1 076** (+1 skipped); build (283 precache entries); evaluation regression **80 / 80**,
+`no_regressions`; full E2E on phone + desktop **146 passed, 0 failed, 16 skipped** (opt-in / project-conditional).
+
 **Updating the owner's Render deployment safely (owner-facing steps).** The Arabic, step-by-step version is
 `docs/DEPLOY_PHONE_AR.md` «التحديث الأول إلى نظام الحسابات المتعددة»; the technical record is `docs/DEPLOYMENT.md` §6.1.
 `render.yaml` deploys every commit to the tracked branch (`autoDeployTrigger: commit`), so **R1-b reaches that branch
