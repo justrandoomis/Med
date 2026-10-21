@@ -190,7 +190,10 @@ attribution rows) took **392 ms** in the server suite; it runs inside the reques
 **83 ms**, undo (5 000 tombstones with before-images) **379 ms** — one run in this container, server suite, not a
 device number. Like the layer copy it runs inside the request: the event loop is busy for about half a second on such a
 page (NFR-OP2 would want a job above that; not needed at the sizes measured). The page map itself is never computed by
-rendering on the request: missing fingerprints answer «pending» and queue P1-T3's analysis job.
+rendering on the request: missing fingerprints answer «pending» and queue P1-T3's analysis job. After the step's review
+added the «live copy» check (one batched primary-key query per 400 items): preview **122 ms**, tap **498 ms**, second
+tap **136 ms**, undo **371 ms** (one run, same suite and container; a per-item lookup had cost 193 ms on the preview and
+was replaced by the batch).
 
 Not measured: any device (iPad, S Pen, BOOX), GPU-accelerated canvases (the read-back per chunk may cost more where the
 canvas lives on a GPU — the tiles use CPU surfaces for that reason), Safari and Firefox.

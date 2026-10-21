@@ -4,6 +4,8 @@
   flex-direction: column;
   gap: var(--ml-space-3);
   padding: var(--ml-space-3);
+  /* (R1-a critic) the row layout follows the panel's own width (≈ 260 px beside the page on a 1280 px screen) */
+  container-type: inline-size;
 }
 .ml-layers__intro {
   margin: 0;
@@ -19,6 +21,9 @@
 }
 .ml-layer {
   display: flex;
+  /* (R1-a critic) in the ~260 px desktop page panel the name was cut to «ملا…» and its meta line broke inside words:
+     the text column keeps a readable width; in a narrow panel «اكتب هنا» and the menu go to a second line (below) */
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--ml-space-2);
   min-height: var(--ml-touch-target);
@@ -40,17 +45,24 @@
 }
 .ml-layer__main {
   display: flex;
-  flex: 1;
+  flex: 1 1 7.5rem;
   flex-direction: column;
-  min-width: 0;
+  min-width: 7.5rem;
 }
 .ml-layer__title {
-  overflow: hidden;
   color: var(--ml-color-ink);
   font-size: var(--ml-text-sm);
   font-weight: var(--ml-weight-medium);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* the whole name, on two lines if needed (it was cut with an ellipsis) */
+  overflow-wrap: anywhere;
+}
+@container (max-width: 20rem) {
+  .ml-layer__main {
+    flex-basis: calc(100% - var(--ml-touch-target) - var(--ml-space-2));
+  }
+  .ml-layer__active {
+    margin-inline-start: auto;
+  }
 }
 .ml-layer__meta,
 .ml-layer__origin {

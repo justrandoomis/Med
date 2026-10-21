@@ -69,7 +69,7 @@ export function registerLayersPurge(ctx: AppContext): () => void {
   return registerPurgeExtension(ctx, layersPurgeExtension);
 }
 
-// ─── (P1-T2 step 3) note migration records («انقل ملاحظاتي إلى الإصدار الجديد», migration 0273) ─────────────────────
+// ─── (P1-T2 step 3) note migration records («انقل ملاحظاتي إلى الإصدار الجديد», migration 0274) ─────────────────────
 // A purge of a lecture (or of one of its versions) deletes its runs and their item rows; a purged original or copy loses
 // its item row and its «keep on the earlier version» decision. The copies themselves are ordinary annotations / notes and
 // go with the core purge of their pages.
@@ -97,7 +97,9 @@ export const reanchorCopyPurgeExtension: PurgeExtension = {
   },
   apply(ctx, set) {
     ctx.db.run(`DELETE FROM reanchor_copy_item WHERE ${purgedItemsWhere(set)}`);
-    // a run of a purged lecture / version goes; so does a run left with no item at all (every copy and original purged)
+    // a run of a purged lecture / version goes (exactly the counted ones). (review) A run of another lecture that is left
+    // without item rows — every original and copy of it purged one by one — keeps its report row: it is not part of this
+    // purge's counted impact, and its undo then finds nothing to tombstone.
     ctx.db.run(`DELETE FROM reanchor_copy_run WHERE id IN (${purgedRunsSql(set)})`);
     ctx.db.run(`DELETE FROM reanchor_copy_decision WHERE ${purgedDecisionsWhere(set)}`);
   },

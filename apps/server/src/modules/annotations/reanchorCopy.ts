@@ -16,7 +16,7 @@
 //    nothing; a second run copies nothing; undo tombstones the run's copies only (a copy changed since is kept), and a
 //    later run revives the same ids; a copy the owner erased is never revived; total = moved + needs review + kept.
 //  * A run is one transaction. Bookkeeping lives in `reanchor_copy_run` / `reanchor_copy_item` / `reanchor_copy_decision`
-//    (migration 0273); the copies are ordinary rows in the sync feed, so every device receives them.
+//    (migration 0274); the copies are ordinary rows in the sync feed, so every device receives them.
 import { createHash } from 'node:crypto';
 import {
   annotationTargetKey,
@@ -260,6 +260,25 @@ function decidedOf(ctx: AppContext, toVersionId: string): Set<string> {
   return new Set(ctx.db.all<{ entity_type: string; entity_id: string }>('SELECT entity_type, entity_id FROM reanchor_copy_decision WHERE to_version_id = ?', [toVersionId]).map((r) => keyOf(r.entity_type, r.entity_id)));
 }
 
+/**
+ * (review 2026-10-21) The items (keys `type:id`) whose copy on `toVersionId` is alive although no run may carry it:
+ * after an undo, a device's queued edit of the copy brings it back (sync «merged»: an edit concurrent with a delete is
+ * kept). That copy is the owner's now — carried forward, never written over by a later tap or review copy. One query
+ * per 400 ids (the deterministic copy ids are primary keys).
+ */
+function liveCopiesOf(ctx: AppContext, items: ReadonlyArray<Pick<Item, 'type' | 'row'>>, toVersionId: string): Set<string> {
+  const out = new Set<string>();
+  for (const type of ['annotation', 'note'] as const) {
+    const byCopy = new Map(items.filter((i) => i.type === type).map((i) => [reanchorCopyId(i.row.id, toVersionId), keyOf(type, i.row.id)]));
+    const ids = [...byCopy.keys()];
+    for (let i = 0; i < ids.length; i += 400) {
+      const chunk = ids.slice(i, i + 400);
+      for (const r of ctx.db.all<{ id: string }>(`SELECT id FROM ${type} WHERE deleted_at IS NULL AND id IN (${chunk.map(() => '?').join(',')})`, chunk)) out.add(byCopy.get(r.id)!);
+    }
+  }
+  return out;
+}
+
 /** text and geometry of a page's regions (for quotes and moved paragraphs) */
 function regionsOf(ctx: AppContext, pageId: string): RegionGeo[] {
   return ctx.db
@@ -309,6 +328,7 @@ function writable(ctx: AppContext, it: Item): boolean {
 function planAll(ctx: AppContext, from: VersionRow, to: VersionRow, items: Item[], map: VersionPageMap | null): Planned[] {
   const carried = carriedOf(ctx, from.source_id);
   const decided = decidedOf(ctx, to.id);
+  const live = liveCopiesOf(ctx, items, to.id);
   const byFrom = new Map((map?.entries ?? []).map((e) => [e.from_page_id, e]));
   const regions = new Map<string, RegionGeo[]>();
   const regionsCached = (pageId: string) => {
@@ -318,7 +338,7 @@ function planAll(ctx: AppContext, from: VersionRow, to: VersionRow, items: Item[
   };
   return items.map((item): Planned => {
     const k = keyOf(item.type, item.row.id);
-    if (carried.has(k)) return { item, status: 'carried' };
+    if (carried.has(k) || live.has(k)) return { item, status: 'carried' };
     if (decided.has(k)) return { item, status: 'kept', keptReason: 'owner_choice' };
     // R5: an item of a read-only layer (a followed copy) follows its author's republish, never the follower's re-anchor
     if (!writable(ctx, item)) return { item, status: 'kept', keptReason: 'read_only_layer' };
@@ -487,6 +507,10 @@ function writeCopy(c: CopyTx, it: Item, anchor: PageAnchor, data: Record<string,
   const db = c.ctx.db;
   const id = reanchorCopyId(it.row.id, c.to.id);
   const rtx = { db, now: c.now, deviceId: c.device };
+  // (review) only an undone copy (a tombstone) is ever revived; a live row under this id is the owner's — never written
+  // over (the planner counts it carried; this guard keeps the whole transaction from overwriting it if it ever got here)
+  const live = (it.type === 'annotation' ? getAnnotation(db, id) : getNote(db, id))?.deleted_at === null;
+  if (live) throw new AppError('CONFLICT', 'هذا العنصر منسوخ إلى الإصدار الجديد من قبل؛ لم يُنسخ فوق نسختك. حدّث القائمة.', 409, { id: it.row.id });
   if (it.type === 'annotation') {
     const r = it.row as AnnotationRow;
     const dataJson = data ? toJson(data) : r.data_json;
@@ -587,7 +611,10 @@ export function previewReanchorCopy(ctx: AppContext, q: { source_id: string; fro
     .filter((v) => v.version_no < to.version_no)
     .map((v) => {
       const items = itemsOn(ctx, v.id);
-      const pending = items.filter((it) => !carried.has(keyOf(it.type, it.row.id)) && !decided.has(keyOf(it.type, it.row.id))).length;
+      // waiting = what a tap or the review list can still carry (never a carried, kept or read-only item)
+      const live = liveCopiesOf(ctx, items, to.id);
+      const waiting = (it: Item) => !carried.has(keyOf(it.type, it.row.id)) && !live.has(keyOf(it.type, it.row.id)) && !decided.has(keyOf(it.type, it.row.id)) && writable(ctx, it);
+      const pending = items.filter(waiting).length;
       return { v, items, pending };
     })
     .filter((e) => e.items.length > 0);
@@ -762,7 +789,10 @@ export function undoReanchorCopy(ctx: AppContext, runId: string, opts: { deviceI
     const rtx = { db: ctx.db, now, deviceId: device };
     for (const it of items) {
       const row = it.entity_type === 'annotation' ? getAnnotation(ctx.db, it.copy_id) : getNote(ctx.db, it.copy_id);
-      if (row && row.deleted_at === null) {
+      // (review) a copy the owner erased before the undo stays carried (its item row is left as it is), so a later tap
+      // never revives what the owner erased
+      if (row && row.deleted_at !== null) continue;
+      if (row) {
         // a copy the owner changed after the copy is theirs now: kept (and still counted as carried forward)
         if (row.rev !== it.copy_rev) {
           keptEdited++;
@@ -853,7 +883,8 @@ export function reanchorCopyAction(ctx: AppContext, body: ActionBody, opts: { de
 
   // copy to the page the owner picked
   const carried = carriedOf(ctx, to.source_id);
-  const already = items.filter((i) => carried.has(keyOf(i.type, i.row.id)));
+  const live = liveCopiesOf(ctx, items, to.id);
+  const already = items.filter((i) => carried.has(keyOf(i.type, i.row.id)) || live.has(keyOf(i.type, i.row.id)));
   if (already.length) throw new AppError('CONFLICT', 'نُسخ هذا العنصر إلى إصدار أحدث من قبل؛ لم يُنسخ مرة ثانية. حدّث القائمة.', 409, { ids: already.map((i) => i.row.id) });
   const t = body.target!;
   const page = ctx.db.get<{ id: string; page_index: number }>('SELECT id, page_index FROM source_page WHERE id = ? AND version_id = ?', [t.page_id, to.id]);

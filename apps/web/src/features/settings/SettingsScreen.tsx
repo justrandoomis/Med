@@ -108,9 +108,12 @@ export function SettingsScreen() {
   // no unsaved typing in it.
   const savedCustom = useRef(settings.custom_instruction);
   useEffect(() => {
-    if (customDraft === savedCustom.current) setCustomDraft(settings.custom_instruction);
+    const previous = savedCustom.current;
     savedCustom.current = settings.custom_instruction;
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the stored value only: a new draft must not re-run the server-sync step
+    // (R1-a final) a functional update: compared with the LATEST draft, not the one of the render that scheduled this
+    // effect. The router commits this screen in a transition, so this effect can run after the owner's first keystroke;
+    // with the render's stale (empty) draft it overwrote what was typed — the text vanished and nothing was saved.
+    setCustomDraft((draft) => (draft === previous ? settings.custom_instruction : draft));
   }, [settings.custom_instruction]);
   useEffect(() => {
     if (customDraft === settings.custom_instruction) return;

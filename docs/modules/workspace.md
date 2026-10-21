@@ -592,10 +592,17 @@ Copy, never move (server, routes and rules: `docs/modules/ink.md`, «P1-T2 step 
 * **Review** (`VersionReview`, at the top of `panels/ReanchorSection.tsx` when the source has several versions): rows
   with the old page and the candidate page side by side, the reason, «انسخها إلى ص …», «اختر مكانها…» (the Round 7 place
   dialog with copy wording — `ReanchorDialog` gained optional `title` / `description` / `submitLabel`), «اتركها على
-  الإصدار 1», and «بقيت على الإصدار 1 باختيارك» with «أعدها إلى المراجعة». The section's empty state now says «هذا
+  الإصدار 1», and «بقيت على الإصدار 1 باختيارك» with «أعدها إلى المراجعة». A review copy's toast offers «تراجع» for that
+  copy only; a refused undo shows «لم يُنفَّذ التراجع» with the reason. The section's empty state now says «هذا
   الإصدار» on multi-version sources (items of an earlier version are listed above it).
 * **Refresh** between banner and list: a small change signal in `panels/noteMigration.ts` (`bumpMigration`,
   `useMigrationVersion`) after every tap, undo or decision; copies reach this device through `syncNow({ pull: true })`.
+* **Review fixes (2026-10-21, adversarial review):** going offline keeps the loaded banner and review list with their
+  controls disabled and «يحتاج اتصالًا» shown as text (before, both vanished, so the «disabled with the reason» path was
+  dead); the tap first pushes this device's unsent writing (`runMigration` → `syncNow()` → POST), so a stroke drawn just
+  before the tap is copied too; a «pending» preview (P1-T3's analysis still running) is fetched again every 5 s for at
+  most 10 minutes; a tap that copied nothing new (retry, or another device was first) offers the undo of the run that
+  did copy (`preview.last_run`). Tests: `noteMigration.test.tsx` «(review) …» (4 new).
 * **Phone:** the review list is in the rail sheet; the banner and dialogs are full-width; controls are design-system
   buttons (44 px on touch, asserted by `e2e/aos-p1-note-migration.spec.ts` on the phone project). Light, dark and e-ink
   through tokens only (`noteMigration.css`).

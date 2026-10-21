@@ -6,13 +6,22 @@ import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NoteDTO, ReanchorCopyActionRequest, ReanchorCopyPreview, ReanchorCopyReport, SourcePageView, SourceVersionView } from '@medlevo/shared';
 import { ToastProvider } from '../../../design';
-import { api } from '../../../lib/api';
+import { api, ApiError } from '../../../lib/api';
 import { getDb } from '../../../lib/localdb';
 import type { SourceDocument } from '../data/useSourceDocument';
 import { NoteMigrationBanner, VersionReview } from './NoteMigration';
 import { hasPendingMigration, newestVersion, versionReviewGroups, willCopyRows } from './noteMigration';
 
-vi.mock('../../../lib/sync', async (orig) => ({ ...(await orig<typeof import('../../../lib/sync')>()), getSyncEngine: () => ({ syncNow: async () => undefined }) }));
+// the order of this device's sync calls and the API posts (review: unsent writing goes before the tap)
+const order = vi.hoisted(() => [] as string[]);
+vi.mock('../../../lib/sync', async (orig) => ({
+  ...(await orig<typeof import('../../../lib/sync')>()),
+  getSyncEngine: () => ({
+    syncNow: async (o?: { pull?: boolean }) => {
+      order.push(o?.pull ? 'sync:pull' : 'sync:push');
+    },
+  }),
+}));
 
 const pageRef = (id: string, i: number, label: string) => ({ page_id: id, page_index: i, label_ar: label, thumbnail: true });
 const V1 = { id: 'V1', version_no: 1 };
@@ -88,6 +97,7 @@ let posts: Array<{ path: string; body: unknown }>;
 beforeEach(async () => {
   current = makePreview();
   posts = [];
+  order.length = 0;
   await getDb().open();
   await Promise.all([getDb().annotations.clear(), getDb().notes.clear()]);
   vi.spyOn(api, 'get').mockImplementation(async (path: string) => {
@@ -96,6 +106,7 @@ beforeEach(async () => {
   });
   vi.spyOn(api, 'post').mockImplementation(async (path: string, body: unknown) => {
     posts.push({ path, body });
+    order.push(`post:${path}`);
     if (path === '/annotations/reanchor-copy') {
       current = makePreview({ copy: 0, already_moved: 2, will_copy: [], last_run: REPORT, summary_ar: 'سيُنقل 0 · يحتاج مراجعة 1 · يبقى على الإصدار 1: 0 · نُقل سابقًا: 2' });
       return { report: REPORT };
@@ -193,11 +204,79 @@ describe('the reader banner: preview → one tap → report → undo', () => {
     expect(onOpenReview).toHaveBeenCalled();
   });
 
-  it('offline: the preview button is disabled with the reason and nothing is fetched or posted', async () => {
+  it('offline from the start: nothing is fetched (nothing known to show) and nothing is posted', async () => {
     banner({ online: false });
     await act(async () => undefined);
     expect(screen.queryByText(/يوجد إصدار أحدث/)).toBeNull();
+    expect(api.get).not.toHaveBeenCalled();
     expect(posts).toEqual([]);
+  });
+
+  it('(review) going offline keeps the banner: the button is disabled and the reason is shown, nothing is posted', async () => {
+    const props = { sourceId: 'S1', versions, currentVersionId: 'V2', onOpenReview: vi.fn(), onOpenVersion: vi.fn() };
+    const view = (online: boolean) => (
+      <MemoryRouter>
+        <ToastProvider>
+          <NoteMigrationBanner {...props} online={online} />
+        </ToastProvider>
+      </MemoryRouter>
+    );
+    const { rerender } = render(view(true));
+    await screen.findByText(/يوجد إصدار أحدث من المحاضرة/);
+    rerender(view(false));
+    expect(screen.getByText(/يوجد إصدار أحدث من المحاضرة/)).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'معاينة النقل…' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/يحتاج اتصالًا/)).toBeTruthy();
+    expect(posts).toEqual([]);
+  });
+
+  it('(review) the tap sends this device’s unsent writing first, so it is part of what is copied', async () => {
+    banner();
+    await screen.findByText(/يوجد إصدار أحدث من المحاضرة/);
+    fireEvent.click(screen.getByRole('button', { name: 'معاينة النقل…' }));
+    const dialog = await screen.findByRole('dialog', { name: 'انقل ملاحظاتي إلى الإصدار 2' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'انقل ملاحظاتي إلى الإصدار 2' }));
+    await waitFor(() => expect(order).toContain('post:/annotations/reanchor-copy'));
+    const tap = order.indexOf('post:/annotations/reanchor-copy');
+    expect(order.slice(0, tap)).toContain('sync:push');
+  });
+
+  it('(review) a tap that copied nothing new (another device was first) still offers the undo of the last run', async () => {
+    current = makePreview({ copy: 2, last_run: REPORT });
+    const post = vi.mocked(api.post).getMockImplementation()!;
+    vi.mocked(api.post).mockImplementation(async (path: string, body: unknown, ...rest: unknown[]) => {
+      if (path === '/annotations/reanchor-copy') {
+        posts.push({ path, body });
+        current = makePreview({ copy: 0, already_moved: 2, will_copy: [], last_run: REPORT });
+        return { report: { ...REPORT, id: null, copied: 0, already_moved: 2, pages: 0, summary_ar: 'لم يُنقل شيء جديد (عنصران نُقل من قبل)؛ عنصر واحد يحتاج مراجعتك؛ لا شيء بقي على الإصدار السابق' } };
+      }
+      return (post as (p: string, b: unknown, ...r: unknown[]) => Promise<unknown>)(path, body, ...rest);
+    });
+    banner();
+    await screen.findByText(/يوجد إصدار أحدث من المحاضرة/);
+    fireEvent.click(screen.getByRole('button', { name: 'معاينة النقل…' }));
+    const dialog = await screen.findByRole('dialog', { name: 'انقل ملاحظاتي إلى الإصدار 2' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'انقل ملاحظاتي إلى الإصدار 2' }));
+    const report = await screen.findByRole('dialog', { name: 'تقرير نقل الملاحظات' });
+    await waitFor(() => expect(within(report).getAllByText(/لم يُنقل شيء جديد/).length).toBeGreaterThan(0));
+    fireEvent.click(within(report).getByRole('button', { name: 'تراجع عن النقل' }));
+    await waitFor(() => expect(posts.at(-1)).toEqual({ path: '/annotations/reanchor-copy/undo', body: { run_id: 'RUN1' } }));
+  });
+
+  it('(review) while the page analysis runs the banner says so and looks again by itself until the preview is ready', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      current = makePreview({ state: 'pending', reason_ar: 'يجري تحليل صفحات الإصدارين.', copy: 0, needs_review: 0, will_copy: [], review: [], algo: null, map_computed_at: null });
+      banner();
+      await screen.findByText(/يجري تحليل صفحات الإصدارين/);
+      current = makePreview();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(6_000);
+      });
+      expect(await screen.findByText(/سيُنقل 2 · يحتاج مراجعة 1/)).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('on an earlier version it says so and opens the newest one', async () => {
@@ -248,6 +327,28 @@ describe('the review list of an earlier version (Round 7 re-anchoring, as a copy
     // the copy is on this device at once; the original was never sent anywhere to be changed
     await waitFor(async () => expect(await getDb().notes.get('rc_copy')).toBeTruthy());
     await waitFor(() => expect(screen.queryByRole('list', { name: 'تحتاج مراجعة من الإصدار 1' })).toBeNull());
+  });
+
+  it('the copy toast’s «تراجع» undoes that copy only; a refused undo says why (never a silent failure)', async () => {
+    review();
+    const list = await screen.findByRole('list', { name: 'تحتاج مراجعة من الإصدار 1' });
+    fireEvent.click(within(list).getByRole('button', { name: 'انسخها إلى الصفحة 32 في الملف' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'تراجع' }));
+    await waitFor(() => expect(posts.at(-1)).toEqual({ path: '/annotations/reanchor-copy/undo', body: { run_id: 'MAN1' } }));
+    expect(await screen.findByText('حُذفت النسخة؛ الأصل باقٍ على الإصدار السابق.')).toBeTruthy();
+
+    // a second copy whose undo the server refuses (another device changed it, or the connection dropped)
+    const list2 = await screen.findByRole('list', { name: 'تحتاج مراجعة من الإصدار 1' });
+    const post = vi.mocked(api.post).getMockImplementation()!;
+    vi.mocked(api.post).mockImplementation(async (path: string, body: unknown, ...rest: unknown[]) => {
+      if (path === '/annotations/reanchor-copy/undo') throw new ApiError({ code: 'CONFLICT', message: 'تعذّر التراجع الآن؛ حاول مرة أخرى.', status: 409 });
+      return (post as (p: string, b: unknown, ...r: unknown[]) => Promise<unknown>)(path, body, ...rest);
+    });
+    fireEvent.click(within(list2).getByRole('button', { name: 'انسخها إلى الصفحة 32 في الملف' }));
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'تراجع' }).length).toBeGreaterThan(0));
+    fireEvent.click(screen.getAllByRole('button', { name: 'تراجع' }).at(-1)!);
+    expect(await screen.findByText('لم يُنفَّذ التراجع')).toBeTruthy();
+    expect(screen.getByText('تعذّر التراجع الآن؛ حاول مرة أخرى.')).toBeTruthy();
   });
 
   it('«اختر مكانها…» reuses the place dialog, worded as a copy', async () => {

@@ -29,6 +29,10 @@ export function fetchMigrationPreview(sourceId: string, opts: { toVersionId?: st
 
 /** The tap. The copies reach this device through the sync feed (pulled right away). */
 export async function runMigration(req: ReanchorCopyRunRequest): Promise<ReanchorCopyRunResponse> {
+  // (review) this device's unsent writing on the earlier version goes first, so the tap carries it too
+  await getSyncEngine()
+    .syncNow()
+    .catch(() => undefined);
   const res = await api.post<ReanchorCopyRunResponse>('/annotations/reanchor-copy', req, { timeoutMs: 120_000 });
   await getSyncEngine()
     .syncNow({ pull: true })

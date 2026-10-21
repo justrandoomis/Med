@@ -23,7 +23,7 @@ import {
 import { type Db, openDb } from '../../src/db/db';
 import { migrate, MIGRATIONS_DIR } from '../../src/db/migrate';
 import { newId as serverId } from '../../src/lib/ids';
-import { planItem, quoteFoundIn, reanchorCopyId } from '../../src/modules/annotations/reanchorCopy';
+import { planItem, quoteFoundIn, reanchorCopyId, translateRects } from '../../src/modules/annotations/reanchorCopy';
 import { insertedAndReordered, reorderedPageOf } from '../fixtures/note-migration/build';
 import { scenario4V1, scenario4V2 } from '../fixtures/versions/build';
 import type { AuthHeaders, TestApp } from '../helpers/app';
@@ -79,6 +79,24 @@ describe('planItem (pure): what may be copied without asking', () => {
     // twice on the page: the prefix decides
     expect(quoteFoundIn('first: inguinal canal. second: inguinal canal.', { exact: 'inguinal canal', prefix: 'second: ' })).toBe(true);
     expect(quoteFoundIn('first: inguinal canal. second: inguinal canal.', { exact: 'inguinal canal', prefix: 'third: ' })).toBe(false);
+  });
+
+  it('(review) a highlight on a re-laid-out page moves with its paragraph only when that paragraph is found once, identical and the same size', () => {
+    const para = (text: string, x: number, y: number, w = 0.8, h = 0.05) => ({ text, box: { x, y, w, h } });
+    const rect = { x: 0.15, y: 0.21, w: 0.3, h: 0.02 };
+    const oldRegions = [para('Heading one', 0.1, 0.1, 0.8, 0.04), para('The rectus sheath encloses the muscle.', 0.1, 0.2)];
+    // the paragraph moved down by 0.1 (a figure was inserted above it)
+    expect(translateRects([rect], oldRegions, [para('Heading one', 0.1, 0.1, 0.8, 0.04), para('The rectus  sheath\nencloses the muscle.', 0.1, 0.3)])).toEqual([{ ...rect, y: 0.31 }]);
+    // the paragraph twice on the new page: which one is not known → never guessed
+    expect(translateRects([rect], oldRegions, [para('The rectus sheath encloses the muscle.', 0.1, 0.3), para('The rectus sheath encloses the muscle.', 0.1, 0.6)])).toBeNull();
+    // re-flowed (other size) or edited → review
+    expect(translateRects([rect], oldRegions, [para('The rectus sheath encloses the muscle.', 0.1, 0.3, 0.6, 0.08)])).toBeNull();
+    expect(translateRects([rect], oldRegions, [para('The rectus sheath surrounds the muscle.', 0.1, 0.3)])).toBeNull();
+    // a rectangle outside every old paragraph → review
+    expect(translateRects([{ ...rect, y: 0.9 }], oldRegions, oldRegions)).toBeNull();
+    // Arabic: tatweel, bidi marks and presentation forms do not decide a match
+    expect(quoteFoundIn('الغمـــد المستقيم يحيط بالعضلة', { exact: '‏الغمد المستقيم' })).toBe(true);
+    expect(quoteFoundIn('ﻻ يحيط', { exact: 'لا يحيط' })).toBe(true);
   });
 
   it('copy ids are deterministic per original and target version', () => {
@@ -422,6 +440,99 @@ describe('Scenario 4 (TEST FIXTURE): 2 pages inserted after p.10, p.30 rewritten
   });
 });
 
+describe('review (2026-10-21): a copy the owner brought back or erased is never overwritten or revived', () => {
+  let t: TestApp;
+  let h: AuthHeaders;
+  let L: Lecture;
+  let ids: Seeded;
+  let hash: string;
+  const preview = async (): Promise<ReanchorCopyPreview> => (await t.app.inject({ method: 'GET', url: `/api/annotations/reanchor-copy?source_id=${L.sourceId}`, headers: h })).json() as ReanchorCopyPreview;
+  const run = async () => {
+    const res = await t.app.inject({ method: 'POST', url: '/api/annotations/reanchor-copy', headers: h, payload: { source_id: L.sourceId, from_version_id: L.v1, to_version_id: L.v2 } });
+    expect(res.statusCode, res.body).toBe(200);
+    return (res.json() as ReanchorCopyRunResponse).report;
+  };
+  const undo = async (runId: string) => {
+    const res = await t.app.inject({ method: 'POST', url: '/api/annotations/reanchor-copy/undo', headers: h, payload: { run_id: runId } });
+    expect(res.statusCode, res.body).toBe(200);
+    return (res.json() as { report: ReanchorCopyReport }).report;
+  };
+  const push = async (o: SyncOp) => {
+    const res = await t.app.inject({ method: 'POST', url: '/api/sync/push', headers: h, payload: { ops: [o] } });
+    expect(res.statusCode, res.body).toBe(200);
+    return (res.json().results as SyncOpResult[])[0]!;
+  };
+  beforeAll(async () => {
+    t = await createProcessingApp();
+    h = await t.login();
+    L = await lectureWith(t, scenario4V2(), 'TEST FIXTURE Abdomen Lecture 5 (review)');
+    ids = await seed(t, h, L);
+    hash = v1Hash(t.ctx.db, Object.values(ids));
+  }, 120_000);
+  afterAll(async () => t?.close());
+
+  it('undo, then a device’s queued edit brings the copy back (sync «merged»): a later tap counts it carried and never overwrites the edit', async () => {
+    const first = await run();
+    expect(first).toMatchObject({ copied: 2 });
+    await undo(first.id!);
+    const inkCopy = reanchorCopyId(ids.ink5, L.v2);
+    // a second device still held the copy at rev 1 and edited it offline; its push arrives after the undo
+    const r = await push(op({ device_id: 'DEVICE_B', entity_type: 'annotation', entity_id: inkCopy, base_rev: 1, payload: { kind: 'ink', tool: 'pen', anchor: anchorOf(L, 5, 'v2'), data: ink(0.6, 0.6), layer: 'ink', z: 0, locked: false } }));
+    expect(r.result).toBe('merged');
+    const edited = t.ctx.db.get<{ data_json: string; deleted_at: number | null; rev: number }>('SELECT data_json, deleted_at, rev FROM annotation WHERE id = ?', [inkCopy])!;
+    expect(edited.deleted_at).toBeNull();
+    // the live copy is carried forward (not offered again); only the highlight waits
+    expect(await preview()).toMatchObject({ copy: 1, already_moved: 1, needs_review: 1, kept: 0, total: 3 });
+    const again = await run();
+    expect(again).toMatchObject({ copied: 1, already_moved: 1 });
+    const after = t.ctx.db.get<{ data_json: string; rev: number }>('SELECT data_json, rev FROM annotation WHERE id = ?', [inkCopy])!;
+    expect(after.data_json).toBe(edited.data_json); // the owner's edit is still there
+    expect(after.rev).toBe(edited.rev);
+    expect(v1Hash(t.ctx.db, Object.values(ids))).toBe(hash);
+  });
+
+  it('a review copy brought back by a device’s note edit after its undo is never overwritten by a second review copy (409)', async () => {
+    const pv = await preview();
+    const item = pv.review.find((x) => x.id === ids.note30)!;
+    const copyReq = { action: 'copy', items: [{ kind: 'note', id: item.id, rev: item.rev }], to_version_id: L.v2, target: { type: 'page', version_id: L.v2, page_id: L.v2Pages[31] } };
+    const first = await t.app.inject({ method: 'POST', url: '/api/annotations/reanchor', headers: h, payload: copyReq });
+    expect(first.statusCode, first.body).toBe(200);
+    await undo((first.json() as ReanchorCopyActionResponse).report!.id!);
+    const noteCopy = reanchorCopyId(ids.note30, L.v2);
+    // the note copy was open in the editor on another device; its autosave arrives after the undo
+    const r = await push(op({ device_id: 'DEVICE_B', entity_type: 'note', entity_id: noteCopy, base_rev: 1, payload: { node_id: null, title: null, body: rt('ما كتبته على النسخة في الإصدار 2'), anchor: anchorOf(L, 32, 'v2'), origin: 'owner' } }));
+    expect(r.result).toBe('merged');
+    // it is carried forward: no longer listed for review
+    expect((await preview()).review.map((x) => x.id)).not.toContain(ids.note30);
+    const second = await t.app.inject({ method: 'POST', url: '/api/annotations/reanchor', headers: h, payload: copyReq });
+    expect(second.statusCode, second.body).toBe(409);
+    const body = JSON.parse(t.ctx.db.get<{ body_json: string }>('SELECT body_json FROM note WHERE id = ?', [noteCopy])!.body_json) as { paragraphs: Array<{ runs: Array<{ t: string }> }> };
+    expect(body.paragraphs[0]!.runs[0]!.t).toBe('ما كتبته على النسخة في الإصدار 2');
+    expect(v1Hash(t.ctx.db, Object.values(ids))).toBe(hash);
+  });
+
+  it('a copy the owner erased stays erased through an undo of its run and a new tap', async () => {
+    const a = newId();
+    const b = newId();
+    for (const [id, x] of [
+      [a, 0.1],
+      [b, 0.5],
+    ] as const) {
+      expect((await push(op({ entity_type: 'annotation', entity_id: id, op: 'append', payload: { kind: 'ink', tool: 'pen', anchor: anchorOf(L, 6), data: ink(x, 0.7), layer: 'ink', z: 0, locked: false } }))).result).toBe('applied');
+    }
+    const tap = await run();
+    expect(tap).toMatchObject({ copied: 2 });
+    const copyA = reanchorCopyId(a, L.v2);
+    expect((await push(op({ entity_type: 'annotation', entity_id: copyA, op: 'delete', base_rev: 1 }))).result).toBe('applied');
+    const u = await undo(tap.id!);
+    expect(u.undo).toEqual({ tombstoned: 1, kept_edited: 0 });
+    const again = await run();
+    expect(again).toMatchObject({ copied: 1 });
+    expect(t.ctx.db.get<{ deleted_at: number | null }>('SELECT deleted_at FROM annotation WHERE id = ?', [copyA])!.deleted_at).not.toBeNull();
+    expect(t.ctx.db.get<{ deleted_at: number | null }>('SELECT deleted_at FROM annotation WHERE id = ?', [reanchorCopyId(b, L.v2)])!.deleted_at).toBeNull();
+  });
+});
+
 describe('pages inserted AND reordered (TEST FIXTURE): moved pages are suggested, never guessed', () => {
   let t: TestApp;
   let h: AuthHeaders;
@@ -520,6 +631,9 @@ describe('layers, purge and the migration on an existing database', () => {
       payload: { action: 'copy', items: [{ kind: 'annotation', id: 'FOLLOWED1', rev: 1 }], to_version_id: L.v2, target: { type: 'page', version_id: L.v2, page_id: L.v2Pages[5] } },
     });
     expect(refused.statusCode, refused.body).toBe(409);
+    // (review) what can never be copied from here does not count as waiting: the default «from» version is picked by it
+    const after = (await t.app.inject({ method: 'GET', url: `/api/annotations/reanchor-copy?source_id=${L.sourceId}`, headers: h })).json() as ReanchorCopyPreview;
+    expect(after.earlier).toEqual([{ version: { id: L.v1, version_no: 1 }, items: 2, pending: 0 }]);
   });
 
   it('a newer version still being processed: the preview says so (counts kept honest) and the tap is refused, nothing written', async () => {
@@ -564,12 +678,18 @@ describe('layers, purge and the migration on an existing database', () => {
     expect(t.ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM reanchor_copy_decision')!.n).toBe(0);
   });
 
-  it('0273 is additive on the owner’s existing database (applied after every newer file; nothing else changes)', () => {
+  it('the note-migration tables come from 0274 (0273 stays reserved for P3-T2’s 0273_annotation_audio_index, BUILD_PLAN appendix B)', () => {
+    const files = readdirSync(MIGRATIONS_DIR);
+    expect(files).toContain('0274_reanchor_copy.sql');
+    expect(files.filter((f) => f.startsWith('0273_'))).toEqual([]);
+  });
+
+  it('0274 is additive on the owner’s existing database (applied after every newer file; nothing else changes)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'medlevo-rc-mig-'));
     try {
       const prev = join(dir, 'previous');
       mkdirSync(prev);
-      for (const f of readdirSync(MIGRATIONS_DIR)) if (f.endsWith('.sql') && f !== '0273_reanchor_copy.sql') copyFileSync(join(MIGRATIONS_DIR, f), join(prev, f));
+      for (const f of readdirSync(MIGRATIONS_DIR)) if (f.endsWith('.sql') && f !== '0274_reanchor_copy.sql') copyFileSync(join(MIGRATIONS_DIR, f), join(prev, f));
       const db = openDb(join(dir, 'vault.db'));
       migrate(db, { dir: prev });
       const schemaBefore = db.all<{ name: string; sql: string }>("SELECT name, sql FROM sqlite_master WHERE type IN ('table','index') AND sql IS NOT NULL ORDER BY name");

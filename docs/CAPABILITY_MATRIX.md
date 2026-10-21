@@ -141,3 +141,16 @@ real device was available: every device cell is «Not run (no device)».
 
 Pen-to-pixel latency (NFR-P1), stray-touch rates and a BOOX e-ink check (OC.5, OC.8 `[dev]`) are blocked here — «Not run
 (no device)». A mouse in Playwright never validates pen quality (§27).
+
+## Release R1-a — final verification (2026-10-21)
+
+Re-checked on the whole tree after every track and review had merged (`docs/TEST_LOG.md`, «Release R1-a — final
+verification»; `docs/academic-os/BUILD_PLAN.md` §1.3). **No cell above moves to a device state:** nothing was run on an
+iPad, Apple Pencil, S Pen, BOOX or any other real device.
+
+| capability | what this verification adds | evidence |
+|---|---|---|
+| Layers panel | at 1280 px the page panel is ≈ 260 px wide: a layer's name was cut to «ملا…» and its meta line broke inside words → the row now keeps a readable text column and moves «اكتب هنا» and the menu to a second line in a narrow panel (container query), names wrap instead of being cut | `e2e/aos-p1-layers.spec.ts` (desktop: every name whole, text column ≥ 110 px — failed before the fix) and the phone panel test; Tested (env) |
+| E-ink display mode | the new R1-a screens (versions, lecture tab, compare, lecture order, import suggestions, the reader's migration banner / preview / report / review list, the layers panel, Settings → display modes, Control Center off-site screen and row) were opened with `data-eink` on at 390 and 1280 px beside light and dark: black / grey only, no contrast under 4.5:1, no overflow, every control named; the copied ink on version 2 drawn in grey | scratch Playwright critic pass (screenshots outside the repository, inspected); Tested (env) — **BOOX: Not run (no device)** |
+| Display-mode settings row | the subhead's icon sat on a line of its own (no CSS rule) → fixed | `apps/web/test/settings-css.critic.test.ts`; Tested (env) |
+| Copy my notes to a newer version, packed ink, tile cache, high contrast / lite | unchanged; their unit and E2E tests passed again in the full runs | full `npm test` and `npx playwright test` (phone + desktop) |

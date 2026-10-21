@@ -565,7 +565,7 @@ BUILD_PLAN §3.4 step 3; ARCHITECTURE_DELTA §6.3; PRD AOS-3.13, 4.17, 4.20, Q35
 vault). **Copy, never move**: the owner's items on an earlier version stay there unchanged; copies are written on the
 new version where P1-T3's page map says the page is the same; everything else waits for the owner's decision.
 
-### Server (`modules/annotations/reanchorCopy.ts`, migration `0273_reanchor_copy.sql`)
+### Server (`modules/annotations/reanchorCopy.ts`, migration `0274_reanchor_copy.sql`; `0273` stays reserved for P3-T2's `0273_annotation_audio_index.sql`, BUILD_PLAN appendix B)
 
 * **What is copied without asking** (pure `planItem`, over P1-T3's `PageMapEntry`; nothing is guessed):
 
@@ -584,13 +584,14 @@ new version where P1-T3's page map says the page is the same; everything else wa
   `anchor_status = 'reanchored'`, `origin = 'reanchor_copy'` (notes: the same columns that exist on `note`); an
   attribution row only when the original has one (its chain + this hop); pictures' `annotation_image` marked referenced;
   the sync feed is touched, so every device receives the copies. The original row is never written (tests hash it).
-* **Bookkeeping (0273, additive):** `reanchor_copy_run` (one row per tap — kind `run` — or per review copy — kind
+* **Bookkeeping (0274, additive):** `reanchor_copy_run` (one row per tap — kind `run` — or per review copy — kind
   `manual`: versions, algorithm, counts, undo), `reanchor_copy_item` (original → copy, the copy's rev when written,
   `undone_at`), `reanchor_copy_decision` («اتركها على الإصدار السابق»). An original with a live item row is «carried
   forward» and never copied twice (a second tap copies nothing and records nothing).
 * **Routes** (`/api/annotations`):
-  * `GET /reanchor-copy?source_id=&from_version_id=&to_version_id=` → `ReanchorCopyPreview` — read-only. Defaults: the
-    newest version, and the newest earlier version with pending items. The map is read or computed from stored
+  * `GET /reanchor-copy?source_id=&from_version_id=&to_version_id=` → `ReanchorCopyPreview` — writes none of the owner's
+    items (it may store P1-T3's page-map cache and queue its analysis job, both derived data). Defaults: the newest
+    version, and the newest earlier version with items still waiting (never counting carried, kept or read-only ones). The map is read or computed from stored
     fingerprints (cheap); missing fingerprints answer `pending` and queue P1-T3's analysis job (never rendering on the
     request). Counts: `total = already_moved + copy + needs_review + kept`; the will-copy pages, the review list (≤ 500)
     with old page and candidate, kept items, every earlier version with items, the last tap.
@@ -598,7 +599,13 @@ new version where P1-T3's page map says the page is the same; everything else wa
     transaction; a map that changed since the preview → 409 and nothing copied; a version still processing → 409.
   * `POST /reanchor-copy/undo {run_id}` — tombstones that run's copies only (a before-image in `annotation_revision`
     each); a copy the owner changed since is kept and reported (`kept_edited`); idempotent. A later tap revives the same
-    ids; a copy the owner erased is never revived.
+    ids; a copy the owner erased is never revived — also across an undo of its run (review fix: the erased copy stays
+    «carried»).
+  * **A live copy is never written over** (review fix): after an undo, a device's queued edit of a copy brings it back
+    (sync «merged» — an edit concurrent with a delete is kept). Such a copy counts as carried (`already_moved`), is not
+    listed for review, a review copy of its original is refused (409), and `writeCopy` refuses any live row under the
+    deterministic id (the transaction rolls back) — before the review a later tap overwrote the owner's edit with the
+    original's content.
   * `POST /reanchor` (Round 7's route, reused AS A COPY) with `action: 'copy'` (to a page — optionally a paragraph — of
     the newer version; Round 7's group geometry; the revision the list saw is checked; refused for read-only layers),
     `'keep_on_previous'` or `'review_again'`. `move` / `keep_detached` are unchanged (`reanchor.ts`, Round 7; this step
@@ -614,22 +621,30 @@ new version where P1-T3's page map says the page is the same; everything else wa
   الإصدار 1: 0» → «معاينة النقل…» opens the preview (nothing changes before the tap) → **one tap** «انقل ملاحظاتي إلى
   الإصدار 2» → the report («نُقل … إلى … صفحات؛ … يحتاج مراجعتك؛ … بقي على الإصدار السابق», the three counts and their sum)
   with «تراجع عن النقل» and «راجع العناصر». On an earlier version the banner says so and opens the newest one. Online
-  only (the controls say why offline). The copies arrive through the sync pull right after the tap.
+  only: going offline keeps what was loaded, its controls disabled and the reason shown (review fix — the banner and the
+  list used to vanish); offline from the start nothing is known, so nothing is shown. The tap first sends this device's
+  unsent writing (review fix), and the copies arrive through the sync pull right after it. While P1-T3's analysis runs
+  («pending») the preview is fetched again every 5 s (at most 10 minutes) instead of waiting for the reader to reopen.
+  A tap that copied nothing new (a retry, or another device was first) offers the undo of the run that did copy.
 * **Review list** — the top of «ملاحظاتي ← إعادة ربط» (`ReanchorSection.tsx`, extended): each item with its old page
   and the candidate page side by side (page images from P1-T3's thumbnail route) and the reason; «انسخها إلى ص …» (one
   tap on the candidate — a moved page follows only this way), «اختر مكانها…» (Round 7's place dialog, worded as a copy:
-  «انسخها هنا»), «اتركها على الإصدار 1»; kept items can go back to review. A link opens P1-T3's compare screen.
+  «انسخها هنا»), «اتركها على الإصدار 1»; kept items can go back to review. A review copy's toast offers «تراجع» (that
+  copy only, `POST /reanchor-copy/undo` with its own run); a refused undo says why. A link opens P1-T3's compare screen.
 * **Default (Q35):** one tap with a preview. The automatic variant («انقل ملاحظاتي تلقائيًا») is **not built**.
 
 ### Tests
 
-`apps/server/test/annotations/reanchor-copy.test.ts` (20: the pure planner, quotes, deterministic ids; Scenario 4 —
+`apps/server/test/annotations/reanchor-copy.test.ts` (26 after the review: the pure planner, quotes, re-derived highlight
+rectangles, deterministic ids; Scenario 4 —
 preview writes nothing, the tap, v1 rows hashed byte-identical, the sync feed, second tap no-op, a changed map → 409,
 review copy / keep / review again, undo keeps an edited copy and a new tap revives, an erased copy is never revived,
 refusals; inserted + reordered fixture — moved page suggested, owner confirmation turns it into a copy target; layers,
-read-only layer kept, a pending version, export, purge, 0273 on an existing database),
-`apps/web/src/features/workspace/panels/noteMigration.test.tsx` (9), `e2e/aos-p1-note-migration.spec.ts` (phone +
-desktop). Fixture: `apps/server/test/fixtures/note-migration/build.ts` (TEST FIXTURE, built from P1-T3's generator).
+read-only layer kept, a pending version, export, purge, 0274 on an existing database and 0273 left free for P3-T2; review:
+a copy brought back by a device after an undo is never overwritten by a tap or a review copy, an erased copy stays erased
+across undo + tap, read-only items never count as waiting),
+`apps/web/src/features/workspace/panels/noteMigration.test.tsx` (14 after the review), `e2e/aos-p1-note-migration.spec.ts`
+(phone + desktop). Fixture: `apps/server/test/fixtures/note-migration/build.ts` (TEST FIXTURE, built from P1-T3's generator).
 
 ### Limits (honest)
 
@@ -639,5 +654,12 @@ desktop). Fixture: `apps/server/test/fixtures/note-migration/build.ts` (TEST FIX
   else goes to review. Page notes carry no paragraph, so a page note on a safe page is copied to the page only.
 * Inserted note pages (`note_page`) are not version-anchored and are not touched; Study Book anchors keep their own
   re-anchoring (`computeReanchor`); citations, evidence and Source Lock pins stay on their version.
-* Decisions are online, audited server calls (like Round 7's re-anchoring); offline the banner and list wait.
+* Decisions are online, audited server calls (like Round 7's re-anchoring); offline the banner and list stay as last
+  loaded with their controls disabled and the reason shown.
+* The review list is bounded (500 items; its heading shows the full count); a dense re-laid-out page with more pen
+  strokes than that is reviewed 500 at a time.
+* A page note that belongs to a notebook keeps its `node_id`: the notebook then lists the original and its copy (copy,
+  never move).
+* The reader's review list shows one earlier version at a time (the newest with items waiting); the preview's `earlier`
+  lists all of them.
 

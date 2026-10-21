@@ -120,6 +120,13 @@ test('P1-T2: a followed layer is read-only everywhere; hide/show, lasso copy, la
   await expect(sara.getByRole('radio')).toHaveCount(0);
   await expect(panel.getByRole('radio', { name: 'اكتب في طبقة «ملاحظاتي»', exact: true })).toBeChecked();
   for (const b of await panel.getByRole('button').all()) expect((await b.boundingBox())!.height, (await b.getAttribute('aria-label')) ?? 'button').toBeGreaterThanOrEqual(43.5);
+  // (R1-a critic) the page panel is ~260 px wide at 1280 px: every layer's name is shown whole (it was cut to «ملا…»)
+  // and its text column keeps room for whole words (the meta line broke inside «ملاحظاتي»)
+  for (const row of await panel.locator('li.ml-layer').all()) {
+    const title = row.locator('.ml-layer__title');
+    expect(await title.evaluate((el) => el.scrollWidth <= el.clientWidth + 1), `layer name cut: «${await title.innerText()}»`).toBe(true);
+    expect((await row.locator('.ml-layer__main').boundingBox())!.width, `text column of «${await title.innerText()}»`).toBeGreaterThanOrEqual(110);
+  }
   await screenshot(page, testInfo, 'aos-p1-layers-panel');
 
   // ── the UI refuses the erase ──

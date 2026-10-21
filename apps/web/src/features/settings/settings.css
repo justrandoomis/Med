@@ -98,6 +98,28 @@
   margin-top: 0.2em;
   color: var(--ml-color-info);
 }
+/* (R1-a critic) a subhead inside a group row: the icon sits beside its text, not on a line of its own */
+.ml-settings__subhead {
+  display: flex;
+  align-items: center;
+  gap: var(--ml-space-2);
+  margin: 0;
+  font-weight: var(--ml-weight-medium);
+  color: var(--ml-color-ink);
+}
+.ml-settings__subhead svg {
+  flex: none;
+  color: var(--ml-color-ink-2);
+}
+/* a note that carries actions (the e-ink suggestion): text first, then its buttons on their own wrapping row */
+.ml-settings__note:has(> .ml-settings__note-actions) {
+  flex-direction: column;
+}
+.ml-settings__note-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ml-space-2);
+}
 .ml-settings__preview {
   padding: var(--ml-space-3) var(--ml-space-4);
   border-radius: var(--ml-radius-md);

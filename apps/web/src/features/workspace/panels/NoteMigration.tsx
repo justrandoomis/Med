@@ -39,7 +39,8 @@ function usePreview(sourceId: string, toVersionId: string | null, online: boolea
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const signal = useMigrationVersion(sourceId);
-  const key = `${sourceId}|${toVersionId}|${online}`;
+  // (review) going offline keeps what was loaded: the banner and the list stay, their controls disabled with the reason
+  const key = `${sourceId}|${toVersionId}`;
   const [loadedFor, setLoadedFor] = useState(key);
   if (loadedFor !== key) {
     setLoadedFor(key);
@@ -61,6 +62,14 @@ function usePreview(sourceId: string, toVersionId: string | null, online: boolea
     };
   }, [sourceId, toVersionId, online, signal, attempt]);
   const reload = useCallback(() => setAttempt((n) => n + 1), []);
+  // (review) while P1-T3's page analysis runs, look again by itself (every 5 s, at most 10 minutes) instead of saying
+  // «يجري تحليل…» until the reader is reopened
+  const pendingNow = preview?.state === 'pending';
+  useEffect(() => {
+    if (!online || !pendingNow || attempt >= 120) return;
+    const t = setTimeout(() => setAttempt((n) => n + 1), 5_000);
+    return () => clearTimeout(t);
+  }, [online, pendingNow, attempt]);
   return { preview, failed, reload };
 }
 
@@ -126,6 +135,7 @@ export function NoteMigrationBanner({ sourceId, versions, currentVersionId, onli
               : preview.state === 'ready'
                 ? `يوجد إصدار أحدث من المحاضرة. لديك ملاحظات على ${versionLabel(preview.from_version.version_no)}: ${preview.summary_ar}`
                 : `يوجد إصدار أحدث من المحاضرة. ${preview.reason_ar ?? ''}`}
+            {!online && <span className="wk-muted">{` ${MIGRATION_OFFLINE_AR}`}</span>}
           </span>
           {(showReport || preview.state === 'ready') && (
             <Button size="sm" variant="secondary" onClick={() => setOpen(true)} disabled={!online} title={!online ? MIGRATION_OFFLINE_AR : undefined}>
@@ -183,7 +193,11 @@ export function MigrationDialog({
   if (!from) return null;
   const rows = willCopyRows(preview);
   // the latest tap between these versions (from an earlier visit or another device) can be undone from the preview too
-  const lastRun = !report && preview.last_run && preview.last_run.id && preview.last_run.undone_at === null ? preview.last_run : null;
+  const undoableLast = preview.last_run && preview.last_run.id && preview.last_run.undone_at === null ? preview.last_run : null;
+  const lastRun = !report ? undoableLast : null;
+  // (review) a tap that copied nothing new (a retry, or another device was first) records nothing: its report offers the
+  // undo of the run that did the copying
+  const reportUndo = report ? (report.id ? (report.undone_at === null ? report : null) : undoableLast) : null;
 
   const run = async () => {
     setBusy('run');
@@ -240,7 +254,7 @@ export function MigrationDialog({
       footer={
         shown ? (
           <>
-            {shown.id && shown.undone_at === null && undoButton(shown)}
+            {reportUndo && undoButton(reportUndo)}
             {preview.needs_review > 0 && (
               <Button variant="secondary" icon={<ListChecks size={16} />} onClick={onReview}>
                 {`راجع العناصر (${preview.needs_review})`}
@@ -378,10 +392,16 @@ export function VersionReview({ doc, online, onGoToPage }: { doc: SourceDocument
       await mergeServerNotes(getDb(), res.notes);
       const target = req.target ? pageIndexOf(req.target.page_id) : -1;
       const runId = res.report?.id ?? null;
+      // the copy's own one-step undo (that copy only); a refused undo says why
+      const undoCopy = (id: string) =>
+        void undoMigration(sourceId, id).then(
+          () => toast.show({ title: 'حُذفت النسخة؛ الأصل باقٍ على الإصدار السابق.', tone: 'success' }),
+          (e: unknown) => toast.show({ title: 'لم يُنفَّذ التراجع', description: errorMessage(e), tone: 'danger' }),
+        );
       toast.show({
         title: res.summary_ar,
         tone: 'success',
-        ...(runId ? { action: { label: 'تراجع', onClick: () => void undoMigration(sourceId, runId).then(() => toast.show({ title: 'حُذفت النسخة؛ الأصل باقٍ على الإصدار السابق.', tone: 'success' })) } } : target >= 0 ? { action: { label: 'اذهب إليها', onClick: () => onGoToPage(target) } } : {}),
+        ...(runId ? { action: { label: 'تراجع', onClick: () => undoCopy(runId) } } : target >= 0 ? { action: { label: 'اذهب إليها', onClick: () => onGoToPage(target) } } : {}),
       });
       if (g) setPlacing(null);
     } catch (e) {

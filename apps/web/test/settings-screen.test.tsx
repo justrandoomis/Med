@@ -65,4 +65,42 @@ describe('Settings screen', () => {
     fireEvent.change(area, { target: { value: 'اذكر المصطلح الإنجليزي دائمًا' } });
     await waitFor(() => expect(patches).toContainEqual({ custom_instruction: 'اذكر المصطلح الإنجليزي دائمًا' }), { timeout: 3000 });
   });
+
+  it('(R1-a final) text typed before the screen’s effects have run is kept and saved (it was overwritten by a stale draft)', async () => {
+    // The test above failed about one run in four under load: the router commits this screen in a transition, so its
+    // passive effects run in a later task; the draft-sync effect then compared the server value with the draft of the
+    // render that scheduled it (empty) and overwrote the owner's first keystrokes. Here the typing happens
+    // deterministically in that window: a MutationObserver callback (a microtask) types as soon as the textarea exists.
+    const patches: Array<Record<string, unknown>> = [];
+    let server = { ...DEFAULT_OWNER_SETTINGS };
+    setFetchImpl(async (url, init) => {
+      if (url.startsWith('/api/settings')) {
+        if (init.method === 'PATCH') {
+          const patch = JSON.parse(String(init.body)) as Record<string, unknown>;
+          patches.push(patch);
+          server = { ...server, ...patch };
+        }
+        return json({ settings: server });
+      }
+      if (url.startsWith('/api/auth/sessions')) return json({ sessions: [] });
+      if (url.startsWith('/api/capabilities')) return json(CAPS);
+      return json({});
+    });
+    await settingsStore.load();
+    const typed = 'اكتب الشرح بالعربية مع المصطلح';
+    let typedEarly = false;
+    const observer = new MutationObserver(() => {
+      const area = document.querySelector('textarea');
+      if (!area || typedEarly) return;
+      typedEarly = true;
+      observer.disconnect();
+      fireEvent.change(area, { target: { value: typed } });
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    mountSettings();
+    await screen.findByRole('heading', { level: 1, name: 'الإعدادات' });
+    expect(typedEarly).toBe(true);
+    await waitFor(() => expect(patches).toContainEqual({ custom_instruction: typed }), { timeout: 3000 });
+    expect((screen.getByLabelText('تعليمات خاصة للشرح') as HTMLTextAreaElement).value).toBe(typed);
+  });
 });

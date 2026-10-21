@@ -14,6 +14,8 @@ import { SuggestionCard } from './SuggestionCard';
 import { CHANGE_TONE, changeLabel, countsSummary, needsReview, studyHref, thumbnailUrl } from './versionsModel';
 import '../library/library.css';
 import './sources.css';
+// the action rows (`.ml-upload__row-actions`) and the suggestion card (R1-a critic pass, test/route-chunk-css.critic.test.ts)
+import '../upload/upload.css';
 
 export function CompareScreen() {
   const { sourceId = '' } = useParams();

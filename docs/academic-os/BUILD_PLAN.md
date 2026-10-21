@@ -1,6 +1,8 @@
 # Academic OS — Build plan
 
-> **Status:** v1 · 2026-10-20 · written after the adversarial design review. Nothing here is built yet.
+> **Status:** v1 · 2026-10-20 · written after the adversarial design review. Release R1-a (P1-T1 step 0, P1-T2,
+> P1-T3, with PL-0 beside them) is built, reviewed and verified as of 2026-10-21 (§1.3, «Release R1-a»); nothing
+> later is built yet.
 > **What it is:** the delivery plan for the Academic OS in the spec's phase order (spec §23 «Implementation Priority»).
 > Each phase is split into **build tracks**; each track is built by **one builder agent** and checked by **one adversarial
 > reviewer agent**. Phase 1 is planned in full detail; Phases 2–5 at track level.
@@ -63,6 +65,60 @@ vault byte for byte and moving the file back stays a valid rollback. Phase 1 the
 
 A Wave 1 track that merges after T1 waits for R1-c rather than joining R1-b. The owner gets layers, history and safe
 note migration on their own library already in R1-a.
+
+#### Release R1-a «single-owner preview» — final verification (2026-10-21)
+
+**Status: verified for the single owner in this container** — every gate green on the whole tree (below; details,
+commands and durations in `docs/TEST_LOG.md`, «Release R1-a — final verification»). Everything runs inside today's
+single-owner database: no system or space database, no second user, no channel. Nothing was run on a device or a real
+hosting account (see «Not run»).
+
+**What shipped** (each part built by its track and reviewed adversarially, BUILD_PLAN §1.2):
+
+| part | what the owner gets | reviewed in |
+|---|---|---|
+| P1-T1 step 0 — seams | nothing visible: Phase 1 error codes and capability keys, the `academic/` contracts, the purge-extension registry, `SyncEngine.onRejected` (at-least-once), the Dexie v3 schema (the per-user database name is prepared, not used yet), unwritten actor / visibility columns | `TEST_LOG` «P1-T1 step 0 — adversarial review» |
+| PL-0 — phone-only hosting | Docker image + Render Blueprint (`render.yaml`), encrypted nightly off-site backups to Cloudflare R2 (S3 API), each verified by a full restore before upload, a one-command restore beside the live data, the Control Center row and «النسخ الاحتياطي خارج الخادم» screen, client-address trust for Render, the Arabic guide `docs/DEPLOY_PHONE_AR.md` | «PL-0 — adversarial review» |
+| P1-T3 — lecture identity and versions | lecture number, name and date read from the file and only **proposed** (uncertain values have no effect), ordering screen, subject placement suggestions, DOCX display PDF, printed contents → page links, page fingerprints and the order-preserving page map, the side-by-side compare screen, «إصدار جديد من …» before anything is applied, the link-candidate service for P1-T5 | «P1-T3 — adversarial review» |
+| P1-T2 steps 1–2 — layers and ink data | the «الطبقات» panel (show / hide per session, «اكتب هنا», read-only layers never changed, refused writing re-homed to «ملاحظاتي»), per-layer history, copy one layer, packed ink v2, the dense-page tile cache, e-ink / high-contrast / lite display modes per device, the native-shell skeleton (static checks only) | «P1-T2 steps 1–2 — adversarial review» |
+| P1-T2 step 3 — safe note migration | «انقل ملاحظاتي إلى الإصدار الجديد»: copy, never move — preview, one tap, report, one-step undo, a review list for what changed (Scenario 4 inside one vault) | «P1-T2 step 3 — adversarial review» |
+
+**Base migrations actually shipped** (all additive; no system or space migration): `0041`, `0050` (T1 step 0), `0160`,
+`0161`, `0164` (T3), `0271`, `0272`, `0274`, `0861` (T2), `0751` (PL-0). Against the table above: `0164`
+(DOCX display rendition, P1-T3), `0274` (note-migration bookkeeping, P1-T2 step 3 — `0273` stays reserved for P3-T2)
+and `0751` (off-site backup runs, PL-0) were added by their tracks. Upgrade path: make and verify a backup first; the
+ten migrations run at the first boot; going back to the Round 7 code means restoring that backup, because the runner
+refuses a database newer than the code.
+
+**Final verification** (2026-10-21, this container): see the gates table in `docs/TEST_LOG.md` «Release R1-a — final
+verification». The first full pass was green before any change; the critic pass of the new screens (390 and 1280 px,
+light, dark and e-ink) then found three layout defects and the final re-run found one real race — all four fixed with
+regression tests:
+
+* the lecture's «النسخ» and «المحاضرة» tabs and the compare screen were unstyled when opened directly (their rows use
+  `upload.css`, which only the upload screens loaded) — `test/route-chunk-css.critic.test.ts`;
+* «وضع العرض على هذا الجهاز» had its icon on a line of its own (two classes had no rule) — `test/settings-css.critic.test.ts`;
+* in the ≈ 260 px desktop page panel a layer's name was cut to «ملا…» and its meta line broke inside words —
+  `e2e/aos-p1-layers.spec.ts` (desktop);
+* Settings: text typed into «تعليمات خاصة للشرح» before the screen's effects had run was overwritten by a stale draft
+  and never saved (a flaky test, failing ≈ 1 in 4 under load, exposed it) — `test/settings-screen.test.tsx` «(R1-a final)».
+
+**Not run (reason)** — R1-a ships with these open:
+
+| what | why |
+|---|---|
+| Any device: iPad + Apple Pencil, Samsung S Pen, BOOX e-ink, a low-end Android phone (NFR-P1 pen latency, OC.5 / OC.8 `[dev]`, palm rejection, e-ink refresh and ghosting) | no device in this container; headless Chromium (390 × 844 touch emulation, 1280 × 800) with mouse input only |
+| Render and Cloudflare R2 accounts; the phone-only dry run (OC.1 `[dev]`) | no account and no phone here; every R2 claim is against the signature-checking S3 fake |
+| Native iOS / Android builds, signing, store submission (OC.2 build part, OC.3, OC.4) | no macOS runner, Xcode, Android SDK or store accounts |
+| A live AI provider | no `ANTHROPIC_API_KEY`; AI paths are unchanged by R1-a and tested with the fake providers |
+| `MEDLEVO_PERF=1` suites and a Docker image rebuild | not re-run in the final verification (no change to the measured paths or to `Dockerfile` / `deploy/` since their track reviews); last numbers in `docs/PERFORMANCE.md` and `docs/DEPLOYMENT.md` §8 |
+| Real course files (T3 detection precision), Safari / Firefox, screen readers, axe-core, CI on a GitHub runner | none available here; precision stays fixture-only; axe-core is not in the repository (structural probes instead) |
+
+**Carried forward** (reported by the reviews, not blocking R1-a; each listed in its track's TEST_LOG entry, module
+note or the matrix «remains» column): P1-T1's baseline re-check (DoD item 1) and the Phase report draft; P1-T2's
+history growth (3.58 KB per stroke edit), layer copy inside the request, per-layer highlight blending, two layer sets in
+the split pane, the lock not checked on undo / redo, bookmarks of hidden layers still listed; P1-T3's eight and PL-0's
+five minors; `ARCHITECTURE_DELTA.md` §3.2 has no rows yet for `0164`, `0274`, `0751` (its owner adds them).
 
 ### 1.4 Coordination with other work
 
@@ -782,8 +838,9 @@ matcher, «Phase 0») cannot recur.
 | `academic/timeline-api.ts` · `copilot-api.ts` · `media-api.ts` additions | P3-T2 · P3-T3 · P3-T1 / P3-T4 |
 | `academic/collab.ts` · `rooms-api.ts` · `nearby.ts` | P4-T1 · P4-T2 · P4-T3 |
 | base `0041`, `0050` · system `2000`, `2010`, `2040`, `2250`, `2300` | P1-T1 |
-| base `0271`, `0272`, `0861` | P1-T2 |
-| base `0160`, `0161` | P1-T3 |
+| base `0271`, `0272`, `0274` (note-migration bookkeeping, step 3), `0861` | P1-T2 |
+| base `0160`, `0161`, `0164` (DOCX display rendition) | P1-T3 |
+| base `0751` (off-site backup runs) | PL-0 (companion work, §3.8) |
 | system `2050`, `2100`, `2200`, `2310` | P1-T4 |
 | base `0163`, `0860` · system `2060`, `2150` · space `3000`, `3010`, `3050`, `3300` | P1-T5 |
 | system `2160` · space `3100` · base `0361`, `0620`, `0621` | P2-T1 · P2-T2 · P2-T4 |

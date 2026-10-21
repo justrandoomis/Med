@@ -21,6 +21,9 @@ import { PagesPanel } from './PagesPanel';
 import { VersionsPanel } from './VersionsPanel';
 import '../library/library.css';
 import './sources.css';
+// the versions and lecture tabs use the upload list rows (`.ml-upload__*`); without this import they were unstyled when
+// this screen was opened directly (R1-a critic pass, test/route-chunk-css.critic.test.ts)
+import '../upload/upload.css';
 
 type Detail = SourceDetail & { source_type_origin?: 'auto' | 'owner' };
 

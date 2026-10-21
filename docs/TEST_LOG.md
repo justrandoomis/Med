@@ -4,8 +4,9 @@ The full suites, run on 2026-10-10 in the integration and acceptance round, with
 durations and failures as they happened. A test that needs something this environment does not have is listed under
 **Not run** with the reason — never as passed (§58).
 
-> **Latest full verification:** «Round 7 — final verification» (2026-10-20) at the end of this file — `npm test`
-> 2 409 passed, full E2E 123 passed / 0 failed on phone + desktop, typecheck / lint / build / evaluation gate green.
+> **Latest full verification:** «Release R1-a — final verification» (2026-10-21) at the end of this file — `npm test`
+> 2 784 passed (shared 109, server 1 765, web 910), full E2E 133 passed / 0 failed on phone + desktop, typecheck / lint /
+> build / evaluation gate (80 / 80) green. The previous one: «Round 7 — final verification» (2026-10-20).
 
 ## Environment
 
@@ -597,8 +598,8 @@ export), then passed:
 
 | test file | tests | what it proves |
 |---|---|---|
-| `apps/server/test/annotations/reanchor-copy.test.ts` | 21 | pure `planItem` (safe + same layout → every kind; re-laid-out page → page anchors and found quotes only; confirmed pair → coordinates reused; uncertain / moved / removed / rejected → review with the candidate), letter-only quote matching with prefix for repeats, deterministic `rc_` ids; **Scenario 4 (TEST FIXTURE)**: the preview writes nothing (row counts and a sha256 of the v1 rows unchanged) and says «سيُنقل 2 · يحتاج مراجعة 1 · يبقى على الإصدار 1: 0»; the tap copies ink p.5 → v2 p.5 and the highlight p.12 → v2 p.14 (same data, previous anchor, same layer, `origin = 'reanchor_copy'`, in the sync feed), lists the p.30 note with candidate p.32, v1 rows byte-identical; a second tap copies and records nothing; a map changed since the preview → 409; review copy through `POST /reanchor` `action: 'copy'` (duplicate → 409, its own undo); keep on the earlier version and «review again»; undo tombstones the copies only and keeps a copy the owner edited, a new tap revives the same ids; an erased copy is never revived; refusals (same / backwards / unknown version, other lecture, unknown run); **pages inserted and reordered**: p.36 moved to p.27 listed `page_moved` with p.27 suggested, copied on the owner's one tap, and an owner confirmation in the page map turns the moved page into a copy target for ink; a followed (read-only) layer's item kept and refused; a pending version → «pending» and 409; full JSON export; purge removes runs, items, decisions; `0273` additive on an existing database; 5 000-stroke timing |
-| `apps/web/src/features/workspace/panels/noteMigration.test.tsx` | 9 | model (newest version, pending, grouping, page rows); the banner: nothing posted before the tap, the tap sends the previewed map, report and one-step undo, «راجع العناصر»; offline / single version shows nothing; an earlier version opens the newest; the review list: old and candidate pages side by side, one-tap copy to the candidate (merged locally), the place dialog worded as a copy with the candidate preselected, keep and «أعدها إلى المراجعة» |
+| `apps/server/test/annotations/reanchor-copy.test.ts` | 22 | pure `planItem` (safe + same layout → every kind; re-laid-out page → page anchors and found quotes only; confirmed pair → coordinates reused; uncertain / moved / removed / rejected → review with the candidate), letter-only quote matching with prefix for repeats, deterministic `rc_` ids; **Scenario 4 (TEST FIXTURE)**: the preview writes nothing (row counts and a sha256 of the v1 rows unchanged) and says «سيُنقل 2 · يحتاج مراجعة 1 · يبقى على الإصدار 1: 0»; the tap copies ink p.5 → v2 p.5 and the highlight p.12 → v2 p.14 (same data, previous anchor, same layer, `origin = 'reanchor_copy'`, in the sync feed), lists the p.30 note with candidate p.32, v1 rows byte-identical; a second tap copies and records nothing; a map changed since the preview → 409; review copy through `POST /reanchor` `action: 'copy'` (duplicate → 409, its own undo); keep on the earlier version and «review again»; undo tombstones the copies only and keeps a copy the owner edited, a new tap revives the same ids; an erased copy is never revived; refusals (same / backwards / unknown version, other lecture, unknown run); **pages inserted and reordered**: p.36 moved to p.27 listed `page_moved` with p.27 suggested, copied on the owner's one tap, and an owner confirmation in the page map turns the moved page into a copy target for ink; a followed (read-only) layer's item kept and refused; a pending version → «pending» and 409; full JSON export; purge removes runs, items, decisions; the tables come from `0274` and `0273` stays free for P3-T2; `0274` additive on an existing database; 5 000-stroke timing |
+| `apps/web/src/features/workspace/panels/noteMigration.test.tsx` | 10 | model (newest version, pending, grouping, page rows); the banner: nothing posted before the tap, the tap sends the previewed map, report and one-step undo, «راجع العناصر»; offline / single version shows nothing; an earlier version opens the newest; the review list: old and candidate pages side by side, one-tap copy to the candidate (merged locally), the place dialog worded as a copy with the candidate preselected, keep and «أعدها إلى المراجعة»; a review copy's toast «تراجع» undoes that copy only and a refused undo says why |
 | `e2e/aos-p1-note-migration.spec.ts` | phone + desktop | the real server and built app: v1 with ink p.5, highlight p.12, notes p.30 / p.36; a renamed v2 with 2 pages inserted, p.30 rewritten and p.36 moved, accepted as version 2; banner → preview (v1 state compared before / after: identical) → one tap → report «نُقل عنصران إلى صفحتين؛ عنصران يحتاجان مراجعتك؛ لا شيء بقي على الإصدار السابق», 4 = 2 + 2 + 0; review list: the moved note copied to p.27 with one tap, the rewritten one placed by the owner on p.33; undo from the banner's report tombstones the tap's copies only; a new tap revives, a second is a no-op; the earlier version's banner opens v2; 44 px touch targets and named controls on the phone; screenshots light / dark (`e2e/.artifacts/screenshots/<project>/aos-p1-note-migration-*.png`) |
 
 Found and fixed while building (each reproduced first):
@@ -617,6 +618,15 @@ Found and fixed while building (each reproduced first):
   its own text (`ownLectureV1/V2` in `test/fixtures/note-migration/build.ts`) and a per-run tag, so it can neither
   duplicate nor be proposed as a version of the other spec's lecture; both specs then run back to back on both projects
   (below).
+* **Resumed after a container restart (2026-10-21):** the partial work in the WIP snapshot was verified (server 21/21,
+  web 9/9) and kept. Two more defects, each reproduced first:
+  * the bookkeeping migration was numbered `0273`, which BUILD_PLAN appendix B and ARCHITECTURE_DELTA §3.2 reserve for
+    P3-T2's `0273_annotation_audio_index.sql` (a later collision would stop a vault from booting, since the runner
+    refuses an applied file that is missing) → renamed `0274_reanchor_copy.sql` before any release (content unchanged;
+    R1-a not shipped). Test «the note-migration tables come from 0274…» failed before (file missing), passes now.
+  * the review copy's toast «تراجع» called the undo without a failure path: a refused undo (409 / offline) was an
+    unhandled rejection and the owner saw nothing → a danger toast «لم يُنفَّذ التراجع» with the server's reason. Web test
+    «the copy toast's «تراجع» undoes that copy only…» failed before (unhandled rejection, no message), passes now.
 
 Seam changes outside this track's own files (smallest, reported): `apps/server/src/modules/annotations/reanchor.ts`
 (Round 7) — `export` added to `boxOf`, `bboxOf`, `translateData`, nothing else; `apps/server/src/modules/data/export.ts`
@@ -625,4 +635,186 @@ Seam changes outside this track's own files (smallest, reported): `apps/server/s
 Performance (one run, server suite): 5 000 strokes — preview 97 ms, tap 487 ms, second tap 83 ms, undo 379 ms
 (`docs/PERFORMANCE.md`).
 
-Final gates (after every change of this step):
+Final gates (after every change of this step, including the resume fixes; 2026-10-21, this container):
+
+| gate | result |
+|---|---|
+| `npm run typecheck` | pass (shared, server, web, e2e) |
+| `npm run lint` | pass (0 warnings) |
+| `npm test` | shared 109 passed; server 1761 passed, 7 skipped (tool-conditional, unchanged); web 900 passed, 1 skipped — exit 0 |
+| `npm run build` | pass (PWA precache 282 entries) |
+| `npx playwright test e2e/aos-p1-note-migration.spec.ts` | 2 passed (phone + desktop, 48 s) |
+| `npx playwright test` (full E2E) | 133 passed, 15 skipped (the existing project-conditional skips in perf, layers, g8, h3, f5 specs), 0 failed — 21.2 min |
+| 5 000-stroke timing (re-run) | preview 94 ms, tap 484 ms, second tap 86 ms, undo 352 ms (server suite, not a device) |
+
+Not run: any device (iPad + Pencil, S Pen, BOOX) — no device here; the automatic variant (Q35 «انقل ملاحظاتي
+تلقائيًا») and the follower fan-out of official versions (P1-T5) — not built; `npm run eval` — not re-run (no change
+touches evidence, search or AI paths).
+
+## Academic OS P1-T2 step 3 — adversarial review (2026-10-21, run in this container; other tracks may have been editing the tree in parallel)
+
+Reviewer (BUILD_PLAN §1.2) of `reanchor_copy`: every changed file read (`reanchorCopy.ts`, `0274_reanchor_copy.sql`,
+`purgeExtension.ts`, the routes in `annotations/index.ts`, the shared contract in `academic/layers.ts`,
+`NoteMigration.tsx`, `noteMigration.ts`, the `ReanchorSection.tsx` extension, the tests, the E2E spec and the docs) and
+the sync handlers it relies on (`annotations/sync.ts`). Scope: copy-never-move, idempotency (twice, two devices), undo,
+removed pages, changed quotes, sync of the copies, the review-list reuse, Scenario 4 E2E. Each defect was reproduced
+with a failing test first.
+
+| # | severity | finding | fix and regression test |
+|---|---|---|---|
+| 1 | **major (data loss)** | After an undo, a device's queued edit of a copy brings it back (sync «merged»: an edit concurrent with a delete is kept, for notes even a plain autosave). Its item row was already marked undone, so the original was offered again and the next tap (or a review copy) went through `writeCopy`'s revive branch and **overwrote the owner's edited copy with the original's content** (only a before-image in `annotation_revision` kept it; history has no restore). Probe: the second tap reported `copied: 2` instead of `1` and the copy's `data_json` reverted. | a live row under the deterministic id counts as carried (`liveCopiesOf`, one batched PK query per 400 ids) in the planner, in the preview's `earlier.pending` and in the review copy (409); `writeCopy` refuses any live row (the transaction rolls back). `reanchor-copy.test.ts` «undo, then a device's queued edit brings the copy back…» and «a review copy brought back by a device's note edit after its undo… (409)» — failed before, pass now. |
+| 2 | minor | A copy the owner erased before an undo of its run had its item row marked undone, so the next tap revived it — against the stated invariant «a copy the owner erased is never revived». | the undo leaves an erased copy's item row as it is (carried). «a copy the owner erased stays erased through an undo of its run and a new tap» — failed before (copied 2), passes now. |
+| 3 | minor | `earlier[].pending` counted read-only (followed-layer) items that can never be carried, and so could pick a default «from» version with nothing to do. | pending = not carried, not live-copied, not kept, writable. Assertion added to «a copy keeps its layer; an item of a read-only layer…» — failed before (`pending: 1`), passes now. |
+| 4 | minor (honesty / offline) | Going offline reset the preview to `null`: the banner and the cross-version review list vanished, so the documented «controls disabled with the reason» path was dead code (and the web test named «offline: the preview button is disabled with the reason» actually asserted that nothing is shown). | `usePreview` keeps what was loaded when going offline; the banner shows «يحتاج اتصالًا» as text. New web test «(review) going offline keeps the banner…» failed before, passes; the old test renamed to what it checks («offline from the start: nothing is fetched…»). |
+| 5 | minor | The tap did not send this device's unsent writing first (the review decisions did), so a stroke drawn just before the tap was left behind and the banner reappeared. | `runMigration` → `syncNow()` before the POST. Web test «(review) the tap sends this device's unsent writing first» failed before, passes. |
+| 6 | minor | A tap that copied nothing new (a retry, or another device was first) returned a report without an id; its report showed no undo although the copies of the earlier run were live. | the report offers the undo of `preview.last_run` when the tap recorded nothing. Web test «(review) a tap that copied nothing new… still offers the undo» failed before, passes. |
+| 7 | minor (UX) | While P1-T3's analysis ran («pending») the banner said «يجري تحليل…» until the reader was reopened. | `usePreview` fetches again every 5 s (online, at most 10 minutes). Web test «(review) while the page analysis runs…» failed before, passes. |
+| 8 | minor (comment) | `purgeExtension.ts` said a run left without items is deleted; the code (rightly — it must match the counted impact bound into the confirm token) deletes only the purged lecture's / versions' runs. | comment corrected; no behaviour change. |
+| — | coverage | `translateRects` (highlight rectangles on a re-laid-out page) had no test. | pure cases added: moved paragraph translated; duplicated, re-flowed, edited paragraph or a rectangle outside every paragraph → review; Arabic tatweel / bidi mark / lam-alef presentation form ignored by the quote match. Passed first time (no defect). |
+
+Checked and found sound (no change): the originals are never written (v1 rows hashed before / after in every flow,
+including the new ones); a second tap and a second device's tap are no-ops (one transaction, deterministic ids, PK);
+undo is idempotent and keeps edited copies; removed / rejected / unmapped pages and changed quotes go to review with
+the candidate (pure `planItem` tests); copies are in the sync feed and the pull does not filter by device; image
+copies keep their picture referenced (`pruneAnnotationImages` counts every annotation); the review route re-checks
+revision, layer access, source, page and region; migration `0274` additive on an existing database.
+
+Not changed, reported: the preview `GET` may store P1-T3's page-map cache and queue its analysis job (derived data,
+none of the owner's items — docs now say so); a page note with a `node_id` appears twice in its notebook (copy, never
+move — documented limit); the review list is bounded at 500 items; one earlier version's review list at a time.
+
+Final gates (after every change of this review; 2026-10-21, this container):
+
+| gate | result |
+|---|---|
+| `npm run typecheck` | pass (shared, server, web, e2e) |
+| `npm run lint` | pass (0 warnings) |
+| `npm test` | shared 109 passed; server 1765 passed, 7 skipped (tool-conditional, unchanged); web 903 passed, **1 failed**, 1 skipped — the failure was `test/settings-screen.test.tsx` «…autosaves the custom instruction without blur» (not this track's file), while the build, lint and typecheck ran at the same time; it passed 3/3 alone and the whole web suite re-run alone passed: **904 passed, 1 skipped, exit 0** |
+| `npm run build` | pass (PWA precache 282 entries) |
+| `npx playwright test e2e/aos-p1-note-migration.spec.ts e2e/smoke.spec.ts` | 6 passed (phone + desktop, 1.0 min); screenshots `e2e/.artifacts/screenshots/{phone,desktop}/aos-p1-note-migration-*.png` |
+| 5 000-stroke timing (after the live-copy check) | preview 122 ms, tap 498 ms, second tap 136 ms, undo 371 ms (server suite, not a device) |
+
+Not run: the full E2E suite (only this track's spec and the smoke spec, as the review task asks); `npm run eval` (no
+change touches evidence, search or AI paths); any device (iPad + Pencil, S Pen, BOOX) — no device here.
+
+## Release R1-a — final verification (2026-10-21, 04:33 → 06:45 UTC, run in this container)
+
+The whole tree at the end of Academic OS Phase 1 Wave 1 — release R1-a «single-owner preview»: P1-T1 step 0, PL-0,
+P1-T3, P1-T2 steps 1–3, each built and reviewed adversarially (entries above). `HEAD` 258ecad plus the uncommitted
+P1-T2 step 3 work and its review (12 changed / new paths at the start). Same environment as above (Node 22.22, Chromium
+at `/opt/pw-browsers/chromium`, no `ANTHROPIC_API_KEY`, `NODE_OPTIONS='--disable-warning=ExperimentalWarning'`); no
+other track was editing the tree. Release checks only — no new feature. What shipped and what is «Not run» is
+summarised in `docs/academic-os/BUILD_PLAN.md` §1.3, «Release R1-a».
+
+### 1. First pass (before any change of this task)
+
+| # | command | exit | duration | result |
+|---|---|---|---|---|
+| 1 | `npm run typecheck` | 0 | 46 s | no type errors (shared, server, web, e2e) |
+| 2 | `npm run lint` (`eslint . --max-warnings 0`) | 0 | 54 s | no problems |
+| 3 | `npm test` | 0 | 387 s | shared 11 files · **109 passed** · server 172 files passed, 7 skipped · **1 765 passed**, 7 skipped · web 146 files passed, 1 skipped · **904 passed**, 1 skipped |
+| 4 | `npm run build` | 0 | 4 s | built in 1.8 s; PWA **282 precache entries** (4 718 KiB) |
+| 5 | `npm run eval -- --set=regression --compare=docs/eval/baseline.json --no-record` | 0 | 9 s | regression **80 / 80** (95 % CI lower bound 95 %), `no_regressions` (`eval-20261021T044408-30d58a2d`) |
+| 6 | `npx playwright test` (full suite, phone + desktop) | 0 | 1 252 s (20.9 min) | 148 tests: **133 passed, 0 failed, 15 skipped** |
+
+The 15 skipped are the existing project-conditional skips: `perf.spec.ts` 6 tests × 2 projects (opt-in
+`MEDLEVO_PERF=1`), `aos-p1-layers` ×2 (its full flow is desktop-only, its panel check phone-only) and one phone-only
+check of `h3-reader-notes` on desktop.
+
+### 2. Critic pass of the new screens (390 and 1280 px; light, dark and e-ink)
+
+A scratch Playwright spec (outside the repository, run with the repository's `e2e/support` harness and its real-server
+global setup) opened every screen R1-a added or changed, on a fresh server with the TEST FIXTURE lecture of
+`apps/server/test/fixtures/note-migration/build.ts` (v1 with ink p.5, a highlight p.12, notes p.30 / p.36; a renamed v2
+with pages inserted and reordered): Settings → display modes, the Control Center row and «النسخ الاحتياطي خارج
+الخادم», `/upload/suggestions`, the compare screen (proposal and v1 ↔ v2), `/lectures/order/:node`, the lecture's
+«النسخ» and «المحاضرة» tabs, the reader's migration banner, preview dialog, report, review list, the layers panel and
+version 2 with the copied ink — 15 screens × 3 modes × 2 projects = 90 screenshots, each probed (one h1, named
+controls, images with alt, no sideways overflow, no honesty red flags, text contrast ≥ 4.5:1, an icon never alone on
+its line, `data-eink` on only in e-ink mode; on the phone 44 px targets and switch touch rings) and looked at.
+
+Found and fixed (each reproduced by a test that failed first):
+
+| # | finding | fix | regression test |
+|---|---|---|---|
+| 1 | Opened directly (a link, a reload), the lecture's «النسخ» tab had no padding and no separators, and the «المحاضرة» tab's contents list and the compare screen's action rows were unstyled: their rows use `.ml-upload__*`, defined in `features/upload/upload.css`, which only the upload screens import (the code-split CSS loaded only after visiting `/upload`, as the P1-T3 E2E does) | `SourceScreen.tsx` and `CompareScreen.tsx` import `../upload/upload.css` (screens import the stylesheets of what they render, as they already did for `library.css`) | `apps/web/test/route-chunk-css.critic.test.ts` (3): for every lazily loaded module (71), each feature class it renders through its static import graph is defined in global CSS, CSS of the eager app graph, or CSS that graph imports — failed on `SourceScreen` and `CompareScreen` only, passes now |
+| 2 | Settings → «وضع العرض على هذا الجهاز»: the icon sat on a line of its own above the subhead (light, dark, e-ink; both widths) — `ml-settings__subhead` and `ml-settings__note-actions` had no rule | rules in `features/settings/settings.css` (flex row; the e-ink suggestion's buttons wrap with a gap under its text) | `apps/web/test/settings-css.critic.test.ts` (2) — failed before (2 classes without a rule), passes now |
+| 3 | At 1280 px the page panel is ≈ 260 px wide: a layer's name was cut to «ملا…» and its meta line broke inside «ملاحظاتي» | `ink/layers/layers.css`: the text column keeps ≥ 7.5 rem, names wrap instead of an ellipsis, and a container query moves «اكتب هنا» and the menu to a second line when the panel is narrower than 20 rem | `e2e/aos-p1-layers.spec.ts` (desktop flow): every layer name whole and its text column ≥ 110 px — failed before («ملاحظاتي» cut, then «شرح سارة (TEST FIXTURE)» cut), passes now; phone panel test unchanged and passing |
+
+Looked at and left (reported, not defects of R1-a): on the phone the probe lists the breadcrumb links (24 px) and skip
+links (43 px) already reported in Round 7, the design system's password-reveal button (40 × 40) and toast close
+button (32 × 32), a visually hidden file input and the layers radio (20 px, inside a 44 px `<label>`); the switch is
+31 px with its 45 px ring (the touch-ring probe passes); at 390 px the migration banner's summary can leave its last
+number alone on a line; the full-page screenshots show the fixed bottom bar mid-page (a screenshot artefact); the date
+field shows Chromium's own `MM/DD/YYYY` format of the test browser. The «تنزيل» links inside the closed «ملفات هذه
+النسخة» list were reported as unnamed by the first probe — they are hidden from the accessibility tree while closed (a
+probe false positive; the probe now skips closed `<details>`).
+
+### 3. A real race found by the final re-run
+
+The first full re-run after the critic fixes failed one web test, `test/settings-screen.test.tsx` «… autosaves the
+custom instruction without blur» (it had failed once in the P1-T2 review too, put down to load). Measured: about 1 run in
+4 under load, sometimes alone. A traced copy (scratch) showed the cause: when the change came **before the screen's mount
+effects had run** (the router commits the screen in a transition, so its passive effects run in a later task), the
+textarea read `""` right after the change and nothing was saved. The draft-sync effect in `SettingsScreen.tsx` compared
+the server value with the draft **of the render that scheduled it** (empty) and set it back, overwriting the owner's
+first keystrokes — the same would happen if a server value arrived while the owner typed. Fixed with a functional
+update (compare with the latest draft). New test «(R1-a final) text typed before the screen's effects have run is kept
+and saved»: a `MutationObserver` callback types the moment the textarea exists — failed on the `HEAD` component (swapped
+in and restored for the check), passes now; under the same load (16 parallel runs × 2 tests) **32 / 32 passed**, where
+the old test had failed 1 in 4.
+
+### 4. Final runs (after every change of this task)
+
+| # | command | exit | duration | result |
+|---|---|---|---|---|
+| 1 | `npm run typecheck` | 0 | 51 s | no type errors (shared, server, web, e2e) |
+| 2 | `npm run lint` | 0 | 59 s | no problems |
+| 3 | `npm test` | 0 | 435 s | shared 11 files · **109 passed** · server 172 files passed, 7 skipped · **1 765 passed**, 7 skipped · web 148 files passed, 1 skipped · **910 passed**, 1 skipped (904 + the 6 new tests) |
+| 4 | `npm run build` | 0 | 5 s | built in 1.9 s; PWA **282 precache entries** (4 718 KiB) |
+| 5 | `npm run eval -- --set=regression --compare=docs/eval/baseline.json --no-record` | 0 | 11 s | regression **80 / 80**, `no_regressions` (`eval-20261021T061141-ccd3c9bf`) |
+| 6 | `npx playwright test` (full suite, phone + desktop) | 0 | 1 343 s (22.4 min) | 148 tests: **133 passed, 0 failed, 15 skipped** (the same project-conditional skips as in section 1) |
+| 7 | critic spec re-run on the final build (scratch, 2 tests) | — | 3.4 min | desktop: all 45 screen × mode checks clean; phone: every check clean except the 44 px list of known items above (the scratch spec asserts it softly, so it reports that test as failed) |
+
+Between section 1 and this table, one intermediate full `npm test` (after the critic fixes) failed one web test — the
+race of section 3; targeted runs while fixing: `npx playwright test e2e/aos-p1-layers.spec.ts --project=desktop`
+1 failed before the layers fix (reproduced), `e2e/aos-p1-layers.spec.ts e2e/aos-eink.spec.ts` 6 passed, 2 skipped
+after it; the three new web test files failed before their fixes and pass now.
+
+E2E per spec (run 6; phone + desktop): `aos-eink` 4 · `aos-p1-layers` 2 (+2 skipped) · `aos-p1-note-migration` 2 ·
+`aos-p1-versions` 2 · `critic-screens` 4 · `f1-notebook-pages` 6 · `f2-course-brain` 4 · `f3-study-modes` 4 ·
+`f4-handwriting-audio` 6 · `f5-quality-ops` 6 · `g1-ac01` 4 · `g1-ac02` 2 · `g1-ac03` 2 · `g1-ac04` 4 · `g2-ac05` 2 ·
+`g2-ac06` 2 · `g2-ac29` 2 · `g3-ac08` 2 · `g3-ac09` 2 · `g3-ac13` 2 · `g4-ac10-ac11` 2 · `g4-ac12-ac14-ac15` 2 · `g5-ac16` 6 ·
+`g5-ac17-ac19` 6 · `g6-ac20` 4 · `g6-ac21` 4 · `g6-ac22` 6 · `g6-ac28` 6 · `g7-ac23` 2 · `g7-ac24` 4 · `g7-ac30` 2 · `g8-ac26` 2 ·
+`g8-ac27` 2 · `g8-security` 8 · `h3-reader-notes` 5 (+1 skipped) · `h4-exports-sources` 4 · `smoke` 4 — all passed; `perf` 12
+skipped (opt-in). No retry was needed (`retries: 0`).
+
+### 5. The AOS rows' named tests, file by file (final tree, `vitest --reporter=json`)
+
+For `docs/REQUIREMENTS_MATRIX.md` (AOS part): every count matches the one the row states.
+
+| suite | files and passed tests |
+|---|---|
+| server (27 files, 244 passed, 0 failed) | `annotations/` layers-migration 2 · layers 17 · history 6 · layer-copy 10 · ink-v2 5 · reanchor-copy 26; `versions/` numbering 26 · page-map 9 · new-version-detect 3 · link-candidates 3 · import-intelligence 7 · review-regressions 25; `processing/docx-display-pdf` 3; `deploy/` render-blueprint 3 · paas-config 14 · client-ip 8 · objectstore-sigv4 7; `data/` offsite 16 · offsite-cli 3 · offsite-review 10 · objectstore 11 · offsite-schedule 6; `tenancy/` binding-harness 5 · capabilities-step0 3 · migrations-0041-0050 4 · purge-extension 7 · purge-extension.review 5 |
+| shared (3 files, 24 passed) | academic-step0 10 · ink-codec 9 · layers 5 |
+| web (16 files, 103 passed) | `test/ink/` layers-visibility 13 · rehome 11 · tiles 13 · text-highlights-layers 1; `design/themeDisplay` 7; `panels/noteMigration` 14; `sources/versions` 11; `control/offsite` 3; `test/tenancy/` sync-onrejected 10 · sync-onrejected.review 5 · localdb-phase1-schema 6 · localdb-old-tab.review 1 · capabilities-screen-step0 1; new: route-chunk-css.critic 3 · settings-css.critic 2 · settings-screen 2 |
+
+### Files changed by this task
+
+`apps/web/src/features/sources/{SourceScreen,CompareScreen}.tsx` (one CSS import each),
+`apps/web/src/features/settings/settings.css`, `apps/web/src/features/settings/SettingsScreen.tsx` (the draft-sync
+effect), `apps/web/src/features/workspace/ink/layers/layers.css`; tests `apps/web/test/{route-chunk-css,settings-css}.critic.test.ts`
+(new), `apps/web/test/settings-screen.test.tsx` (+1), `e2e/aos-p1-layers.spec.ts` (+1 assertion block); docs: this entry,
+`README.md`, `docs/REQUIREMENTS_MATRIX.md` (AOS part), `docs/CAPABILITY_MATRIX.md`, `docs/academic-os/BUILD_PLAN.md`
+(§1.3 «Release R1-a», Appendix B migration rows, status line).
+
+### Not run in this verification (and why)
+
+| what | why |
+|---|---|
+| Any device: iPad + Apple Pencil, Samsung S Pen, BOOX e-ink, a low-end Android phone | no device in this container — Chromium phone (390 × 844, touch, DPR 2) and desktop projects with mouse input only |
+| Render, Cloudflare R2, a phone-only dry run of `docs/DEPLOY_PHONE_AR.md` | no account and no phone; the off-site path is tested against the signature-checking S3 fake |
+| Native iOS / Android builds and store steps | no macOS runner, Xcode, Android SDK or accounts |
+| A live AI provider; `npm run eval -- --mode=live` | no `ANTHROPIC_API_KEY`; nothing in R1-a changes an AI path |
+| `MEDLEVO_PERF=1` suites, the ink harness config, a Docker image rebuild, the CI workflows on GitHub | not re-run: no change to the measured paths, the ink engine or `Dockerfile` / `deploy/` since their track reviews; no GitHub runner |
+| Safari, Firefox, screen readers, axe-core | not available here (axe-core is not in the repository; structural probes instead) |
