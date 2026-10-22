@@ -15,7 +15,7 @@ import type { Db } from '../../db/db';
 import { AppError } from '../../lib/errors';
 import type { Viewer } from '../../system/binding';
 import { publicDirectory } from '../../system/directory';
-import { linkedPendingCount, recordPrivateLink, runReanchorCopyAcross, type PrivateLinkRow } from '../annotations/reanchorCopy';
+import { linkedPendingCount, recordPrivateLink, runReanchorCopyAcross, unlinkedVersionItems, type PrivateLinkRow } from '../annotations/reanchorCopy';
 import { FINGERPRINT_ALGO, minhashFromBlob, readFingerprints } from '../processing/fingerprint';
 import { matchLinkCandidates } from '../versions/candidates';
 import { CopiesService, ensurePersonalLayer, getCopy, memberOf, notFound, refreshHoldings } from './copies';
@@ -152,12 +152,16 @@ export function linkToOfficial(ctx: AppContext, viewer: Viewer, body: LinkToOffi
   // the copy itself (one transaction in the vault); nothing of the private source changes
   const run = runReanchorCopyAcross(ctx, { from_version_id: src.version_id, to_version_id: version.id }, { deviceId });
   const r = run.report;
+  // (review C2 R2) what is still only on ANOTHER version of the private lecture is counted (kept there) and named
+  const linkedNo = ctx.db.get<{ n: number }>('SELECT version_no AS n FROM source_version WHERE id = ?', [src.version_id])?.n ?? 0;
+  const elsewhere = unlinkedVersionItems(ctx, src.id, src.version_id, version.id).map((e) => ({ ...e, linked_version_no: linkedNo }));
+  const elsewhereN = elsewhere.reduce((s, e) => s + e.items, 0);
   const summary = {
-    total: r.total,
+    total: r.total + elsewhereN,
     copied: r.copied + r.already_moved,
     needs_review: r.needs_review,
-    kept: r.kept,
-    summary_ar: linkSummaryAr(r.copied + r.already_moved, r.needs_review, r.kept, run.note_pages),
+    kept: r.kept + elsewhereN,
+    summary_ar: linkSummaryAr(r.copied + r.already_moved, r.needs_review, r.kept, run.note_pages, elsewhere),
     note_pages: run.note_pages,
   };
   // (C2, X8 c) the link itself is remembered, so what could not be placed is listed in the review list of the official
@@ -172,7 +176,13 @@ export function linkToOfficial(ctx: AppContext, viewer: Viewer, body: LinkToOffi
  * are listed in the review list of the OFFICIAL copy («ملاحظاتي ← إعادة ربط»), from where they are copied by hand or
  * kept on the private lecture; the originals stay on the private lecture, unchanged.
  */
-export function linkSummaryAr(copied: number, notPlaced: number, kept: number, notePages: { total: number; copied: number; items: number } = { total: 0, copied: 0, items: 0 }): string {
+export function linkSummaryAr(
+  copied: number,
+  notPlaced: number,
+  kept: number,
+  notePages: { total: number; copied: number; items: number } = { total: 0, copied: 0, items: 0 },
+  elsewhere: ReadonlyArray<{ version_no: number; items: number; linked_version_no: number }> = [],
+): string {
   const parts = [copied > 0 ? `نُسخ ${itemsCountAr(copied)} إلى النسخة الرسمية` : 'لم يُنسخ شيء إلى النسخة الرسمية'];
   if (notePages.copied === 1) parts.push('ونُسخت صفحة الملاحظات المضافة بما عليها');
   else if (notePages.copied > 1) parts.push(`ونُسخت ${notePages.copied} صفحات ملاحظات مضافة بما عليها`);
@@ -180,6 +190,16 @@ export function linkSummaryAr(copied: number, notPlaced: number, kept: number, n
   if (notPlaced === 1) parts.push('لم يُنسخ عنصر واحد تلقائيًا لأن صفحته تغيّرت أو لم يُعثر على مكانه بأمان: تجده في «ملاحظاتي ← إعادة ربط» في النسخة الرسمية لتنسخه بنفسك أو تبقيه');
   else if (notPlaced > 1) parts.push(`لم يُنسخ ${itemsCountAr(notPlaced)} تلقائيًا لأن صفحاتها تغيّرت أو لم يُعثر على أماكنها بأمان: تجدها في «ملاحظاتي ← إعادة ربط» في النسخة الرسمية لتنسخها بنفسك أو تبقيها`);
   if (kept > 0) parts.push(`بقي ${itemsCountAr(kept)} من طبقات القراءة فقط في محاضرتك الخاصة`);
+  // (review C2 R2) items left on another version of the private lecture: the link copied the version it matched only
+  for (const e of elsewhere) {
+    const one = e.items === 1;
+    const why = `لأن الربط ينسخ من الإصدار ${e.linked_version_no} الذي تدرسه فقط`;
+    const todo =
+      e.version_no < e.linked_version_no
+        ? `${one ? 'انقله' : 'انقلها'} إليه («ملاحظاتي ← إعادة ربط» في محاضرتك الخاصة) ثم اربطها مجددًا`
+        : `افتح الإصدار ${e.version_no} وادرسه ثم اربطها مجددًا`;
+    parts.push(`وبقي ${one ? 'عنصر واحد' : itemsCountAr(e.items)} على الإصدار ${e.version_no} من محاضرتك الخاصة لم ${one ? 'يُنسخ' : 'تُنسخ'} ${why}: ${todo}`);
+  }
   return `${parts.join('؛ ')}. محاضرتك الخاصة وكل ما عليها لم يتغيّر.`;
 }
 

@@ -30,7 +30,7 @@ import type { AppContext } from '../../context';
 import { fromJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
 import { convertToPdf, detectTools } from '../processing/tools';
-import type { ExportFile } from './export';
+import { lineageOf, type ExportFile } from './export';
 import { resolveOfflineTarget } from './offline';
 
 // ───────── colours: the reader's ink tokens, light-paper values (web features/workspace/ink/palette.ts) ─────────
@@ -130,11 +130,12 @@ interface Row {
   z: number;
 }
 
-type Item =
+type Item = { id: string } & (
   | { type: 'stroke'; page: number; data: InkData; highlighter: boolean }
   | { type: 'shape'; page: number; data: ShapeData }
   | { type: 'text_highlight'; page: number; data: TextHighlightData }
-  | { type: 'image'; page: number; data: ImageAnnotationData };
+  | { type: 'image'; page: number; data: ImageAnnotationData }
+);
 
 const SKIP_REASON_AR: Record<string, string> = {
   needs_reanchor: 'كتابة تحتاج إعادة ربط بموضعها بعد تغيّر الصفحة — مكانها غير مؤكد، فلم تُرسم.',
@@ -163,13 +164,13 @@ function classify(rows: Row[], pageCount: number | null): { items: Item[]; skipp
     const d = fromJson<Record<string, unknown>>(r.data_json, {}) ?? {};
     if (Array.isArray(d.points) && d.style) {
       const data = d as unknown as InkData;
-      items.push({ type: 'stroke', page: r.page_index, data, highlighter: data.style.tool === 'highlighter' || r.kind === 'highlight' });
+      items.push({ id: r.id, type: 'stroke', page: r.page_index, data, highlighter: data.style.tool === 'highlighter' || r.kind === 'highlight' });
     } else if (typeof d.shape === 'string' && Array.isArray(d.from) && Array.isArray(d.to) && d.style) {
-      items.push({ type: 'shape', page: r.page_index, data: d as unknown as ShapeData });
+      items.push({ id: r.id, type: 'shape', page: r.page_index, data: d as unknown as ShapeData });
     } else if (Array.isArray(d.rects)) {
-      items.push({ type: 'text_highlight', page: r.page_index, data: d as unknown as TextHighlightData });
+      items.push({ id: r.id, type: 'text_highlight', page: r.page_index, data: d as unknown as TextHighlightData });
     } else if (typeof d.image_key === 'string' && d.box) {
-      items.push({ type: 'image', page: r.page_index, data: d as unknown as ImageAnnotationData });
+      items.push({ id: r.id, type: 'image', page: r.page_index, data: d as unknown as ImageAnnotationData });
     } else {
       skip(['text', 'sticky', 'bookmark', 'link'].includes(r.kind) ? r.kind : 'unknown');
     }
@@ -200,7 +201,22 @@ function target(ctx: AppContext, sourceId: string, versionId: string | null): Ta
   return { sourceId: source.id, versionId: version.id, title: source.title, pdfFileId, pageCount: version.page_count, rows };
 }
 
-function summaryOf(t: Target, items: Item[], skipped: Map<string, number>): AnnotatedPdfSummary {
+/**
+ * (review of C2, AOS-4.18) What is drawn but is not the owner's own writing — strokes of a followed or forked classmate's
+ * explanation — named with its lineage, one line per origin («مشتق من منشور «X» (الإصدار n) لـ Y»): the flat picture
+ * must not pass it off as «كتابتك». The same lines go into the PDF's document properties.
+ */
+function lineageLines(ctx: AppContext, items: Item[]): string[] {
+  const lineage = lineageOf(ctx, 'annotation', items.map((i) => i.id));
+  const by = new Map<string, number>();
+  for (const i of items) {
+    const l = lineage.get(i.id);
+    if (l) by.set(l.lineage_ar, (by.get(l.lineage_ar) ?? 0) + 1);
+  }
+  return [...by].map(([line, n]) => `مرسوم فيه أيضًا ما ليس من كتابتك (${n} ${n === 1 ? 'عنصر' : n === 2 ? 'عنصران' : n <= 10 ? 'عناصر' : 'عنصرًا'}): ${line}.`);
+}
+
+function summaryOf(t: Target, items: Item[], skipped: Map<string, number>, lineage: string[] = []): AnnotatedPdfSummary {
   const count = (pred: (i: Item) => boolean) => items.filter(pred).length;
   return {
     source_id: t.sourceId,
@@ -222,6 +238,7 @@ function summaryOf(t: Target, items: Item[], skipped: Map<string, number>): Anno
       'نسخة PDF مسطحة تحفظ المظهر: الملف الأصلي كما هو وفوقه كتابتك مرسومة خطوطًا متجهة. لا يُعدَّل الملف المحفوظ لديك.',
       'هذه صورة للكتابة وليست حبرًا قابلًا لإعادة التحرير: الحبر نفسه يبقى في التطبيق وفي تصدير JSON والنسخة الاحتياطية.',
       'سماكة الضربة ثابتة في هذا الملف (لا تتغيّر بالضغط كما في القارئ).',
+      ...lineage,
     ],
   };
 }
@@ -230,7 +247,7 @@ function summaryOf(t: Target, items: Item[], skipped: Map<string, number>): Anno
 export function annotatedPdfSummary(ctx: AppContext, sourceId: string, versionId: string | null): AnnotatedPdfSummary {
   const t = target(ctx, sourceId, versionId);
   const { items, skipped } = classify(t.rows, t.pageCount);
-  return summaryOf(t, items, skipped);
+  return summaryOf(t, items, skipped, lineageLines(ctx, items));
 }
 
 function drawItem(doc: PDFDocument, page: PDFPage, box: PageBox, item: Item, images: Map<string, Awaited<ReturnType<PDFDocument['embedPng']>>>): boolean {
@@ -336,9 +353,10 @@ export async function exportAnnotatedPdf(ctx: AppContext, sourceId: string, vers
     else skipped.set('missing_image', (skipped.get('missing_image') ?? 0) + 1);
   }
   doc.setProducer('MedLevo — PDF مسطح بكتابتك (الأصل لم يتغيّر)');
-  doc.setSubject('نسخة من الملف الأصلي مع كتابة المالك مرسومة خطوطًا متجهة — ليست حبرًا قابلًا للتحرير.');
+  const lineage = lineageLines(ctx, drawnItems);
+  doc.setSubject(['نسخة من الملف الأصلي مع كتابة المالك مرسومة خطوطًا متجهة — ليست حبرًا قابلًا للتحرير.', ...lineage].join(' '));
   const bytes = await doc.save({ useObjectStreams: false });
-  const summary = summaryOf({ ...t, pageCount }, drawnItems, skipped);
+  const summary = summaryOf({ ...t, pageCount }, drawnItems, skipped, lineage);
   // eslint-disable-next-line no-control-regex -- a file name never carries control characters
   const name = `${t.title} - مع كتابتي`.normalize('NFC').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').trim().slice(0, 80) || 'medlevo';
   return { file: { fileName: `${name}.pdf`, contentType: 'application/pdf', body: Buffer.from(bytes) }, summary };

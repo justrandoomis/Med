@@ -13,6 +13,7 @@
 import type { QuotaView, SpaceAiAllowanceView } from '@medlevo/shared';
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import type { Db } from '../db/db';
 import { AppError } from '../lib/errors';
 import { type Clock, localDate, startOfMonthInTz } from '../lib/time';
 import type { Binding, TenantBinding, Viewer } from './binding';
@@ -49,6 +50,42 @@ export interface QuotaConfig {
 
 /** «نسخة من بياناتي» archive names (modules/accounts/export.ts EXPORT_NAME_RE). */
 const EXPORT_ARCHIVE_RE = /^medlevo-export-[0-9TZ-]+-[0-9a-z]{8}\.tar\.gz$/;
+
+/** Tables whose rows belong to ONE source version: a stub's rows there point at the space's files (forks/stubs.ts). */
+const VERSION_ROW_TABLES: Readonly<Record<string, string>> = { source_version: 'id', source_page: 'version_id', version_rendition: 'version_id' };
+
+/**
+ * C1 review (AOS-21.9 / 21.45, PRD §6.2 «≈ 1.5 MB of stubs per student»): the files a vault's quota counts. A stub of
+ * an official lecture («ابدأ الدراسة», a course follow's fan-out, a linked private lecture) holds stored_file rows for
+ * the SPACE's blobs — the subject's quota pays for them once; charging every student who studies them again let a
+ * moderator's uploads fill students' quotas. A file counts when any non-stub row references it (the user's own source,
+ * page, picture, recording …, including the same bytes the user uploaded themselves) or when no stub references it at
+ * all (unreferenced rows still count until the GC removes them). The foreign keys into stored_file are read from the
+ * schema, so a table added later counts as the user's own.
+ */
+export function vaultOwnFilesSql(db: Db): string {
+  const fks = db.all<{ tbl: string; col: string }>(
+    `SELECT m.name AS tbl, p."from" AS col FROM sqlite_master m, pragma_foreign_key_list(m.name) p WHERE m.type = 'table' AND p."table" = 'stored_file'`,
+  );
+  const hasStubs = db.get<{ x: number }>(`SELECT 1 AS x FROM pragma_table_info('source') WHERE name = 'is_stub'`) !== undefined;
+  if (!hasStubs) return 'SELECT COALESCE(SUM(size), 0) AS n FROM stored_file';
+  const q = (s: string) => `"${s.replace(/"/g, '""')}"`;
+  const stubVersions = `SELECT v.id FROM source_version v JOIN source s ON s.id = v.source_id WHERE s.is_stub = 1`;
+  const own: string[] = [];
+  const stub: string[] = [];
+  for (const fk of fks) {
+    const key = VERSION_ROW_TABLES[fk.tbl];
+    const sel = `SELECT ${q(fk.col)} AS id FROM ${q(fk.tbl)} WHERE ${q(fk.col)} IS NOT NULL`;
+    if (key) {
+      own.push(`${sel} AND ${q(key)} NOT IN (${stubVersions})`);
+      stub.push(`${sel} AND ${q(key)} IN (${stubVersions})`);
+    } else own.push(sel);
+  }
+  if (stub.length === 0) return 'SELECT COALESCE(SUM(size), 0) AS n FROM stored_file';
+  const ownSet = own.length ? own.join(' UNION ') : 'SELECT NULL AS id WHERE 0';
+  return `WITH own(id) AS (${ownSet}), stub(id) AS (${stub.join(' UNION ')})
+    SELECT COALESCE(SUM(size), 0) AS n FROM stored_file WHERE id IN (SELECT id FROM own) OR id NOT IN (SELECT id FROM stub)`;
+}
 
 /** Who pays for an AI call made in the current binding. */
 export interface AiParty {
@@ -138,7 +175,7 @@ export class QuotaService {
     const pages = db.get<{ page_count: number }>('PRAGMA page_count')!.page_count;
     const pageSize = db.get<{ page_size: number }>('PRAGMA page_size')!.page_size;
     const bytesDb = pages * pageSize;
-    const files = db.get<{ n: number }>('SELECT COALESCE(SUM(size), 0) AS n FROM stored_file')!.n;
+    const files = db.get<{ n: number }>(vaultOwnFilesSql(db))!.n;
     this.system.vaults.setBytesInternal(vaultId, bytesDb, files);
     return { bytes_db: bytesDb, bytes_files: files, bytes_exports: this.exportsBytes(vaultId) };
   }

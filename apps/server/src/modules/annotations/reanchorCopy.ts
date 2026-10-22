@@ -246,13 +246,19 @@ function itemsOn(ctx: AppContext, versionId: string): Item[] {
 
 const keyOf = (type: string, id: string) => `${type}:${id}`;
 
-/** originals already carried forward by a run or a review copy of this lecture (and not undone) */
-function carriedOf(ctx: AppContext, sourceId: string): Set<string> {
+/**
+ * Originals of `sourceId` already carried forward INTO the document `toSourceId` by a run or a review copy (and not
+ * undone). (review C2 R1) Scoped to the target document: «اربط بالمحاضرة الرسمية» copies a private lecture's items into
+ * ANOTHER document (an official copy) — that carries nothing into a second official copy, nor to the private lecture's
+ * own next version (before, such items counted as «نُقل سابقًا» everywhere and were copied nowhere else).
+ */
+function carriedOf(ctx: AppContext, sourceId: string, toSourceId: string): Set<string> {
   return new Set(
     ctx.db
       .all<{ entity_type: string; from_id: string }>(
-        `SELECT i.entity_type, i.from_id FROM reanchor_copy_item i JOIN reanchor_copy_run r ON r.id = i.run_id WHERE r.source_id = ? AND i.undone_at IS NULL`,
-        [sourceId],
+        `SELECT i.entity_type, i.from_id FROM reanchor_copy_item i JOIN reanchor_copy_run r ON r.id = i.run_id JOIN source_version tv ON tv.id = r.to_version_id
+          WHERE r.source_id = ? AND tv.source_id = ? AND i.undone_at IS NULL`,
+        [sourceId, toSourceId],
       )
       .map((r) => keyOf(r.entity_type, r.from_id)),
   );
@@ -294,13 +300,40 @@ export function recordPrivateLink(ctx: AppContext, l: Omit<PrivateLinkRow, 'crea
 
 /** Items of a linked private version still waiting for a decision against `to` (neither carried nor kept). */
 function linkedPending(ctx: AppContext, fromVersion: VersionRow, items: Item[], toVersionId: string): number {
-  const carried = carriedOf(ctx, fromVersion.source_id);
+  const toSourceId = getVersion(ctx, toVersionId)?.source_id;
+  if (!toSourceId) return 0;
+  const carried = carriedOf(ctx, fromVersion.source_id, toSourceId);
   const decided = decidedOf(ctx, toVersionId);
   const live = liveCopiesOf(ctx, items, toVersionId);
   return items.filter((it) => {
     const k = keyOf(it.type, it.row.id);
     return !carried.has(k) && !live.has(k) && !decided.has(k) && writable(ctx, it);
   }).length;
+}
+
+/**
+ * (review C2 R2) Items of the private lecture on its OTHER versions than the linked one that are there only: not moved
+ * to another version of the private lecture, not copied into the official copy. The link does not copy them (its page
+ * map is from the linked version); it counts them and names their version, so nothing is left behind silently.
+ */
+export function unlinkedVersionItems(ctx: AppContext, privateSourceId: string, linkedVersionId: string, toVersionId: string): Array<{ version_no: number; items: number }> {
+  const to = getVersion(ctx, toVersionId);
+  if (!to) return [];
+  const within = carriedOf(ctx, privateSourceId, privateSourceId);
+  const across = carriedOf(ctx, privateSourceId, to.source_id);
+  const out: Array<{ version_no: number; items: number }> = [];
+  for (const v of versionsOf(ctx, privateSourceId)) {
+    if (v.id === linkedVersionId) continue;
+    const items = itemsOn(ctx, v.id);
+    if (items.length === 0) continue;
+    const live = liveCopiesOf(ctx, items, to.id);
+    const n = items.filter((it) => {
+      const k = keyOf(it.type, it.row.id);
+      return !within.has(k) && !across.has(k) && !live.has(k) && writable(ctx, it);
+    }).length;
+    if (n > 0) out.push({ version_no: v.version_no, items: n });
+  }
+  return out;
 }
 
 /** Items of a link's private version still waiting in the review list of its official copy (library badge). */
@@ -417,7 +450,7 @@ function writable(ctx: AppContext, it: Item): boolean {
 }
 
 function planAll(ctx: AppContext, from: VersionRow, to: VersionRow, items: Item[], map: VersionPageMap | null): Planned[] {
-  const carried = carriedOf(ctx, from.source_id);
+  const carried = carriedOf(ctx, from.source_id, to.source_id);
   const decided = decidedOf(ctx, to.id);
   const live = liveCopiesOf(ctx, items, to.id);
   const byFrom = new Map((map?.entries ?? []).map((e) => [e.from_page_id, e]));
@@ -701,7 +734,7 @@ export function previewReanchorCopy(ctx: AppContext, q: { source_id: string; fro
   const versions = versionsOf(ctx, q.source_id);
   const to = q.to_version_id ? versionOf(ctx, q.source_id, q.to_version_id) : versions[versions.length - 1];
   if (!to) throw new AppError('NOT_FOUND', 'لا يوجد إصدار لهذا المصدر.', 404);
-  const carried = carriedOf(ctx, q.source_id);
+  const carried = carriedOf(ctx, q.source_id, q.source_id);
   const decided = decidedOf(ctx, to.id);
   const earlierItems = versions
     .filter((v) => v.version_no < to.version_no)
@@ -979,7 +1012,7 @@ interface NotePagePlan {
 
 /** The private source's live note pages and what is written on them that has not been carried to `to` yet. */
 function notePagesToCopy(ctx: AppContext, from: VersionRow, to: VersionRow): NotePagePlan[] {
-  const carried = carriedOf(ctx, from.source_id);
+  const carried = carriedOf(ctx, from.source_id, to.source_id);
   const out: NotePagePlan[] = [];
   for (const row of ctx.db.all<NotePageRow>('SELECT * FROM note_page WHERE source_id = ? AND deleted_at IS NULL ORDER BY sort_order, created_at, id', [from.source_id])) {
     const copyId = reanchorCopyId(row.id, to.id);
@@ -1146,7 +1179,7 @@ export function reanchorCopyAction(ctx: AppContext, body: ActionBody, opts: { de
 
   // copy to the page the owner picked (the originals' runs are recorded under their own source: the earlier version's,
   // which is the same lecture, or the linked private lecture's)
-  const carried = carriedOf(ctx, from.source_id);
+  const carried = carriedOf(ctx, from.source_id, to.source_id);
   const live = liveCopiesOf(ctx, items, to.id);
   const already = items.filter((i) => carried.has(keyOf(i.type, i.row.id)) || live.has(keyOf(i.type, i.row.id)));
   if (already.length) throw new AppError('CONFLICT', 'نُسخ هذا العنصر إلى إصدار أحدث من قبل؛ لم يُنسخ مرة ثانية. حدّث القائمة.', 409, { ids: already.map((i) => i.row.id) });

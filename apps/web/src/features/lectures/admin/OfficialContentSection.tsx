@@ -137,6 +137,28 @@ interface BulkResult {
   title: string;
   ok: boolean;
   note: string | null;
+  /** (review C2 R4) a failed file can be sent again: into the draft already made for it (never a second draft) */
+  file: File;
+  lectureId: string | null;
+}
+
+/** One file of «ارفع عدة محاضرات»: its draft (made once — a retry reuses `lectureId`), then its upload. */
+async function uploadOne(spaceId: string, f: File, title: string, lectureId: string | null): Promise<BulkResult> {
+  let id = lectureId;
+  try {
+    id ??= (await lecturesApi.create(spaceId, { title })).id;
+    const up = await lecturesApi.upload(spaceId, id, f);
+    return { name: f.name, title, ok: true, note: up.duplicate_note_ar ?? null, file: f, lectureId: id };
+  } catch (err) {
+    return {
+      name: f.name,
+      title,
+      ok: false,
+      note: id ? `أُضيفت المسودة لكن رفع ملفها لم يكتمل: ${errorMessage(err)} «أعد المحاولة» يرفعه إلى المسودة نفسها.` : `${errorMessage(err)} لم تُضف مسودة لهذا الملف.`,
+      file: f,
+      lectureId: id,
+    };
+  }
 }
 
 function BulkUpload({ subject, onDone }: { subject: AdminSubject; onDone: () => void }) {
@@ -144,6 +166,7 @@ function BulkUpload({ subject, onDone }: { subject: AdminSubject; onDone: () => 
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [results, setResults] = useState<BulkResult[] | null>(null);
   const [inputKey, setInputKey] = useState(0);
+  const [retrying, setRetrying] = useState<number | null>(null);
   const tooMany = files.length > MAX_BULK;
 
   const run = async () => {
@@ -153,20 +176,23 @@ function BulkUpload({ subject, onDone }: { subject: AdminSubject; onDone: () => 
     for (let i = 0; i < files.length; i++) {
       const f = files[i]!;
       setProgress({ done: i, total: files.length });
-      const title = titleFromFileName(f.name);
-      let lectureId: string | null = null;
-      try {
-        lectureId = (await lecturesApi.create(subject.spaceId, { title })).id;
-        const up = await lecturesApi.upload(subject.spaceId, lectureId, f);
-        out.push({ name: f.name, title, ok: true, note: up.duplicate_note_ar ?? null });
-      } catch (err) {
-        out.push({ name: f.name, title, ok: false, note: lectureId ? `أُضيفت المسودة لكن رفع ملفها لم يكتمل: ${errorMessage(err)} ارفعه من «أضف محاضرة رسمية» بالعنوان نفسه أو احذف المسودة.` : errorMessage(err) });
-      }
+      out.push(await uploadOne(subject.spaceId, f, titleFromFileName(f.name), null));
       setResults([...out]);
     }
     setProgress(null);
     setFiles([]);
     setInputKey((k) => k + 1);
+    onDone();
+  };
+
+  // (review C2 R4) «أعد المحاولة»: the same file into the same draft (or a first draft when none was made)
+  const retry = async (i: number) => {
+    const r = results?.[i];
+    if (!r || r.ok || progress || retrying !== null) return;
+    setRetrying(i);
+    const next = await uploadOne(subject.spaceId, r.file, r.title, r.lectureId);
+    setResults((prev) => (prev ? prev.map((x, j) => (j === i ? next : x)) : prev));
+    setRetrying(null);
     onDone();
   };
 
@@ -205,6 +231,11 @@ function BulkUpload({ subject, onDone }: { subject: AdminSubject; onDone: () => 
                 <BidiText as="span" text={r.title} />
                 {r.ok ? ': رُفع' : ': لم يُرفع'}
                 {r.note ? ` — ${r.note}` : ''}
+                {!r.ok && !progress && (
+                  <Button variant="secondary" loading={retrying === i} disabled={retrying !== null && retrying !== i} onClick={() => void retry(i)}>
+                    {`أعد المحاولة: ${r.name}`}
+                  </Button>
+                )}
               </li>
             ))}
           </ul>

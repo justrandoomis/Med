@@ -1956,3 +1956,27 @@ Everything of PHASE1_REPORT §6 (devices, Render, R2, AI key, Safari / Firefox, 
 runner). Not re-run here: the full E2E suite (the gate's second full run passed 179 / 0 / 17; this review re-ran the six
 specs its changes and the gate's changes touch, plus smoke), the owner-migration script against the real R1-a / R1-b
 builds (no server code changed since it ran), the browser perf suite, the critic screenshots (no screen changed).
+
+## Phase 1 completion — track C1: platform, privacy, quotas, data model (builder, 2026-10-22, gates ≈ 09:40 → 10:55 UTC)
+
+Run in this container while tracks C2 / C3 worked in the same tree (shared CPU). Rows and evidence:
+`docs/REQUIREMENTS_MATRIX.md` «Phase 1 completion — track C1»; details: `docs/modules/tenancy.md` (same title).
+
+| gate | result |
+|---|---|
+| `npm run typecheck` | pass (shared, server, web, e2e) |
+| `npm run lint` | pass (`--max-warnings 0`, now including `medlevo/module-boundaries`) |
+| `npm test` — shared | 234 / 234 |
+| `npm test` — server | 2,446 passed, 7 skipped, **1 failed**: `test/search/federation.test.ts` NFR-P5 «p95 ≤ 50 ms» measured 56.8 ms while lint and typecheck ran beside it; re-run alone: 8 / 8 passed (timing under load; no C1 change touches the search path) |
+| `npm test` — web | 1,238 passed, 1 skipped (run on its own: `npm test` stops at the first failing workspace) |
+| `npm run build` | pass |
+| `npx playwright test` (phone 390 × 844 + desktop 1280 × 800) | 180 passed, 17 skipped, **1 failed**: `f1-notebook-pages` «… after a reload and offline» (phone) — `page.reload` offline met `ERR_INTERNET_DISCONNECTED` (the service worker was not yet controlling the page); re-run alone: 3 / 3 passed. `aos-no-decorative` (now with «سياسة استخدام البيانات») passed on both projects (axe 0 serious in light / dark / e-ink); AC-21 / AC-22 and the note migration passed on both |
+
+New C1 tests (each failed before its change unless marked evidence): `srv:deploy/cookie-secure.c1`,
+`srv:tenancy/module-boundaries.eslint.c1`, `srv:evidence/cache-key-viewer.c1`, `srv:ai/consent.c1`,
+`srv:ai/allowance-view.c1`, `srv:lectures/space-quota.c1`, `srv:notifications/space-quota-warning.c1`,
+`srv:tenancy/rate-limits.c1`, `srv:accounts/export-quota.c1`, `srv:tenancy/blob-cache-eviction.c1`,
+`srv:data/space-backup.c1`, `srv:tenancy/sync-actor.c1`, `srv:authz/acl-grants.c1`, `srv:channels/course-mapping.c1`,
+`srv:annotations/ink-wire-compressed.c1` (wire: v2 JSON identity 11.67 MB, gzip 5.01 MB, br 3.72 MB),
+`web:me/ai-consent.c1`, `web:tenancy/sync-transient.c1`; evidence: `srv:tenancy/file-privacy.c1`,
+`srv:forks/versions-shared.c1`, `srv:forks/fork-graph.c1`. Not run: a device, Cloudflare R2, a real AI provider.

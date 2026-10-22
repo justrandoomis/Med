@@ -306,8 +306,10 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     origin: origins[0]!,
     allowedOrigins: origins,
     originSource,
-    // Secure cookies by default whenever the app is served over https; explicit env value wins.
-    cookieSecure: e.MEDLEVO_COOKIE_SECURE ?? origins[0]!.startsWith('https://'),
+    // Secure cookies by default whenever the app is served over https — ANY accepted origin, not only the first (C1
+    // review: «http://lan,https://public» started without Secure); an explicit true wins, an explicit false with https
+    // was refused above.
+    cookieSecure: e.MEDLEVO_COOKIE_SECURE ?? origins.some((o) => o.startsWith('https://')),
     trustProxy: proxy.trust.mode !== 'none',
     proxy,
     logLevel: e.MEDLEVO_LOG_LEVEL ?? (nodeEnv === 'test' ? 'silent' : 'info'),
