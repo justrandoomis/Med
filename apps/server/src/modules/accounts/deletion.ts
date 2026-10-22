@@ -43,6 +43,8 @@ export interface AccountDeletionParticipant {
   name: string;
   /** remove or withdraw this account's shared items; must be idempotent (a crash re-runs it) */
   run(ctx: AppContext, who: { userId: string; vaultId: string | null }): void | Promise<void>;
+  /** (P1-T5 step 3) what the deletion preview says about this account's shared items (publications, forks others keep) */
+  preview?(ctx: AppContext, userId: string): Partial<DeletionPreview['publications']>;
 }
 
 const participants = new WeakMap<object, Map<string, AccountDeletionParticipant>>();
@@ -104,7 +106,13 @@ export function deletionPreview(ctx: AppContext, viewer: Viewer): DeletionPrevie
       cards: count(ctx, 'flashcard', 'WHERE deleted_at IS NULL'),
       bytes: used.bytes_db + used.bytes_files,
     },
-    publications: { total: 0, forked_by_others: 0 },
+    publications: [...(participants.get(ctx.system)?.values() ?? [])].reduce(
+      (acc, p) => {
+        const c = p.preview?.(ctx, viewer.userId) ?? {};
+        return { total: acc.total + (c.total ?? 0), forked_by_others: acc.forked_by_others + (c.forked_by_others ?? 0) };
+      },
+      { total: 0, forked_by_others: 0 },
+    ),
     policy_ar: DELETION_POLICY_AR,
     confirm_token: sign(ctx, viewer.userId, expiresAt),
     expires_at: expiresAt,

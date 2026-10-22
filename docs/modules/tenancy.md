@@ -515,3 +515,25 @@ Release checks only (`docs/TEST_LOG.md` «Release R1-b + N1 — final verificati
   a request without a supported `x-medlevo-client` (an R1-a app; only user #1 passes the gate) and the annotation handler
   refuses, from such a client, a geometry change of a polygon, curved or double arrow, answering with the server's copy
   (`docs/modules/ink.md`, R10).
+
+## GATE-1 — Phase 1 exit gate (2026-10-22)
+
+Two defects of this module were found by the gate and fixed with tests that failed first (PHASE1_REPORT §4):
+
+* **R1-c on an R1-a data directory (owner migration precheck).** Since release R1-c the build ships base migrations
+  0163 / 0860, and `planOwnerMigration` / `runOwnerMigration` compared the legacy database with *this build's* base
+  set — so a real R1-a database was reported «أقدم من الإصدار R1-a … ثبّت R1-a وشغّله مرة واحدة أولًا», which is wrong
+  and loops. `ownerMigration.ts` now holds the frozen list of R1-a's 44 base migrations (`R1A_BASE_MIGRATIONS`): a
+  database missing one of those is still `DB_OLDER_THAN_R1A`; a database that has all of them but not this release's
+  later base migrations is refused with `MULTI_USER_RELEASE_FIRST` and the Arabic way that works — deploy the
+  multi-user release R1-b first, finish its upgrade, then this release. Nothing changes on disk (ADR-0003 §5 release
+  rule: the release that moves the owner adds no base migration). The unit suites had missed it because
+  `legacy-fixture.ts` writes its «R1-a» database with the current build. Test: `test/tenancy/owner-migration.gate1.test.ts`;
+  end to end against the real `d0c8ab4` / `514f356` builds: PHASE1_REPORT §2.1 (R1-a → R1-b → R1-c 43 / 43 checks,
+  R1-a → R1-c refused 8 / 8, R1-b refuses to start on R1-c data).
+* **Test template directory leak.** `test/helpers/template.ts` created one `/tmp/medlevo-vault-template-*` per test
+  worker and never removed it (≈ 17 GB, `ENOSPC` in the P1-T5 step-3 review). A Vitest global setup
+  (`test/global-setup.ts`) now creates one directory per `vitest run`, provides it to the workers and removes it at the
+  end; the helper falls back to the old per-process directory only outside Vitest. Test:
+  `test/tenancy/template-dir.gate1.test.ts`. The stale directories left by earlier runs were not removed (shared
+  `/tmp`; the environment's permission policy refused it).

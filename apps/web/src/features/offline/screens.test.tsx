@@ -142,6 +142,28 @@ describe('BackupsPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: /أنشئ نسخة احتياطية الآن/ }));
     await waitFor(() => expect(calls).toContain('POST /api/data/backups'));
   });
+
+  it('GATE-1: a download the server refuses (several accounts, no encryption key) is a disabled control with its reason, not a dead link', async () => {
+    const reason = 'هذه النسخة تضم بيانات كل الحسابات على الخادم، فلا تُنزَّل إلا مشفّرة. اضبط MEDLEVO_BACKUP_ENCRYPTION_KEY على الخادم ثم أعد المحاولة.';
+    const list: BackupsListResponse = {
+      backups: [
+        { id: 'B3', file_name: 'b3.tar.gz', status: 'completed', status_label_ar: 'اكتملت', origin: 'api', size: 4096, sha256: 'ef'.repeat(32), created_at: 2, finished_at: 3, summary: null, warnings_ar: [], error_ar: null, job: null, verification: null, download_url: '/api/data/backups/B3/download', download_blocked_ar: reason },
+      ],
+      included_ar: [],
+      excluded_ar: [],
+      storage_note_ar: 'احتفظ بها خارج هذا الجهاز.',
+    };
+    setFetchImpl(async (url, init) => (url === '/api/data/backups' && (init.method ?? 'GET') === 'GET' ? json(list) : json({}, 404)));
+    mount(<BackupsPanel />);
+    const btn = await screen.findByRole('button', { name: /نزّل النسخة/ });
+    expect(screen.queryByRole('link', { name: /نزّل النسخة/ })).toBeNull();
+    expect(btn.hasAttribute('disabled')).toBe(true);
+    const describedBy = btn.getAttribute('aria-describedby');
+    expect(describedBy).toBeTruthy();
+    expect(document.getElementById(describedBy!)?.textContent).toBe(reason);
+    // the restore check does not need the download: it stays available
+    expect(screen.getByRole('button', { name: /تحقّق من الاستعادة/ }).hasAttribute('disabled')).toBe(false);
+  });
 });
 
 describe('ExportPanel', () => {

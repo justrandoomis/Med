@@ -180,3 +180,50 @@ any real device; every browser line below is headless Chromium (390 × 844 touch
 | Writing bar on a wide reader (desktop, iPad landscape widths) | at 1280 px with the study rail open the writing bar covered the zoom group and «المزيد من أدوات الكتابة» → top-bar slots fixed; checked at 1280 / 1180 / 1024 px, rail open and closed | `e2e/r1b-final-critic.spec.ts` (failed before); Tested (env) — **a real iPad: Not run** |
 | Eyedropper link, shape labels, phone targets (G07, G20, settings) | the eyedropper's icon sat alone on a line; in the dark theme a shape's label was invisible on the white page (1.2:1) — now drawn in the paper tone's ink colour (greys in e-ink); the colour-meaning fields and writing sliders were 40 px on a coarse pointer → 44 px | `apps/web/test/ink/ink-css.critic.test.ts` (3; each failed before); scratch critic probe (contrast ≥ 4.5:1, no icon alone, 44 px on the phone); Tested (env) |
 | E-ink display mode on the N1 / R1-b screens | the writing toolbar, the pen / eraser / lasso / shape options (a filled, labelled shape on the page), the six sections of «إعدادات الكتابة», the colour legend, «امسح الصفحة» / «احذف كل نوع» / «المحذوف بالجملة» / the clean view, the ruler, the measurement panel, the zoom strip, the neat copy, the page menu, «قدرات القلم على هذا الجهاز», Settings and the Control Center (24 screens) were opened with `data-eink` on at 390 and 1280 px beside light and dark (144 screenshots; the upgrade page in light and dark, 16 more) | scratch critic pass (inspected); Tested (env) — **BOOX: Not run (no device)** |
+
+## Academic OS P1-T4 step 2 — notifications (2026-10-21)
+
+No capability key was added (`notifications.push` of ARCHITECTURE_DELTA §12 stays unregistered: push is not built). What
+the inbox can and cannot do is said by the routes themselves:
+
+| feature | needs | state | tested here |
+|---|---|---|---|
+| In-app inbox «التنبيهات» (joins, decisions, invitations, reports, moderation outcomes; P1-T5's lectures, versions, subject events) | nothing | built — server only; the screen is P1-T4 step 3 | yes: `srv:notifications/*`, `srv:moderation/*`, `srv:acceptance/ac01b` (Tested (env)) |
+| Web Push to a browser or an installed PWA | VAPID keys, a push sender, a device run | **not built**: `GET /api/notifications/prefs` answers `push.available: false` with the Arabic reason; switching push on answers `409 FEATURE_DISABLED`; the subscription routes are not mounted | the refusal only. **iOS Web Push (Home Screen PWA, iOS 16.4+): Not run (no device, nothing to deliver)** |
+
+## Academic OS P1-T4 step 3 — the channel screens (2026-10-22)
+
+No capability key was added. What depends on the device or the server is said on the screen itself:
+
+| feature | needs | state | tested here |
+|---|---|---|---|
+| In-app inbox «التنبيهات» and the bell | nothing | built (web + server) | yes: `web:test/channels/notifications.test.tsx`, `e2e:aos-p1-join.spec.ts` (an approval → an unread entry that opens the subject), `e2e:aos-no-decorative.spec.ts` (Tested (env)) |
+| QR scanner «امسح رمز QR» (camera) | a camera the browser lets the page use (HTTPS or localhost) | built — decoded on the device (jsQR, lazy chunk); no camera / refused / busy → an Arabic reason and the code field; «اختر صورة رمز QR» reads a picture instead | yes: `e2e:aos-p1-join.spec.ts` — Chromium's fake capture device playing a QR (Tested (env)); refused camera → field; a phone camera: **Not run (no device)** |
+| QR of an invite link | nothing | built (SVG, qrcode-generator; loads only with «الرموز والدعوات») | yes: `web:test/channels/qr.test.ts` (round trip on pixels), `e2e:aos-p1-admin.spec.ts` |
+| Web Push | VAPID keys, a sender, a device run | **not built** — «تفضيلات التنبيهات» shows the server's reason and offers no push switch | the refusal only |
+| Offline copies of «القنوات», the subject page, «التنبيهات», «إدارة القنوات» | a previous online visit on this device by this account | built — read-only with «غير متصل · تعرض نسخة محفوظة …», every network action disabled with its reason | yes: `web:test/channels/channels-screens.test.tsx` (offline) |
+
+## Academic OS P1-T5 step 3 — course-only explanations (2026-10-22)
+
+No capability key was added. What depends on the network or the device is said on the screen itself:
+
+| feature | needs | state | tested here |
+|---|---|---|---|
+| Publish / republish / withdraw an explanation, «ابدأ الدراسة بهذا الشرح» (follow / fork), «طبّق التحديث», «أبلغ» | the server (online) | built — offline every one of them is disabled with an Arabic reason (`role="status"`); the copies already in the vault keep working offline | yes: `web:test/copies/publications.test.tsx`, `e2e:aos-s2-followed-copy`, `e2e:aos-p1-vertical-slice` (Tested (env)) |
+| Writing on a followed copy offline, synced later | nothing (local-first ink) | built — the writing goes to the student's own layer of the copy; the followed layer stays read-only (server refuses a raw delete, `layer_read_only`) | yes: `e2e:aos-s2-followed-copy` step 3 and the slice — **mouse input through Playwright**: says nothing about pen latency or palm rejection; iPad + Apple Pencil, S Pen, BOOX: **Not run (no device)** |
+| Page previews of an explanation and of an update | the server renders the official page thumbnail (poppler `pdftoppm`) | built — the pictures are an addition: without them the counts and the page list say everything | yes (Tested (env), poppler 24.02 here) |
+
+## GATE-1 — Phase 1 exit (2026-10-22)
+
+Re-checked on the whole R1-c tree (`docs/TEST_LOG.md` «GATE-1 — Phase 1 exit gate»; the phase verdict:
+`docs/academic-os/PHASE1_REPORT.md`). **No cell above moves to a device state:** nothing was run on an iPad, Apple
+Pencil, S Pen, BOOX, iPhone, Safari, Firefox, a screen reader or a real camera; every browser line is headless Chromium
+141 (390 × 844 touch emulation, 1280 × 800, 834 × 1194).
+
+| capability | what GATE-1 adds | evidence |
+|---|---|---|
+| Whole-instance backup download on a server that has had several accounts (or a subject space) | the archive leaves only encrypted (`MEDLEVO_BACKUP_ENCRYPTION_KEY`, generated by `render.yaml`); **without the key** «نزّل النسخة» is now a disabled control with the server's reason instead of a link that ended in nothing; the archive now holds every subject space | `apps/server/test/data/gate1-backup-download.test.ts`, `gate1-space-backup.test.ts`, web `features/offline/screens.test.tsx` «GATE-1 …», `e2e/g7-ac30-restore.spec.ts` (encrypted download → CLI restore with the key → second server); Tested (env) — **Render's generated key and R2: Not run (no account)** |
+| E-ink display mode on the 30 new R1-c screens | the shell, «القنوات», join sheet, browse, subject page (3 tabs), lecture page (2 tabs), publication page, update preview, report dialog, reader with the study-copy bar, «التنبيهات», «أنا» + 3 sub-pages, «إدارة القنوات» + 8 sections, both «ابدأ الدراسة» dialogs, the invite landing — opened with `data-eink` beside light and dark at 390 and 1280 px (180 screenshots): no contrast under 4.5:1, no overflow, axe 0 serious / critical after the fix below | scratch critic pass (inspected); Tested (env) — **BOOX refresh / ghosting: Not run (no device)** |
+| Speech control / screen readers on the reader's page indicator | axe `label-content-name-mismatch` (serious, WCAG 2.5.3) in every look: the name now starts with the shown words | `apps/web/src/features/workspace/chrome/GoToPage.gate1.test.tsx`; **VoiceOver / TalkBack / Voice Control: Not run (no device)** |
+| Touch targets of breadcrumb links on a phone | 24 px tall («أنا» 10 px wide) → 44 × 44 px on a coarse pointer | `apps/web/test/breadcrumbs-css.gate1.critic.test.ts`; Tested (env) — **a real phone: Not run** |
+| Upgrading an R1-a installation straight to R1-c | refused with the way that works (deploy R1-b first), nothing changed; R1-a → R1-b → R1-c keeps every entity, file and recording and R1-b then refuses R1-c data | `apps/server/test/tenancy/owner-migration.gate1.test.ts`; scratch end-to-end script against the real `d0c8ab4` / `514f356` builds; **on Render: Not run (no account)** |

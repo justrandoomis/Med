@@ -16,6 +16,7 @@ const FILE_NAME_RE = /^medlevo-backup-[0-9TZ-]+-[0-9a-z]{8}\.tar\.gz$/;
 
 export const BACKUP_INCLUDED_AR = [
   'قاعدة البيانات كاملة في لقطة متسقة: المكتبة والمصادر وإصداراتها وصفحاتها ومناطقها، الملاحظات والحبر والتمييز، الأسئلة ومفاتيحها وروابطها ومحاولاتك، البطاقات وأحداث المراجعة، الجلسات، كتب الدراسة والأدلة والاستشهادات، الإعدادات وسجل التغييرات.',
+  'قاعدة النظام (الحسابات والأجهزة والقنوات والعضويات والأدوار والتنبيهات والبلاغات) وخزنة كل حساب ومساحة كل مادة (المحاضرات الرسمية وإصداراتها ومرفقاتها والشروحات المنشورة)، كلٌّ في لقطة متسقة.',
   'كل ملف تشير إليه قاعدة البيانات (الملفات الأصلية وملفات PDF المحوّلة وصور الصفحات والأشكال) مع بصمة sha256 لكل ملف.',
   'ملف manifest.json: إصدار التطبيق، والـ migrations المطبّقة، وعدد الصفوف في كل جدول، وبصمة كل ملف.',
 ];
@@ -60,9 +61,19 @@ function archiveExists(ctx: AppContext, row: BackupRow): boolean {
   }
 }
 
+/** P1-T1 step 2 / GATE-1: why a whole-instance archive cannot leave this server (the download route refuses with it) */
+export const BACKUP_DOWNLOAD_NEEDS_KEY_AR =
+  'هذه النسخة تضم بيانات كل الحسابات على الخادم، فلا تُنزَّل إلا مشفّرة. اضبط MEDLEVO_BACKUP_ENCRYPTION_KEY على الخادم ثم أعد المحاولة؛ وتُفتح النسخة المشفّرة بالمفتاح نفسه عند الاستعادة.';
+
+/** the same rule as GET /backups/:id/download: several accounts ever ⇒ encrypted only, and only with the key */
+export function backupDownloadBlockedAr(ctx: AppContext): string | null {
+  return ctx.tenancy.hasHadSeveralDatabases() && !ctx.config.secrets.backupEncryptionKey() ? BACKUP_DOWNLOAD_NEEDS_KEY_AR : null;
+}
+
 export function backupView(ctx: AppContext, row: BackupRow): BackupView {
   const report = fromJson<RestoreReport | null>(row.verify_report_json ?? 'null') ?? null;
   const done = row.status === 'completed' || row.status === 'completed_with_warnings';
+  const downloadUrl = done && !row.deleted_at && archiveExists(ctx, row) ? `/api/data/backups/${encodeURIComponent(row.id)}/download` : null;
   return {
     id: row.id,
     file_name: row.file_name,
@@ -89,7 +100,9 @@ export function backupView(ctx: AppContext, row: BackupRow): BackupView {
             checks_failed: (report?.checks ?? []).filter((c) => !c.ok).map((c) => c.name),
           }
         : null,
-    download_url: done && !row.deleted_at && archiveExists(ctx, row) ? `/api/data/backups/${encodeURIComponent(row.id)}/download` : null,
+    download_url: downloadUrl,
+    // GATE-1 (AOS-23.3): the list says why a download is unavailable instead of offering a link the route refuses
+    download_blocked_ar: downloadUrl ? backupDownloadBlockedAr(ctx) : null,
   };
 }
 
@@ -194,6 +207,11 @@ export function instanceBackupSources(ctx: AppContext): BackupInstance {
       db: v.id === primaryId ? ctx.db : undefined,
       primary: v.id === primaryId,
     })),
+    // GATE-1: every subject space of the registry (whatever its status: an archived subject still holds its lectures)
+    spaces: ctx.system.vaults
+      .liveDatabasesInternal()
+      .filter((d) => d.kind === 'space')
+      .map((s) => ({ id: s.id, dbFile: s.db_file, path: ctx.pool.pathOfFile('space', s.db_file) })),
   };
 }
 

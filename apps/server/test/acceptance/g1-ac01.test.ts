@@ -27,8 +27,9 @@ describe('G1 AC-01 — personal library, single owner, no institution / users / 
     const lines = routes.split('\n').filter((l) => l.trim());
     expect(lines.length).toBeGreaterThan(100); // every module is mounted (sanity: the listing is real)
     expect(routes).toContain('/api/library/');
-    // P1-T1: the vocabulary ban on routes is removed (ADR-0003 §3.10); channel routes do not exist yet (P1-T4)
-    expect(lines.filter((l) => /channel|universit|college|subscri|billing|pricing|payment/i.test(l))).toEqual([]);
+    // P1-T1: the vocabulary ban on routes is removed (ADR-0003 §3.10); P1-T4's channel routes live only under
+    // /api/channels/* — the personal library needs none of them, and no route anywhere is a subscription or payment
+    expect(lines.filter((l) => /channel|universit|college|subscri|billing|pricing|payment/i.test(l) && !/\/api\/channels\//.test(l))).toEqual([]);
   });
 
   it('the vault has no institution / user / subscription table; the account lives in the system DB', () => {

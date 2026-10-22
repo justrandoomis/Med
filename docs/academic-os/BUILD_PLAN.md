@@ -3,7 +3,9 @@
 > **Status:** v1 · 2026-10-20 · written after the adversarial design review. Release R1-a (P1-T1 step 0, P1-T2,
 > P1-T3, with PL-0 beside them) is built, reviewed and verified as of 2026-10-21 (§1.3, «Release R1-a»); release R1-b
 > (P1-T1 steps 1–3, with parity N1 waves 1–2 beside it) is built, reviewed and verified in this container as of
-> 2026-10-21 (§1.3, «Release R1-b»); R1-c (P1-T4, P1-T5) is not started.
+> 2026-10-21 (§1.3, «Release R1-b»); release R1-c (wave-2 contracts, P1-T4, P1-T5) is built, reviewed and verified
+> by GATE-1 as of 2026-10-22 (§1.3, «Release R1-c»). **Phase 1 is not complete**: it is reported «closed with blocked
+> Musts», pending the owner's sign-off, with buildable Musts still open ([PHASE1_REPORT.md](PHASE1_REPORT.md)).
 > **What it is:** the delivery plan for the Academic OS in the spec's phase order (spec §23 «Implementation Priority»).
 > Each phase is split into **build tracks**; each track is built by **one builder agent** and checked by **one adversarial
 > reviewer agent**. Phase 1 is planned in full detail; Phases 2–5 at track level.
@@ -222,6 +224,60 @@ once not mutually excluded; N1: the `ink` settings object is one last-writer-win
 are not resizable, per-tool current presets stay on the device, Shift-constrained shapes (AOS-1.7) not built, the ruler's
 keys differ from AOS-1.8, «عرّف» / «أضف إلى المراجعة» in the page menu wait for N3 / N4.
 
+#### Release R1-c «channels and the vertical slice» — GATE-1 verification (2026-10-22)
+
+**Status: verified in this container by GATE-1** (BUILD_PLAN §3.9; commands, counts and durations: `docs/TEST_LOG.md`
+«GATE-1 — Phase 1 exit gate»; the phase verdict, every open Must and the Not-run list: [PHASE1_REPORT.md](PHASE1_REPORT.md)).
+Nothing was run on a device, on Render, on Cloudflare R2 or with an AI key.
+
+**What shipped** (each part built by its track and reviewed adversarially, §1.2):
+
+| part | what the owner and the students get | reviewed in |
+|---|---|---|
+| Wave-2 step 0 — contracts | the shared contracts of P1-T4 / P1-T5 (`packages/shared/src/academic/*`), the space-route declarations, the web seams | `TEST_LOG` «Wave-2 step 0 — adversarial review» |
+| P1-T4 step 1 — tree, joining, roles | University → … → Subject tree (one **space per subject**), class codes / invite links / QR (hashed, rate-limited), registration **only** with a code or link, approvals, invitations, roles inherited down the tree, the generated X9 matrix | «AOS P1-T4 step 1 — adversarial review» |
+| P1-T4 step 2 — notifications, moderation | in-app inbox (batched fan-out, per-kind preferences, read state, access re-checked at read time), minimal moderation (report → hide / restore / dismiss with a reason, author and reporter told, audit), scoped audit view, course follow | «AOS P1-T4 step 2 — adversarial review» |
+| P1-T4 step 3 — the web | five destinations (الرئيسية، المكتبة، القنوات، المراجعة، أنا) and the bell, «القنوات», the subject page, the join sheet with an in-app QR scanner, the invite landing, «أنا» (devices, privacy, usage), «التنبيهات», «إدارة القنوات» with its sections | «AOS P1-T4 step 3 — adversarial review» |
+| P1-T5 step 1 — official lectures | official lectures and versions in the subject space, approval, publish with the page map, corrections, withdraw / rights takedown, attachments, exam dates, the updates feed, duplicates, «المحتوى الرسمي» / «الملفات المكررة» | «AOS P1-T5 step 1 — adversarial review» |
+| P1-T5 step 2 — study copies | «ابدأ الدراسة» (a stub in the student's vault, no page bytes copied), course-follow and new-version fan-out with safe note copying, link a private lecture to its official twin (Partial), promote a moderator's lecture, federated search with scope tokens, stub retrieval | «AOS P1-T5 step 2 — adversarial review» |
+| P1-T5 step 3 — course-only explanations | publish chosen layers course-only, independent fork and followed copy, update preview / apply / skip / auto, moderation hide / restore, withdrawal, account deletion | «AOS P1-T5 step 3 — adversarial review» |
+| GATE-1 fixes | spaces in every whole-instance backup; the backup download says why it is unavailable; R1-c tells an R1-a owner to deploy R1-b first; the page indicator's accessible name; breadcrumb touch targets; one test template directory per run | PHASE1_REPORT §4 |
+
+**Migrations actually shipped:** base `0163_pinned_region`, `0860_document_copy` (applied to each vault when it is first
+opened); system `2050_directory`, `2060_lecture_copy`, `2100_permissions`, `2150_publications`, `2200_notifications`,
+`2310_moderation`; space `3000_official_lectures`, `3010_subject_content`, `3050_publications`, `3300_scoped_fts` — as the
+table above planned. Because R1-c adds base migrations, **R1-b refuses to start on R1-c data** (checked against the real
+R1-b release) and **R1-c refuses to migrate an R1-a owner itself** (it says to deploy R1-b first; nothing changes).
+
+**GATE-1 verification:** first pass on the whole tree — typecheck, lint, build, evaluation (80 / 80) and `npm test`
+green, full E2E 177 passed / 2 failed / 17 skipped (`g7-ac30-restore` phone + desktop); the owner migration end to end
+against the real R1-a and R1-b releases (R1-a → R1-b → R1-c 43 / 43 checks; R1-a → R1-c refused, nothing changed,
+8 / 8); the critic pass of the 30 new screens at 390 / 1280 px in light, dark and e-ink; the performance gate against
+R1-b. Six defects found and fixed with tests that failed first (PHASE1_REPORT §4). Final gates on the final tree:
+⟦FINAL_GATES_SHORT⟧
+
+**Updating the owner's Render deployment (owner-facing steps).** The Arabic version is `docs/DEPLOY_PHONE_AR.md`
+«التحديث إلى الإصدار R1-c»; PHASE1_REPORT §12 has the same steps in English. In short: (1) be on R1-b with «اكتملت
+الترقية» first; (2) check `MEDLEVO_BACKUP_ENCRYPTION_KEY` is set and saved; (3) «نسخ احتياطي الآن» → «نجحت» — the only
+way back; (4) merge, wait for Live (no maintenance page); (5) tap «تحديث» on each device; create the tree, subjects and
+a class code or invite link in «إدارة القنوات» (no open sign-up); (6) back up again and «تحقّق من الاستعادة»; (7) to go
+back, restore the step-3 backup — a Render rollback to R1-b fails to start on R1-c data, on purpose.
+
+**Not run (reason)** — R1-c ships with these open (details and what unblocks each: PHASE1_REPORT §6):
+
+| what | why |
+|---|---|
+| Render, R2, the phone-only dry run, an installed PWA updating itself | no Render / Cloudflare account, no phone here |
+| iPad + Pencil, S Pen, BOOX, iPhone / iPad Safari, the in-app QR scanner with a real camera | no device (Chromium's fake camera stream only) |
+| VoiceOver / TalkBack, Safari / Firefox, Web Push | not available here |
+| A live AI provider | no `ANTHROPIC_API_KEY` |
+| NFR-OP2 load test, NFR-P1 pen latency | need the target Render plan / the devices |
+| Docker image rebuild, CI on a GitHub runner | no Docker daemon here; not pushed |
+
+**Carried forward:** X8 (c) (19H.3: unplaced linked items in no review list; inserted note pages not copied); no
+per-space backup artifact and no per-space storage quota; the 48 open buildable Musts of PHASE1_REPORT §5.3; the heavy
+study-copy bar on phones; owner question N4; every «remains» item of the track reviews.
+
 ### 1.4 Coordination with other work
 
 * **Round 7 hardening** is still running on 2026-10-20 (it added migrations `0280`, `0290`, `0670`, `0810` and a manual
@@ -307,7 +363,7 @@ Companion: C-PAR (parity N1–N5 rows of §1) and PL-0 (Round 7 deploy task) run
 | `apps/web/src/features/workspace/*` outside `ink/` (WorkspaceScreen, panels) | T2 (layers panel in `panels/LeftPanel.tsx`) | T5 (copy chip, version banner; new `workspace/copies/*`) | — |
 | `apps/web/src/app/*` (AppShell, routes, router, layouts) | T1 (layouts: draft recovery per user, client-version gate) | T4 (5 destinations; in wave-2 step 0 it adds the route imports of `features/lectures` and `features/copies`) | feature route arrays |
 | `modules/authz/*` | T1 (policy core, binding hook, `spaceRoutes.ts`) | T4 (`rules/channels.ts`, matrix test), T5 (`rules/{lectures,publications,layers}.ts`, entries in `spaceRoutes.ts`) | rule modules self-register; only T5 edits `spaceRoutes.ts` in wave 2 |
-| `apps/web/src/features/admin/sections.ts` | — | T4 | T5 registers «المحتوى الرسمي» and «الملفات المكررة» from `features/lectures/admin/*` |
+| `apps/web/src/features/admin/sections.ts` | — | T4 | T5 registers «المحتوى الرسمي», «الملفات المكررة» and «الملفات والمواعيد» (IA §4.10; planned in the wave-2 step-0 review) from `features/lectures/admin/*` |
 | `e2e/smoke.spec.ts`, `e2e/g1-ac01-personal-library.spec.ts` | — | T4 (navigation change; AC-01a replaces the second) | — |
 
 ---

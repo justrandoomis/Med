@@ -385,3 +385,59 @@ Known limits (not fixed, by design or out of reach of a deterministic check):
 * Text-citation detector: «the last page of the drug chart», «في الشريحة التالية من التصوير المقطعي» (a CT slice) are
   still flagged (rare in generated explanations; the cost is one removed sentence, reported).
 * AI judgement paths (verifier `based_on`, entailment) are still tested only with scripted / fake providers.
+
+## Academic OS P1-T5 step 2 — federated search, stub retrieval, lazy pinning (builder 2026-10-21, reviewed 2026-10-21)
+
+### Federated search (`search/federation.ts`, `search/scopeTokens.ts`, migration-space `3300_scoped_fts`)
+* `GET /api/search?…&scope=all|mine|subjects` (default `all`). The vault is searched exactly as before (`mine`/`all`).
+  Official text is searched IN EACH SUBJECT SPACE the viewer belongs to (approved membership or a role there, checked per
+  space on every request; pending, removed and other subjects' moderators get nothing).
+* Each space has a contentless `chunk_scope_fts(text, heading_path, scope)` kept by triggers on `document_chunk`; `scope`
+  holds `v<version>` / `s<source>` tokens and `hd` for the published, not taken-down head (maintained by
+  `retokenizeVersions` on publish / withdraw). The allowed versions go INSIDE the MATCH:
+  `(scope : (hd OR v…)) AND ({text heading_path} : (terms))` — `hd` for every published head, `v…` for earlier versions
+  the viewer's copy holds (`mine`). Drafts, withdrawn and taken-down lectures are never searched; every hit is checked
+  again against the allowed set. More than 500 named versions → a capped post-filter (2 000 candidates), reported in
+  `searched.spaces_truncated` and shown in the web.
+* Hits are typed `chunks`, origin `source`, `is_evidence: false`, with `db: {kind:'space', space_id, subject, lecture_id,
+  in_library}` (vault hits carry no `db`); reciprocal-rank fusion (k = 60) of the vault list and each space list.
+* NFR-P5 (measured, `test/search/federation.test.ts`, 250 lectures × 1 000 chunks = 250 000 chunks, built in ≈ 37–56 s):
+  in isolation (final tree) raw p50 25.4 ms / p95 41.9 ms over 48 runs, p95 of each query's best of 3 = 41.9 ms; inside
+  the full parallel suite an earlier run measured raw p95 70.8 ms (CPU contention of the other test workers), so the gate
+  uses the p95 of each query's best of three runs (≤ 50 ms) and logs the raw numbers too.
+
+### Stub retrieval and lazy pinning (`evidence/retrieval.ts`, `evidence/evidence.ts`, `forks/pin.ts`, migration `0163_pinned_region`)
+* Retrieval partitions the locked versions: the vault's own versions as before; stub versions grouped by their subject
+  space (member check per call). Anchors, neighbours, adjacent chunks and keyword chunks of a stub version are read from
+  the space (`chunk_scope_fts` with the version token for keywords).
+* Citing an official region copies it into the vault under the SAME id with a `pinned_region` row (space, version,
+  sha256 of text + `\0` + locator) — the evidence row and every citation keep their foreign keys in the user's vault.
+  Pins happen when evidence rows are made for a request (the model's evidence pack, a selected anchor region in
+  `studybook/explain.ts` `anchorRegions`), never by reading. Published official regions are immutable; a new official
+  version leaves every pin's text and hash unchanged (`pinState` reports `same_as_space`).
+* After leaving the subject: nothing of the space is read, nothing new is pinned; the vault's own pinned rows (earlier
+  citations) stay.
+* Tests: `test/evidence/stub-retrieval.test.ts` — AC-05 (lock + anchored chat; «from memory» answer rejected; the
+  reference never in the prompt), AC-06 (fabricated aliases, raw ids of an official region not held, `__proto__`),
+  AC-07 (swapped key noun refused before the verifier), AC-29 (the injected PDF published officially: data blocks only,
+  obeyed instructions removed, the owner's note never in the prompt), membership loss, pins after a new version.
+
+### Review (P1-T5 step 2, 2026-10-21)
+* **R-E — no bm25 side channel from drafts.** The scoped index held every chunk of the space, drafts and moderators-only
+  attachments included; bm25 statistics are computed over the whole index, so a moderator's unpublished draft full of a
+  term flipped the order of a student's official hits (reproduced, `test/search/review-step2-drafts.test.ts`). Now only
+  PUBLISHED official versions are indexed (insert / update triggers, the initial fill and `retokenizeVersions` all test
+  `official_version_publish`); a version enters the index in the transaction that publishes it, and a re-processed
+  published version is re-indexed by the triggers. Withdrawn (once published) versions stay in the statistics — their text
+  was public. Moderators' draft search, when built, needs an index of its own.
+* NFR-P5 rerun on the reviewed tree, in isolation: 250 000 chunks, raw p50 24.4 ms / raw p95 40.6 ms over 48 runs (best-of-3
+  p95 40.6 ms).
+* Stub regions for P1-T2's note copy and for manual placement (R-A, R-B): the space's full page is read first, through
+  the member-checked seam; see `docs/modules/copies-publications.md` «Review».
+
+### Not done (step 2)
+* Drafts are not searched for their moderators; subject attachments are not federated; no semantic search.
+* A lecture withdrawn for an error stays retrievable and citable for the holders of a copy (only a rights takedown
+  removes its text) — owner decision recorded in the step-2 review.
+* The vault page-regions route serves a stub page from the space through a seam in `sources/service.ts`
+  (`setStubPageRegions`, P1-T5 additive); offline packages of a stub do not include the space's regions yet.

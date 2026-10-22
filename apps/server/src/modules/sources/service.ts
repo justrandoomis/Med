@@ -35,6 +35,16 @@ import {
 
 export const SOURCE_AR = 'المصدر';
 
+/**
+ * (P1-T5 step 2 review R-F) A vault STUB of an official lecture holds the space's ids and no text: its file and its
+ * processing belong to the subject's space. Re-processing it here would copy the official text into the vault (where a
+ * rights takedown never reaches it) and a replacement would mix a private file into the official copy — both refused.
+ */
+export const STUB_READ_ONLY_AR = 'هذه نسختك من محاضرة رسمية: ملفها ومعالجتها تخص المادة، فلا تُعاد معالجتها ولا يُستبدل ملفها في مكتبتك. ملاحظاتك عليها باقية.';
+export function assertNotStub(ctx: AppContext, sourceId: string): void {
+  if (ctx.db.get('SELECT 1 AS x FROM source WHERE id = ? AND is_stub = 1', [sourceId])) throw new AppError('CONFLICT', STUB_READ_ONLY_AR, 409);
+}
+
 export function getSourceRow(ctx: AppContext, id: string): SourceRow {
   const row = ctx.db.get<SourceRow>('SELECT * FROM source WHERE id = ?', [id]);
   if (!row) throw Errors.notFound(SOURCE_AR);
@@ -140,7 +150,8 @@ export class SourcesService {
     const { ctx } = this;
     const page = ctx.db.get<PageRow>('SELECT * FROM source_page WHERE id = ?', [pageId]);
     if (!page) throw Errors.notFound('الصفحة');
-    const regions = ctx.db.all<RegionRow>('SELECT * FROM source_region WHERE page_id = ? ORDER BY reading_order, created_at', [pageId]);
+    // (P1-T5 step 2 seam) a vault STUB page of an official lecture: its regions live in the subject's space
+    const regions = stubPageRegions?.(ctx, pageId) ?? ctx.db.all<RegionRow>('SELECT * FROM source_region WHERE page_id = ? ORDER BY reading_order, created_at', [pageId]);
     const numbered = !!ctx.db.get(`SELECT 1 AS x FROM source_page WHERE version_id = ? AND kind = 'page' AND printed_label IS NOT NULL LIMIT 1`, [page.version_id]);
     return { page: { ...toPageView(page), numbered_version: numbered }, regions: regions.map(toRegionView) };
   }
@@ -394,6 +405,7 @@ export class SourcesService {
     const v = getVersionRow(ctx, versionId);
     const src = getSourceRow(ctx, v.source_id);
     if (src.deleted_at !== null) throw new AppError('CONFLICT', 'هذا المصدر في سلة المحذوفات.', 409);
+    assertNotStub(ctx, src.id);
     if (v.format === 'audio') throw Errors.featureDisabled('معالجة التسجيلات الصوتية (التفريغ النصي) غير متاحة في هذا الإصدار.');
     if (!processingRegistered(ctx)) throw Errors.featureDisabled('وحدة معالجة المستندات غير متاحة في هذا الإصدار من الخادم، لذلك لا يمكن إعادة المعالجة الآن.');
     if (pageIndexes && v.page_count !== null && pageIndexes.some((i) => i >= v.page_count!)) {
@@ -432,4 +444,15 @@ export class SourcesService {
 
 export function sourceTypeOf(ctx: AppContext, id: string): SourceType {
   return getSourceRow(ctx, id).source_type;
+}
+
+/**
+ * (P1-T5 step 2, additive seam) The regions of a page the bound vault holds only as a STUB of an official lecture: the
+ * forks module registers a reader of the subject's space (membership checked on every call; null = not a stub page or
+ * no access, and the vault's own rows — pinned citations — are answered instead). Nothing is written through it.
+ */
+type StubPageRegions = (ctx: AppContext, pageId: string) => RegionRow[] | null;
+let stubPageRegions: StubPageRegions | null = null;
+export function setStubPageRegions(fn: StubPageRegions | null): void {
+  stubPageRegions = fn;
 }

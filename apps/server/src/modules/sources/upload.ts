@@ -580,7 +580,7 @@ export function enqueuePendingVersions(ctx: AppContext): number {
   if (!processingRegistered(ctx)) return 0;
   const pending = ctx.db.all<{ id: string; kind: string; page_count: number | null }>(
     `SELECT v.id, v.kind, v.page_count FROM source_version v JOIN source s ON s.id = v.source_id
-     WHERE v.processing_status = 'pending' AND v.format <> 'audio' AND s.deleted_at IS NULL`,
+     WHERE v.processing_status = 'pending' AND v.format <> 'audio' AND s.deleted_at IS NULL AND s.is_stub = 0`, // (P1-T5 s2 review R-F) stubs: their space
   );
   let n = 0;
   for (const v of pending) {

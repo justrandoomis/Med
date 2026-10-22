@@ -10,6 +10,7 @@ import type { Db } from '../../db/db';
 import { fromJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
 import { newId } from '../../lib/ids';
+import { pinStubRegion, stubChunkRegionIds } from '../forks/pin';
 import { pageLabelAr, type LabelPage } from '../sources/pagelabel';
 
 export interface EvidenceRow {
@@ -62,12 +63,17 @@ function isLowSurrogate(code: number): boolean {
  */
 export function fromRegion(ctx: AppContext, regionId: string, opts: { start?: number; end?: number } = {}): EvidenceRow {
   const { db } = ctx;
-  const r = db.get<RegionForEvidence>(
-    `SELECT r.id, r.version_id, r.page_id, r.kind, r.text, r.bbox_json, r.status, r.text_origin, v.source_id, s.deleted_at AS source_deleted_at
-       FROM source_region r JOIN source_version v ON v.id = r.version_id JOIN source s ON s.id = v.source_id
-      WHERE r.id = ?`,
-    [regionId],
-  );
+  const read = () =>
+    db.get<RegionForEvidence>(
+      `SELECT r.id, r.version_id, r.page_id, r.kind, r.text, r.bbox_json, r.status, r.text_origin, v.source_id, s.deleted_at AS source_deleted_at
+         FROM source_region r JOIN source_version v ON v.id = r.version_id JOIN source s ON s.id = v.source_id
+        WHERE r.id = ?`,
+      [regionId],
+    );
+  let r = read();
+  // P1-T5 step 2: a region of an official lecture the vault holds as a STUB is pinned into the vault when it is cited
+  // (same id, content hash recorded — forks/pin.ts), so the evidence row and its foreign keys stay in the vault
+  if (!r && pinStubRegion(ctx, regionId)) r = read();
   if (!r) throw new AppError('NOT_FOUND', MSG.regionMissing, 404, { region_id: regionId });
   if (r.source_deleted_at !== null) throw new AppError('CONFLICT', MSG.sourceTrashed, 409, { region_id: regionId });
   if (r.status === 'rejected') throw new AppError('INVALID_EVIDENCE', MSG.regionRejected, 422, { region_id: regionId });
@@ -111,13 +117,22 @@ export function chunkRegionIds(db: Db, chunkId: string): string[] {
   return fromJson<string[]>(c.region_ids_json, []) ?? [];
 }
 
+/** The regions of a chunk of the bound vault, or of an official chunk of a stub version it holds (P1-T5 step 2). */
+function citableChunkRegionIds(ctx: AppContext, chunkId: string): string[] {
+  if (ctx.db.get('SELECT 1 AS x FROM document_chunk WHERE id = ?', [chunkId])) return chunkRegionIds(ctx.db, chunkId);
+  const stub = stubChunkRegionIds(ctx, chunkId);
+  if (stub === null) throw new AppError('NOT_FOUND', MSG.chunkMissing, 404, { chunk_id: chunkId });
+  return stub;
+}
+
 /**
  * Evidence rows for a retrieval chunk: one whole-region excerpt per citable region (tables are one region
  * whose text is the serialized table). Regions without text (figure boxes) are skipped.
  */
 export function fromChunk(ctx: AppContext, chunkId: string): EvidenceRow[] {
   const out: EvidenceRow[] = [];
-  for (const rid of chunkRegionIds(ctx.db, chunkId)) {
+  for (const rid of citableChunkRegionIds(ctx, chunkId)) {
+    if (!ctx.db.get('SELECT 1 AS x FROM source_region WHERE id = ?', [rid])) pinStubRegion(ctx, rid);
     const r = ctx.db.get<{ text: string | null; kind: string; status: string; text_origin: string | null }>('SELECT text, kind, status, text_origin FROM source_region WHERE id = ?', [rid]);
     if (!r || !r.text?.trim() || NON_EVIDENCE_KINDS.has(r.kind) || r.status === 'rejected' || r.text_origin === 'vision') continue;
     out.push(fromRegion(ctx, rid));

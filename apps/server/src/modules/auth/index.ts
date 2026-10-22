@@ -7,15 +7,18 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
   type AuthStatusResponse,
+  type ChannelMembershipView,
   type LoginResponse,
   type MeLite,
   RECOVERY_CODE_COUNT,
   type RecoverResponse,
   type RecoveryCodesResponse,
+  registerWithJoinSchema,
+  type RegisterWithJoinResponse,
   type SessionsResponse,
   type SetupResponse,
 } from '@medlevo/shared';
-import type { ModuleOptions, ModulePlugin } from '../../context';
+import type { AppContext, ModuleOptions, ModulePlugin } from '../../context';
 import { AppError } from '../../lib/errors';
 import { parseBody, parseParams, RATE_LIMITS } from '../../lib/http';
 import type { Viewer } from '../../system/binding';
@@ -34,16 +37,24 @@ export { isLoopbackHost, type SetupTokenOptions } from './setup-token';
 
 /**
  * Registration with a class code, an invite link or an invitation (ARCHITECTURE_DELTA §7.2 POST /api/auth/register)
- * is verified by the channels module (P1-T4), which implements this interface. Until then there is no verifier and
- * the route is not mounted: accounts other than the first one cannot be created from the network.
+ * is verified by the channels module (P1-T4), which implements this interface. Without a verifier the route is not
+ * mounted: accounts other than the first one cannot be created from the network.
  */
 export interface JoinTokenVerifier {
-  /** validates the join proof; returns what the new account joins, or throws JOIN_CODE_INVALID */
+  /**
+   * validates the join proof and reserves one use of it; returns what the new account joins, or throws
+   * JOIN_CODE_INVALID (wrong, expired, revoked, exhausted) / RATE_LIMITED
+   */
   verify(join: { code: string } | { invite_token: string } | { invitation_id: string }, ip: string): { describeAr: string };
+  /** P1-T4: the new account joins what the proof named (its membership, pending or approved) */
+  redeem(ticket: { describeAr: string }, userId: string, ip: string): ChannelMembershipView | null;
+  /** P1-T4: the account could not be created — the reserved use is given back */
+  release(ticket: { describeAr: string }): void;
 }
 
 export interface AuthModuleOptions extends SetupTokenOptions {
-  joinVerifier?: JoinTokenVerifier | null;
+  /** P1-T4: a verifier, or a factory that builds one on the application context (modules/index.ts) */
+  joinVerifier?: JoinTokenVerifier | ((ctx: AppContext) => JoinTokenVerifier) | null;
 }
 
 /**
@@ -163,6 +174,50 @@ async function authModule(app: FastifyInstance, opts: ModuleOptions, tokenOpts: 
     setSessionCookie(reply, config, created.token, created.session.expires_at);
     return { ok: true, recovery_codes: codes, session: toSessionInfo(created.session, created.session.id), notice_ar: codesNotice, user: meLite(user) };
   });
+
+  // P1-T4 (ARCHITECTURE_DELTA §7.2; PRD Q2/Q3): no open sign-up — a new account always comes with a valid class code
+  // or invite-link token, checked (and one use reserved) by the channels module's verifier BEFORE the account exists.
+  // Never a platform admin; its own vault; signed in on this device like setup and login. Mounted only with a verifier.
+  const verifier = typeof tokenOpts.joinVerifier === 'function' ? tokenOpts.joinVerifier(ctx) : (tokenOpts.joinVerifier ?? null);
+  if (verifier) {
+    // a whole class may register from one lecture-hall address: a coarse ceiling only; wrong proofs are limited per IP
+    // by the verifier (join_attempt) and scrypt cost bounds the rest
+    app.post('/register', { config: { rateLimit: { max: 120, timeWindow: 60_000 } } }, async (req, reply): Promise<RegisterWithJoinResponse> => {
+      const body = parseBody(registerWithJoinSchema, req);
+      const ip = clientIp(req);
+      if (body.password.length < minLen) {
+        throw new AppError('VALIDATION_FAILED', `كلمة المرور أقصر من ${minLen} أحرف.`, 400, { where: 'body', issues: [{ path: 'password', code: 'too_small', message: `اختر كلمة مرور من ${minLen} أحرف على الأقل.` }] });
+      }
+      if (normalizeUsername(body.password) === normalizeUsername(body.username)) {
+        throw new AppError('VALIDATION_FAILED', 'كلمة المرور يجب ألا تطابق اسم المستخدم.', 400, {
+          where: 'body',
+          issues: [{ path: 'password', code: 'custom', message: 'اختر كلمة مرور مختلفة عن اسم المستخدم.' }],
+        });
+      }
+      if (users.countInternal() === 0) throw new AppError('SETUP_REQUIRED', 'لم يُنشأ أي حساب بعد. أكمل الإعداد الأولي أولًا.', 409);
+      const ticket = verifier.verify(body.join, ip);
+      let created: ReturnType<typeof ctx.tenancy.createAccount>;
+      let codes: string[];
+      try {
+        const passwordHash = await hashSecret(body.password, logN);
+        const issued = await issueCodes();
+        codes = issued.codes;
+        created = ctx.tenancy.createAccount({ username: body.username, displayName: body.display_name, passwordHash, recoveryHashes: issued.hashes, isPlatformAdmin: false, timezone: config.timezone });
+      } catch (e) {
+        verifier.release(ticket);
+        throw e;
+      }
+      const { user, vault } = created;
+      const membership: ChannelMembershipView | null = verifier.redeem(ticket, user.id, ip);
+      // same browser, another account before: retire that session as sign-in does (no ghost device)
+      if (req.auth) sessions.revoke(req.auth.user.id, req.auth.sessionId);
+      const session = sessions.create({ userId: user.id, userAgent: req.headers['user-agent'], ip, deviceLabel: body.device_label, deviceId: body.device_id });
+      audit(req, user.id, 'register', `إنشاء حساب بالانضمام إلى: ${ticket.describeAr}`);
+      ctx.tenancy.inVault(vault.id, () => ctx.audit.record({ entityType: 'owner', entityId: user.id, action: 'register', summary: 'إنشاء الحساب بالانضمام إلى قناة' }));
+      setSessionCookie(reply, config, session.token, session.session.expires_at);
+      return { user: meLite(user), recovery_codes: codes, membership };
+    });
+  }
 
   app.post('/login', { config: { rateLimit: RATE_LIMITS.auth } }, async (req, reply): Promise<LoginResponse> => {
     const body = parseBody(loginBody, req);

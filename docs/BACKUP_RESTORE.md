@@ -54,8 +54,19 @@ whole, by the app and by `npm run backup` alike:
 ```
 medlevo-backup/system.sqlite             accounts, sessions, devices, the vault registry, the job index
 medlevo-backup/vaults/<vault>.sqlite     one snapshot per account (each consistent on its own, VACUUM INTO)
-medlevo-backup/files/aa/bb/<sha256>      every stored file any vault refers to (stored once when shared)
+medlevo-backup/spaces/<space>.sqlite     one snapshot per subject space (official lectures, versions, attachments,
+                                         published explanations) — since GATE-1 (release R1-c)
+medlevo-backup/files/aa/bb/<sha256>      every stored file any vault or space refers to (stored once when shared)
 ```
+
+**Subject spaces (GATE-1, release R1-c).** Every space in the system registry (`space`) is snapshotted like a vault
+and listed in `manifest.spaces[]` (`space_id`, `db_file`, `path`, sha256, size, migrations, row counts). Verification
+checks each space with the base + space migrations, its referenced files, and that the archive holds **exactly** the
+spaces the archived registry names: an archive that leaves one out is refused with the reason («the space registry does
+not name exactly the archived spaces») and never restored half. Before this fix (found by GATE-1, reported by the P1-T3,
+P1-T4 and P1-T5 builders since wave 2) an archive made with any subject held no official lecture at all, and its
+restore-check failed on the registry. `npm run backup` reads the registry from `system.sqlite` the same way
+(«N subject space(s) in …»). Regression: `apps/server/test/data/gate1-space-backup.test.ts`.
 
 The manifest adds `layout: "multi_user"`, `system` and `vaults[]` (`db` describes the primary vault — the first
 platform admin's, whose `data_backup` list shows the archive); `database_hash` and the integrity checks cover every
@@ -316,7 +327,7 @@ and `apps/server/src/modules/accounts/export.ts`.
 
 | what | who | where it lands | encrypted |
 |---|---|---|---|
-| whole-instance archive (system DB + every active vault + their files) | platform admin (app or `npm run backup`) | `DATA_DIR/backups/` | `npm run backup -- --encrypt` keeps **only** `…tar.gz.mlenc` (the plain archive is removed; without the key nothing is kept, exit 2). The app's archive stays plain on the server disk, but once the server has **ever had more than one account** (deleted accounts count: an older archive still holds their vaults — step-2 review) the download route sends it **only encrypted** (`…tar.gz.mlenc`, streamed) and refuses (409, Arabic reason) without a key; a server that has only ever had one account downloads it unchanged (AC-30) |
+| whole-instance archive (system DB + every active vault + their files) | platform admin (app or `npm run backup`) | `DATA_DIR/backups/` | `npm run backup -- --encrypt` keeps **only** `…tar.gz.mlenc` (the plain archive is removed; without the key nothing is kept, exit 2). The app's archive stays plain on the server disk, but once the server has **ever had more than one account** (deleted accounts count: an older archive still holds their vaults — step-2 review) the download route sends it **only encrypted** (`…tar.gz.mlenc`, streamed) and refuses (409, Arabic reason) without a key; a server that has only ever had one account downloads it unchanged (AC-30). Since GATE-1 the backup list says so up front: `download_blocked_ar` carries the same reason and «نزّل النسخة» is a disabled control with it instead of a link that ends in nothing (`apps/server/test/data/gate1-backup-download.test.ts`) |
 | per-vault backup (one account's vault + the files it references, `manifest.layout = 'vault'`) | platform admin: `POST /api/platform/vaults/:vaultId/backups` | `DATA_DIR/backups/vaults/<vault id>/medlevo-vault-…tar.gz[.mlenc]` | yes whenever the key is set (the plain archive never stays on disk) |
 | «نسخة من بياناتي» (the user's own export, same per-vault format) | the user: `POST /api/accounts/me/export` → job; `GET /api/accounts/me/exports[/:jobId/download]` | `DATA_DIR/exports/<vault id>/` (newest 3 kept; removed with the account) | no — it is the user's own copy, delivered over their authenticated connection |
 
@@ -348,8 +359,8 @@ listening — a restored data directory always boots), the boot check of `restor
 directory (its `boot` check reports it), and the vault restore runs one at the end. Hints are never the reason a file
 is deleted (`docs/modules/tenancy.md` «Step 2», blob GC).
 
-**What a whole-instance backup contains with several accounts.** Every vault in status `active` or `locked`; a vault
-being deleted is left out. A registered vault whose file is missing stops the backup with a reason (it is never
+**What a whole-instance backup contains with several accounts.** Every vault in status `active` or `locked` and every
+registered subject space; a vault being deleted is left out. A registered vault whose file is missing stops the backup with a reason (it is never
 created empty by the snapshot). Accounts deleted after an archive was made remain in that archive until its retention
 removes it (the account-deletion preview says so) — and such an archive is never downloaded in clear again, even when
 only one account is left (step-2 review).

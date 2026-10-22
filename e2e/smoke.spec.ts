@@ -154,9 +154,15 @@ test('smoke: setup → library → upload → processing → reader → vault �
     await screenshot(page, testInfo, '10-review');
   });
 
-  await test.step('Control Center opens from settings and shows AI as not configured', async () => {
-    await nav('الإعدادات').click();
+  await test.step('Control Center opens from settings (under «أنا», AOS IA §3.1) and shows AI as not configured', async () => {
+    // five destinations since Academic OS P1-T4: «الإعدادات» moved under «أنا»
+    await expect(page.getByRole('navigation', { name: 'التنقل الرئيسي' }).getByRole('link')).toHaveText(['الرئيسية', 'المكتبة', 'القنوات', 'المراجعة', 'أنا']);
+    await nav('أنا').click();
+    await expect(page.getByRole('heading', { level: 1, name: 'أنا' })).toBeVisible();
+    await page.getByRole('main').getByRole('link', { name: /^الإعدادات/ }).click();
     await expect(page.getByRole('heading', { level: 1, name: 'الإعدادات' })).toBeVisible();
+    // «أنا» stays the current destination on its sub-pages
+    await expect(nav('أنا')).toHaveAttribute('aria-current', 'page');
     await page.getByRole('link', { name: /مركز التحكم/ }).click();
     await expect(page).toHaveURL(/\/control$/);
     await expect(page.getByRole('heading', { level: 1, name: 'مركز التحكم' })).toBeVisible();

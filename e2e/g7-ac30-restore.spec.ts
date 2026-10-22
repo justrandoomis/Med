@@ -11,7 +11,7 @@ import type { Page } from '@playwright/test';
 import type { AnnotationDTO, LectureQuestionsResponse, NoteDTO, SyncOp } from '@medlevo/shared';
 import { apiAs, expect, openWorkspace, screenshot, setupOwner, test } from './support';
 import { SERVER_DIR } from './support/paths';
-import { startServer, type RunningServer } from './support/server';
+import { E2E_BACKUP_ENCRYPTION_KEY, startServer, type RunningServer } from './support/server';
 
 const rt = (text: string) => ({ v: 1, paragraphs: [{ dir: 'rtl', runs: [{ t: text }] }] });
 const uid = () => crypto.randomUUID().replace(/-/g, '').toUpperCase().slice(0, 26);
@@ -82,7 +82,9 @@ test('AC-30: backup made in the app, restore verified by the server, restored wi
   const work = mkdtempSync(join(tmpdir(), 'medlevo-e2e-g7-ac30-'));
   let restoredServer: RunningServer | null = null;
   try {
-    const archive = join(work, 'backup.tar.gz');
+    // GATE-1: on a server that has had several accounts (every other spec signs up classmates) the archive leaves only
+    // encrypted (…tar.gz.mlenc) and is restored with the same key; a server with one account sends it plain (…tar.gz)
+    let archive = join(work, 'backup.tar.gz');
     await test.step('«بياناتك» → back up now → the server verifies the restore → download the archive', async () => {
       await page.goto('/offline?tab=backups');
       await page.getByRole('button', { name: 'أنشئ نسخة احتياطية الآن' }).click();
@@ -93,14 +95,17 @@ test('AC-30: backup made in the app, restore verified by the server, restored wi
       await expect(page.getByText(/اختُبرت الاستعادة/).first()).toBeVisible({ timeout: 180_000 });
       await screenshot(page, testInfo, 'g7-ac30-backup-verified');
       const [file] = await Promise.all([page.waitForEvent('download'), download.click()]);
+      expect(file.suggestedFilename()).toMatch(/\.tar\.gz(\.mlenc)?$/);
+      archive = join(work, file.suggestedFilename());
       await file.saveAs(archive);
+      expect(await file.failure()).toBeNull();
     });
 
     const target = join(work, 'restored');
     await test.step('restore with the command-line tool into an empty directory (every check passes)', () => {
       const r = spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', '--import', 'tsx', join(SERVER_DIR, 'src', 'cli', 'restore-verify.ts'), archive, '--target', target], {
         cwd: SERVER_DIR,
-        env: { ...process.env, INIT_CWD: SERVER_DIR, ANTHROPIC_API_KEY: '' },
+        env: { ...process.env, INIT_CWD: SERVER_DIR, ANTHROPIC_API_KEY: '', MEDLEVO_BACKUP_ENCRYPTION_KEY: E2E_BACKUP_ENCRYPTION_KEY },
         encoding: 'utf8',
         timeout: 300_000,
       });

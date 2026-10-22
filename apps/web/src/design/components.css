@@ -1414,6 +1414,17 @@
 .ml-breadcrumbs__sep {
   color: var(--ml-color-ink-3);
 }
+@media (pointer: coarse) {
+  /* GATE-1 critic: a breadcrumb link is navigation, not a word in running text — a 44 px touch target on a phone
+     («أنا» was 10 × 24 px) */
+  .ml-breadcrumbs a {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: var(--ml-touch-target);
+    min-width: var(--ml-touch-target);
+  }
+}
 
 /* ───────────── lists & groups (inset grouped, not cards-in-cards) ───────────── */
 .ml-list,

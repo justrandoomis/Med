@@ -69,7 +69,29 @@ export interface SearchResult {
   source_title: string | null;
   /** generated content is never evidence; the UI labels it */
   is_evidence: false;
+  /**
+   * P1-T5 step 2 (additive, ARCHITECTURE_DELTA §7.12 `FederatedHit.db`): where the hit comes from. Absent = the user's
+   * own vault (every hit before federation); a subject space names the space, the subject and the official lecture.
+   */
+  db?: SearchHitDb;
 }
+
+/** P1-T5 step 2 (additive): the database of a federated hit. */
+export type SearchHitDb =
+  | { kind: 'vault' }
+  | {
+      kind: 'space';
+      space_id: string;
+      subject: { id: string; kind: 'subject'; title: string };
+      lecture_id: string;
+      /** the viewer studies this lecture (a stub with the same ids is in their library): the reader opens it directly */
+      in_library: boolean;
+    };
+
+/** P1-T5 step 2 (additive, §11.1): `mine` = my library (incl. the official text of lectures I study), `subjects` = official lectures of my subjects, `all` = both. */
+export const SEARCH_SCOPES = ['all', 'mine', 'subjects'] as const;
+export type SearchScopeParam = (typeof SEARCH_SCOPES)[number];
+export const SEARCH_SCOPE_LABELS_AR: Record<SearchScopeParam, string> = { all: 'الكل', mine: 'مكتبتي', subjects: 'موادي الرسمية' };
 
 export interface SearchResponse {
   query: string;
@@ -83,6 +105,8 @@ export interface SearchResponse {
   searched_types: SearchResultType[];
   /** e.g. «لا توجد أسئلة مفهرسة بعد» */
   notices_ar: string[];
+  /** P1-T5 step 2 (additive): what was searched — the vault, and how many subject spaces (official text) */
+  searched?: { scope: SearchScopeParam; vault: boolean; spaces: number; spaces_truncated: number };
 }
 
 // ───────── normalization with an index map ─────────

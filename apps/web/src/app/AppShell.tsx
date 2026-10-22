@@ -1,17 +1,14 @@
 import { useEffect, useRef, type RefObject } from 'react';
-import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { House, Layers, Library, Search, Settings } from 'lucide-react';
+import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Search } from 'lucide-react';
 import { IconButton, Kbd } from '../design';
+import { NotificationBell } from '../features/notifications/NotificationBell';
 import { BrandMark } from './BrandMark';
+import { activeDestination, PRIMARY_DESTINATIONS } from './navigation';
 import { GlobalSaveStatus, OfflineIndicator } from './SyncIndicators';
 import { isSearchShortcut } from './shortcuts';
 
-export const PRIMARY_DESTINATIONS = [
-  { to: '/', label: 'الرئيسية', icon: House, end: true },
-  { to: '/library', label: 'المكتبة', icon: Library, end: false },
-  { to: '/review', label: 'المراجعة', icon: Layers, end: false },
-  { to: '/settings', label: 'الإعدادات', icon: Settings, end: false },
-] as const;
+export { PRIMARY_DESTINATIONS } from './navigation';
 
 /** Moves focus to the new page's heading after client-side navigation (screen readers announce it). */
 function useFocusOnNavigate(mainRef: RefObject<HTMLElement | null>) {
@@ -36,13 +33,16 @@ function useFocusOnNavigate(mainRef: RefObject<HTMLElement | null>) {
 }
 
 /**
- * Home-first shell (§23). Phones: compact top bar + bottom tab bar (الرئيسية / المكتبة / المراجعة /
- * الإعدادات). Tablets & desktop: one slim top bar with the same destinations, search, save status
- * and the offline indicator. No permanent sidebar. The study workspace (/study/…) does not use it.
+ * Home-first shell (§23; Academic OS IA §3.1). Phones: compact top bar + bottom tab bar with the five destinations
+ * (الرئيسية / المكتبة / القنوات / المراجعة / أنا — «الإعدادات» lives in «أنا»). Tablets & desktop: one slim top bar with
+ * the same destinations, search, «التنبيهات» (a bell with a text count), save status and the offline indicator. No
+ * permanent sidebar. The study workspace (/study/…) does not use it.
  */
 export function AppShell() {
   const navigate = useNavigate();
   const mainRef = useRef<HTMLElement>(null);
+  const { pathname } = useLocation();
+  const current = activeDestination(pathname);
   useFocusOnNavigate(mainRef);
 
   // "/" or Ctrl/⌘+K opens search (see isSearchShortcut)
@@ -71,11 +71,11 @@ export function AppShell() {
             </span>
           </Link>
           <nav aria-label="التنقل الرئيسي" className="ml-topnav">
-            {PRIMARY_DESTINATIONS.map(({ to, label, icon: Icon, end }) => (
-              <NavLink key={to} to={to} end={end} className="ml-topnav__link">
-                <Icon size={18} aria-hidden="true" />
-                <span>{label}</span>
-              </NavLink>
+            {PRIMARY_DESTINATIONS.map((d) => (
+              <Link key={d.to} to={d.to} className="ml-topnav__link" aria-current={current === d ? 'page' : undefined}>
+                <d.icon size={18} aria-hidden="true" />
+                <span>{d.label}</span>
+              </Link>
             ))}
           </nav>
           <div className="ml-topbar__end">
@@ -85,6 +85,7 @@ export function AppShell() {
               <Kbd>/</Kbd>
             </Link>
             <IconButton className="ml-search-icon" label="البحث" icon={<Search size={20} />} onClick={() => navigate('/search')} />
+            <NotificationBell />
             <OfflineIndicator />
             <GlobalSaveStatus />
           </div>
@@ -96,11 +97,11 @@ export function AppShell() {
       </main>
 
       <nav aria-label="التنقل الرئيسي" className="ml-tabbar ml-no-print">
-        {PRIMARY_DESTINATIONS.map(({ to, label, icon: Icon, end }) => (
-          <NavLink key={to} to={to} end={end} className="ml-tabbar__link">
-            <Icon size={24} aria-hidden="true" strokeWidth={1.75} />
-            <span>{label}</span>
-          </NavLink>
+        {PRIMARY_DESTINATIONS.map((d) => (
+          <Link key={d.to} to={d.to} className="ml-tabbar__link" aria-current={current === d ? 'page' : undefined}>
+            <d.icon size={24} aria-hidden="true" strokeWidth={1.75} />
+            <span>{d.label}</span>
+          </Link>
         ))}
       </nav>
       {/* the PWA update prompt is mounted in RootLayout (layouts.tsx) so it also shows on /study and /login */}

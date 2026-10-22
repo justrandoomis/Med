@@ -44,6 +44,7 @@ import { buildExplanationPrompt, GENERATOR_VERSION, resolveRules, type RulesPatc
 import { figureOutputSchema, type CompareBody, type ExplainBody, type FigureOutput } from './schema';
 import { termsForTexts } from './terms';
 import { labelParagraph, paragraphOf, richText, shorten } from './text';
+import { pinStubRegion } from '../forks/pin';
 import { normalizeForSearch } from '@medlevo/shared';
 
 // ───────── real-patient requests (§12) ─────────
@@ -87,6 +88,8 @@ interface RegionLite {
 export function anchorRegions(ctx: AppContext, anchor: SelectionAnchor): RegionLite[] {
   const ids = [...new Set(anchor.region_ids ?? [])];
   if (ids.length === 0) return [];
+  // P1-T5 step 2: a selected region of an official lecture held as a stub is pinned into the vault first (forks/pin.ts)
+  for (const id of ids) pinStubRegion(ctx, id);
   const rows = ctx.db.all<RegionLite>(
     `SELECT id, version_id, page_id, kind, text, parent_region_id, bbox_json FROM source_region WHERE id IN (${ids.map(() => '?').join(',')})`,
     ids,

@@ -5,6 +5,13 @@ import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { E2E_ARTIFACTS_DIR, REPO_ROOT, SERVER_DIR, WEB_DIST_DIR, type E2eServerInfo } from './paths';
 
+/**
+ * GATE-1: the E2E servers run with a backup encryption key, as the Render blueprint does (`render.yaml` generates
+ * MEDLEVO_BACKUP_ENCRYPTION_KEY). A server that has had several accounts lets a whole-instance archive leave only
+ * encrypted with it; without one the download is refused (and the backup list says why). Test-only, 32 bytes.
+ */
+export const E2E_BACKUP_ENCRYPTION_KEY = Buffer.from('medlevo-e2e-only-backup-key-32b!').toString('base64');
+
 export interface RunningServer extends E2eServerInfo {
   child: ChildProcess;
   stop(): Promise<void>;
@@ -57,6 +64,7 @@ export async function startServer(project: string, dataDir: string): Promise<Run
       MEDLEVO_SETUP_TOKEN: '',
       MEDLEVO_ALLOW_EXTERNAL_FETCH: 'false',
       MEDLEVO_TRUST_PROXY: 'false',
+      MEDLEVO_BACKUP_ENCRYPTION_KEY: E2E_BACKUP_ENCRYPTION_KEY,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });

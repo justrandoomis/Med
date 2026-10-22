@@ -1,6 +1,6 @@
 // Backups (§49, AC-30): create (server job), list with real sizes and contents, authenticated download, restore
 // verification in a separate directory on the server, delete (with impact). The CLI commands are shown too.
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useId, useState } from 'react';
 import { Archive, Download, ShieldCheck, Trash2 } from 'lucide-react';
 import type { BackupsListResponse, BackupView } from '@medlevo/shared';
 import { Bidi, Button, buttonClass, ConfirmDialog, EmptyState, ErrorState, LoadingState, StatusPill, useToast } from '../../design';
@@ -25,6 +25,7 @@ function BackupRow({ b, onChanged }: { b: BackupView; onChanged: () => void }) {
   const [deleting, setDeleting] = useState(false);
   const [busy, setBusy] = useState(false);
   const job = b.job && (b.job.status === 'queued' || b.job.status === 'running') ? b.job : null;
+  const blockedId = useId();
   return (
     <li className="dl-row">
       <div className="dl-row__text">
@@ -57,6 +58,11 @@ function BackupRow({ b, onChanged }: { b: BackupView; onChanged: () => void }) {
         ) : (
           (b.status === 'completed' || b.status === 'completed_with_warnings') && <p className="dl-meta">لم تُختبر استعادة هذه النسخة بعد. النسخة غير المختبرة ليست ضمانًا.</p>
         )}
+        {b.download_url && b.download_blocked_ar && (
+          <p className="dl-meta" id={blockedId}>
+            {b.download_blocked_ar}
+          </p>
+        )}
         {b.sha256 && (
           <p className="dl-meta dl-hash">
             SHA-256: <code dir="ltr">{b.sha256}</code>
@@ -64,11 +70,17 @@ function BackupRow({ b, onChanged }: { b: BackupView; onChanged: () => void }) {
         )}
       </div>
       <div className="dl-row__actions">
-        {b.download_url && (
-          <a className={buttonClass({ variant: 'secondary', size: 'sm' })} href={b.download_url} download={b.file_name}>
-            <Download size={16} aria-hidden="true" /> نزّل النسخة
-          </a>
-        )}
+        {b.download_url &&
+          (b.download_blocked_ar ? (
+            // GATE-1 (AOS-23.3): the server refuses this download — a disabled control with its reason, never a dead link
+            <Button size="sm" variant="secondary" icon={<Download size={16} />} disabled aria-describedby={blockedId}>
+              نزّل النسخة
+            </Button>
+          ) : (
+            <a className={buttonClass({ variant: 'secondary', size: 'sm' })} href={b.download_url} download={b.file_name}>
+              <Download size={16} aria-hidden="true" /> نزّل النسخة
+            </a>
+          ))}
         {(b.status === 'completed' || b.status === 'completed_with_warnings') && b.download_url && (
           <Button
             size="sm"

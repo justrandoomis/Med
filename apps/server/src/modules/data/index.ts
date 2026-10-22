@@ -23,6 +23,7 @@ import { parseParams, parseQuery } from '../../lib/http';
 import { ENC_SUFFIX, EncryptStream, encryptedSize } from '../../lib/objectstore/encryption';
 import { BACKUP_EXCLUDED } from './backup';
 import {
+  BACKUP_DOWNLOAD_NEEDS_KEY_AR,
   BACKUP_INCLUDED_AR,
   BACKUP_STORAGE_NOTE_AR,
   archiveForDownload,
@@ -89,8 +90,7 @@ export const EXPORT_PDF_NOTE_AR =
 export const EXPORT_PDF_NO_CONVERTER_AR =
   'PDF «الأصل مع كتابتي» يعمل (نسخة مسطحة تحفظ المظهر). تحويل كتاب الدراسة والملاحظات والأسئلة إلى PDF يحتاج LibreOffice على الخادم وهو غير مثبّت هنا — صدّرها Word أو اطبع نسخة HTML.';
 
-export const BACKUP_DOWNLOAD_NEEDS_KEY_AR =
-  'هذه النسخة تضم بيانات كل الحسابات على الخادم، فلا تُنزَّل إلا مشفّرة. اضبط MEDLEVO_BACKUP_ENCRYPTION_KEY على الخادم ثم أعد المحاولة؛ وتُفتح النسخة المشفّرة بالمفتاح نفسه عند الاستعادة.';
+export { BACKUP_DOWNLOAD_NEEDS_KEY_AR } from './backups';
 
 export default async function register(app: FastifyInstance, { ctx }: ModuleOptions): Promise<void> {
   registerBackupJobs(ctx);

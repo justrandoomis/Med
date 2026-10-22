@@ -1,0 +1,101 @@
+/* «أنا» and its screens (P1-T4 step 3) — tokens only, logical properties. */
+.me-account {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-1);
+  margin-bottom: var(--ml-space-4);
+}
+.me-account__name {
+  font-size: var(--ml-text-lg);
+  font-weight: var(--ml-weight-semibold);
+}
+.me-account__user {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-2);
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-sm);
+}
+.me-account__badge {
+  padding-inline: var(--ml-space-2);
+  border: 1px solid var(--ml-color-line-strong);
+  border-radius: var(--ml-radius-pill);
+  font-size: var(--ml-text-xs);
+}
+.me-links + .me-links {
+  margin-top: var(--ml-space-4);
+}
+.me-section {
+  margin-top: var(--ml-space-6);
+}
+.me-section__title {
+  margin-bottom: var(--ml-space-3);
+  font-size: var(--ml-text-lg);
+  line-height: var(--ml-leading-lg);
+}
+.me-note {
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-sm);
+  line-height: var(--ml-leading-sm);
+}
+.me-bullets {
+  margin: 0;
+  padding-inline-start: var(--ml-space-5);
+  font-size: var(--ml-text-sm);
+  line-height: var(--ml-leading-sm);
+}
+.me-device,
+.me-export {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-2) var(--ml-space-3);
+  padding: var(--ml-space-3) var(--ml-space-4);
+}
+.me-device__icon {
+  flex: none;
+  color: var(--ml-color-ink-2);
+}
+.me-device__text,
+.me-export__text {
+  display: flex;
+  flex: 1 1 12rem;
+  flex-direction: column;
+  min-width: 0;
+}
+.me-device__label {
+  font-weight: var(--ml-weight-medium);
+}
+.me-device__meta,
+.me-export__meta {
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-sm);
+}
+.me-device__end {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-2);
+}
+.me-export__warn {
+  color: var(--ml-color-warning);
+  font-size: var(--ml-text-sm);
+}
+.me-meter__head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--ml-space-2);
+}
+.me-meter__title {
+  font-weight: var(--ml-weight-medium);
+}
+.me-meter__value {
+  color: var(--ml-color-ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.me-meter__note {
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-sm);
+}

@@ -1,7 +1,10 @@
 import { useEffect } from 'react';
 import { Link, Outlet, isRouteErrorResponse, useLocation, useNavigate, useRouteError } from 'react-router-dom';
-import { CloudOff, Compass } from 'lucide-react';
+import { CloudOff } from 'lucide-react';
 import { Button, EmptyState, ErrorState, buttonClass } from '../design';
+import { NotFoundScreen } from './NotFoundScreen';
+
+export { NotFoundScreen } from './NotFoundScreen';
 import { setUnauthenticatedHandler } from '../lib/api';
 import { forgetAuth } from '../lib/auth';
 import { capabilitiesStore } from '../lib/capabilities';
@@ -106,30 +109,6 @@ export function RouteErrorScreen() {
           <Link to="/" className={buttonClass({ variant: 'plain' })}>
             الرئيسية
           </Link>
-        }
-      />
-    </div>
-  );
-}
-
-export function NotFoundScreen() {
-  usePageTitle('الصفحة غير موجودة');
-  return (
-    <div className="ml-page">
-      <EmptyState
-        headingLevel={1}
-        icon={<Compass size={28} />}
-        title="هذه الصفحة غير موجودة"
-        description="ربما تغيّر الرابط أو نُقل العنصر. ابدأ من الرئيسية أو من المكتبة."
-        actions={
-          <>
-            <Link to="/" className={buttonClass({ variant: 'primary' })}>
-              الرئيسية
-            </Link>
-            <Link to="/library" className={buttonClass({ variant: 'secondary' })}>
-              المكتبة
-            </Link>
-          </>
         }
       />
     </div>

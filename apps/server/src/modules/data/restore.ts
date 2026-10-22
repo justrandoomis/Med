@@ -10,6 +10,9 @@
 //   overwrites data). Verifies first (same checks), then starts a new server data epoch (clients reset their sync
 //   cursor), revokes every session (a revoked device in the old snapshot must not come back), and moves the
 //   verified directory into place.
+// GATE-1: a multi-user archive also holds every subject space (spaces/<id>.sqlite) and its files; verification checks
+//   each space like a vault (base + space migrations) and refuses an archive whose space registry names a space it does
+//   not hold. Spaces keep their content as archived (no sync epoch: clients never pull from a space).
 // P1-T1: a multi-user archive (system DB + every vault) restores to a complete multi-user data directory (marker
 //   written, every vault gets its own new epoch, every account's sessions revoked). A single-owner archive restores
 //   to medlevo.sqlite as before; its boot check runs on a sandbox copy (this build serves it after the owner migration).
@@ -24,7 +27,7 @@ import { basename, dirname, join, resolve, sep } from 'node:path';
 import { z } from 'zod';
 import { BACKUP_FORMAT, type BackupManifest, type RestoreCheck, type RestoreReport } from '@medlevo/shared';
 import { openDb, toJson, type Db } from '../../db/db';
-import { MIGRATIONS_DIR, readMigrations, SYSTEM_MIGRATIONS_DIR } from '../../db/migrate';
+import { MIGRATIONS_DIR, readMigrations, SPACE_MIGRATIONS_DIR, SYSTEM_MIGRATIONS_DIR } from '../../db/migrate';
 import { MARKER_FILE } from '../../system/layout';
 import { newId } from '../../lib/ids';
 import { BACKUP_DB_PATH, BACKUP_MANIFEST_PATH, BACKUP_ROOT, BACKUP_SYSTEM_PATH, rowCounts } from './backup';
@@ -48,6 +51,8 @@ const rowCountsSchema = z.record(z.string().max(200), z.number().int().nonnegati
 const sha = z.string().regex(/^[0-9a-f]{64}$/);
 /** the single-owner database, or a vault of a multi-user archive (P1-T1) */
 const DB_PATH_RE = /^medlevo-backup\/(medlevo\.sqlite|vaults\/[A-Za-z0-9_-]{1,80}\.sqlite)$/;
+/** a subject space of a multi-user archive (GATE-1) */
+const SPACE_PATH_RE = /^medlevo-backup\/spaces\/[A-Za-z0-9_-]{1,80}\.sqlite$/;
 
 const manifestSchema = z.object({
   format: z.literal(BACKUP_FORMAT),
@@ -84,6 +89,21 @@ const manifestSchema = z.object({
         row_counts: rowCountsSchema,
         sync_head_seq: z.number().int().nonnegative(),
         server_epoch: z.string().max(64).nullable(),
+      }),
+    )
+    .max(1_000_000)
+    .optional(),
+  // GATE-1: every subject space of a multi-user archive (absent in archives made before R1-c)
+  spaces: z
+    .array(
+      z.object({
+        space_id: z.string().regex(/^[A-Za-z0-9_-]{1,80}$/),
+        db_file: z.string().regex(/^[A-Za-z0-9_-]{1,80}\.sqlite$/),
+        path: z.string().regex(SPACE_PATH_RE),
+        sha256: sha,
+        size: z.number().int().nonnegative(),
+        migrations: migrationList,
+        row_counts: rowCountsSchema,
       }),
     )
     .max(1_000_000)
@@ -342,7 +362,7 @@ function onDiskShas(dataDir: string): Set<string> {
  */
 function instanceChecks(extractDir: string, manifest: BackupManifest, onDisk: Set<string>, acceptMissing: boolean, checks: RestoreCheck[]): void {
   const problems: string[] = [];
-  const known = (dir: string, set: 'system' | 'base') => new Map(readMigrations(dir, set).map((m) => [m.name, m.checksum]));
+  const known = (dir: string, set: 'system' | 'base' | 'space') => new Map(readMigrations(dir, set).map((m) => [m.name, m.checksum]));
   const checkDb = (label: string, path: string, entry: { migrations: Array<{ name: string; checksum: string }>; row_counts: Record<string, number> }, build: Map<string, string>) => {
     let db: Db | null = null;
     try {
@@ -370,6 +390,12 @@ function instanceChecks(extractDir: string, manifest: BackupManifest, onDisk: Se
       const same =
         registry.length === archived.length && registry.every((r, i) => r.id === archived[i]!.vault_id && r.user_id === archived[i]!.user_id && r.db_file === archived[i]!.db_file);
       if (!same) problems.push('system: the vault registry does not name exactly the archived vaults');
+      // GATE-1: the space registry names exactly the archived spaces (an archive that left a subject out is refused)
+      const spaceRegistry = sys.all<{ id: string; db_file: string }>('SELECT id, db_file FROM space ORDER BY id');
+      const archivedSpaces = [...(manifest.spaces ?? [])].sort((a, b) => (a.space_id < b.space_id ? -1 : 1));
+      const sameSpaces =
+        spaceRegistry.length === archivedSpaces.length && spaceRegistry.every((r, i) => r.id === archivedSpaces[i]!.space_id && r.db_file === archivedSpaces[i]!.db_file);
+      if (!sameSpaces) problems.push(`system: the space registry does not name exactly the archived spaces (registry ${spaceRegistry.length}, archive ${archivedSpaces.length})`);
     } finally {
       sys.close();
     }
@@ -385,13 +411,25 @@ function instanceChecks(extractDir: string, manifest: BackupManifest, onDisk: Se
       db.close();
     }
   }
+  // GATE-1: every subject space — integrity, foreign keys, base + space migrations of this build, row counts, files
+  const spaceBuild = new Map([...known(MIGRATIONS_DIR, 'base'), ...known(SPACE_MIGRATIONS_DIR, 'space')]);
+  for (const sp of manifest.spaces ?? []) {
+    const db = checkDb(`space ${sp.space_id}`, sp.path, sp, spaceBuild);
+    if (!db) continue;
+    try {
+      const absent = db.all<{ sha256: string }>('SELECT sha256 FROM stored_file').filter((f) => !onDisk.has(f.sha256) && !(acceptMissing && missingAtBackup.has(f.sha256)));
+      if (absent.length) problems.push(`space ${sp.space_id}: ${absent.length} referenced file(s) not in the archive`);
+    } finally {
+      db.close();
+    }
+  }
   add(
     checks,
     'instance',
     problems.length === 0,
     problems.length === 0
-      ? `قاعدة النظام و${manifest.vaults!.length} خزنة سليمة ومطابقة لهذا الإصدار، وسجل الخزائن يطابق النسخة.`
-      : `${problems.length} مشكلة في قاعدة النظام أو الخزائن الأخرى.`,
+      ? `قاعدة النظام و${manifest.vaults!.length} خزنة و${(manifest.spaces ?? []).length} مساحة مادة سليمة ومطابقة لهذا الإصدار، وسجل الخزائن والمساحات يطابق النسخة.`
+      : `${problems.length} مشكلة في قاعدة النظام أو الخزائن الأخرى أو مساحات المواد.`,
     problems.length ? problems.slice(0, 30) : undefined,
   );
 }
@@ -494,7 +532,7 @@ export async function verifyBackup(archivePath: string, opts: VerifyOptions = {}
     const vaultOnly = manifest.layout === 'vault';
     if (vaultOnly) {
       const vs = manifest.vaults ?? [];
-      const ok = !manifest.system && vs.length === 1 && vs[0]!.primary && vs[0]!.path === manifest.db.path && vs[0]!.path === `${BACKUP_ROOT}/vaults/${vs[0]!.db_file}`;
+      const ok = !manifest.system && !manifest.spaces?.length && vs.length === 1 && vs[0]!.primary && vs[0]!.path === manifest.db.path && vs[0]!.path === `${BACKUP_ROOT}/vaults/${vs[0]!.db_file}`;
       if (!ok) {
         add(checks, 'manifest', false, 'ملف manifest.json لنسخة خزنة واحدة غير متّسق.');
         return finish();
@@ -508,12 +546,14 @@ export async function verifyBackup(archivePath: string, opts: VerifyOptions = {}
         primaries.length === 1 &&
         primaries[0]!.path === manifest.db.path &&
         vs.every((v) => v.path === `${BACKUP_ROOT}/vaults/${v.db_file}`) &&
-        new Set(vs.map((v) => v.db_file)).size === vs.length;
+        new Set(vs.map((v) => v.db_file)).size === vs.length &&
+        (manifest.spaces ?? []).every((sp) => sp.path === `${BACKUP_ROOT}/spaces/${sp.db_file}`) &&
+        new Set((manifest.spaces ?? []).map((sp) => sp.db_file)).size === (manifest.spaces ?? []).length;
       if (!consistent) {
         add(checks, 'manifest', false, 'ملف manifest.json لنسخة متعددة الحسابات غير متّسق (قاعدة النظام أو قائمة الخزائن).');
         return finish();
       }
-    } else if (manifest.db.path !== BACKUP_DB_PATH || manifest.system || manifest.vaults) {
+    } else if (manifest.db.path !== BACKUP_DB_PATH || manifest.system || manifest.vaults || manifest.spaces) {
       add(checks, 'manifest', false, 'ملف manifest.json لا يطابق صيغة نسخ MedLevo الاحتياطية.');
       return finish();
     }
@@ -521,12 +561,13 @@ export async function verifyBackup(archivePath: string, opts: VerifyOptions = {}
       checks,
       'manifest',
       true,
-      `نسخة ${manifest.backup_id} من الإصدار ${manifest.app_version}، أُنشئت ${new Date(manifest.created_at).toISOString()}${multi ? `؛ تشمل قاعدة النظام و${manifest.vaults!.length} خزنة` : vaultOnly ? '؛ خزنة حساب واحد وملفاتها' : ''}.`,
+      `نسخة ${manifest.backup_id} من الإصدار ${manifest.app_version}، أُنشئت ${new Date(manifest.created_at).toISOString()}${multi ? `؛ تشمل قاعدة النظام و${manifest.vaults!.length} خزنة و${(manifest.spaces ?? []).length} مساحة مادة` : vaultOnly ? '؛ خزنة حساب واحد وملفاتها' : ''}.`,
     );
     const dbEntries = multi
       ? [
           { path: manifest.system!.path, sha256: manifest.system!.sha256, size: manifest.system!.size },
           ...manifest.vaults!.map((v) => ({ path: v.path, sha256: v.sha256, size: v.size })),
+          ...(manifest.spaces ?? []).map((sp) => ({ path: sp.path, sha256: sp.sha256, size: sp.size })),
         ]
       : [{ path: manifest.db.path, sha256: manifest.db.sha256, size: manifest.db.size }];
 

@@ -45,6 +45,11 @@ export const PUBLIC_ROUTES: ReadonlySet<string> = new Set([
   // P1-T1 step 3: the owner-migration page's address; after the migration it only redirects to the app
   'GET /api/maintenance',
   'HEAD /api/maintenance',
+  // P1-T4 (ADR-0003 §3.10, PRD Q2): registration with a class code / invite link, and the invite-link preview (the
+  // channel title only; the body of a missing route otherwise) — the only two new public routes
+  'POST /api/auth/register',
+  'GET /api/channels/join/preview',
+  'HEAD /api/channels/join/preview',
 ]);
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);

@@ -23,6 +23,14 @@ import { routes as offline } from '../features/offline/routes';
 import { routes as cases } from '../features/cases/routes';
 import { routes as media } from '../features/media/routes';
 import { routes as brain } from '../features/brain/routes';
+// Academic OS wave 2 (P1-T5): empty until their screens are built (wave-2 step 0)
+import { routes as lectures } from '../features/lectures/routes';
+import { routes as copies } from '../features/copies/routes';
+// Academic OS wave 2 (P1-T4 step 3): «القنوات», «التنبيهات», «أنا», «إدارة القنوات» (IA §3.1 five destinations)
+import { routes as channels } from '../features/channels/routes';
+import { routes as notifications } from '../features/notifications/routes';
+import { routes as me } from '../features/me/routes';
+import { routes as admin } from '../features/admin/routes';
 
 /** Every feature's routes (see routeTypes.ts for the placement contract). */
 export const FEATURES: Record<string, FeatureRoutes> = {
@@ -45,6 +53,12 @@ export const FEATURES: Record<string, FeatureRoutes> = {
   cases,
   media,
   brain,
+  lectures,
+  copies,
+  channels,
+  notifications,
+  me,
+  admin,
 };
 
 export function buildRoutes(features: Record<string, FeatureRoutes> = FEATURES): RouteObject[] {

@@ -3,7 +3,7 @@
 import type { ModulePlugin } from '../context';
 import aiModule from './ai';
 import auditModule from './audit';
-import authModule from './auth';
+import { createAuthModule } from './auth';
 import filesModule from './files';
 import jobsModule from './jobs';
 import settingsModule from './settings';
@@ -26,6 +26,12 @@ import brainModule from './brain';
 import versionsModule from './versions';
 import accountsModule from './accounts';
 import platformModule from './platform';
+import channelsModule from './channels';
+import lecturesModule from './lectures';
+import forksModule from './forks';
+import notificationsModule from './notifications';
+import moderationModule, { adminAuditModule } from './moderation';
+import { createChannelJoinVerifier } from './channels/verifier';
 
 export interface ModuleEntry {
   name: string;
@@ -35,7 +41,8 @@ export interface ModuleEntry {
 }
 
 export const MODULES: ModuleEntry[] = [
-  { name: 'auth', prefix: '/api/auth', plugin: authModule },
+  // P1-T4: registration (POST /api/auth/register) behind P1-T1's JoinTokenVerifier, implemented by the channels module
+  { name: 'auth', prefix: '/api/auth', plugin: createAuthModule({ joinVerifier: createChannelJoinVerifier }) },
   // settings owns /api/settings and /api/capabilities
   { name: 'settings', prefix: '/api', plugin: settingsModule },
   { name: 'audit', prefix: '/api/audit', plugin: auditModule },
@@ -65,4 +72,15 @@ export const MODULES: ModuleEntry[] = [
   { name: 'accounts', prefix: '/api/accounts', plugin: accountsModule },
   // Academic OS P1-T1 step 1: whole-deployment views, platform admin only (404 for everyone else)
   { name: 'platform', prefix: '/api/platform', plugin: platformModule },
+  // Academic OS P1-T4 step 1: the university tree, joining, members, codes, invitations and roles (system DB)
+  { name: 'channels', prefix: '/api/channels', plugin: channelsModule },
+  // Academic OS P1-T4 step 2: the in-app inbox, minimal moderation and the scoped audit view (system DB)
+  { name: 'notifications', prefix: '/api/notifications', plugin: notificationsModule },
+  { name: 'moderation', prefix: '/api/moderation', plugin: moderationModule },
+  { name: 'admin', prefix: '/api/admin', plugin: adminAuditModule },
+  // Academic OS P1-T5 step 1: official lectures and the subject's content in subject spaces (/api/spaces/:spaceId/…,
+  // every route on the space-route allow-list, authz/spaceRoutes.ts)
+  { name: 'lectures', prefix: '/api/spaces', plugin: lecturesModule },
+  // Academic OS P1-T5 step 2: study copies of official lectures in the user's own vault (stubs, «ابدأ الدراسة», link)
+  { name: 'forks', prefix: '/api/copies', plugin: forksModule },
 ];

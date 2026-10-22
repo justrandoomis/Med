@@ -42,6 +42,11 @@ describe('tenancy import boundaries', () => {
       'src/modules/data/backups.ts', // the instance backup snapshots the system DB (VACUUM INTO)
       'src/modules/platform/index.ts', // counts only
       'src/modules/accounts/deletion.ts', // step 2: one system transaction per deletion step
+      'src/modules/channels/service.ts', // P1-T4: the channel repository (tree, memberships, codes, roles) on the system DB
+      'src/modules/notifications/service.ts', // P1-T4 step 2: the inbox, preferences and the fan-out queue (system DB)
+      'src/modules/notifications/fanout.ts', // P1-T4 step 2: the fan-out worker writes notification rows in batches
+      'src/modules/moderation/service.ts', // P1-T4 step 2: reports, moderation actions and the scoped audit view
+      'src/modules/forks/system.ts', // P1-T5 step 2: lecture_copy (holders, counts only) and read-only course_follow / space / vault lookups
     ]);
     const users = usersOf(/\bsystem\.db\b/).filter((f) => !f.startsWith('src/system/'));
     expect(users.filter((f) => !allowed.has(f))).toEqual([]);
@@ -67,6 +72,7 @@ describe('tenancy import boundaries', () => {
       'src/modules/accounts/export.ts', // the export job (bound to the user's own vault)
       'src/modules/platform/index.ts', // platform-admin quotas and counts
       'src/modules/data/vault-backup.ts', // platform-admin per-vault backup / restore
+      'src/modules/channels/service.ts', // P1-T4: a subject's space is registered through the registry (registerSpaceInternal)
     ]);
     const users = usersOf(/\.[a-zA-Z]+Internal\(/).filter((f) => !f.startsWith('src/system/'));
     expect(users.filter((f) => !allowed.has(f))).toEqual([]);
@@ -76,7 +82,8 @@ describe('tenancy import boundaries', () => {
     const copyServices = /^src\/modules\/(forks|channels|social|search|evidence|studybook|data)\//;
     const users = usersOf(/\bdbs\.(vault|space)\(/).filter((f) => f !== 'src/context.ts');
     expect(users.filter((f) => !copyServices.test(f))).toEqual([]);
-    expect(users).toEqual([]); // R1-b step 1: no copy service exists yet
+    // P1-T5 step 2: the copy services — stubs from the space, lazy pinning, the purge recount in vaults, promote from a vault
+    expect(users).toEqual(['src/modules/forks/promote.ts', 'src/modules/forks/purgeExtension.ts', 'src/modules/forks/stubs.ts', 'src/modules/search/federation.ts']);
   });
 
   it('database files are opened by path only by the pool, the boot guard, the context, backup / restore and the CLIs', () => {

@@ -1,0 +1,88 @@
+/* «التنبيهات» (P1-T4 step 3) — tokens only; unread is text + a soft row, never colour alone. */
+.nt-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ml-space-3);
+  margin-block: var(--ml-space-4);
+}
+.nt-days {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-5);
+}
+.nt-day {
+  display: flex;
+  flex-direction: column;
+}
+.nt-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ml-space-3);
+  padding: var(--ml-space-3) var(--ml-space-4);
+}
+.nt-row--unread {
+  background: color-mix(in srgb, var(--ml-color-accent-soft) 55%, transparent);
+}
+.nt-row__icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--ml-color-ink-2);
+}
+.nt-row__main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  min-height: var(--ml-touch-target);
+  justify-content: center;
+  color: var(--ml-color-ink);
+  text-decoration: none;
+  border-radius: var(--ml-radius-sm);
+}
+a.nt-row__main:hover .nt-row__text {
+  text-decoration: underline;
+}
+.nt-row__text {
+  overflow-wrap: anywhere;
+}
+.nt-row__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ml-space-2);
+  font-size: var(--ml-text-xs);
+  line-height: var(--ml-leading-xs);
+  color: var(--ml-color-ink-2);
+}
+.nt-row__end {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--ml-space-1);
+}
+.nt-row__end .ml-btn {
+  min-height: var(--ml-touch-target);
+}
+.nt-prefs {
+  margin-top: var(--ml-space-6);
+}
+.nt-prefs > .ml-btn {
+  min-height: var(--ml-touch-target);
+}
+.nt-prefs__panel {
+  margin-top: var(--ml-space-3);
+}
+@media (max-width: 30rem) {
+  .nt-row {
+    flex-wrap: wrap;
+  }
+  .nt-row__end {
+    flex-direction: row;
+    align-items: center;
+    width: 100%;
+    justify-content: flex-end;
+  }
+}

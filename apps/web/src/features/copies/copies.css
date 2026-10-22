@@ -1,0 +1,178 @@
+/* Study copies (P1-T5 step 2): «ابدأ الدراسة», «اربط بالمحاضرة الرسمية», the copy bar in the reader and the official
+   lecture page. Tokens only (light / dark / e-ink come from them), logical properties (RTL), 44 px targets. */
+.cp-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-3);
+  min-inline-size: 0;
+}
+.cp-sheet__line {
+  margin: 0;
+  line-height: var(--ml-leading-md);
+  color: var(--ml-color-ink);
+}
+.cp-sheet__line--muted {
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-sm);
+}
+.cp-sheet__error {
+  margin: 0;
+  color: var(--ml-color-danger);
+  font-size: var(--ml-text-sm);
+}
+.cp-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ml-space-2) var(--ml-space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cp-counts__n {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.cp-candidates {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0;
+}
+.cp-candidates__legend {
+  margin-block-end: var(--ml-space-2);
+  padding: 0;
+  font-weight: 600;
+}
+.cp-candidate {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ml-space-3);
+  min-block-size: 44px;
+  padding: var(--ml-space-3);
+  border: 1px solid var(--ml-color-line);
+  border-radius: var(--ml-radius-md);
+  background: var(--ml-color-paper);
+  cursor: pointer;
+}
+.cp-candidate input[type='radio'] {
+  inline-size: 20px;
+  block-size: 20px;
+  margin: 2px 0 0;
+  flex: none;
+}
+.cp-candidate__text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-1);
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+.cp-candidate__title {
+  font-weight: 600;
+}
+.cp-candidate__basis {
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-sm);
+}
+
+/* the bar in the reader: which copy this is, the official lecture's state, «موجودة رسميًا» */
+.cp-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-2) var(--ml-space-3);
+  padding-block: var(--ml-space-2);
+  padding-inline: var(--ml-space-4);
+  border-block-end: 1px solid var(--ml-color-line);
+  background: var(--ml-color-paper);
+  color: var(--ml-color-ink);
+  font-size: var(--ml-text-sm);
+  min-inline-size: 0;
+}
+.cp-bar__note {
+  margin: 0;
+  color: var(--ml-color-ink-2);
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+.cp-bar .ml-btn {
+  min-block-size: 44px;
+}
+.cp-bar__link {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: 44px;
+  color: var(--ml-color-accent);
+}
+.cp-bar__switch {
+  min-inline-size: 0;
+}
+
+/* the official lecture page */
+.cp-lecture {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-4);
+  max-inline-size: var(--ml-content-max);
+  margin-inline: auto;
+  padding-block: var(--ml-space-4);
+  padding-inline: var(--ml-space-4);
+  color: var(--ml-color-ink);
+  min-inline-size: 0;
+}
+.cp-lecture__subject {
+  margin: 0;
+  color: var(--ml-color-ink-2);
+}
+.cp-lecture__title {
+  margin: 0;
+  font-size: var(--ml-text-2xl);
+  line-height: var(--ml-leading-2xl);
+  overflow-wrap: anywhere;
+}
+.cp-lecture__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-2) var(--ml-space-3);
+  margin: 0;
+  color: var(--ml-color-ink-2);
+}
+.cp-lecture__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ml-space-3);
+}
+.cp-lecture__actions .ml-btn {
+  min-block-size: 44px;
+}
+.cp-lecture__notice {
+  margin: 0;
+  padding: var(--ml-space-3);
+  border: 1px solid var(--ml-color-line);
+  border-radius: var(--ml-radius-md);
+  background: var(--ml-color-paper);
+}
+.cp-lecture__versions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cp-lecture__version {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ml-space-2);
+  padding-block: var(--ml-space-2);
+  border-block-end: 1px solid var(--ml-color-line);
+}
+.cp-lecture__h2 {
+  margin: 0;
+  font-size: var(--ml-text-lg);
+  line-height: var(--ml-leading-lg);
+}

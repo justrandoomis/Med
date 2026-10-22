@@ -20,6 +20,15 @@ export function GoToPage({ pages, pageIndex, onGo, compact }: { pages: readonly 
   // controls next to it. The total stays in the accessible name and in the go-to popover.
   const positionOnly = !!page && page.kind === 'page' && !page.printed_label && !!page.numbered_version;
   const showCount = !(compact && positionOnly);
+  // GATE-1 (WCAG 2.5.3 «label in name», axe serious): the name starts with exactly what the button shows, in its order
+  // (a speech-control user says what they see); the spoken extras — «n من N», the file position hidden on the phone —
+  // follow it. Parentheses are not used for shown words: speech tools drop them.
+  const pageName = (() => {
+    if (!page || !f) return 'الانتقال إلى صفحة';
+    const shown = [f.primary, !compact && f.secondary ? f.secondary : null, showCount ? `${pageIndex + 1}/${total}` : null].filter((x): x is string => !!x);
+    const extras = [showCount ? null : `${pageIndex + 1} من ${total}`, compact && f.secondary ? f.secondary : null].filter((x): x is string => !!x);
+    return `${shown.join('، ')}${showCount ? ` (${pageIndex + 1} من ${total})` : ''}${extras.length ? `، ${extras.join('، ')}` : ''}. الانتقال إلى صفحة`;
+  })();
 
   const submit = (close: () => void) => {
     const r = resolveGoTo(value, pages);
@@ -51,13 +60,22 @@ export function GoToPage({ pages, pageIndex, onGo, compact }: { pages: readonly 
         }
       }}
       trigger={
-        <button type="button" className={cx('wk-pageind', compact && 'wk-pageind--compact')} aria-label={page ? `${fullPageLabel(page)}، ${pageIndex + 1} من ${total}. الانتقال إلى صفحة` : 'الانتقال إلى صفحة'}>
+        <button type="button" className={cx('wk-pageind', compact && 'wk-pageind--compact')} aria-label={pageName}>
           <span className="wk-pageind__primary">{f?.primary ?? '—'}</span>
-          {!compact && f?.secondary && <span className="wk-pageind__secondary">{f.secondary}</span>}
+          {/* the spaces keep the shown words apart in the text (axe, speech tools, copy) — a flex row does not render them */}
+          {!compact && f?.secondary && (
+            <>
+              {' '}
+              <span className="wk-pageind__secondary">{f.secondary}</span>
+            </>
+          )}
           {showCount && (
-            <span className="wk-pageind__count" aria-hidden="true">
-              {pageIndex + 1}/{total}
-            </span>
+            <>
+              {' '}
+              <span className="wk-pageind__count" aria-hidden="true">
+                {pageIndex + 1}/{total}
+              </span>
+            </>
           )}
         </button>
       }

@@ -40,7 +40,7 @@ import { AppError } from '../../lib/errors';
 import { randomToken } from '../../lib/hash';
 import { parseBody, parseParams, parseQuery, parseWith } from '../../lib/http';
 import { buildImpactReport, executePurge, type ImpactCounts } from './purge';
-import { getSourceRow, SourcesService } from './service';
+import { assertNotStub, getSourceRow, SourcesService } from './service';
 import { cleanFileName } from './sniff';
 import { enqueuePendingVersions, type IncomingFile, processingRegistered, registerReplacement, registerUpload, sofficeAvailable } from './upload';
 
@@ -241,6 +241,7 @@ export default async function sourcesModule(app: FastifyInstance, { ctx }: Modul
     const { id: sourceId } = parseParams(idParams, req);
     const src = getSourceRow(ctx, sourceId);
     if (src.deleted_at !== null) throw new AppError('CONFLICT', 'هذا المصدر في سلة المحذوفات. استعده أولًا.', 409);
+    assertNotStub(ctx, sourceId); // (P1-T5 s2 review R-F) before a byte of the upload is read
     const mp = await readMultipart(ctx, req);
     try {
       const f = parseWith(replaceFields, mp.fields, 'body');

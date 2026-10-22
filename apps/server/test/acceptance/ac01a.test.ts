@@ -46,8 +46,8 @@ describe('AC-01a — the personal library for an account with no channel', () =>
     expect(me1.owns_legacy_device_data).toBe(true);
     expect(me2.owns_legacy_device_data).toBe(false);
     expect(me2.is_platform_admin).toBe(false);
-    // P1-T4 adds channels; no channel route exists, so nothing of AC-01 can depend on one
-    expect(t.app.printRoutes({ commonPrefix: false }).split('\n').filter((l) => /channel|universit|college|subscri|billing|pricing|payment/i.test(l))).toEqual([]);
+    // P1-T4 adds channels — only under /api/channels/*, so nothing of AC-01 depends on one (and nothing is a payment)
+    expect(t.app.printRoutes({ commonPrefix: false }).split('\n').filter((l) => /channel|universit|college|subscri|billing|pricing|payment/i.test(l) && !/\/api\/channels\//.test(l))).toEqual([]);
   });
 
   for (const [label, who] of [

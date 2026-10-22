@@ -15,7 +15,9 @@
 import type { AbstainReason, ResolvedScope, ScopeOrigin, SearchedReport, SearchedVersionReport, SourceScope, SourceType } from '@medlevo/shared';
 import { ABSTAIN_REASON_LABELS_AR } from '@medlevo/shared';
 import type { AppContext } from '../../context';
-import { fromJson } from '../../db/db';
+import { type Db, fromJson } from '../../db/db';
+import { stubSpaces } from '../forks/pin';
+import { scopedMatch } from '../search/scopeTokens';
 import { AppError } from '../../lib/errors';
 import { buildQuery, groupCoverage, type Expansion } from './terms';
 
@@ -215,6 +217,39 @@ interface RegionRow {
 // citable = source text: never layout furniture, rejected extractions or model-written (vision) descriptions
 const CITABLE_REGION = `kind NOT IN ('header','footer','table_cell') AND status <> 'rejected' AND COALESCE(text_origin, '') <> 'vision' AND text IS NOT NULL AND trim(text) <> ''`;
 
+/**
+ * Where the text of the scope's versions lives (P1-T5 step 2): the vault's own sources in the vault; a STUB of an
+ * official lecture in its subject's space (chunks, regions and FTS are never copied into a vault — ADR-0003 §3.3).
+ * Stub versions of a subject the user can no longer read are left out (nothing of them is retrieved).
+ */
+interface Part {
+  db: Db;
+  versionIds: string[];
+  /** the space's scoped FTS (scope tokens inside the MATCH) instead of the vault's chunk_fts */
+  scoped: boolean;
+}
+
+function partitionsOf(ctx: AppContext, versionIds: string[]): Part[] {
+  if (versionIds.length === 0) return [];
+  const rows = ctx.db.all<{ id: string; is_stub: number; origin_space_id: string | null }>(
+    `SELECT v.id, s.is_stub, s.origin_space_id FROM source_version v JOIN source s ON s.id = v.source_id WHERE v.id IN (${inList(versionIds.length)})`,
+    versionIds,
+  );
+  const local = rows.filter((r) => r.is_stub !== 1).map((r) => r.id);
+  const parts: Part[] = local.length ? [{ db: ctx.db, versionIds: local, scoped: false }] : [];
+  const stubRows = rows.filter((r) => r.is_stub === 1 && r.origin_space_id);
+  if (stubRows.length) {
+    const spaces = new Map(stubSpaces(ctx).map((s) => [s.spaceId, s.db]));
+    const bySpace = new Map<string, string[]>();
+    for (const r of stubRows) bySpace.set(r.origin_space_id!, [...(bySpace.get(r.origin_space_id!) ?? []), r.id]);
+    for (const [spaceId, ids] of bySpace) {
+      const db = spaces.get(spaceId);
+      if (db) parts.push({ db, versionIds: ids, scoped: true });
+    }
+  }
+  return parts;
+}
+
 export function retrieve(ctx: AppContext, req: RetrieveRequest): RetrieveResult {
   const scope = req.scope;
   if (!scope || !Array.isArray(scope.versionIds)) throw new AppError('OUT_OF_SCOPE', 'الاسترجاع يحتاج نطاق مصادر محسومًا (Source Lock).', 409);
@@ -228,6 +263,9 @@ export function retrieve(ctx: AppContext, req: RetrieveRequest): RetrieveResult 
   const coveredRegions = new Set<string>();
   const dropped: string[] = [];
   let droppedPage: string | null = null;
+  const parts = partitionsOf(ctx, versionIds);
+  const partOf = new Map<string, Part>();
+  for (const p of parts) for (const v of p.versionIds) partOf.set(v, p);
 
   const base = (versionId: string) => {
     const m = meta.get(versionId)!;
@@ -243,14 +281,14 @@ export function retrieve(ctx: AppContext, req: RetrieveRequest): RetrieveResult 
   };
   const pushRegion = (r: RegionRow, kind: CandidateKind) => {
     const key = `region:${r.id}`;
-    if (seen.has(key) || !r.text?.trim()) return;
+    if (seen.has(key) || !r.text?.trim() || !meta.has(r.version_id)) return;
     seen.add(key);
     coveredRegions.add(r.id);
     out.push({ key, kind, ...base(r.version_id), chunk_id: null, region_ids: [r.id], page_ids: r.page_id ? [r.page_id] : [], heading_path: null, text: r.text, rank: null });
   };
   const pushChunk = (c: ChunkRow, kind: CandidateKind, rank: number | null) => {
     const key = `chunk:${c.id}`;
-    if (seen.has(key)) return;
+    if (seen.has(key) || !meta.has(c.version_id)) return;
     const regionIds = fromJson<string[]>(c.region_ids_json, []) ?? [];
     // a chunk whose regions are all already candidates adds nothing
     if (regionIds.length > 0 && regionIds.every((id) => coveredRegions.has(id))) return;
@@ -269,34 +307,43 @@ export function retrieve(ctx: AppContext, req: RetrieveRequest): RetrieveResult 
     });
   };
 
-  // 1) anchors (scope-checked), neighbours, adjacent chunks
+  // 1) anchors (scope-checked), neighbours, adjacent chunks — each in the database that holds its version
   if (versionIds.length > 0 && req.anchor) {
-    const vIn = inList(versionIds.length);
     let anchors: RegionRow[] = [];
     const wanted = [...new Set(req.anchor.region_ids ?? [])].slice(0, 50);
     if (wanted.length > 0) {
-      anchors = ctx.db.all<RegionRow>(
-        `SELECT id, version_id, page_id, kind, reading_order, text FROM source_region
-          WHERE id IN (${inList(wanted.length)}) AND version_id IN (${vIn})`,
-        [...wanted, ...versionIds],
-      );
+      for (const p of parts) {
+        anchors.push(
+          ...p.db.all<RegionRow>(
+            `SELECT id, version_id, page_id, kind, reading_order, text FROM source_region
+              WHERE id IN (${inList(wanted.length)}) AND version_id IN (${inList(p.versionIds.length)})`,
+            [...wanted, ...p.versionIds],
+          ),
+        );
+      }
       const found = new Set(anchors.map((a) => a.id));
       for (const id of wanted) if (!found.has(id)) dropped.push(id);
     } else if (req.anchor.page_id) {
-      anchors = ctx.db.all<RegionRow>(
-        `SELECT id, version_id, page_id, kind, reading_order, text FROM source_region
-          WHERE page_id = ? AND version_id IN (${vIn}) AND ${CITABLE_REGION} ORDER BY reading_order LIMIT 60`,
-        [req.anchor.page_id, ...versionIds],
-      );
-      const pageInScope = ctx.db.get<{ x: number }>(`SELECT 1 AS x FROM source_page WHERE id = ? AND version_id IN (${vIn})`, [req.anchor.page_id, ...versionIds]);
+      for (const p of parts) {
+        anchors.push(
+          ...p.db.all<RegionRow>(
+            `SELECT id, version_id, page_id, kind, reading_order, text FROM source_region
+              WHERE page_id = ? AND version_id IN (${inList(p.versionIds.length)}) AND ${CITABLE_REGION} ORDER BY reading_order LIMIT 60`,
+            [req.anchor.page_id, ...p.versionIds],
+          ),
+        );
+      }
+      const pageInScope = ctx.db.get<{ x: number }>(`SELECT 1 AS x FROM source_page WHERE id = ? AND version_id IN (${inList(versionIds.length)})`, [req.anchor.page_id, ...versionIds]);
       if (!pageInScope) droppedPage = req.anchor.page_id;
     }
+    anchors = anchors.slice(0, 60);
     anchors.sort((a, b) => wanted.indexOf(a.id) - wanted.indexOf(b.id));
     for (const a of anchors) pushRegion(a, 'anchor_region');
     if (neighbours > 0) {
       for (const a of anchors) {
-        if (!a.page_id) continue;
-        const near = ctx.db.all<RegionRow>(
+        const p = partOf.get(a.version_id);
+        if (!a.page_id || !p) continue;
+        const near = p.db.all<RegionRow>(
           `SELECT id, version_id, page_id, kind, reading_order, text FROM source_region
             WHERE page_id = ? AND version_id = ? AND ${CITABLE_REGION} AND parent_region_id IS NULL
               AND reading_order BETWEEN ? AND ? AND id <> ?
@@ -308,7 +355,9 @@ export function retrieve(ctx: AppContext, req: RetrieveRequest): RetrieveResult 
     }
     // chunks containing the anchors → their previous / next chunks (logical context, §52)
     for (const a of anchors) {
-      const holder = ctx.db.get<ChunkRow>(
+      const p = partOf.get(a.version_id);
+      if (!p) continue;
+      const holder = p.db.get<ChunkRow>(
         `SELECT c.id, c.version_id, c.source_id, c.heading_path, c.text, c.region_ids_json, c.page_ids_json, c.prev_chunk_id, c.next_chunk_id, 0 AS rank
            FROM document_chunk c, json_each(c.region_ids_json) j
           WHERE c.version_id = ? AND j.value = ? LIMIT 1`,
@@ -317,30 +366,44 @@ export function retrieve(ctx: AppContext, req: RetrieveRequest): RetrieveResult 
       if (!holder) continue;
       for (const adjId of [holder.prev_chunk_id, holder.next_chunk_id]) {
         if (!adjId) continue;
-        const adj = ctx.db.get<ChunkRow>(
+        const adj = p.db.get<ChunkRow>(
           `SELECT id, version_id, source_id, heading_path, text, region_ids_json, page_ids_json, prev_chunk_id, next_chunk_id, 0 AS rank
-             FROM document_chunk WHERE id = ? AND version_id IN (${vIn})`,
-          [adjId, ...versionIds],
+             FROM document_chunk WHERE id = ? AND version_id IN (${inList(p.versionIds.length)})`,
+          [adjId, ...p.versionIds],
         );
         if (adj) pushChunk(adj, 'adjacent_chunk', null);
       }
     }
   }
 
-  // 2) keyword retrieval, scope-filtered in SQL before ranking
+  // 2) keyword retrieval, scope-filtered in SQL before ranking (official text: scope tokens inside the space's MATCH)
   const built = buildQuery(ctx.db, req.query ?? '', { dropStopwords: true });
   let mode: RetrieveResult['query']['mode'] = 'none';
   if (versionIds.length > 0 && built.and) {
     const limit = Math.max(k * 4, 20);
-    const run = (match: string) =>
-      ctx.db.all<ChunkRow>(
+    const runIn = (p: Part, match: string): ChunkRow[] => {
+      if (p.scoped) {
+        const scoped = scopedMatch(p.versionIds, match);
+        if (!scoped) return [];
+        return p.db.all<ChunkRow>(
+          `SELECT c.id, c.version_id, c.source_id, c.heading_path, c.text, c.region_ids_json, c.page_ids_json, c.prev_chunk_id, c.next_chunk_id,
+                  bm25(chunk_scope_fts) AS rank
+             FROM chunk_scope_fts JOIN document_chunk c ON c.rowid = chunk_scope_fts.rowid
+            WHERE chunk_scope_fts MATCH ?
+            ORDER BY rank LIMIT ?`,
+          [scoped, limit],
+        );
+      }
+      return p.db.all<ChunkRow>(
         `SELECT c.id, c.version_id, c.source_id, c.heading_path, c.text, c.region_ids_json, c.page_ids_json, c.prev_chunk_id, c.next_chunk_id,
                 bm25(chunk_fts) AS rank
            FROM chunk_fts JOIN document_chunk c ON c.rowid = chunk_fts.rowid
-          WHERE chunk_fts MATCH ? AND c.version_id IN (${inList(versionIds.length)})
+          WHERE chunk_fts MATCH ? AND c.version_id IN (${inList(p.versionIds.length)})
           ORDER BY rank LIMIT ?`,
-        [match, ...versionIds, limit],
+        [match, ...p.versionIds, limit],
       );
+    };
+    const run = (match: string) => parts.flatMap((p) => runIn(p, match)).sort((a, b) => a.rank - b.rank);
     let hits = run(built.and);
     mode = 'and';
     if (hits.length < k && built.or && built.or !== built.and) {
@@ -353,7 +416,7 @@ export function retrieve(ctx: AppContext, req: RetrieveRequest): RetrieveResult 
     }
     // defensive: never let anything outside the scope through (the SQL already filtered)
     const allowed = new Set(versionIds);
-    hits = hits.filter((h) => allowed.has(h.version_id));
+    hits = hits.filter((h) => allowed.has(h.version_id) && meta.has(h.version_id));
     const ranked = hits
       .map((h, i) => ({ h, tier: tierOf(meta.get(h.version_id)!.source_type), order: i }))
       .sort((a, b) => a.tier - b.tier || a.order - b.order);

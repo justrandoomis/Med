@@ -12,7 +12,7 @@ import { loadConfig } from '../../src/config';
 import { type ModuleEntry, MODULES } from '../../src/modules';
 import { ALLOW, type AuthzRule, createAuthz, forbidden, HIDDEN, type MembershipProvider, type SpaceMembership } from '../../src/modules/authz/policy';
 import { createSpaceRouteAllowList, isSpaceRouteUrl, SPACE_ROUTE_PREFIX } from '../../src/modules/authz/routes';
-import { SPACE_ROUTES } from '../../src/modules/authz/spaceRoutes';
+import { SPACE_ROUTE_DECLARATIONS, SPACE_ROUTES } from '../../src/modules/authz/spaceRoutes';
 import type { SpaceRouteGrant, Viewer } from '../../src/system/binding';
 import { type AuthHeaders, createTestApp, TEST_ORIGIN, type TestApp } from '../helpers/app';
 import { processTemplateDir } from '../helpers/template';
@@ -80,7 +80,8 @@ describe('policy core', () => {
 
 describe('space-route allow-list (gate 2)', () => {
   it('ships EMPTY in R1-b step 1 and only accepts entries under /api/spaces/:spaceId/', () => {
-    expect(SPACE_ROUTES).toEqual([]);
+    // R1-c: P1-T5 step 1 mounts its declared routes; the allow-list in force is exactly the mounted declarations
+    expect(SPACE_ROUTES).toEqual(SPACE_ROUTE_DECLARATIONS.filter((d) => d.mounted));
     expect(isSpaceRouteUrl('/api/spaces/:spaceId/lectures')).toBe(true);
     expect(isSpaceRouteUrl('/api/spaces')).toBe(false);
     expect(isSpaceRouteUrl('/api/spacesx')).toBe(false);

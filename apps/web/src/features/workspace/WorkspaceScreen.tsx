@@ -38,6 +38,7 @@ import { LayerViewProvider } from './ink/layers/LayerViewProvider';
 import type { LayerSession } from './ink/layers/model';
 import type { MineTabValue, NoteDraft } from './panels/MineTab';
 import { NoteMigrationBanner } from './panels/NoteMigration';
+import { StudyCopyBar } from './copies/StudyCopyBar';
 import { StudyRail, type RailTab } from './panels/StudyRail';
 import { BookCanvas, type BookCanvasHandle, type BookLocation, type LayoutMode } from './reader/BookCanvas';
 import { stepSpread } from './reader/geometry';
@@ -1225,6 +1226,8 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
               }}
             />
           )}
+          {/* (Academic OS P1-T5 step 2) my copy of an official lecture, or «موجودة رسميًا» for a private one */}
+          {!focusMode && <StudyCopyBar sourceId={sourceId} sourceType={detail.source_type ?? null} online={online} />}
           {doc.pdfError && (
             <div className="wk-banner wk-banner--warning" role="alert">
               {doc.pdfError}

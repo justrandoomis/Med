@@ -370,6 +370,46 @@ function shippedBaseMigrations(): string[] {
   return readMigrations().map((m) => m.name);
 }
 
+/**
+ * GATE-1: the base migrations of release R1-a (git d0c8ab4) — the schema the owner migration moves byte for byte
+ * (ADR-0003 §5 release rule). A later release adds base migrations of its own (R1-c: 0163, 0860) that must not run as
+ * part of the move, so an R1-a database reaching such a release is sent through the multi-user release R1-b first
+ * (`MULTI_USER_RELEASE_FIRST`); only a database that lacks one of THESE is «older than R1-a». Frozen: never edit.
+ */
+export const R1A_BASE_MIGRATIONS: readonly string[] = [
+  '0001_core.sql', '0030_job_worker.sql', '0041_sync_actor_visibility.sql', '0050_change_log_actor.sql',
+  '0100_library_trash.sql', '0150_sources_registry.sql', '0160_lecture_identity.sql', '0161_page_map.sql',
+  '0164_version_rendition.sql', '0200_processing.sql', '0210_figure_reading.sql', '0220_page_orientation.sql',
+  '0250_annotations.sql', '0260_note_pages_links_images.sql', '0270_ink_recognition.sql',
+  '0271_annotation_layers.sql', '0272_annotation_revision.sql', '0274_reanchor_copy.sql',
+  '0280_annotation_image_release.sql', '0290_reanchor.sql', '0300_evidence.sql',
+  '0310_content_alert_question_corrected.sql', '0450_studybook.sql', '0460_study_diagram.sql', '0500_questions.sql',
+  '0510_question_occurrence_lookup.sql', '0520_question_derivation.sql', '0530_question_fingerprint_v2.sql',
+  '0550_exams.sql', '0560_written_handwriting.sql', '0570_simulation.sql', '0600_learning.sql', '0650_media.sql',
+  '0660_audio_recording.sql', '0670_visual_source_registry.sql', '0700_control.sql', '0710_quality_ops.sql',
+  '0750_data.sql', '0751_offsite_backup.sql', '0770_cases.sql', '0800_course_brain.sql',
+  '0801_brain_relation_reasons_purge.sql', '0810_brain_algorithms_statements.sql', '0861_attribution.sql',
+];
+
+/** The Arabic reason an R1-a database cannot be moved by THIS release, or null when the base schema is the one shipped. */
+function baseSchemaProblemAr(pending: string[]): { code: 'DB_OLDER_THAN_R1A' | 'MULTI_USER_RELEASE_FIRST'; reason_ar: string } | null {
+  if (!pending.length) return null;
+  const missingR1a = pending.filter((m) => R1A_BASE_MIGRATIONS.includes(m));
+  if (missingR1a.length) {
+    return {
+      code: 'DB_OLDER_THAN_R1A',
+      reason_ar: `قاعدة البيانات أقدم من الإصدار R1-a (ينقصها ${missingR1a.length} ترحيلًا أساسيًا). نقل المالك يجب ألا يغيّر قاعدة البيانات، فثبّت R1-a وشغّله مرة واحدة أولًا ثم حدّث إلى هذا الإصدار.`,
+    };
+  }
+  const names = pending.map((m) => m.replace(/\.sql$/, '')).join('، ');
+  return {
+    code: 'MULTI_USER_RELEASE_FIRST',
+    reason_ar:
+      `قاعدة بياناتك من الإصدار R1-a. هذا الإصدار يضيف ترحيلات أساسية (${names}) لا تُطبَّق أثناء نقل بياناتك إلى الحساب رقم 1، حتى يبقى التراجع ممكنًا. ` +
+      'انشر أولًا إصدار الترقية إلى الحسابات المتعددة (R1-b) وأكمل الترقية حتى «اكتملت الترقية»، ثم حدّث إلى هذا الإصدار. لم يتغير شيء.',
+  };
+}
+
 interface OwnerRow {
   username: string;
   password_hash: string;
@@ -488,11 +528,8 @@ export function planOwnerMigration(config: AppConfig): DryRunReport {
       };
       if (!owner) report.problems_ar.push('قاعدة المالك الواحد لا تحتوي حساب مالك (لم يكتمل الإعداد الأول فيها): لا يوجد حساب لنقله.');
       if (unknown.length) report.problems_ar.push(`قاعدة البيانات أحدث من هذا الإصدار (ترحيلات لا يعرفها: ${unknown.join('، ')}).`);
-      if (pending.length) {
-        report.problems_ar.push(
-          `قاعدة البيانات أقدم من الإصدار R1-a (ينقصها ${pending.length} ترحيلًا أساسيًا). قاعدة الإصدار تمنع أي ترحيل أساسي مع نقل المالك: ثبّت R1-a وشغّله مرة واحدة أولًا ثم حدّث إلى هذا الإصدار.`,
-        );
-      }
+      const schemaProblem = baseSchemaProblemAr(pending);
+      if (schemaProblem) report.problems_ar.push(schemaProblem.reason_ar);
       if (missing) report.warnings_ar.push(`${missing} ملف تشير إليه قاعدة البيانات غير موجود في مخزن الملفات منذ قبل الترقية؛ تُنقل كما هي وتذكر النسخة الاحتياطية ذلك.`);
       // backup archive (database + files, gzip may shrink it) + its extracted copy for the restore check + the system DB
       report.disk.needed_bytes = Math.ceil((report.legacy.size + bytes) * 2.2) + 64 * 1024 * 1024;
@@ -757,12 +794,9 @@ const STEP_RUNNERS: Record<MigrationStep, StepRunner> = {
     if (unknown.length) {
       throw new OwnerMigrationError('DB_NEWER', `قاعدة البيانات أحدث من هذا الإصدار (${unknown.join('، ')}). لم يتغير شيء؛ ثبّت الإصدار الذي أنشأها.`, false);
     }
-    if (pending.length) {
-      throw new OwnerMigrationError(
-        'DB_OLDER_THAN_R1A',
-        `قاعدة البيانات أقدم من الإصدار R1-a (ينقصها ${pending.length} ترحيلًا أساسيًا). نقل المالك يجب ألا يغيّر قاعدة البيانات، فثبّت R1-a وشغّله مرة واحدة أولًا ثم حدّث إلى هذا الإصدار. لم يتغير شيء.`,
-        false,
-      );
+    const schemaProblem = baseSchemaProblemAr(pending);
+    if (schemaProblem) {
+      throw new OwnerMigrationError(schemaProblem.code, schemaProblem.code === 'DB_OLDER_THAN_R1A' ? `${schemaProblem.reason_ar} لم يتغير شيء.` : schemaProblem.reason_ar, false);
     }
     dropEmptyWal(config.dbPath, 'medlevo.sqlite');
     return { fk_violations: fkViolations, migrations: migrations.length };

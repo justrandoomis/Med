@@ -47,8 +47,11 @@
   border-radius: 7px;
 }
 @media (pointer: coarse) {
-  /* the brand is the «الرئيسية» link on phones: 44px touch target (critic round) */
+  /* the brand is the «الرئيسية» link on phones: 44px touch target (critic round) — also when only the mark shows
+     (larger text sizes hide the name; review P1-T4 step 3, R6) */
   .ml-brand {
+    justify-content: center;
+    min-width: var(--ml-touch-target);
     min-height: var(--ml-touch-target);
   }
 }
@@ -99,6 +102,55 @@
   .ml-topnav__link[aria-current='page'] {
     background: var(--ml-color-accent-soft);
     color: var(--ml-color-accent-soft-ink);
+    /* not colour alone (e-ink renders the accent grey/black) */
+    font-weight: var(--ml-weight-semibold);
+  }
+}
+/* Tablets — iPad mini / Air / Pro in portrait and the smaller ones in landscape (48rem – 80rem): the five destinations
+   no longer fit one row beside the brand, search, «التنبيهات» and the save status (a 768 px iPad scrolled sideways,
+   and every iPad at 150 % text — review P1-T4 step 3, R6). The top bar becomes two rows: the brand and the controls,
+   then the five destinations side by side, each 44 px tall. Still one top bar (IA §3.1), no sidebar, nothing hidden.
+   The screens' sticky panels read the bar's height from --ml-topbar-h (scoped to the shell: /study keeps its own). */
+@media (min-width: 48rem) and (max-width: 79.99rem) {
+  .ml-shell {
+    --ml-topbar-h: 6.5rem;
+  }
+  .ml-topbar__inner {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: 3.5rem auto;
+    grid-template-areas:
+      'brand end'
+      'nav nav';
+    column-gap: var(--ml-space-3);
+    row-gap: 0;
+    height: auto;
+  }
+  .ml-brand {
+    grid-area: brand;
+    align-self: center;
+  }
+  .ml-topbar__end {
+    grid-area: end;
+    justify-content: flex-end;
+  }
+  .ml-topnav {
+    grid-area: nav;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: var(--ml-space-1);
+    padding-bottom: var(--ml-space-1);
+  }
+  .ml-topnav__link {
+    justify-content: center;
+    min-width: 0;
+    min-height: var(--ml-touch-target);
+    padding-inline: var(--ml-space-2);
+  }
+  .ml-topnav__link > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 }
 @media (min-width: 64rem) {
@@ -127,6 +179,51 @@
     display: none !important;
   }
 }
+/* iPad and other touch screens wide enough for the top bar: 44 px targets (review P1-T4 step 3, R6) */
+@media (min-width: 48rem) and (pointer: coarse) {
+  .ml-topnav__link,
+  .ml-search-entry {
+    min-height: var(--ml-touch-target);
+  }
+}
+
+/* ── «التنبيهات»: a bell with the unread count as TEXT (IA §3.1, §8.4 — no red numeric badge) ── */
+.ml-bell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  flex: none;
+  min-width: var(--ml-touch-target);
+  min-height: var(--ml-touch-target);
+  padding-inline: var(--ml-space-1);
+  border-radius: var(--ml-radius-md);
+  color: var(--ml-color-ink-2);
+  text-decoration: none;
+}
+.ml-bell:hover {
+  background: var(--ml-color-fill);
+  color: var(--ml-color-ink);
+}
+.ml-bell[aria-current='page'] {
+  background: var(--ml-color-accent-soft);
+  color: var(--ml-color-accent-soft-ink);
+}
+.ml-bell__count {
+  min-width: 1.25rem;
+  padding-inline: 4px;
+  border-radius: var(--ml-radius-pill);
+  background: var(--ml-color-accent-soft);
+  color: var(--ml-color-accent-soft-ink);
+  font-size: var(--ml-text-xs);
+  font-weight: var(--ml-weight-semibold);
+  line-height: 1.25rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+:root[data-eink='on'] .ml-bell__count {
+  outline: 1px solid var(--ml-color-ink);
+}
 
 /* ── main ── */
 .ml-main {
@@ -144,7 +241,8 @@
   bottom: 0;
   z-index: var(--ml-z-nav);
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  /* the five destinations of IA §3.1 */
+  grid-template-columns: repeat(5, 1fr);
   height: calc(var(--ml-tabbar-h) + var(--ml-safe-bottom));
   padding-bottom: var(--ml-safe-bottom);
   padding-inline: var(--ml-safe-right) var(--ml-safe-left);
@@ -159,6 +257,7 @@
   align-items: center;
   justify-content: center;
   gap: 2px;
+  min-width: 0;
   min-height: var(--ml-touch-target);
   color: var(--ml-color-ink-2);
   font-size: var(--ml-text-xs);
@@ -169,6 +268,9 @@
 }
 .ml-tabbar__link[aria-current='page'] {
   color: var(--ml-color-accent);
+  /* not colour alone (e-ink renders the accent black): a bar on the tab's top edge and a heavier label */
+  box-shadow: inset 0 2px 0 currentColor;
+  font-weight: var(--ml-weight-semibold);
 }
 .ml-tabbar__link:active svg {
   transform: scale(0.92);
@@ -189,6 +291,26 @@
 @media (max-width: 30rem) {
   .ml-topbar__inner {
     gap: var(--ml-space-2);
+  }
+  /* with the bell and a larger text size (Settings › حجم النص up to 160 %) the name gives way instead of pushing the bar
+     wider than the screen (AC-22 at 150 %: the page must not scroll sideways) */
+  .ml-brand {
+    flex: 0 1 auto;
+    /* the name may shrink, the «الرئيسية» link never below a 44 px target (review P1-T4 step 3, R6) */
+    min-width: var(--ml-touch-target);
+  }
+  .ml-brand-mark {
+    flex: none;
+  }
+  .ml-brand__name {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: clip;
+  }
+  /* any text size above 100 % («1.15», «1.3», «1.5» …) */
+  :root[data-text-scale^='1.'] .ml-brand__name {
+    display: none;
   }
   .ml-topbar:has(.ml-offline-pill) .ml-brand__name {
     display: none;

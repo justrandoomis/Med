@@ -5,11 +5,13 @@
 // the server.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { CloudOff, FileInput, FileText, NotebookPen, ScanText, Search as SearchIcon, Sparkles } from 'lucide-react';
+import { CloudOff, FileInput, FileText, Landmark, NotebookPen, ScanText, Search as SearchIcon, Sparkles } from 'lucide-react';
 import {
   SEARCH_ORIGIN_LABELS_AR,
   SEARCH_RESULT_TYPE_LABELS_AR,
   SEARCH_RESULT_TYPES,
+  SEARCH_SCOPE_LABELS_AR,
+  SEARCH_SCOPES,
   SOURCE_TYPE_LABELS_AR,
   SOURCE_TYPES,
   type LibraryTreeResponse,
@@ -18,6 +20,7 @@ import {
   type SearchResponse,
   type SearchResult,
   type SearchResultType,
+  type SearchScopeParam,
   type SourceType,
 } from '@medlevo/shared';
 import { Button, Checkbox, EmptyState, ErrorState, LoadingState, SegmentedControl, Select, StatusPill, TextField, type StatusTone } from '../../design';
@@ -28,6 +31,7 @@ import { useOnline } from '../../lib/useOnline';
 import { usePageTitle } from '../../lib/usePageTitle';
 import { isSearchShortcut } from '../../app/shortcuts';
 import { BidiLines, BidiText } from '../evidence/BidiText';
+import { lectureUrl } from '../copies/api';
 import { studyUrl } from '../workspace/nav/SourceNavigation';
 import { searchNotesLocally } from './localSearch';
 import './search.css';
@@ -59,6 +63,8 @@ interface Params {
   types: SearchResultType[];
   sourceType: SourceType | '';
   node: string;
+  /** (P1-T5 step 2) my library, my subjects' official lectures, or both */
+  scope: SearchScopeParam;
 }
 
 function readParams(sp: URLSearchParams): Params {
@@ -70,6 +76,7 @@ function readParams(sp: URLSearchParams): Params {
     types,
     sourceType: (SOURCE_TYPES as readonly string[]).includes(st) ? (st as SourceType) : '',
     node: sp.get('node') ?? '',
+    scope: (SEARCH_SCOPES as readonly string[]).includes(sp.get('scope') ?? '') ? (sp.get('scope') as SearchScopeParam) : 'all',
   };
 }
 
@@ -81,9 +88,14 @@ export function resultsAr(n: number): string {
   return `${n} نتيجة`;
 }
 
-/** Where a result opens: the reader at the exact version/page/region (or the source when that is all we know). */
+/**
+ * Where a result opens: the reader at the exact version/page/region (or the source when that is all we know). A hit in
+ * a subject's official text opens the reader only when the viewer studies that lecture (their copy has the same ids);
+ * otherwise the lecture page, where «ابدأ الدراسة» adds it to their library and opens that page.
+ */
 export function resultHref(r: SearchResult): string | null {
   const l = r.location;
+  if (r.db?.kind === 'space' && !r.db.in_library) return lectureUrl(r.db.space_id, r.db.lecture_id, l?.page_index ?? null);
   if (!l?.source_id) return null;
   return studyUrl({ sourceId: l.source_id, versionId: l.version_id, pageIndex: l.page_index, pageId: l.page_id, regionId: l.region_id });
 }
@@ -106,6 +118,11 @@ export function ResultItem({ r }: { r: SearchResult }) {
         <StatusPill tone={ORIGIN_TONE[r.origin]} icon={ORIGIN_ICON[r.origin]}>
           {SEARCH_ORIGIN_LABELS_AR[r.origin]}
         </StatusPill>
+        {r.db?.kind === 'space' && (
+          <StatusPill tone="info" icon={<Landmark size={14} />}>
+            {`رسمي · ${r.db.subject.title}`}
+          </StatusPill>
+        )}
         {r.location?.page_label_ar && <span className="sr-item__page">{r.location.page_label_ar}</span>}
         {r.source_title && r.type !== 'chunks' && <BidiText as="span" className="sr-item__source" text={r.source_title} />}
         {!href && r.type === 'notes' && <span className="sr-item__page">ملاحظة غير مرتبطة بصفحة</span>}
@@ -189,6 +206,7 @@ export function SearchScreen() {
       if (next.types.length) out.set('types', next.types.join(','));
       if (next.sourceType) out.set('source_type', next.sourceType);
       if (next.node) out.set('node', next.node);
+      if (next.scope !== 'all') out.set('scope', next.scope);
       setSp(out, { replace: true });
     },
     [sp, setSp],
@@ -251,7 +269,7 @@ export function SearchScreen() {
     }
     api
       .get<SearchResponse>('/search', {
-        query: { q: p.q, mode: p.mode, types: p.types.length ? p.types.join(',') : undefined, source_type: p.sourceType || undefined, node_id: p.node || undefined, limit: 20 },
+        query: { q: p.q, mode: p.mode, types: p.types.length ? p.types.join(',') : undefined, source_type: p.sourceType || undefined, node_id: p.node || undefined, scope: p.scope, limit: 20 },
         timeoutMs: 20_000,
       })
       .then((data) => mine === seq.current && setState({ loading: false, error: null, data, local: null }))
@@ -274,6 +292,7 @@ export function SearchScreen() {
           types: params.types.length ? params.types.join(',') : undefined,
           source_type: params.sourceType || undefined,
           node_id: params.node || undefined,
+          scope: params.scope,
           limit: 20,
           cursor: data.next_cursor,
         },
@@ -334,6 +353,17 @@ export function SearchScreen() {
             ]}
           />
           {!semantic.available && <p className="sr-hint">{semantic.reason ?? 'البحث الدلالي غير متاح في هذا الإصدار.'}</p>}
+          {/* (P1-T5 step 2) the official text of my subjects is searched on the server; offline only my notes are */}
+          {online && (
+            <SegmentedControl<SearchScopeParam>
+              label="أين أبحث"
+              showLabel
+              size="sm"
+              value={params.scope}
+              onValueChange={(v) => update({ scope: v })}
+              options={SEARCH_SCOPES.map((v) => ({ value: v, label: SEARCH_SCOPE_LABELS_AR[v] }))}
+            />
+          )}
         </div>
         <details className="sr-filters" open={params.types.length > 0 || !!params.sourceType || !!params.node}>
           <summary>تصفية النتائج</summary>
@@ -394,6 +424,9 @@ export function SearchScreen() {
           </p>
         ))}
         {state.data?.exact_rejected ? <p className="sr-hint">{`استُبعدت ${state.data.exact_rejected} نتيجة لم تطابق العبارة حرفيًا.`}</p> : null}
+        {state.data?.searched?.spaces_truncated ? (
+          <p className="sr-hint">{`في ${state.data.searched.spaces_truncated === 1 ? 'مادة واحدة' : `${state.data.searched.spaces_truncated} مواد`} من موادك نسخ كثيرة تدرسها: بُحث فيها في أفضل النتائج الأولى فقط، فقد تفوتك نتيجة بعيدة.`}</p>
+        ) : null}
 
         {!params.q.trim() ? (
           <EmptyState icon={<SearchIcon size={24} />} title="ابحث في كل ما في مكتبتك" description="اكتب كلمة أو مصطلحًا. الحروف العربية تُطابَق دون التشكيل وصور الهمزة، والمطابقة الحرفية تبحث عن العبارة كما كُتبت." />

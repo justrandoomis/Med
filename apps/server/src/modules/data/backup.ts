@@ -8,6 +8,8 @@
 // Multi-user layout (P1-T1 step 1): the archive holds the system DB (accounts, sessions, devices, registry, job index)
 //   and EVERY registered vault at their data-directory paths (system.sqlite, vaults/<id>.sqlite), plus each referenced
 //   blob once; `manifest.db` describes the primary vault (the requester's / user #1's), `manifest.vaults` all of them.
+//   GATE-1: and EVERY registered subject space (spaces/<id>.sqlite — official lectures, attachments, course-only
+//   explanations) with the blobs its rows reference; `manifest.spaces` lists them.
 //   A single-owner archive (medlevo.sqlite) of releases up to R1-a stays readable and restorable.
 // Vault layout (P1-T1 step 2): ONE account's vault (vaults/<id>.sqlite) and the files it references — the per-vault
 //   backup of the platform admin and the user's own «نسخة من بياناتي»; no system DB, no other account.
@@ -29,6 +31,8 @@ export const BACKUP_DB_PATH = `${BACKUP_ROOT}/medlevo.sqlite`;
 /** P1-T1 multi-user archives: the system DB and every vault, at their data-directory paths */
 export const BACKUP_SYSTEM_PATH = `${BACKUP_ROOT}/system.sqlite`;
 export const backupVaultPath = (dbFile: string): string => `${BACKUP_ROOT}/vaults/${dbFile}`;
+/** GATE-1: every registered subject space, at its data-directory path */
+export const backupSpacePath = (dbFile: string): string => `${BACKUP_ROOT}/spaces/${dbFile}`;
 const DB_FILE_NAME_RE = /^[A-Za-z0-9_-]{1,80}\.sqlite$/;
 export const BACKUP_MANIFEST_PATH = `${BACKUP_ROOT}/manifest.json`;
 export const BACKUP_EXCLUDED = [
@@ -63,11 +67,21 @@ export interface BackupVaultSource {
   primary: boolean;
 }
 
-/** The whole multi-user instance: the system DB and every registered vault (P1-T1). */
+/** One registered subject space to back up (GATE-1: official lectures and explanations live there since R1-c). */
+export interface BackupSpaceSource {
+  id: string;
+  dbFile: string;
+  /** absolute path of the live file (opened read-consistently by path; never through the pool) */
+  path: string;
+}
+
+/** The whole multi-user instance: the system DB, every registered vault (P1-T1) and every subject space (GATE-1). */
 export interface BackupInstance {
   systemPath: string;
   systemDb?: Db;
   vaults: BackupVaultSource[];
+  /** every space of the registry; omitted = none (an instance before R1-c) */
+  spaces?: BackupSpaceSource[];
 }
 
 export interface CreateBackupOptions extends BackupPaths {
@@ -243,6 +257,7 @@ export async function createBackup(opts: CreateBackupOptions): Promise<BackupRes
     let manifestDb: BackupManifest['db'];
     let manifestSystem: BackupManifest['system'];
     let manifestVaults: BackupManifest['vaults'];
+    let manifestSpaces: BackupManifest['spaces'];
     const archiveDbs: Array<{ path: string; abs: string; sha256: string }> = [];
     const fileRowsAll: Array<{ id: string; sha256: string; size: number; storage_key: string }> = [];
     let totalRows = 0;
@@ -295,6 +310,21 @@ export async function createBackup(opts: CreateBackupOptions): Promise<BackupRes
         fileRowsAll.push(...v.fileRows);
         totalRows += Object.values(v.row_counts).reduce((a, b) => a + b, 0);
         if (src === primary) manifestDb = { path, sha256: v.sha256, size: v.size, migrations: v.migrations, row_counts: v.row_counts, sync_head_seq: v.sync_head_seq, server_epoch: v.server_epoch };
+      }
+      // GATE-1: every subject space (official lectures, attachments, explanations) and the blobs its rows reference
+      manifestSpaces = [];
+      const spaces = inst.spaces ?? [];
+      if (spaces.length) mkdirSync(join(work, 'spaces'), { recursive: true, mode: 0o700 });
+      for (const src of spaces) {
+        checkAbort();
+        if (!DB_FILE_NAME_RE.test(src.dbFile)) throw new ArchiveError('WRITE_FAILED', 'اسم ملف مساحة مادة غير صالح في السجل؛ لم تُنشأ نسخة.');
+        const out = join(work, 'spaces', src.dbFile);
+        const v = await snapshotVault(undefined, src.path, out, warnings, ` (مساحة ${src.id})`);
+        const path = backupSpacePath(src.dbFile);
+        manifestSpaces.push({ space_id: src.id, db_file: src.dbFile, path, sha256: v.sha256, size: v.size, migrations: v.migrations, row_counts: v.row_counts });
+        archiveDbs.push({ path, abs: out, sha256: v.sha256 });
+        fileRowsAll.push(...v.fileRows);
+        totalRows += Object.values(v.row_counts).reduce((a, b) => a + b, 0);
       }
     }
     checkAbort();
@@ -368,6 +398,7 @@ export async function createBackup(opts: CreateBackupOptions): Promise<BackupRes
       manifest.layout = 'multi_user';
       manifest.system = manifestSystem!;
       manifest.vaults = manifestVaults!;
+      manifest.spaces = manifestSpaces!;
     }
     await writer.addBuffer(BACKUP_MANIFEST_PATH, Buffer.from(JSON.stringify(manifest, null, 2), 'utf8'), now);
     const archive = await writer.finish();

@@ -404,3 +404,19 @@ write, and a vector copy of the original needs a PDF writer; nothing native).
   (real server, phone + desktop: the summary before the file, then a downloaded file starting `%PDF-`).
 * Not verified: Acrobat / Preview rendering (pdftoppm / poppler only); PDF/A; very large PDFs (the whole file is held in
   memory while drawn).
+
+## GATE-1 — Phase 1 exit gate (2026-10-22)
+
+* **Subject spaces in whole-instance backups (data loss on restore, fixed).** The app's backup job and `npm run backup`
+  snapshotted `system.sqlite` and the vaults only, so an archive made with any subject held no official lecture,
+  version, attachment or published explanation, and its restore check failed on the registry. `backup.ts` now
+  snapshots every registered space (`medlevo-backup/spaces/<file>`, `manifest.spaces[]`) and the files it references;
+  `restore.ts` checks each space with the base + space migrations, its files, and that the archive holds exactly the
+  spaces the archived registry names (otherwise refused, never restored half); the CLI reads the registry from
+  `system.sqlite`. Contract: `BackupManifest.spaces?` (additive). Test: `test/data/gate1-space-backup.test.ts`.
+* **The download says when it is unavailable.** `BackupView.download_blocked_ar` (additive) carries the same reason the
+  download route gives (several databases ever + no `MEDLEVO_BACKUP_ENCRYPTION_KEY` → 409); «بياناتك» shows a disabled
+  «نزّل النسخة» with it instead of a link that ended in nothing; the restore check stays available. Tests:
+  `test/data/gate1-backup-download.test.ts`, web `features/offline/screens.test.tsx` «GATE-1 …». The E2E servers run
+  with a test key (as `render.yaml` generates one) and `e2e/g7-ac30-restore.spec.ts` restores the `.mlenc` archive.
+

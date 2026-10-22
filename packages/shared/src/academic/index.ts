@@ -12,3 +12,11 @@ export * from './versions';
 // P1-T2: authorship layers (document keys, layer access R1–R6, layer copy, history) and ink data v2 (packed points)
 export * from './layers';
 export * from './ink-codec';
+// Wave-2 step 0 (P1-T4 and P1-T5 together, BUILD_PLAN §3.6/§3.7): channels, inbox, moderation (P1-T4); official
+// lectures, study copies, course-only publications (P1-T5)
+export * from './channels-api';
+export * from './notifications-api';
+export * from './moderation-api';
+export * from './lectures-api';
+export * from './copies-api';
+export * from './publications-api';

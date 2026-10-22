@@ -232,6 +232,21 @@ export interface BackupManifest {
     sync_head_seq: number;
     server_epoch: string | null;
   }>;
+  /**
+   * (GATE-1, additive) `layout: 'multi_user'`: every registered subject space (official lectures, attachments,
+   * course-only explanations) at its data-directory path `spaces/<db_file>`; the files its rows reference are in
+   * `files` with the vaults' (each blob once). Absent in archives made before R1-c — those come from an instance with
+   * no space, and verification refuses an archive whose system registry names a space it does not hold.
+   */
+  spaces?: Array<{
+    space_id: string;
+    db_file: string;
+    path: string;
+    sha256: string;
+    size: number;
+    migrations: Array<{ name: string; checksum: string }>;
+    row_counts: Record<string, number>;
+  }>;
 }
 
 export interface BackupView {
@@ -251,6 +266,11 @@ export interface BackupView {
   verification: { status: 'passed' | 'failed'; verified_at: number; summary_ar: string; checks_failed: string[] } | null;
   /** authenticated download (only for finished archives that exist) */
   download_url: string | null;
+  /**
+   * GATE-1: set when the archive exists but this server refuses to let it leave (an archive of several accounts without
+   * MEDLEVO_BACKUP_ENCRYPTION_KEY) — the reason, shown on a disabled download control. The restore check still works.
+   */
+  download_blocked_ar?: string | null;
 }
 
 export interface BackupsListResponse {

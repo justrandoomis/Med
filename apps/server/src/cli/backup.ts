@@ -40,14 +40,17 @@ function fromInitCwd(p: string): string {
  * server may be running). The primary — whose data_backup table lists the archive — is user #1's (the first platform
  * admin's) vault.
  */
-function readInstance(systemDbPath: string, vaultsDir: string): BackupInstance {
+function readInstance(systemDbPath: string, vaultsDir: string, spacesDir: string): BackupInstance {
   const sys = openDb(systemDbPath);
   try {
     const admin = sys.get<{ id: string }>(`SELECT id FROM user_account WHERE is_platform_admin = 1 ORDER BY created_at, id LIMIT 1`)?.id ?? null;
     const rows = sys.all<{ id: string; user_id: string; db_file: string }>(`SELECT id, user_id, db_file FROM vault WHERE status IN ('active','locked') ORDER BY created_at, id`);
+    // GATE-1: every subject space too (official lectures and explanations live there)
+    const spaces = sys.all<{ id: string; db_file: string }>(`SELECT id, db_file FROM space ORDER BY id`);
     return {
       systemPath: systemDbPath,
       vaults: rows.map((r) => ({ id: r.id, userId: r.user_id, dbFile: r.db_file, path: join(vaultsDir, r.db_file), primary: r.user_id === admin })),
+      spaces: spaces.map((s) => ({ id: s.id, dbFile: s.db_file, path: join(spacesDir, s.db_file) })),
     };
   } finally {
     sys.close();
@@ -77,7 +80,7 @@ async function main(): Promise<number> {
   const config = loadConfig(env, { cwd: process.env.INIT_CWD ?? process.cwd() });
   // P1-T1: a multi-user data directory (system.sqlite + vaults/) is backed up whole — the system DB and every vault;
   // a single-owner one (medlevo.sqlite, R1-a and earlier) exactly as before
-  const instance = existsSync(config.systemDbPath) ? readInstance(config.systemDbPath, config.vaultsDir) : null;
+  const instance = existsSync(config.systemDbPath) ? readInstance(config.systemDbPath, config.vaultsDir, config.spacesDir) : null;
   if (!instance && !existsSync(config.dbPath)) {
     process.stderr.write(`MedLevo backup: no database at ${config.dbPath} or ${config.systemDbPath}. Nothing was backed up.\n`);
     return 2;
@@ -88,7 +91,7 @@ async function main(): Promise<number> {
   const outDir = outArg ? fromInitCwd(outArg) : serverBackups;
   const started = Date.now();
   process.stdout.write(
-    instance ? `MedLevo backup: snapshot of ${config.systemDbPath} and ${instance.vaults.length} vault(s) in ${config.vaultsDir}\n` : `MedLevo backup: snapshot of ${config.dbPath}\n`,
+    instance ? `MedLevo backup: snapshot of ${config.systemDbPath}, ${instance.vaults.length} vault(s) in ${config.vaultsDir} and ${instance.spaces?.length ?? 0} subject space(s) in ${config.spacesDir}\n` : `MedLevo backup: snapshot of ${config.dbPath}\n`,
   );
   let lastStage = '';
   const res = await createBackup({

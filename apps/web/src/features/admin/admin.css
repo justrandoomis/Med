@@ -1,0 +1,109 @@
+/* «إدارة القنوات» (P1-T4 step 3) — tokens only; logical properties; 44 px targets on touch. */
+.ad-host__crumbs {
+  max-width: var(--ml-content-max);
+  margin-inline: auto;
+  padding: var(--ml-space-4) max(var(--ml-space-4), var(--ml-safe-right)) 0 max(var(--ml-space-4), var(--ml-safe-left));
+}
+.ad-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-4);
+}
+.ad-scope {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+  padding: var(--ml-space-3) var(--ml-space-4);
+  border-radius: var(--ml-radius-md);
+  background: var(--ml-color-paper-2);
+}
+.ad-scope__line {
+  font-size: var(--ml-text-sm);
+  overflow-wrap: anywhere;
+}
+.ad-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-2);
+}
+.ad-two {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: var(--ml-space-3);
+}
+.ad-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--ml-space-3);
+  padding: var(--ml-space-4);
+  border-radius: var(--ml-radius-lg);
+  background: var(--ml-color-paper);
+  box-shadow: var(--ml-shadow-paper);
+}
+.ad-card > .ml-field,
+.ad-card > .ad-two {
+  align-self: stretch;
+}
+.ad-card--new {
+  outline: 2px solid var(--ml-color-accent);
+  outline-offset: 2px;
+}
+.ad-card__title {
+  font-size: var(--ml-text-lg);
+  line-height: var(--ml-leading-lg);
+}
+.ad-tree__row,
+.ad-member,
+.ad-report {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-2) var(--ml-space-3);
+  padding-block: var(--ml-space-2);
+  padding-inline: var(--ml-space-4);
+  min-height: 3.25rem;
+}
+.ad-tree__text,
+.ad-member__text {
+  display: flex;
+  flex: 1 1 12rem;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ad-tree__title,
+.ad-member__name {
+  font-weight: var(--ml-weight-medium);
+  overflow-wrap: anywhere;
+}
+.ad-tree__meta,
+.ad-member__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-1) var(--ml-space-2);
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-sm);
+  line-height: var(--ml-leading-sm);
+}
+.ad-tree__actions,
+.ad-member__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ml-space-1);
+}
+.ad-report__note {
+  padding: var(--ml-space-1) var(--ml-space-2);
+  border-inline-start: 3px solid var(--ml-color-line-strong);
+  color: var(--ml-color-ink);
+  font-size: var(--ml-text-sm);
+  overflow-wrap: anywhere;
+}
+@media (pointer: coarse) {
+  .ad-member__actions .ml-btn,
+  .ad-tree__actions .ml-icon-btn {
+    min-height: var(--ml-touch-target);
+  }
+}

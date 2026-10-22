@@ -1,0 +1,259 @@
+/* Course-only explanations (P1-T5 step 3): the lecture page's «الشروحات» tab, the publication page, the publish and
+   report dialogs and the page previews. Tokens only (light / dark / e-ink come from them), logical properties (RTL),
+   44 px targets; the student label is text, never colour alone. */
+.pb-banner {
+  margin: 0;
+  padding: var(--ml-space-3);
+  border: 1px solid var(--ml-color-line);
+  border-inline-start: 4px solid var(--ml-color-warning);
+  border-radius: var(--ml-radius-md);
+  background: var(--ml-color-paper);
+  color: var(--ml-color-ink);
+  line-height: var(--ml-leading-md);
+}
+.pb-tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-3);
+  min-inline-size: 0;
+  padding-block: var(--ml-space-3);
+}
+.pb-tab__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-2) var(--ml-space-3);
+}
+.pb-tab__actions .ml-btn,
+.pb-update .ml-btn {
+  min-block-size: 44px;
+}
+.pb-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.pb-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-1);
+  min-block-size: 44px;
+  padding: var(--ml-space-3);
+  border: 1px solid var(--ml-color-line);
+  border-radius: var(--ml-radius-md);
+  background: var(--ml-color-paper);
+  color: var(--ml-color-ink);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.pb-card:hover {
+  border-color: var(--ml-color-accent);
+}
+.pb-card:focus-visible {
+  outline: 2px solid var(--ml-color-focus);
+  outline-offset: 2px;
+}
+.pb-card__title {
+  font-weight: 600;
+}
+.pb-card__meta,
+.pb-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ml-space-1) var(--ml-space-3);
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-sm);
+}
+.pb-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-4);
+  max-inline-size: 960px;
+  margin-inline: auto;
+  padding: var(--ml-space-4);
+  min-inline-size: 0;
+}
+.pb-page__title {
+  margin: 0;
+  font-size: var(--ml-text-xl);
+  line-height: var(--ml-leading-sm);
+  overflow-wrap: anywhere;
+}
+.pb-page__h2 {
+  margin: 0;
+  font-size: var(--ml-text-lg);
+}
+.pb-notice {
+  margin: 0;
+  padding: var(--ml-space-3);
+  border: 1px solid var(--ml-color-line);
+  border-inline-start: 4px solid var(--ml-color-danger);
+  border-radius: var(--ml-radius-md);
+  background: var(--ml-color-paper);
+  line-height: var(--ml-leading-md);
+}
+.pb-versions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.pb-versions li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ml-space-1) var(--ml-space-3);
+  padding-block: var(--ml-space-2);
+  border-block-end: 1px solid var(--ml-color-line);
+}
+.pb-previews {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: var(--ml-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.pb-preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-1);
+  min-inline-size: 0;
+}
+.pb-preview__frame {
+  position: relative;
+  inline-size: 100%;
+  aspect-ratio: 210 / 297;
+  border: 1px solid var(--ml-color-line);
+  border-radius: var(--ml-radius-sm);
+  background: var(--ml-color-paper);
+  overflow: hidden;
+}
+.pb-preview__frame img,
+.pb-preview__frame svg {
+  position: absolute;
+  inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
+}
+.pb-preview__frame img {
+  object-fit: contain;
+}
+.pb-preview__ink {
+  fill: none;
+  stroke: var(--ml-color-accent);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+.pb-preview__box {
+  fill: none;
+  stroke: var(--ml-color-accent);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+.pb-preview__mark {
+  fill: none;
+  stroke: var(--ml-color-ink);
+  vector-effect: non-scaling-stroke;
+}
+.pb-preview__mark--added {
+  stroke-width: 3;
+}
+.pb-preview__mark--changed {
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+}
+.pb-preview__mark--removed {
+  stroke: var(--ml-color-danger);
+  stroke-width: 2;
+  stroke-dasharray: 2 3;
+}
+.pb-preview__caption {
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-sm);
+}
+.pb-choices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0;
+}
+.pb-choices__legend {
+  margin-block-end: var(--ml-space-2);
+  padding: 0;
+  font-weight: 600;
+}
+.pb-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ml-space-3);
+  min-block-size: 44px;
+  padding: var(--ml-space-3);
+  border: 1px solid var(--ml-color-line);
+  border-radius: var(--ml-radius-md);
+  background: var(--ml-color-paper);
+  cursor: pointer;
+}
+.pb-choice input {
+  inline-size: 20px;
+  block-size: 20px;
+  margin: 2px 0 0;
+  flex: none;
+}
+.pb-choice__text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-1);
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+.pb-choice__title {
+  font-weight: 600;
+}
+.pb-choice__hint {
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-sm);
+}
+.pb-update {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-2) var(--ml-space-3);
+  padding: var(--ml-space-2) var(--ml-space-3);
+  border: 1px solid var(--ml-color-line);
+  border-inline-start: 4px solid var(--ml-color-accent);
+  border-radius: var(--ml-radius-md);
+  background: var(--ml-color-paper);
+}
+.pb-update__text {
+  margin: 0;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+:root[data-eink='on'] .pb-preview__ink,
+:root[data-eink='on'] .pb-preview__box,
+:root[data-eink='on'] .pb-preview__mark--removed {
+  stroke: var(--ml-color-ink);
+}
+:root[data-eink='on'] .pb-banner,
+:root[data-eink='on'] .pb-notice,
+:root[data-eink='on'] .pb-update {
+  border-inline-start-color: var(--ml-color-ink);
+}
+@media (max-width: 480px) {
+  .pb-page {
+    padding: var(--ml-space-3);
+  }
+  .pb-previews {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

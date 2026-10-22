@@ -27,6 +27,7 @@ import {
   type SearchResponse,
   type SearchResult,
   type SearchResultType,
+  type SearchScopeParam,
   type SourceType,
 } from '@medlevo/shared';
 import type { AppContext } from '../../context';
@@ -34,6 +35,8 @@ import { fromJson } from '../../db/db';
 import { locatorLabelAr, type PageForLabel } from '../evidence/evidence';
 import { pageLabelAr } from '../sources/pagelabel';
 import { buildQuery, type BuiltQuery } from '../evidence/terms';
+import type { Viewer } from '../../system/binding';
+import { federatedLists, fuse } from './federation';
 
 export interface SearchParams {
   q: string;
@@ -45,6 +48,10 @@ export interface SearchParams {
   version_id?: string;
   limit: number;
   offset: number;
+  /** P1-T5 step 2: federation (default «all»: the vault and the subjects the viewer belongs to) */
+  scope?: SearchScopeParam;
+  /** the signed-in viewer (null: no federation — e.g. a tool process) */
+  viewer?: Viewer | null;
 }
 
 interface Scored {
@@ -571,11 +578,23 @@ export function universalSearch(ctx: AppContext, p: SearchParams): SearchRespons
   // sources first, then the owner's own notes, then generated content (never ranked as a source)
   const typeOrder: Record<SearchResultType, number> = { chunks: 0, questions: 1, transcripts: 2, notes: 3, handwriting: 4, generated: 5 };
   all.sort((a, b) => a.group - b.group || a.rank - b.rank || typeOrder[a.result.type] - typeOrder[b.result.type]);
-  const page = all.slice(p.offset, p.offset + p.limit);
-  base.results = page.map((s) => s.result);
-  base.next_cursor = all.length > p.offset + p.limit ? encodeCursor(p.offset + p.limit) : null;
+  // P1-T5 step 2: official text of the subjects the viewer belongs to, merged by reciprocal-rank fusion (§11.1)
+  const scope = p.scope ?? 'all';
+  const vaultList = scope === 'subjects' ? [] : all.map((s) => s.result);
+  let merged = vaultList;
+  if (p.viewer && types.includes('chunks') && !p.node_id && !(p.version_id && !p.source_id)) {
+    const fed = federatedLists(ctx, { viewer: p.viewer, scope, q: p.q, mode: p.mode, built, sourceType: p.source_type, sourceId: p.source_id, fetch });
+    counters.exactRejected += fed.exactRejected;
+    base.searched = { scope, vault: scope !== 'subjects', spaces: fed.report.spaces, spaces_truncated: fed.report.truncated };
+    if (fed.lists.length) merged = fuse([vaultList, ...fed.lists].filter((l) => l.length > 0));
+  } else {
+    base.searched = { scope, vault: scope !== 'subjects', spaces: 0, spaces_truncated: 0 };
+  }
+  const page = merged.slice(p.offset, p.offset + p.limit);
+  base.results = page;
+  base.next_cursor = merged.length > p.offset + p.limit ? encodeCursor(p.offset + p.limit) : null;
   if (p.mode === 'exact') base.exact_rejected = counters.exactRejected;
-  if (all.length === 0 && built.expansions.length === 0 && p.mode === 'keyword') {
+  if (merged.length === 0 && built.expansions.length === 0 && p.mode === 'keyword') {
     notices.push('لا نتائج. جرّب كلمات أقل، أو أضف مرادفًا أو اختصارًا إلى قاموس مصطلحاتك.');
   }
   return base;

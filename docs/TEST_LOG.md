@@ -1266,3 +1266,457 @@ line), `docs/modules/ink.md`, `docs/modules/tenancy.md`. No migration was added 
 | `e2e/aos-p1-two-users-one-browser.spec.ts` | no registration route until P1-T4 |
 | A live AI provider, G10 phase-2 reflow with a real reader | no `ANTHROPIC_API_KEY`; fake providers only |
 | `MEDLEVO_PERF=1` suites, Safari / Firefox, screen readers, axe-core, CI on a GitHub runner | not available here / no change to the measured paths |
+
+## Academic OS wave-2 step 0 — contracts of P1-T4 and P1-T5 (2026-10-21, gates 17:44 → 18:20 UTC, run in this container; no other track was running)
+
+Code under test: `HEAD` 514f356 (release R1-b) plus this step's uncommitted files. Commands from the repository root with
+`NODE_OPTIONS='--disable-warning=ExperimentalWarning'`; logs under the session scratchpad (`step0/`), Playwright output in
+`step0/e2e-results` (`--output`, `--reporter=list`). Contracts and seams only — no route, table or screen is added.
+
+| # | command | exit | result |
+|---|---|---|---|
+| 0 | new tests before the code (17:35) | 1 | red: shared contract test (modules missing), server declarations test 10 / 10 failed, both web tests (modules missing) |
+| 1 | `npm run typecheck` | 0 | shared, server, web, e2e clean |
+| 2 | `npm run lint` | 0 | 0 problems |
+| 3 | `npm test` | 0 | shared **12 files, 193 passed** · server **200 files passed, 7 skipped; 2 017 passed**, 7 skipped · web **167 files passed, 1 skipped; 1 083 passed**, 1 skipped (3 293 passed = R1-b's 3 192 + 101 new) |
+| 4 | `npm run build` | 0 | built; PWA `generateSW`, 283 precache entries (unchanged: the new route tables are empty) |
+| 5 | `E2E_BUILD=0 npx playwright test --output <scratch>/step0/e2e-results --reporter=list` (17:54 → 18:20) | 0 | **146 passed, 16 skipped** (perf 12 opt-in; `aos-p1-layers` 2, `h3-reader-notes` 1 and `r1b-final-critic` 1 run on one project only, phone or desktop), 0 failed — 162 tests, phone + desktop, 26.2 min; the same 146 passed as release R1-b |
+
+New tests (all passing): shared `test/academic-wave2-step0` 84 (every exported zod schema of the six contracts has a
+fixture, parses its valid inputs, refuses its invalid ones and round-trips `parse(parse(x)) = parse(x)` also through
+JSON; Phase 1 limits — course-only `explanation` publications, reports on publications, hide / restore / dismiss, no
+collaborative copy; AC-20 bidi controls refused in display text; strict notification payloads refuse private text;
+groups under 5 read «أقل من 5»; barrel) · server `test/lectures/space-routes.contract` 10 (40 P1-T5 space routes
+declared with module, step, minimum access and authz check; none mounted, so the allow-list in force stays empty; all
+mountable together; no Phase 2 guest access; moderator-only routes; contributor routes narrowed by a named check; the
+running server mounts exactly the routes marked mounted) · web `test/copies/wave2-step0-routes` 3 (the app route table
+imports `features/lectures` and `features/copies`, which add no route yet; every route of every feature carries a
+screen) · `test/channels/admin-sections` 4 (the «إدارة القنوات» section plan, owners, order and who sees each section;
+registry empty until a track registers a built screen).
+
+Not run: any phone, iPad or pen; Render; Cloudflare R2; a second browser engine — none is needed for contracts.
+
+## Wave-2 step 0 — adversarial review of the P1-T4 / P1-T5 contracts (2026-10-21, gates 18:37 → 18:48 UTC, run in this container; no other track was running)
+
+Reviewer of both tracks' step-0 contracts together (BUILD_PLAN §1.1, §1.2). Code under test: `HEAD` 514f356 plus the
+step-0 files and this review's fixes (uncommitted). Every changed file was read against ARCHITECTURE_DELTA §4–§7, §12,
+§13, PRD §4.3 and the P1-T4 / P1-T5 rows, IA §4.1–§4.10, and the existing auth, files, binding and authz code. Each
+defect below was reproduced by a test that failed on the builder's version (21 of the 30 tests in
+`packages/shared/test/academic-wave2-step0.review.test.ts` failed for the defect at 18:31 — one more failed because the
+reviewer's own fixture assumed UTF-16 lengths, while zod counts code points, and was corrected first; the other 8 assert
+refusals that already held; the type-level parts of R8 / R9 failed `tsc`), then fixed.
+
+| # | sev | defect | fix · test |
+|---|---|---|---|
+| R1 | major | `pushSubscriptionSchema` took any `https://host/…` endpoint — the server POSTs every push message there, so a signed-in user could aim it at `169.254.169.254`, `127.0.0.1`, `[::1]`, `2130706433`, `localhost`, `*.internal`, a non-default port or `good.host@10.0.0.5` (SSRF once push sending exists) | `isPublicPushEndpoint()` (WHATWG URL: https, default port, no user info, no IP literal, dotted public name); unsubscribing stays possible for any https endpoint · `sh:academic-wave2-step0.review` R1 (18) |
+| R2 | major | `registerWithJoinSchema` was `.strict()` without `device_label` / `device_id`, which `deviceFields()` (web `lib/auth.ts`) sends with every setup and sign-in — registration from the real client would answer 400, or create a session with no device | both fields as in `/api/auth/setup` · R2 (2) |
+| R3 | minor | an invitation id was accepted as a registration proof, but invitations are addressed to existing accounts and their ids are no secret (invitee's inbox, admin list) | proof = class code or invite-link token only · R3; fixture moved to «invalid» |
+| R4 | minor | the same publication could be reported as `{db:'system'}` and `{db:<space>}` — two «targets» for the one-open-report index | `MODERATION_TARGET_DB`: publication → system index, version → space · R4 (2) |
+| R5 | minor | vault source titles (≤ 300 chars, bidi controls allowed) fail the strict notification payload (≤ 200 code points, no bidi) → a `reanchor_ready` could not be written | `notificationTitle()` (strips bidi, collapses controls, cuts by code point with «…», «بلا عنوان») · R5 (2) |
+| R6 | minor | `actor` («who caused it») was undefined per kind — nothing stopped a moderation notice from naming the reporter (§13), or a lock-screen push from naming them | `NOTIFICATION_KINDS_WITHOUT_ACTOR` (moderation, report_received, reanchor_ready, quota_warning) · R6 |
+| R7 | minor | the preference label of `subject_update` («ملفات ومواعيد امتحانات») hid that the kind also tells copy holders a lecture was withdrawn | label names «سحب محاضرة» · R7 |
+| R8 | minor | no way to read the viewer's own course follow → the «تابع المادة» toggle (AOS-2.16, IA §4.2) could not show its state | `ChannelNodeView.viewer.course_follow` · R8 (type check) |
+| R9 | minor | the lecture view could not show «approved» (AOS-18.4 draft → approved → published) and no route could correct a lecture's title / number / date (`lecture_no_origin: 'moderator'`, AOS-3.4 / 3.18) | `OfficialLectureView.approved`, `patchOfficialLectureSchema`, declaration `PATCH /api/spaces/:spaceId/lectures/:lectureId` (member + `edit official_lecture`, not mounted) · R9 (2), `srv:lectures/space-routes.contract` «R9» |
+| R10 | minor | IA §4.10 «الملفات والمواعيد» (Phase 1: approving contributors' attachments) was not planned, so P1-T5 would have had to edit P1-T4's `sections.ts` | planned for P1-T5 (admin, subject moderator); BUILD_PLAN §3.2 row updated · `web:test/channels/admin-sections` |
+| R11 | minor | a replayed «طبّق التحديث» (lost response, second device) was unspecified (409 or no-op?) | `copies-api.ts`: replay of an applied / skipped version is a 200 no-op (doc) |
+| R12 | minor | the re-mounted id-keyed space reads (`files/:id`, `sources/pages/:id/regions`, thumbnails) name a file / page, not a lecture, so their declared `check` cannot see drafts, takedowns or moderator-only attachments | rule written into `spaceRoutes.ts` for P1-T5: resolve the owning lecture / attachment first, else 404 (doc) |
+
+Open notes for the tracks (not defects of step 0; not fixed): N1 correction proposals of contributors have no list /
+decide contract (`review_item_id` only; AOS-18.9, T5) · N2 the space question bank for previous exams (AOS-2.5) has no
+declared space routes (T5, its file) · N3 no server seam yet for T4's moderation to resolve a publication's scope, title
+and author and set `publication.status` in T5's tables — agree a registry like the admin sections · N4 document
+conflicts: AOS-2.15 lets a Subject Moderator approve joins, PRD §4.3 and ARCHITECTURE_DELTA §5.3 do not (the contract and
+the section plan follow §4.3); the join preview returns `{title_ar, kind, requires_approval}` (delta §7.3) while AOS-2.13
+and the T4 test say «only the title»; delta §7.2 still lists `invitation_id` (R3) · N5 an invitee who switched off in-app
+`invitation` notices has no other way to find an invitation (`GET /api/channels/invitations`, T4) · N6 no notification
+kind for a contributor's draft or attachment being approved / rejected · N7 no member-readable list of a subject's
+moderators (IA §4.2 header) · N8 the publish request has no server preview, so exclusions (bookmarks, AOS-1.26) cannot be
+previewed (IA §4.4, T5) · N9 fix the class-code alphabet (no 0/O, 1/I/L) before the first code exists: `normalizeJoinCode`
+is what gets hashed · N10 `notifications.push` (features.ts) and N11 federated search hit fields stay with T4 step 2 / T5
+step 2, as the builder recorded · N12 shapes that differ from the delta text without a note (from-vault, link-candidates
+`candidates`, `StartStudyingResponse`, `ApplyUpstreamResponse`, nested report `target`) — the tracks build against the
+contract files.
+
+| # | command | exit | result |
+|---|---|---|---|
+| 0 | new review tests before the fixes (18:31) | 1 | `sh:academic-wave2-step0.review` 21 failed for the defects (+1 reviewer fixture, corrected) / 8 passed + `tsc` errors (R8, R9 types); `srv:…space-routes.contract` «R9» failed; `web:…admin-sections` 2 failed |
+| 1 | `npm run typecheck` | 0 | shared, server, web, e2e clean |
+| 2 | `npm run lint` | 0 | 0 problems |
+| 3 | `npm test` (18:37 → 18:46) | 0 | shared **13 files, 224 passed** · server **200 files passed, 7 skipped; 2 018 passed**, 7 skipped · web **167 files passed, 1 skipped; 1 083 passed**, 1 skipped (3 325 = step 0's 3 293 + 32) |
+| 4 | `npm run build` | 0 | PWA `generateSW`, **283 precache entries** (unchanged: nothing user-visible was added) |
+| 5 | `E2E_BUILD=0 npx playwright test e2e/smoke.spec.ts e2e/g8-security.spec.ts e2e/g1-ac01-personal-library.spec.ts --output <scratch>/review-w2s0/e2e-results --reporter=list` (18:46 → 18:48) | 0 | **16 passed**, 0 failed (phone + desktop; smoke, public-route and cross-site checks, AC-01 «no university / users / roles screen») |
+
+Not run: the full E2E suite (the builder's full run at 17:54 → 18:20 covered the same user-visible tree — this review
+changed only type and schema files, one comment and one not-mounted declaration); any phone, iPad or pen; Render;
+Cloudflare R2; a second browser engine.
+
+## AOS P1-T5 step 1 — official lectures in subject spaces (builder, 2026-10-21, gates 19:23 → 20:45 UTC, run in this container while P1-T4 ran its own gates)
+
+Builder's run (BUILD_PLAN §3.7 step 1; the reviewer sets statuses). Code under test: `HEAD` plus the uncommitted wave-2
+work of both tracks. What was built: space migrations `3000_official_lectures`, `3010_subject_content`; server
+`modules/lectures/*` (drafts, approval, upload through the processing pipeline inside the space, publish with preview and
+P1-T3's page map, corrections → new version, withdraw and rights takedown, attachments, exam dates, `subject_event`,
+duplicates, offline package, re-mounted space reads), `authz/rules/lectures.ts`, `system/directory.ts`; 32 space routes
+mounted on the allow-list (3 new declarations); web «المحتوى الرسمي» and «الملفات المكررة» registered through P1-T4's
+section registry. Module note: `docs/modules/lectures.md`; matrix evidence: «AOS-P1-T5 step 1».
+
+Test-first: the server tests in `apps/server/test/lectures/*` were written before the module and failed with 404
+(routes missing) / missing tables; `space-routes.contract` failed on the mounted set; P1-T1's
+`tenancy/migrations-system` and `tenancy/authz` failed once the space set and mounted routes appeared (updated with
+the smallest change). The web tests were written with the screens (not before them).
+
+| # | command | exit | result |
+|---|---|---|---|
+| 1 | `npm run typecheck` | 0 | shared, server, web, e2e clean |
+| 2 | `npm run lint` | 0 | 0 problems |
+| 3 | `npm test -w @medlevo/shared` | 0 | **14 files, 229 passed** |
+| 4 | server `npx vitest run` (19:23 → 19:34) | 1 | **210 files passed, 2 failed, 7 skipped; 2 098 passed, 2 failed**, 7 skipped. Both failures were P1-T4's new `/api/channels/*` routes against the AC-01 route ban (`acceptance/ac01a`, `acceptance/g1-ac01`), not P1-T5 code; re-run at 19:52 after P1-T4's update: both pass (7 + 4) |
+| 5 | server targeted `--reporter=json` (19:52) | 0 | `lectures/lectures` 14, `lectures/corrections` 3, `lectures/subject-content` 6, `lectures/rules` 6, `lectures/channels-integration` 1, `lectures/space-routes.contract` 12, `authz/matrix` 5 (P1-T5 specs added), `tenancy/*` 25 files, `acceptance/ac01a` 7, `acceptance/g1-ac01` 4 — **280 passed, 0 failed** |
+| 6 | `npm test -w @medlevo/web` | 0 | **169 files passed, 1 skipped; 1 099 passed**, 1 skipped (then `test/copies` re-run after one more test: 3 files, 20 passed) |
+| 7 | `npm run build` (19:37) | 0 | PWA `generateSW`, **288 precache entries**; `OfficialContentSection` and `DuplicatesSection` are lazy chunks. Final tree rebuilt into a scratch `--outDir` at 20:3x (P1-T4's E2E was serving `apps/web/dist`): 0, 288 entries |
+| 8 | `E2E_BUILD=0 npx playwright test --output <scratch>/P1-T5/e2e-results --reporter=list` (19:39 → 20:14) | 1 | **144 passed, 2 failed, 16 skipped** (phone + desktop). Failures: `critic-screens` «screen sweep» (phone: `exams-new` blank `<html>`) and `g5-ac16` Arabic (desktop: `/` answered 500) — `apps/web/dist` was being rewritten by the other track's E2E run at that time (dist mtime 20:03:43) |
+| 9 | `E2E_BUILD=0 npx playwright test e2e/critic-screens.spec.ts e2e/g5-ac16-late-linking.spec.ts` (re-run on the stable dist) | 0 | **10 passed** (both specs, phone + desktop) |
+| 10 | server `npx vitest run` again on the final tree (20:2x → 20:4x) | 0 | **212 files passed, 7 skipped; 2 101 passed, 0 failed**, 7 skipped |
+
+Not run: an E2E of the two new admin sections — the area that hosts `/admin/:section` is P1-T4's step 3, so no route
+reaches them yet (component tests and a stylesheet check instead); axe-core (not installed in this repo — structural
+probe in `web:copies/lectures-admin`); any phone, iPad or pen; Render; Cloudflare R2; a second browser engine.
+
+## Academic OS P1-T4 step 1 — university tree, joining, memberships, roles, X9 matrix (2026-10-21, gates 19:51 → 20:34 UTC, run in this container; P1-T5 step 1 and then its reviewer were editing the tree and running their own suites in parallel)
+
+Server only (BUILD_PLAN §3.6 step 1; module note `docs/modules/channels.md`). New: system migrations `2050_directory`
+(tree, closure, join codes, memberships, invitations, course follow, join attempts) and `2100_permissions` (roles, ACL
+grants); `apps/server/src/modules/channels/*` (`/api/channels`, 19 routes), `modules/authz/rules/channels.ts`,
+`modules/authz/test-support/matrix.ts`; `POST /api/auth/register` behind P1-T1's `JoinTokenVerifier` (implemented by
+`channels/verifier.ts`). Test-first: the new channel / matrix tests were run before any route existed and failed (8 failed,
+38 skipped behind them — routes 404); the «no row per public preview» test failed against the code before its fix.
+
+| # | command | result |
+|---|---|---|
+| 1 | `npm run typecheck` | exit 0 |
+| 2 | `npm run lint` | exit 0 (0 problems) |
+| 3 | `npm test` (19:51 → 20:03) | exit 0 — shared 14 files / 229 passed; server 212 files passed + 7 skipped / 2 101 passed + 7 skipped; web 169 files passed + 1 skipped / 1 100 passed + 1 skipped (3 430 passed; includes P1-T5 step 1's tests) |
+| 4 | `npm run build` | exit 0, 288 precache entries (283 before wave 2; the new entries are P1-T5's screens — this step adds no web code) |
+| 5 | `npx playwright test --reporter=list --output <scratch>/p1t4/e2e-out` (phone + desktop, 20:03 → 20:33, 29.9 min) | exit 0 — 146 passed, 16 skipped (12 opt-in perf, 4 single-project), 0 failed |
+
+New tests (54): `srv:channels/tree` 12, `srv:channels/join` 18, `srv:channels/register` 6, `srv:channels/roles` 7,
+`srv:channels/deletion` 1, `srv:channels/owner-university` 3 (on a real R1-a data directory migrated by the journaled
+owner migration), `srv:authz/matrix` 5 (X9: 15 principals × every action × channel_node / space / platform / vault
+targets, > 5 000 policy cases, plus a route matrix through HTTP; a deliberately weakened rule made 188 cases fail),
+`sh:channels-step1` 2. P1-T1 tests updated where they pinned what this step changes (minimal edits):
+`srv:acceptance/g8-security` (the public list gains exactly `POST /api/auth/register` and `GET|HEAD
+/api/channels/join/preview`), `srv:tenancy/migrations-system` (system list + `2050`, `2100`),
+`srv:tenancy/import-boundary` (`channels/service.ts` may use the system DB handle and `registerSpaceInternal`),
+`srv:acceptance/ac01a` and `srv:acceptance/g1-ac01` (channel vocabulary allowed only under `/api/channels/*`).
+
+Not run: any phone, iPad, Apple Pencil, S Pen or BOOX device; Render; Cloudflare R2; a second browser engine; web push
+(step 2). No web screen exists yet for joining or administration (step 3), so nothing of this step is visible in the app.
+
+## AOS P1-T4 step 1 — adversarial review (2026-10-21, gates 20:56 → 21:15 UTC, run in this container while P1-T5's reviewer ran its own gates)
+
+Reviewer of P1-T4 step 1 (BUILD_PLAN §1.2), server only. Read every changed file; probed as an anonymous caller, a
+signed-in outsider, a pending member, a student, a contributor, an Assistant, a Subject Moderator, another subject's
+moderator, another university's Admin, an Admin of one subject, and a removed member. Every defect was reproduced first by
+a failing test in `apps/server/test/channels/review-step1.test.ts` (run before the fixes: 9 of 10 failed — the tenth, the
+signed-in address ceiling, is a guard that held — then R2c and R7 added failing): R1 one per-IP budget for every wrong
+proof (a NAT lockout through the public preview or wrong registrations), R2 removals that did not hold against an approved
+membership higher up or a re-join through the stage, R3 a rejected request approved by an open code, R4 invitations that
+outlived their sender's role, R5 self-invitations, R6 an Admin of one subject moving it out from under its superiors, R7
+pending invitations left after an archive (`docs/modules/channels.md` «Review»). The X9 matrix was widened (20
+principals; every resource type of the policy asked, unruled ones hidden from everyone; route matrix + route inventory;
+role and invitation ids in the missing-id test). Probe outside the repository (`scratchpad/p1t4-review`): a whole-instance
+backup's sources name no `spaces/*.sqlite` (P1-T1's backup code — reported, not changed).
+
+| # | command | result |
+|---|---|---|
+| 1 | `npm run typecheck` | exit 0 |
+| 2 | `npm run lint` | exit 0 (0 problems) |
+| 3 | `npm test` (20:59 → 21:12) | exit 0 — shared 14 files / 229 passed; server 214 files passed + 7 skipped / 2 132 passed + 7 skipped; web 169 files passed + 1 skipped / 1 102 passed + 1 skipped (3 463 passed) |
+| 4 | `npm run build` | exit 0, 288 precache entries (no web change in this review) |
+| 5 | `npx playwright test e2e/smoke.spec.ts e2e/g8-security.spec.ts e2e/g1-ac01-personal-library.spec.ts e2e/g7-ac30-restore.spec.ts e2e/aos-p1-versions.spec.ts --reporter=list --output <scratch>/p1t4-review/e2e-out` (phone + desktop, 21:13 → 21:15) | exit 0 — 20 passed, 0 failed |
+
+Targeted: `srv:channels/*` + `srv:authz/matrix` 70 passed (tree 12, join 18, register 6, roles 7, deletion 1,
+owner-university 3, review-step1 15, matrix 8); `srv:lectures/*`, `srv:tenancy/*`, `srv:acceptance/g8-security` 298 passed
+after the access change (P1-T5's rules read the same provider).
+
+Not run: the full E2E suite (only the five specs that touch this work — the step adds no screen); any phone, iPad, Apple
+Pencil, S Pen or BOOX device; Render; Cloudflare R2; a second browser engine; axe (no new screen).
+
+
+## AOS P1-T5 step 1 — adversarial review (2026-10-21, gates 20:46 → 21:12 UTC, run in this container; the P1-T4 step-1 reviewer and then P1-T4 step 2 were editing the tree and running their own suites in parallel)
+
+Review of the official-lectures step (BUILD_PLAN §1.2). Every changed file of the step was read; the probes ran as a
+guest, a pending member, a student, a contributor, a second contributor, an Assistant, a Subject Moderator, another
+subject's moderator and a removed member. Twelve defects were reproduced first by tests that failed against the
+builder's code (`srv:lectures/review-step1` 13 tests — 11 failed before the fixes, the 2 others pin behaviour that held;
+`web:test/copies/lectures-admin` «review R1», «review R12» — both failed before) and fixed; the table is in
+`docs/modules/lectures.md` «Review». Majors: a rejected (never-published) draft shown to students and in the feed (R1);
+draft versions visible to the lecture's uploader instead of the version's (R2); a retried correction job marked
+`failed` (R3); a waiting upload made unpublishable by a correction (R4); offline packages sharing one rate-limit bucket
+(R6); the lecture's text left in the space's Course Brain tables after a rights takedown (R9); multipart bodies stored
+before the upload authz check (R10). Minors: takedown text left in the corrections queue (R5), `immutable` caching of
+space files (R7), draft lectures named by exam dates and attachments (R8), approval kept after a contributor's edit
+(R11), a second lecture created when a file was refused (R12). The X9 specs gained the `withdrawn_draft` state.
+
+| # | command | result |
+|---|---|---|
+| 1 | `npm run typecheck` (final tree) | exit 0 |
+| 2 | `npm run lint` (final tree) | exit 0 |
+| 3 | `npm test` (20:46 → 20:58) | shared 14 files / 229 passed; server 2 failed in `srv:channels/review-step1` — the P1-T4 reviewer's own probes, written before its fixes; passed (15 / 15) on re-run once that review landed. Web did not start (the script stops at the first failing workspace) |
+| 3a | `npm test -w @medlevo/web` | exit 0 — 169 files passed + 1 skipped / 1 102 passed + 1 skipped |
+| 3b | `npm test -w @medlevo/server` (re-run 21:01 → 21:12, final tree) | exit 0 — 214 files passed + 7 skipped / 2 132 passed + 7 skipped, 0 failed |
+| 4 | `npm run build` | exit 0, 288 precache entries |
+| 5 | `E2E_BUILD=0 npx playwright test e2e/smoke.spec.ts e2e/g1-ac01-personal-library.spec.ts --output <scratch>/P1-T5-review/e2e-results` (phone + desktop) | exit 0 — 8 passed, 0 failed |
+
+Targeted: `srv:lectures/*` 55 passed (lectures 14, corrections 3, subject-content 6, rules 6, channels-integration 1,
+space-routes.contract 12, review-step1 13), `srv:authz/matrix` 8 passed, `web:test/copies/lectures-admin` 16 passed.
+
+Not run: an E2E of the two admin sections (no `/admin/:section` host before P1-T4 step 3); axe-core (not installed —
+structural probes in the web tests); the full Playwright suite (only the smoke and AC-01 specs — no other spec reaches
+this step's code); any phone, iPad, Apple Pencil, S Pen or BOOX device; Render; Cloudflare R2; a second browser engine.
+
+## AOS P1-T4 step 2 — notifications, minimal moderation, scoped audit view, course follow (builder, 2026-10-21, gates 21:46 → 22:50 UTC, run in this container while P1-T5 step 2 was editing the tree and running its own suites)
+
+Built test-first (server only; the screens are step 3): system migrations `2200_notifications` (inbox, preferences, push
+subscriptions — unused, the fan-out queue) and `2310_moderation`; `modules/notifications` (strict titles-and-counts
+publishing, a fan-out worker in the root context writing at most 500 rows a step with retry and back-off, the inbox with
+per-user read state and access re-checked when a row is written and when it is read, in-app preferences, push refused
+with the reason); `modules/moderation` (reports through a target registry the owner track fills, the queue of a subject's
+moderators, hide / restore / dismiss with an Arabic reason, notices to author and reporters without an actor, audit
+entries; the scoped audit view `GET /api/admin/audit`); course follow `PUT / DELETE /api/channels/subjects/:id/follow`;
+join / decision / invitation notices from the channels service; `channel_node` gained `moderate` (404 otherwise),
+`view_audit` lost the Subject Moderator (review N6). 54 new tests, each red before its code (the new modules did not exist;
+the follow and audit routes answered 404; the leaver-reporter test was shown failing against the code without its rule):
+`srv:notifications/inbox` (15), `srv:notifications/fanout` (6), `srv:moderation/minimal` (14), `srv:moderation/audit-view`
+(4), `srv:channels/follow` (6), `srv:acceptance/ac01b` (7), `srv:authz/matrix` (+2). Measured: a fan-out step of 500
+recipients ≈ 40 ms; 1,203 followers in 3 steps.
+
+| # | command | result |
+|---|---|---|
+| 1 | `npm run typecheck` (21:46; again 22:33) | exit 0 both times |
+| 2 | `npm run lint` (21:47, 22:01, re-run 22:31) | 21:47 / 22:01 exit 1 — only `apps/server/src/modules/forks/fanout.ts` and `apps/server/test/search/federation.test.ts` (P1-T5 step 2, in progress); every file of this step `--max-warnings 0` exit 0. **Re-run 22:31: exit 0** |
+| 3 | `npm test` (21:49 → 21:55) | shared 14 files / 229 passed; server 220 files passed + 7 skipped / 2 191 passed + 7 skipped, **1 failed**: `srv:lectures/space-routes.contract` «steps 2–3 none yet» — P1-T5 step 2 mounted `POST /api/spaces/:spaceId/lectures/from-vault` before updating its own assertion (not this step's file). Web did not start (the script stops at the first failing workspace) |
+| 3a | `npm test -w @medlevo/web` (21:56 → 21:58) | exit 0 — 169 files passed + 1 skipped / 1 102 passed + 1 skipped |
+| 3b | targeted after the last change (reporter notices gated on membership, 22:28 → 22:31) | `srv:moderation/*`, `srv:notifications/*`, `srv:channels/*`, `srv:authz/*`, `srv:acceptance/*`, `srv:tenancy/*` — 69 files / 600 passed; P1-T5's `srv:lectures/space-routes.contract` re-run once: 12 / 12 passed (its owner had updated it) |
+| 3c | `npm test` again on the final tree (22:34 → 22:46) | shared 14 files / 229 passed; server 227 files + 7 skipped / **2 237 passed** + 7 skipped, 0 failed; web 170 files + 1 skipped / 1 113 passed + 1 skipped, 0 failed — but the web process exited 1 (no failing test; the reason was not in the captured summary) → `npm test -w @medlevo/web` re-run 22:47 → 22:50: **exit 0**, 1 113 passed + 1 skipped |
+| 4 | `npm run build` (21:58) | exit 0, 288 precache entries (no web change in this step) |
+| 5 | `E2E_BUILD=0 npx playwright test --reporter=list --output <scratch>/p1t4/e2e-out` (phone + desktop, 21:58 → 22:27, 29.1 min) | exit 0 — **146 passed**, 16 skipped (12 opt-in perf, 4 single-project), **0 failed** (same 146 as R1-b and step 1) |
+
+Not run: any `[e2e]` criterion of this step (no screen before step 3); Web Push on any device (not built); axe (no new
+screen); any phone, iPad, Apple Pencil, S Pen or BOOX device; Render; Cloudflare R2; a second browser engine.
+
+## AOS P1-T5 step 2 — copies, fan-out, federated search, stub retrieval (builder, 2026-10-21)
+
+Builder run of BUILD_PLAN §3.7 «Steps» 2 (stubs, «ابدأ الدراسة», `document_copy`, `lecture_copy`, course-follow and
+official-version fan-out, purge refusal, link / promote private lectures, federated search with scope tokens, stub
+retrieval with lazy pinning, the web pieces). Final tree, `NODE_OPTIONS='--disable-warning=ExperimentalWarning'`,
+P1-T4 step 2 building in the same tree at the same time.
+
+| # | command | result |
+|---|---|---|
+| 1 | `npm run typecheck` (final tree) | exit 0 |
+| 2 | `npm run lint` (final tree) | exit 0 |
+| 3 | `npm test` (22:29 → 22:42, 13.2 min) | exit 0 — shared 14 files / 229 passed; server 227 files passed + 7 skipped / **2 237 passed** + 7 skipped; web 170 files passed + 1 skipped / **1 113 passed** + 1 skipped; 0 failed |
+| 4 | `npm run build` | exit 0, 294 precache entries (4 970 KiB) |
+| 5 | `E2E_BUILD=0 npx playwright test --reporter=list --output <scratch>/P1-T5-s2/e2e-results` (22:43 → 23:11, phone + desktop) | exit 0 — **146 passed, 16 skipped** (12 opt-in perf, 4 single-project), 0 failed |
+| 6 | `npx vitest run test/search/federation.test.ts -t NFR-P5` (isolation) | 250 000 chunks built in 36.2 s; raw p50 25.4 ms, raw p95 41.9 ms over 48 runs; p95 of each query's best of 3 = 41.9 ms (≤ 50 ms) |
+
+An earlier full server run on an intermediate tree (22:09 → 22:19) failed 5 tests, all fixed before the final run: the
+NFR-P5 gate inside the parallel suite (raw p95 70.8 ms under CPU contention — the gate now uses each query's best of
+three runs and logs the raw distribution), the import-boundary list (federation reads spaces through `ctx.dbs`), the
+step-1 contract «steps 2–3 mount nothing» (step 2 mounts `from-vault`), the step-1 assertion «the vault search never
+sees official text» (federation now finds it, labelled), and a stub-regions test that ran before its seam was registered.
+
+Targeted (new or changed in this step): `srv:forks/stubs` 8, `srv:forks/versions` 8, `srv:forks/course-follow` 3,
+`srv:forks/link-private` 6, `srv:search/federation` 8, `srv:evidence/stub-retrieval` 10, `srv:acceptance/ac01b-content` 8,
+`srv:lectures/*` (lectures 14, space-routes.contract 12), `srv:tenancy/import-boundary` 6;
+`web:test/copies/copies` 11, `web:test/copies/wave2-step0-routes` 3, `web:test/copies/lectures-admin` 16.
+
+Test-first notes (honest): the server acceptance tests of this step were written before or with their code and failed
+first where a defect was reproduced (AC-29 on a stub: an anchor region of an official page answered `OUT_OF_SCOPE` until
+`anchorRegions` pinned it; stub page regions returned `[]` until the `setStubPageRegions` seam was registered). Parts of
+the server modules and the web screens were written before their tests in the same session; their tests were added
+afterwards.
+
+Not run: E2E of the new screens (the lecture page, the copy bar, search scope chips — the Scenario 2 / 4 specs are step
+3); axe-core (not installed — structural / CSS checks in the web tests instead); a visual critic pass of the new screens
+at 390 / 1280 in light / dark / e-ink; any phone, iPad, Apple Pencil, S Pen or BOOX device; Render; Cloudflare R2; a real
+AI model (the stub AC-05/06/07/29 reruns use the TEST-ONLY scripted provider).
+
+
+## AOS P1-T4 step 2 — adversarial review (2026-10-21, gates 22:58 → 23:23 UTC, run in this container while the P1-T5 step-2 reviewer edited the tree and ran its own suites)
+
+Reviewer of P1-T4 step 2 (BUILD_PLAN §1.2), server only. Read every file of the step (migrations `2200`, `2310`;
+`modules/notifications/*`, `modules/moderation/*`; the follow and notice code of `modules/channels`; `rules/channels.ts`;
+the contracts; the tests and docs); probed as a guest, a pending member, a student, a contributor, an Assistant, a Subject
+Moderator, a moderator who wrote the reported content, another subject's moderator, another university's Admin, a
+removed member and a suspended role holder. Every defect was reproduced first by a failing test in
+`apps/server/test/moderation/review-step2.test.ts` (7 tests; run before the fixes: 6 failed, the seventh — «the fallback
+stays a fallback» — pins behaviour that held): R1 (major) a report on content written by the only moderator of the chain,
+or a join request whose only approver holds the role on a suspended account, reached nobody; R2 the reporter's note shown
+to the author-moderator; R3 a report's stale scope deciding who moderates; R4 an owner link outside the in-app pattern
+made every moderation decision on that content fail (500); R5 the reporter and note shown to every moderator — the author
+included — once the content no longer resolved. Fixes in `notifications/{fanout,audiences,service}.ts` and
+`moderation/service.ts`; table and the findings reported but not fixed in `docs/modules/notifications-moderation.md`
+«Review».
+
+| # | command | result |
+|---|---|---|
+| 1 | `npm run typecheck` (after the fixes; again 23:23 on the final tree) | exit 0 both times |
+| 2 | `npm run lint` (23:11 → 23:13) | exit 0 (0 problems) |
+| 3 | `npm test` (22:58 → 23:18) | shared 14 files / 229 passed; server 227 files passed + 7 skipped / **2 243 passed** + 7 skipped, **1 failed**: P1-T5's timing test `srv:search/federation` «NFR-P5 … p95 … stays within 50 ms» (measured 57.3 ms while lint, build and the other track's suites ran) — not this step's file; web did not start (the script stops at the first failing workspace) |
+| 3a | `npm test -w @medlevo/web` (23:18 → 23:20) | exit 0 — 170 files passed + 1 skipped / 1 113 passed + 1 skipped |
+| 3b | `npx vitest run test/search/federation.test.ts` (the one allowed re-run, 23:21 → 23:22) | 8 / 8 passed |
+| 3c | targeted after the fixes: `srv:moderation/*`, `srv:notifications/*`, `srv:channels/*`, `srv:authz/*`, `srv:acceptance/*`, `srv:tenancy/*` | 70 files / 607 passed |
+| 4 | `npm run build` (23:13) | exit 0, 294 precache entries (no web change in this review; the count moved with P1-T5's web work) |
+| 5 | `E2E_BUILD=0 npx playwright test e2e/smoke.spec.ts e2e/g8-security.spec.ts e2e/g1-ac01-personal-library.spec.ts --reporter=list --output <scratch>/p1t4-review2/e2e-out` (phone + desktop, 23:20 → 23:21) | exit 0 — 16 passed, 0 failed |
+
+Not run: the full E2E suite (only the specs that touch this work — the step adds no screen; the builder's full run was
+146 passed / 0 failed); any `[e2e]` criterion of the step (no screen before step 3); axe (no new screen); Web Push on any
+device (not built); a measurement of the inbox read with thousands of hidden rows; any phone, iPad, Apple Pencil, S Pen or
+BOOX device; Render; Cloudflare R2; a second browser engine.
+
+
+## AOS P1-T5 step 2 — adversarial review (2026-10-21 → 22, gates 23:42 → 00:03 UTC, run in this container while P1-T4 step 3 was editing the web shell and running its own suites)
+
+Reviewer of P1-T5 step 2 (BUILD_PLAN §1.2). Read every file of the step (migrations `0163`, `0860`, `2060`, `3300`;
+`modules/forks/*`, `search/{federation,scopeTokens}.ts`, `evidence/{retrieval,evidence}.ts`, the seams in
+`annotations/reanchorCopy.ts`, `sources/service.ts`, `studybook/explain.ts`; the web copies / lecture / search screens;
+the tests and docs). Scenario 4 rerun end to end on an OFFICIAL lecture with P1-T3's 40 → 42-page fixture (passes).
+Every defect was reproduced first by a failing test — `apps/server/test/forks/review-step2.test.ts` (14 tests: 7 failed
+before the fixes — R-A, R-B, R-C, R-D, R-F, R-G, R-I; the Scenario 4 and two-device tests pin behaviour that held),
+`apps/server/test/search/review-step2-drafts.test.ts` (3; 2 failed before R-E; the bm25 order flip was first shown by a
+throw-away probe), `apps/web/test/copies/copies.test.tsx` «review P1-T5 s2» (2; both failed with the fixes reverted).
+Findings, fixes and what stays open: `docs/modules/copies-publications.md` «Review».
+
+| # | command | result |
+|---|---|---|
+| 1 | `npm run typecheck` (23:42) | exit 2 — ONE error, in the other track's in-progress file: `apps/web/src/app/routes.tsx` imports `../features/admin/routes` (P1-T4 step 3, not yet on disk at that minute); `tsc -p packages/shared`, `-p apps/server`, `-p e2e` exit 0 |
+| 2 | `npm run lint` (23:43) | exit 1 — 3 errors, all in P1-T4 step-3 files being written (`features/channels/qr.ts`, `features/me/{DevicesScreen,UsageScreen}.tsx`); `eslint` on every file this review touched: exit 0 |
+| 3 | `npm test` (23:50 → 00:00) | shared 14 files / 229 passed; server 230 files + 7 skipped / **2 261 passed** + 7 skipped / 0 failed (NFR-P5 passed inside the parallel suite this time); web 176 files + 1 skipped / 1 167 passed + 1 skipped / **1 failed**: `test/channels/admin.test.tsx` «approves one request and several at once» — P1-T4 step 3's new test of its own in-progress screen |
+| 3a | targeted after the fixes: `srv:forks/*`, `srv:search/*`, `srv:evidence/*`, `srv:annotations/*`, `srv:acceptance/ac01b-content`, `srv:lectures/*`, `srv:sources/*`, `srv:tenancy/*` | 67 files / 705 passed |
+| 3b | `npx vitest run test/search/federation.test.ts -t NFR-P5` in isolation | 250 000 chunks: raw p50 24.4 ms, raw p95 40.6 ms over 48 runs; best-of-3 p95 40.6 ms (≤ 50 ms) |
+| 4 | `npm run build` (00:00) | exit 0, 335 precache entries (P1-T4 step 3's screens included) |
+| 5 | `E2E_BUILD=0 npx playwright test e2e/smoke.spec.ts e2e/aos-p1-note-migration.spec.ts e2e/h3-reader-notes.spec.ts e2e/g2-ac05-source-lock.spec.ts e2e/aos-p1-versions.spec.ts e2e/h4-exports-sources.spec.ts --output <scratch>/P1-T5-s2-review/e2e-out` (phone + desktop, 00:00 → 00:03) | 17 passed, 1 skipped (desktop: phone-only test), **2 failed**: `smoke.spec.ts` main flow, phone and desktop, at its LAST step — the «الإعدادات» link of «التنقل الرئيسي», which P1-T4 step 3 is replacing with the five-destination shell (its task: update the smoke navigation); every step before it (setup, library, upload, processing, reader, vault, review) passed; the manual re-anchoring to a paragraph (`h3-reader-notes` item 2, touched by R-B) and the P1-T2 note migration passed on both projects |
+| 6 | the one allowed re-run of the other track's failures (00:04 → 00:08): `npm run typecheck`, `npm run lint`, `vitest run test/channels/admin.test.tsx test/copies`, `npm run build` + `smoke.spec.ts` | typecheck exit 0; lint exit 0; web 5 files / 47 passed; build exit 0 (333 precache entries); smoke main flow still fails at the same last step on both projects (P1-T4 has not yet moved the smoke spec to its new navigation — `e2e/smoke.spec.ts` unchanged on disk), the API-session test passes |
+
+Not run: the E2E specs of Scenarios 2 and 4 and of the vertical slice (step 3), the full E2E suite, axe-core (not
+installed), a visual critic pass of the touched screens, any phone, iPad, Apple Pencil, S Pen or BOOX device, Render,
+Cloudflare R2, a real AI model (the Scenario 4 Study Book answer and the stub AC-05/06/07/29 reruns use the TEST-ONLY
+scripted provider).
+
+
+## AOS P1-T5 step 3 — course-only explanations: publish, follow, fork, updates, moderation (builder, 2026-10-22, run in this container while P1-T4 step 3 was finishing its docs and gates)
+
+Builder of P1-T5 step 3 (BUILD_PLAN §3.7 «Steps» 3). Code, tests and docs: `docs/modules/copies-publications.md`
+«Step 3». Commands from the repository root with `NODE_OPTIONS='--disable-warning=ExperimentalWarning'`; Playwright with
+`--output <scratch>/P1-T5-s3/…` (Chromium at `/opt/pw-browsers/chromium`).
+
+| # | command | result |
+|---|---|---|
+| 1 | `npm run typecheck` | exit 0 (shared, server, web, e2e) |
+| 2 | `npm run lint` | first run exit 1 — one unused variable in this step's new `e2e/aos-s2-followed-copy.spec.ts`; fixed; `eslint` on every file of the step: exit 0 |
+| 3 | `npm test` | shared 14 files / 229 passed; server 233 files passed + 7 skipped / **2 294 passed** + 7 skipped / **1 failed**: `srv:search/federation` «NFR-P5 … p95 … within 50 ms» (raw p95 155.8 ms, best-of-3 p95 75.6 ms while the whole parallel suite ran — P1-T5 step 2's timing test, known to inflate under load); web did not start (the script stops at the first failing workspace) |
+| 3a | `npx vitest run test/search/federation.test.ts` (the one allowed re-run) | 8 / 8 passed |
+| 3b | `npm test -w @medlevo/web` (`vitest run` in `apps/web`) | 178 files passed + 1 skipped / **1 188 passed** + 1 skipped / 0 failed |
+| 3c | `vitest run test/forks/publications.test.ts -t scale` | publish of 5 000 strokes 315 ms; a republish with one changed stroke 352 ms, one new `publication_item` row |
+| 4 | `npm run build` | exit 0, 337 precache entries |
+| 5 | `npx playwright test e2e/aos-s2-followed-copy.spec.ts e2e/aos-s4-official-version.spec.ts e2e/aos-p1-vertical-slice.spec.ts` (phone + desktop) | **6 passed** (2.6 min); axe-core (P1-T4's `axeInLooks`, light / dark / e-ink) 0 serious / critical on the explanations tab, the publication page (classmate and author), the start, publish, update-preview, report and official-version move dialogs |
+| 6 | `E2E_BUILD=0 npx playwright test --reporter=list --output <scratch>/P1-T5-s3/pw-full` — the full suite, phone + desktop, 1 worker, on the 01:37 build (01:37 → 02:22 UTC) | exit 1 — **171 passed, 16 skipped, 3 failed** (45.0 min). The three step-3 specs passed again on both projects. Failures, none in this step's files: (a) `aos-p1-join.spec.ts:252` phone «keyboard only …» — after «تم الانضمام» Escape left the join sheet open (P1-T4's spec and sheet; desktop passed); (b) `g7-ac30-restore.spec.ts` phone AND desktop — the restore check never showed «اختُبرت الاستعادة» (180 s): see row 8 |
+| 7 | the one allowed re-run: `E2E_BUILD=0 npx playwright test e2e/g7-ac30-restore.spec.ts …/pw-rerun-g7` (02:23), then `… e2e/aos-p1-join.spec.ts …/pw-rerun-join` (02:28) | AC-30 alone on fresh servers: **2 / 2 passed**; the join spec: **12 / 12 passed** (phone + desktop) |
+| 8 | probe of (b): `E2E_BUILD=0 npx playwright test e2e/aos-s4-official-version.spec.ts e2e/g7-ac30-restore.spec.ts --project=desktop` (02:24 → 02:27) | Scenario 4 passed, **AC-30 failed again** on the same server — AC-30 fails whenever subject spaces exist: the whole-instance backup (`modules/data/backup.ts`, P1-T1) archives `system.sqlite` and `vaults/*` but no `spaces/*.sqlite` (an archive from the full run listed 0 `spaces/` entries while the data directory held them); a scratch verification of such an archive ended with the boot blob mark `incomplete`. Already reported by P1-T3 and P1-T4 (`docs/modules/lectures.md`, `channels.md`); publications now live in those spaces too. Not changed here (another track's file) |
+| 9 | `npm run typecheck`, `npm run lint` on the final tree (02:29 → 02:31) | exit 0, exit 0 (0 problems). No P1-T5 source file changed after rows 3 / 4 (only P1-T4's reviewer's files) |
+
+Not run: devices (iPad + Apple Pencil, S Pen, BOOX), VoiceOver / TalkBack, a second browser engine, Render, Cloudflare
+R2, a real AI model (the Scenario 4 Study Book citation is a server test with the scripted provider), the `[e2e]` of an
+author's account deletion (server test only), Scenario 4 step 5 (purge: no HTTP route in a subject space — server test).
+
+## AOS P1-T4 step 3 — the web: app shell, «القنوات», subject page, join + QR, «أنا», «التنبيهات», «إدارة القنوات» (builder, 2026-10-22, gates 00:42 → 02:10 UTC)
+
+Built in this container while P1-T5 step 3 was building and running its own suites (its global setup rebuilt
+`apps/web/dist` twice during the full E2E run below — at 01:04 and 01:16 — and a page load that hit the rebuild answered
+500). Test-first: every new screen's unit test was written before it (`apps/web/test/channels/*`, 60 tests in the
+channels folder incl. `admin-sections`), and each defect found by the E2E specs was reproduced by a failing test first:
+the invite-landing account switch (`join.test.tsx` «… with a fresh page load» — the route gate reloaded `/join/<token>`
+and the recovery codes were lost), «every disabled control says why» (`sayWhy.ts` in `admin`, `me`, `join` — «انقل»,
+«ارفض», «احذف حسابي نهائيًا», «متابعة إلى القنوات» had no reason), the platform admin's new university hidden in another
+scope (`admin.test.tsx`), focus lost to `<body>` when the join result / QR preview replaced the form (`join.test.tsx`,
+then `e2e:aos-p1-join` «keyboard only»), and the phone top bar wider than the screen at 150 % text with the new bell
+(`e2e:g6-ac22-font-size` failed first — the brand name now yields).
+
+| # | command | result |
+|---|---|---|
+| 1 | `npm run typecheck` (00:42; again 02:09) | exit 0 |
+| 2 | `npm run lint` (00:43; again 02:09) | exit 0 |
+| 3 | `npm test` (00:44 → 00:53) | shared 14 files / 229 passed; server 234 files + 7 skipped / 2 295 passed + 7 skipped; web 176 files + 1 skipped / 1 170 passed + 1 skipped / **1 failed**: `test/copies/copies.test.tsx` «ابدأ الدراسة …» — P1-T5's test, two «tab» elements while P1-T5 step 3 was adding «الشروحات» to its lecture page |
+| 3a | the one allowed re-run: `npx vitest run` (web, 01:40; again 02:10) | 178 files + 1 skipped / **1 188 passed** + 1 skipped / 0 failed |
+| 4 | `npm run build` (00:53; again 02:10) | exit 0, 337 precache entries; jsQR is its own lazy chunk (130 kB, 47.5 kB gzip), the QR encoder loads only with «الرموز والدعوات» |
+| 5 | `npx playwright test --output <scratch>/p1t4/e2e-full` (full suite, phone + desktop, 00:55 → 01:37) | 180 tests: **143 passed, 21 failed, 16 skipped**. Phone: 19 failures — `g6-ac22` raised the owner's text size to 150 % and failed on «horizontal overflow» (the top bar with the new bell at 150 % — this step's defect, fixed in `app/shell.css`), which left 150 % on for every later phone test (overflow cascade in g6-ac28, g7, g8, h3, h4, n1, f4, smoke); `g4-ac12` hit a 500 on the document while P1-T5's run rebuilt `dist`; `g7-ac30` see 6. Desktop: 2 — `aos-ac01a` (500 on `/channels` during the same rebuild) and `g7-ac30` |
+| 6 | the one allowed re-run of the failures after the fix, plus `aos-p1-join` with its two new tests: `npx playwright test` g6-ac22, smoke, aos-ac01a, aos-p1-join, f4, g4-ac12, g6-ac28, g7-ac23, g7-ac24, g7-ac30, g8-ac26, g8-ac27, g8-security, h3, h4, n1 (01:38 → 02:00) | 82 tests: **77 passed, 4 failed, 1 skipped**: `aos-p1-join` «keyboard only» on both projects (focus lost after joining — fixed, see 7) and `g7-ac30-restore` on both projects: «فشلت الاستعادة التجريبية … (health 200، مصادر 67/67، كتابات 21/21)» — the counts match, so the failing part of P1-T1's boot check is health `ok` or the blob mark pass; this server now holds subject spaces (created by this step's specs before g7 runs), and whole-instance backups still leave out `spaces/*.sqlite` (P1-T1's `modules/data/backups.ts`, recorded in `docs/modules/channels.md` «Not done» since step 1). Not this step's files; not re-run again |
+| 7 | after the focus fix: `npx playwright test e2e/aos-ac01a.spec.ts e2e/aos-no-decorative.spec.ts e2e/aos-p1-admin.spec.ts e2e/aos-p1-join.spec.ts e2e/smoke.spec.ts --output <scratch>/p1t4/e2e-mine` (02:00 → 02:09, web rebuilt by the global setup) | **30 passed, 0 failed** (phone + desktop) |
+
+What the new specs do (phone 390 × 844 and desktop 1280 × 800, the real server): `aos-p1-join` (J9 — invite landing with
+only the title, an account created with the link, a typed code → pending → approved → an unread inbox entry → the subject
+page → «تابع المادة» kept on the server; a QR read from a generated picture; no camera → the field; a REAL camera stream
+from Chromium's fake capture device decoded by the in-app scanner; a revoked link answers like an unknown one; offline
+copies read-only with the reason; keyboard only), `aos-p1-admin` (tree CRUD, codes and the QR shown once, revoke,
+approval, a role here and one inherited, audit by scope and action, «الإشراف» empty, no area for a student),
+`aos-ac01a` (AC-01a for an account whose only join request was declined), `aos-no-decorative` (every visible control of
+every new screen clicked on a fresh load: 0 dead controls, 0 disabled without a reason, every in-app link opens a real
+screen; a self-test proves it catches a dead button), axe-core 4.14.0 in light / dark / e-ink on every new screen:
+0 serious / critical.
+
+Not run: the fixture report in «الإشراف» (no reportable content type is registered until P1-T5 step 3 lands its
+publications — the flow is covered by `srv:moderation/minimal` and `web:channels/admin`); a phone camera, iPad, Apple
+Pencil, S Pen, BOOX; VoiceOver / TalkBack; Web Push (not built); a second browser engine; Render; Cloudflare R2.
+
+## AOS P1-T4 step 3 — adversarial review (reviewer, 2026-10-22, gates 02:20 → 03:00 UTC)
+
+Run beside the P1-T5 step 3 review (which was writing its own tests in the same tree). To keep the shared
+`apps/web/dist` and the shared E2E servers out of each other's way, the review built the web app into its own folder
+(`vite build --outDir <scratch>/p1t4r3/dist`) and ran the E2E specs against two servers of its own (one per project, a
+fresh data dir each, `MEDLEVO_WEB_DIST` = that build) with `E2E_BASE_URL` and `--output <scratch>/p1t4r3/…`.
+Test-first: every defect below was reproduced by a failing test before its fix (the review's own probes and screenshots
+are in `<scratch>/p1t4r3/probe*`).
+
+| # | command | result |
+|---|---|---|
+| 1 | `npx vitest run test/channels/review-step3.test.tsx` before the fixes | 13 of 14 failed (R1 ×2, R2 ×2, R3, R4, R5 ×2, R7, R8 ×2, R9, R10); the 404 case of R2 passed (kept) |
+| 2 | `npx playwright test e2e/aos-ac01a.spec.ts -g "fits a 390" --project desktop` before the CSS fix | failed with 43 problems: 768 / 820 px iPads 832 px wide at 100 % (1109 px at 150 %), every iPad at 150 %, destination links and the search entry 36 px tall on touch, the phone brand link 28 px wide at 150 % |
+| 3 | sweep probe (`<scratch>/p1t4r3/probe/dead-probe.spec.ts`): a dead button injected on `/channels`, `/me`, `/notifications`, `/admin`, `/` — 5 rounds each, phone + desktop | caught 50 / 50 (no background activity was mistaken for an action) → kept as a self-test in `aos-no-decorative` |
+| 4 | `npx vitest run test/channels/` after the fixes | 9 files, **74 passed** |
+| 5 | `npm run typecheck` | exit 0 |
+| 6 | `npm run lint` | exit 0 |
+| 7 | `npm test` — shared; web (`vitest run --maxWorkers=2`); server | shared 14 files / **229 passed**; web 179 files + 1 skipped / **1 202 passed** + 1 skipped; server 234 files passed + 7 skipped, **2 306 passed** + 7 skipped, **1 failed**: `test/forks/review-step3.test.ts` «… «طالب سابق» …» — the P1-T5 step 3 reviewer's new test-first file (written at 02:49, during this run); not this track's — see 7a |
+| 7a | the one allowed re-run of that file: `npx vitest run test/forks/review-step3.test.ts` (03:00, after the P1-T5 reviewer's fix) | 1 file, **12 passed** |
+| 8 | `npm run build` | exit 0, 337 precache entries |
+| 9 | `npx playwright test e2e/smoke.spec.ts e2e/aos-ac01a.spec.ts e2e/aos-p1-join.spec.ts e2e/aos-p1-admin.spec.ts e2e/aos-no-decorative.spec.ts e2e/g6-ac22-font-size.spec.ts` — phone (own server) and desktop (own server) in parallel | phone **19 passed**, 1 skipped (the shell-size test runs once, on desktop, and opens its own phone and iPad contexts); desktop **20 passed** |
+| 10 | `npx playwright test e2e/aos-p1-admin.spec.ts -g "fixture report"` (added after 9 started), phone + desktop | **2 passed** |
+| 11 | regression check of the tablet top bar on P1-T5's iPad-sized journey: `npx playwright test e2e/aos-p1-vertical-slice.spec.ts --project desktop` (834 × 1194) | **1 passed** |
+
+Not run: a phone or iPad camera, iPad / Apple Pencil, S Pen, BOOX, VoiceOver / TalkBack, Web Push, a second browser
+engine, Render, Cloudflare R2 (no device or account here); the full E2E suite (the step's specs, smoke, g6-ac22 and the
+vertical slice were run — the full suite belongs to the release run).
+
+## AOS P1-T5 step 3 — adversarial review (reviewer, 2026-10-22, gates 02:55 → 03:25 UTC)
+
+Review of the course-only explanations step (publish, follow, fork, updates, moderation, account deletion). Test-first:
+every defect was reproduced by a failing test before its fix (`apps/server/test/forks/review-step3.test.ts`, web
+`test/copies/publications.test.tsx` «review R3-B»). Findings and fixes: `docs/modules/copies-publications.md` «Review
+(P1-T5 step 3)». Logs: `<scratch>/P1-T5-review3/`.
+
+| # | command | result |
+|---|---|---|
+| 1 | `npx vitest run test/forks/review-step3.test.ts` before the fixes | 6 of 9 failed (R3-A ×2, R3-B, R3-C, R3-D, R3-E's «nothing newer» part); then R3-F added and failed alone (11 passed / 1 failed) |
+| 2 | `npx vitest run test/copies/publications.test.tsx` (web) before the page fix | 1 failed («review R3-B»), 17 passed |
+| 3 | after the fixes: `test/forks/review-step3.test.ts` | **12 passed** |
+| 4 | `npx vitest run test/forks test/lectures test/authz test/moderation test/acceptance test/notifications test/tenancy test/annotations` | 94 files, **849 passed** |
+| 5 | `npm run typecheck` | exit 0 |
+| 6 | `npm run lint` | exit 0 |
+| 7 | `npm test` | shared 14 files / **229 passed**; server 235 files + 7 skipped / **2 307 passed** + 7 skipped; web 179 files + 1 skipped / **1 203 passed** + 1 skipped; exit 0 |
+| 8 | `npm run build` | exit 0, 337 precache entries |
+| 9 | `E2E_BUILD=0 npx playwright test e2e/aos-s2-followed-copy.spec.ts e2e/aos-s4-official-version.spec.ts e2e/aos-p1-vertical-slice.spec.ts e2e/smoke.spec.ts` (first run) | 9 failed / 1 passed in 300 ms – 4 min: **`ENOSPC: no space left on device`** in the servers' logs — 8 437 leaked `/tmp/medlevo-vault-template-*` dirs (≈ 17 GB) of earlier server test runs (P1-T1's test helper; see the module note). The stale ones (> 20 min, no test process running) were removed (16 GB free), the run stopped |
+| 10 | the same command again, after `npm run build` | **10 passed** (phone 390 × 844 + desktop 1280 × 800; the slice's desktop run at 834 × 1194), 2.6 min; the specs' axe checks (light / dark / e-ink) 0 serious / critical |
+
+Not run: iPad + Apple Pencil, S Pen, BOOX (no device); VoiceOver / TalkBack; a second browser engine; Render; Cloudflare
+R2; a real AI model; the full E2E suite (the release run's job — this review ran the three step-3 specs and smoke).

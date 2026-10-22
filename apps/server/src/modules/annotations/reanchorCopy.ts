@@ -281,9 +281,36 @@ function liveCopiesOf(ctx: AppContext, items: ReadonlyArray<Pick<Item, 'type' | 
 
 /** text and geometry of a page's regions (for quotes and moved paragraphs) */
 function regionsOf(ctx: AppContext, pageId: string): RegionGeo[] {
+  // (P1-T5 step 2 seam) a vault STUB of an official lecture keeps its regions in the subject's space: read them there
+  // first — the vault holds at most the few regions a citation pinned, never the whole page (review P1-T5 s2 R-A)
+  const stub = stubRegionSource?.(ctx, pageId);
+  if (stub && stub.length > 0) return stub.map((r) => ({ text: r.text ?? '', box: boxOf(fromJson(r.bbox_json)) }));
   return ctx.db
     .all<{ text: string | null; bbox_json: string | null }>(`SELECT text, bbox_json FROM source_region WHERE page_id = ? AND status <> 'rejected' ORDER BY reading_order`, [pageId])
     .map((r) => ({ text: r.text ?? '', box: boxOf(fromJson(r.bbox_json)) }));
+}
+
+/**
+ * The paragraph a manual placement names (Round 7 «انقل يدويًا», the review list's copy): the vault's region row, or —
+ * on a vault STUB page — the subject space's region of that page through the seam below (review P1-T5 s2 R-B). Null:
+ * no such region on that page.
+ */
+export function placementRegion(ctx: AppContext, regionId: string, pageId: string): { bbox_json: string | null; page_id: string | null; status: string } | null {
+  const r = ctx.db.get<{ bbox_json: string | null; page_id: string | null; status: string }>('SELECT bbox_json, page_id, status FROM source_region WHERE id = ?', [regionId]);
+  if (r) return r;
+  const s = stubRegionSource?.(ctx, pageId)?.find((x) => x.id === regionId);
+  return s ? { bbox_json: s.bbox_json, page_id: pageId, status: 'extracted' } : null;
+}
+
+/**
+ * (P1-T5 step 2, additive seam) Regions of a page the bound vault holds only as a stub (official lecture): the forks
+ * module registers a reader of the subject's space here, so a highlight's quote is found again on a new official
+ * version exactly as on a private source. Nothing is written through it.
+ */
+type StubRegionSource = (ctx: AppContext, pageId: string) => Array<{ id?: string; text: string | null; bbox_json: string | null }> | null;
+let stubRegionSource: StubRegionSource | null = null;
+export function setStubRegionSource(fn: StubRegionSource | null): void {
+  stubRegionSource = fn;
 }
 
 // ───────────────────────────── the page map ─────────────────────────────
@@ -488,6 +515,8 @@ interface CopyTx {
   device: string;
   runId: string;
   to: VersionRow;
+  /** (P1-T5 «اربط بالمحاضرة الرسمية») the layer of the copy when it lands in ANOTHER document; default: the same layer */
+  layerFor?: (layerId: string | null) => string | null;
 }
 
 /** the copy's attribution: the original's chain plus this hop (own items without attribution get none) */
@@ -501,6 +530,8 @@ function copyAttribution(c: CopyTx, type: 'annotation' | 'note', fromId: string,
     [type, copyId, prev.author_user_id, prev.author_display, toJson(chain), c.now],
   );
 }
+
+const layerOfCopy = (c: CopyTx, layerId: string | null | undefined): string | null => (c.layerFor ? c.layerFor(layerId ?? null) : (layerId ?? null));
 
 /** Writes (or revives after an undo) the copy of `it` at `anchor` with `data` (annotations). Returns its id and rev. */
 function writeCopy(c: CopyTx, it: Item, anchor: PageAnchor, data: Record<string, unknown> | null): { id: string; rev: number } {
@@ -520,7 +551,7 @@ function writeCopy(c: CopyTx, it: Item, anchor: PageAnchor, data: Record<string,
         `INSERT INTO annotation (id, kind, tool, anchor_json, data_json, layer, z, locked, anchor_status, previous_anchor_json, input_json, device_id, rev, created_at, updated_at, deleted_at,
                                  conflict_of_id, layer_id, author_user_id, migrated_from_id, origin)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'reanchored', ?, ?, ?, 1, ?, ?, NULL, NULL, ?, ?, ?, 'reanchor_copy')`,
-        [id, r.kind, r.tool, toJson(anchor), dataJson, r.layer, r.z, r.locked, r.anchor_json, r.input_json, c.device, c.now, c.now, r.layer_id ?? null, r.author_user_id ?? null, r.id],
+        [id, r.kind, r.tool, toJson(anchor), dataJson, r.layer, r.z, r.locked, r.anchor_json, r.input_json, c.device, c.now, c.now, layerOfCopy(c, r.layer_id), r.author_user_id ?? null, r.id],
       );
     } else {
       // an undone copy (tombstoned by the undo) comes back under the same id, from the original as it is now
@@ -529,7 +560,7 @@ function writeCopy(c: CopyTx, it: Item, anchor: PageAnchor, data: Record<string,
         `UPDATE annotation SET kind = ?, tool = ?, anchor_json = ?, data_json = ?, layer = ?, z = ?, locked = ?, anchor_status = 'reanchored', previous_anchor_json = ?, input_json = ?,
                                layer_id = ?, author_user_id = ?, migrated_from_id = ?, deleted_at = NULL, detached_at = NULL, device_id = ?, rev = rev + 1, updated_at = ?
           WHERE id = ?`,
-        [r.kind, r.tool, toJson(anchor), dataJson, r.layer, r.z, r.locked, r.anchor_json, r.input_json, r.layer_id ?? null, r.author_user_id ?? null, r.id, c.device, c.now, id],
+        [r.kind, r.tool, toJson(anchor), dataJson, r.layer, r.z, r.locked, r.anchor_json, r.input_json, layerOfCopy(c, r.layer_id), r.author_user_id ?? null, r.id, c.device, c.now, id],
       );
     }
     writeAnnotationTarget(db, id, anchor);
@@ -547,7 +578,7 @@ function writeCopy(c: CopyTx, it: Item, anchor: PageAnchor, data: Record<string,
         `INSERT INTO note (id, node_id, title, body_json, anchor_json, origin, ai_record_json, rev, base_rev, conflict_of_id, device_id, created_at, updated_at, deleted_at,
                            source_id, anchor_target_key, layer_id, author_user_id, migrated_from_id, previous_anchor_json, detached_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, 1, NULL, NULL, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, NULL)`,
-        [id, r.node_id, r.title, r.body_json, toJson(anchor), r.origin, r.ai_record_json, c.device, c.now, c.now, sourceId, annotationTargetKey(anchor), r.layer_id ?? null, r.author_user_id ?? null, r.id, r.anchor_json],
+        [id, r.node_id, r.title, r.body_json, toJson(anchor), r.origin, r.ai_record_json, c.device, c.now, c.now, sourceId, annotationTargetKey(anchor), layerOfCopy(c, r.layer_id), r.author_user_id ?? null, r.id, r.anchor_json],
       );
     } else {
       recordNoteRevision(rtx, existing as unknown as Record<string, unknown> & NoteRow, 'restore', null);
@@ -555,7 +586,7 @@ function writeCopy(c: CopyTx, it: Item, anchor: PageAnchor, data: Record<string,
         `UPDATE note SET node_id = ?, title = ?, body_json = ?, anchor_json = ?, origin = ?, ai_record_json = ?, source_id = ?, anchor_target_key = ?, layer_id = ?, author_user_id = ?,
                          migrated_from_id = ?, previous_anchor_json = ?, deleted_at = NULL, detached_at = NULL, device_id = ?, rev = rev + 1, updated_at = ?
           WHERE id = ?`,
-        [r.node_id, r.title, r.body_json, toJson(anchor), r.origin, r.ai_record_json, sourceId, annotationTargetKey(anchor), r.layer_id ?? null, r.author_user_id ?? null, r.id, r.anchor_json, c.device, c.now, id],
+        [r.node_id, r.title, r.body_json, toJson(anchor), r.origin, r.ai_record_json, sourceId, annotationTargetKey(anchor), layerOfCopy(c, r.layer_id), r.author_user_id ?? null, r.id, r.anchor_json, c.device, c.now, id],
       );
     }
     indexNote(db, { id, title: r.title, body: fromJson<RichText>(r.body_json) ?? { v: 1, paragraphs: [] }, origin: r.origin, deleted: false });
@@ -775,6 +806,57 @@ export function runReanchorCopy(ctx: AppContext, body: RunBody, opts: { deviceId
   });
 }
 
+// ───────────────────────────── a copy into ANOTHER document (P1-T5 step 2, additive) ─────────────────────────────
+/**
+ * «اربط بالمحاضرة الرسمية» (ARCHITECTURE_DELTA §6.9 step 2): the same plan and the same copy rules as the tap above,
+ * from a version of one source (a private upload) to a version of ANOTHER source of this vault (the stub of its official
+ * twin), through a page map computed between the two from their fingerprints. Copy, never move: deterministic ids,
+ * `migrated_from_id`, previous anchors kept, uncertain items left for review; the private source's rows are not
+ * touched. Copies land in the target document's personal layer «ملاحظاتي» (layer_id NULL) — items of read-only layers
+ * stay where they are. A second run copies nothing. One transaction.
+ */
+export function runReanchorCopyAcross(ctx: AppContext, body: { from_version_id: string; to_version_id: string }, opts: { deviceId: string | null }): ReanchorCopyRunResponse {
+  const from = getVersion(ctx, body.from_version_id);
+  const to = getVersion(ctx, body.to_version_id);
+  if (!from || !to) throw new AppError('NOT_FOUND', 'الإصدار غير موجود.', 404);
+  if (from.source_id === to.source_id) throw new AppError('VALIDATION_FAILED', 'الإصداران من المصدر نفسه؛ استعمل نقل الملاحظات إلى الإصدار الجديد.', 400);
+  const ms = mapBetween(ctx, from, to);
+  if (ms.state !== 'ready') throw new AppError('CONFLICT', `${ms.reason_ar}`, 409, { state: ms.state });
+  const now = ctx.clock.now();
+  const device = opts.deviceId ?? 'server';
+  return ctx.db.tx(() => {
+    const plan = planAll(ctx, from, to, itemsOn(ctx, from.id), ms.map);
+    const tally = tallyOf(plan);
+    const toCopy = plan.filter((p) => p.status === 'copy' && p.plan?.action === 'copy');
+    const byPage = new Map<string, number>();
+    for (const p of toCopy) {
+      const pl = p.plan as Extract<ItemPlan, { action: 'copy' }>;
+      byPage.set(pl.to_page_id, (byPage.get(pl.to_page_id) ?? 0) + 1);
+    }
+    const counts: RunCounts = { total: tally.total, copied: tally.copy, already_moved: tally.already_moved, needs_review: tally.needs_review, kept: tally.kept, by_page: [...byPage].map(([page_id, items]) => ({ page_id, items })) };
+    const runId = toCopy.length ? newId(now) : null;
+    const row: RunRow = { id: runId ?? '', source_id: from.source_id, from_version_id: from.id, to_version_id: to.id, kind: 'run', algo: ms.map.algo, counts_json: JSON.stringify(counts), device_id: device, created_at: now, undone_at: null, undo_json: null };
+    if (!runId) return { report: { ...reportOf(ctx, row), id: null } };
+    insertRun(ctx, row);
+    const c: CopyTx = { ctx, now, device, runId, to, layerFor: () => null };
+    for (const p of toCopy) {
+      const pl = p.plan as Extract<ItemPlan, { action: 'copy' }>;
+      const data = pl.rects ? { ...(fromJson<Record<string, unknown>>((p.item.row as AnnotationRow).data_json) ?? {}), rects: pl.rects } : null;
+      writeCopy(c, p.item, pageAnchorOn(to, { page_id: pl.to_page_id, page_index: pl.to_page_index }), data);
+    }
+    const report = reportOf(ctx, row);
+    ctx.audit.record({
+      entityType: 'source_version',
+      entityId: to.id,
+      action: 'reanchor_copy',
+      summary: `نسخ المالك ملاحظاته من مصدر خاص إلى المحاضرة الرسمية: ${report.summary_ar}. لم يتغير شيء في المصدر الخاص.`,
+      before: null,
+      after: { run_id: runId, from_version_id: from.id, to_version_id: to.id, algo: ms.map.algo, ...counts },
+    });
+    return { report };
+  });
+}
+
 // ───────────────────────────── undo ─────────────────────────────
 export function undoReanchorCopy(ctx: AppContext, runId: string, opts: { deviceId: string | null }): ReanchorCopyRunResponse {
   const run = ctx.db.get<RunRow>('SELECT * FROM reanchor_copy_run WHERE id = ?', [runId]);
@@ -891,7 +973,7 @@ export function reanchorCopyAction(ctx: AppContext, body: ActionBody, opts: { de
   if (!page) throw new AppError('VALIDATION_FAILED', 'الصفحة المختارة ليست من الإصدار الجديد.', 400);
   let region: NormBox | null = null;
   if (t.region_id) {
-    const r = ctx.db.get<{ bbox_json: string | null; page_id: string | null; status: string }>('SELECT bbox_json, page_id, status FROM source_region WHERE id = ?', [t.region_id]);
+    const r = placementRegion(ctx, t.region_id, page.id);
     if (!r || r.page_id !== page.id || r.status === 'rejected') throw new AppError('VALIDATION_FAILED', 'الفقرة المختارة ليست على الصفحة المختارة.', 400);
     region = boxOf(fromJson(r.bbox_json));
   }

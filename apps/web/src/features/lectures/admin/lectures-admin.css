@@ -1,0 +1,171 @@
+/* «إدارة القنوات» sections of P1-T5 (features/lectures/admin) — tokens only, logical properties, 44 px targets.
+   Light / dark / e-ink come from the tokens (e-ink: black and grey, no shadows); nothing here sets a colour of its own. */
+.lec-admin {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-5);
+  max-inline-size: var(--ml-content-max);
+  margin-inline: auto;
+  padding-block: var(--ml-space-4);
+  padding-inline: var(--ml-space-4);
+  color: var(--ml-color-ink);
+  min-inline-size: 0;
+}
+.lec-admin__h1 {
+  margin: 0;
+  font-size: var(--ml-text-2xl);
+  line-height: var(--ml-leading-2xl);
+}
+.lec-admin__h2 {
+  display: flex;
+  align-items: center;
+  gap: var(--ml-space-2);
+  margin: 0 0 var(--ml-space-3);
+  font-size: var(--ml-text-lg);
+  line-height: var(--ml-leading-lg);
+}
+.lec-admin__scope {
+  max-inline-size: var(--ml-measure-form);
+}
+.lec-admin__scope-line {
+  margin: 0;
+  color: var(--ml-color-ink-2);
+}
+.lec-admin__add,
+.lec-admin__group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-3);
+  padding: var(--ml-space-4);
+  border: 1px solid var(--ml-color-line);
+  border-radius: var(--ml-radius-lg);
+  background: var(--ml-color-paper);
+  min-inline-size: 0;
+}
+.lec-admin__add-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr));
+  gap: var(--ml-space-3);
+}
+.lec-admin__file {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-1);
+  font-size: var(--ml-text-sm);
+}
+.lec-admin__file-label {
+  font-weight: var(--ml-weight-semibold);
+}
+.lec-admin__file input[type='file'] {
+  min-block-size: 44px;
+  max-inline-size: 100%;
+}
+.lec-admin__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-2);
+}
+.lec-admin__actions .ml-btn {
+  min-block-size: 44px;
+}
+.lec-admin__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-3);
+}
+.lec-admin__row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+  padding-block: var(--ml-space-3);
+  border-block-start: 1px solid var(--ml-color-line);
+  min-inline-size: 0;
+}
+.lec-admin__row:first-child {
+  border-block-start: 0;
+  padding-block-start: 0;
+}
+.lec-admin__row-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-2);
+}
+.lec-admin__title {
+  font-weight: var(--ml-weight-semibold);
+  overflow-wrap: anywhere;
+}
+.lec-admin__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ml-space-1);
+  padding-inline: var(--ml-space-2);
+  border: 1px solid var(--ml-color-line-strong);
+  border-radius: var(--ml-radius-pill);
+  font-size: var(--ml-text-xs);
+  color: var(--ml-color-ink-2);
+}
+.lec-admin__meta,
+.lec-admin__note,
+.lec-admin__hint,
+.lec-admin__empty {
+  margin: 0;
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-sm);
+  overflow-wrap: anywhere;
+}
+.lec-admin__error {
+  margin: 0;
+  color: var(--ml-color-danger-ink);
+  font-size: var(--ml-text-sm);
+}
+.lec-admin__versions,
+.lec-admin__diff {
+  margin: 0;
+  padding-inline-start: var(--ml-space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-1);
+  font-size: var(--ml-text-sm);
+  overflow-wrap: anywhere;
+}
+.lec-admin__diff del {
+  color: var(--ml-color-ink-2);
+}
+.lec-admin__diff ins {
+  text-decoration: underline;
+  font-weight: var(--ml-weight-semibold);
+}
+.lec-admin__preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+}
+.lec-admin__preview p {
+  margin: 0;
+}
+.lec-admin__dup-files {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+}
+.lec-admin__dup-file {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--ml-space-1) var(--ml-space-3);
+  padding: var(--ml-space-2) var(--ml-space-3);
+  border: 1px solid var(--ml-color-line);
+  border-radius: var(--ml-radius-md);
+  min-inline-size: 0;
+}
+.lec-admin__coverage {
+  font-variant-numeric: tabular-nums;
+}

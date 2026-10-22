@@ -1,7 +1,7 @@
 // Search module (/api/search) — track C1. Universal Search (§46) over document chunks, questions, the owner's
 // notes, generated content and transcripts (see ./service.ts). Owns no tables of its own beyond the FTS
 // indexes listed in ARCHITECTURE §2 (filled by the owning modules).
-import { SEARCH_MODES, SEARCH_RESULT_TYPES, SOURCE_TYPES, type SearchResponse, type SearchResultType } from '@medlevo/shared';
+import { SEARCH_MODES, SEARCH_RESULT_TYPES, SEARCH_SCOPES, SOURCE_TYPES, type SearchResponse, type SearchResultType } from '@medlevo/shared';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { ModuleOptions } from '../../context';
@@ -37,6 +37,8 @@ const searchQuery = z.object({
   version_id: ID.optional(),
   limit: z.coerce.number().int().min(1).max(50).default(20),
   cursor: z.string().max(200).optional(),
+  /** P1-T5 step 2: federation over the subjects the viewer belongs to (ARCHITECTURE_DELTA §11.1) */
+  scope: z.enum(SEARCH_SCOPES).default('all'),
 });
 
 export default async function register(app: FastifyInstance, { ctx }: ModuleOptions): Promise<void> {
@@ -56,6 +58,8 @@ export default async function register(app: FastifyInstance, { ctx }: ModuleOpti
       version_id: q.version_id,
       limit: q.limit,
       offset: decodeCursor(q.cursor),
+      scope: q.scope,
+      viewer: ctx.binding.viewer(),
     });
   });
 }

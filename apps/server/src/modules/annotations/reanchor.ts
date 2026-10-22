@@ -35,6 +35,7 @@ import { describeAnchorAr, getAnnotation, getNote, pageAnchorResolves, toAnnotat
 // (Academic OS P1-T2, minimal seam) layer rule R5 and the version history apply here too
 import { recordAnnotationRevision, recordNoteRevision } from './history';
 import { checkExistingItem } from './layers';
+import { placementRegion } from './reanchorCopy';
 
 const ID = z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/);
 export const reanchorBody = z
@@ -277,7 +278,7 @@ function resolveTarget(ctx: AppContext, t: ReanchorTarget, sources: Set<string>)
     }
     let region: NormBox | null = null;
     if (t.region_id) {
-      const r = ctx.db.get<{ bbox_json: string | null; page_id: string | null; status: string }>('SELECT bbox_json, page_id, status FROM source_region WHERE id = ?', [t.region_id]);
+      const r = placementRegion(ctx, t.region_id, page.id); // (P1-T5 s2 review R-B) a stub page's paragraphs are the space's
       if (!r || r.page_id !== page.id || r.status === 'rejected') throw new AppError('VALIDATION_FAILED', 'الفقرة المختارة ليست على الصفحة المختارة.', 400);
       region = boxOf(fromJson(r.bbox_json));
     }

@@ -154,16 +154,42 @@ measurably change text contrast. Owner setting: *Settings → المظهر → �
 | `Bidi`, `Term`, `RichTextView` | mixed-direction text | see §3 |
 | `ThemeProvider`, `useAppearance()`, `appearanceStore` | appearance prefs | persisted locally (try/catch), synced from `/api/settings` by `lib/settings.ts` |
 
+### Academic OS pieces (P1-T4 step 3; IA §8.2)
+
+Built from the components above and the same tokens, in the feature folders that use them (not in `design/`):
+
+| piece | where | use | accessibility / behaviour |
+|---|---|---|---|
+| `RoleBadge` | `features/channels/ui.tsx` | «مشرف المادة», «مساعد», «مدير القناة», «مساهم» where the role matters | text, never a colour alone; a student is a member, not a role — no badge |
+| `InlineBanner` (`icon`, `tone` neutral / warning, `action`) | `features/channels/ui.tsx` | a non-modal notice in the page flow | `role="status"`; icon + text |
+| `CachedBanner` (`at`) | `features/channels/ui.tsx` | a screen shown from the copy saved on this device | «غير متصل · تعرض نسخة محفوظة على هذا الجهاز من …» and what needs a connection |
+| `ReasonedButton` (`reason`) | `features/channels/ui.tsx` | any button that may be unable to act (offline, nothing selected, a policy) | disabled **and** the reason on screen, linked by `aria-describedby` (AOS-23.3: no decorative controls); a plain `Button` otherwise |
+| `QrCard` (`payload`, `caption`) | `features/channels/QrCard.tsx` | the QR of an invite link, shown once after creating it | one SVG path of unit squares (crisp at any size, black on white in every theme and in e-ink), `role="img"` named «رمز QR: …», the link as selectable LTR text and «انسخ الرابط»; the encoder (`qrEncode.ts`, qrcode-generator) loads only with the codes section |
+| `QrScanner` | `features/channels/QrScanner.tsx` | «امسح رمز QR» inside the join sheet | asks for the camera only on the tap; frames decoded on the device (jsQR, its own lazy chunk); an Arabic reason when the camera cannot be used and the focus returns to the code field; «أوقف الكاميرا»; the stream stops when a code is read or the sheet closes |
+| NotificationRow | `features/notifications/NotificationsScreen.tsx` | one inbox entry | kind icon (decorative) + the text + who + when; «غير مقروء» as a pill with text; the row is a link to its target; «علّم كمقروء» |
+| the bell | `features/notifications/NotificationBell.tsx` | top bar | a link named «التنبيهات، N غير مقروءة»; the count as text on a pill (an outline in e-ink) |
+| `ReportDialog` «أبلغ» | P1-T5, `features/lectures` | reporting a publication | built by P1-T5 with `Dialog` and these tokens |
+
 Layout patterns (in `components.css` / `app/shell.css`): `.ml-page` (+`--narrow`), `.ml-page__header|title|lede`,
 `.ml-group` / `.ml-group__row` / `.ml-group-header` / `.ml-group-footer` (inset-grouped settings-style lists),
 `.ml-list`, `.ml-stack`, `.ml-cluster`, `.ml-paper`, `.ml-visually-hidden`, `.ml-skip-link`.
 
 ## 5. Shell (spec §23)
 
-* **Phones:** compact top bar (mark, search, offline indicator, save status) + **bottom tab bar** with four
-  labelled destinations: الرئيسية / المكتبة / المراجعة / الإعدادات.
+* **Phones:** compact top bar (mark, search, the bell «التنبيهات», offline indicator, save status) + **bottom tab bar**
+  with five labelled destinations: الرئيسية / المكتبة / القنوات / المراجعة / أنا (Academic OS IA §3.1; «الإعدادات»,
+  «مركز التحكم» and the downloads are under «أنا»; a destination stays current on its sub-pages — `app/navigation.ts`).
 * **Tablet / desktop (≥ 48rem):** one slim translucent top bar with the same destinations, a search entry
   (`/` or Ctrl/⌘ K), the offline indicator and the save status. **No permanent sidebar.**
+* **Tablets (48rem – 80rem: every iPad in portrait, the smaller ones in landscape):** the same top bar in **two rows** —
+  the mark, search, «التنبيهات» and the save status, then the five destinations side by side, each 44 px tall. One row
+  did not fit beside the bell and the save status (a 768 px iPad scrolled sideways, every iPad at 150 % text — review of
+  P1-T4 step 3). The bar's height is `--ml-topbar-h` (6.5rem there, scoped to `.ml-shell`, so the screens' sticky
+  panels sit below it and `/study` keeps 3.5rem). On a touch screen every top-bar control is ≥ 44 px (the brand link
+  too when only the mark shows). Measured by `e2e/aos-ac01a.spec.ts` «the shell fits a 390 px phone and iPad sizes».
+* A destination is current (`aria-current="page"`, a bar and a heavier label — not colour alone, e-ink) on every screen
+  IA §3.2 places under it: «المراجعة» also for `/questions`, `/exams`, `/practice`, `/cases`, `/planner`, `/weakness`,
+  `/concepts`, `/knowledge`, `/terms`, `/explanation-rules`.
 * `/study/…` (workspace) is full-bleed without the shell. Focus moves to the new page's `h1` after navigation;
   a skip link jumps to `#main`.
 

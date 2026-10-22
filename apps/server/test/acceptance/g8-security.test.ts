@@ -110,6 +110,11 @@ describe('G8 security — authentication on every registered /api route', () => 
         // P1-T1 step 3: the owner-migration page's address; once the app runs it only redirects to the app
         'GET /api/maintenance',
         'HEAD /api/maintenance',
+        // P1-T4 (ADR-0003 §3.10, PRD Q2): exactly two new public routes — registration with a join proof, and the
+        // invite-link preview (HEAD follows its GET)
+        'POST /api/auth/register',
+        'GET /api/channels/join/preview',
+        'HEAD /api/channels/join/preview',
       ].sort(),
     );
     const m = await t.app.inject({ method: 'GET', url: '/api/maintenance' });
