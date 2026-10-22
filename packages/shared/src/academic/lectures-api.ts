@@ -16,7 +16,7 @@ import { z } from 'zod';
 import type { OfflineManifestResponse } from '../data-api';
 import type { CursorPage, GroupCount, NodeRef } from './channels-api';
 import { cursorPageQuerySchema, entityIdSchema, isoDateSchema, plainTextSchema } from './channels-api';
-import type { PageChangeKind } from './versions';
+import type { ImportSuggestionView, PageChangeKind } from './versions';
 import type { UserRef } from './visibility';
 
 /** The badge of official content (always text + icon, never colour alone). */
@@ -53,7 +53,15 @@ export interface OfficialLectureView {
   /** drafts and lectures in review are listed to the subject's moderators and to their uploader only */
   status: OfficialLectureStatus;
   /** the published official version students see (null before the first publish) */
-  head_version: { id: string; version_no: number; page_count: number | null; processing_status: string } | null;
+  head_version: {
+    id: string;
+    version_no: number;
+    page_count: number | null;
+    processing_status: string;
+    /** (C2, AOS-4.5 / 19I.2 / 18.18, additive) the Subject Moderator who published it and when — shown with «رسمي» */
+    published_by?: UserRef | null;
+    published_at?: number | null;
+  } | null;
   uploaded_by: UserRef;
   /**
    * the moderator who approved a contributor's draft and when (AOS-18.4 «draft → approved → published»; review W2-step0
@@ -87,7 +95,8 @@ export interface OfficialVersionView {
  * route never reads a vault).
  */
 export interface OfficialLectureDetail extends OfficialLectureView {
-  versions: OfficialVersionView[];
+  /** (C2, AOS-18.18) each version says who uploaded it (`uploaded_by`, P1-T5 step 1 `OfficialVersionUploader`) */
+  versions: Array<OfficialVersionView & OfficialVersionUploader>;
   withdrawn: { reason: LectureWithdrawReason; note_ar: string; at: number } | null;
 }
 
@@ -129,6 +138,13 @@ export const uploadOfficialVersionSchema = z.object({ upload_id: entityIdSchema 
 export interface UploadOfficialVersionResponse {
   version_id: string;
   job_id: string;
+  /**
+   * (Phase 1 completion C2, AOS-3.6 / 2.3, additive) the same bytes are already another official lecture of this subject
+   * — named ONLY when the uploader may see that lecture (version); otherwise absent: no title, no hint. The upload is
+   * kept either way (the subject's «الملفات المكررة» lists both for the moderators).
+   */
+  duplicate_of?: { lecture_id: string; title: string; version_no: number } | null;
+  duplicate_note_ar?: string | null;
 }
 
 /** POST /api/spaces/:s/lectures/:id/approve — a moderator approves a contributor's draft. */
@@ -433,3 +449,34 @@ export const createSubjectAttachmentFieldsSchema = z
     lecture_id: entityIdSchema.optional(),
   })
   .strict();
+
+// ───────────────────────────── the subject's review queue (Phase 1 completion C2; AOS-3.18, 3.11) ─────────────────────
+/**
+ * GET /api/spaces/:s/subject/review — what the import intelligence (P1-T3) found in the subject's OFFICIAL uploads and
+ * could not decide alone: an uncertain lecture number or date, a proposed title, «إصدار جديد من …» (an upload whose
+ * pages match an existing lecture). Role-scoped: the subject's official moderators only (an Assistant has no power over
+ * official content, Q5); a student's own uploads are reviewed in their vault (`GET /api/versions/suggestions`) and the
+ * two queues never mix. Uncertain values have no effect until a moderator accepts them; a moderator's decision is never
+ * overridden by a later analysis.
+ */
+export interface SubjectReviewItem {
+  suggestion: ImportSuggestionView;
+  /** the official lecture whose file was analysed (null: a subject attachment) */
+  lecture: { id: string; title: string; status: OfficialLectureStatus; lecture_no: number | null } | null;
+  /** «إصدار جديد من …»: the existing lecture the upload would become a new version of */
+  target_lecture: { id: string; title: string; status: OfficialLectureStatus; head_version_no: number | null } | null;
+}
+export interface SubjectReviewResponse {
+  items: SubjectReviewItem[];
+}
+export const decideSubjectReviewSchema = z.object({ action: z.enum(['accept', 'reject']) }).strict();
+export type DecideSubjectReviewRequest = z.infer<typeof decideSubjectReviewSchema>;
+export interface DecideSubjectReviewResponse {
+  item: SubjectReviewItem;
+  result_ar: string;
+  /**
+   * accepting «إصدار جديد من …»: the file became a new DRAFT version of the existing lecture (the same stored file, no
+   * byte copy); the moderator publishes it with the usual preview, and its holders and followers are told then (3.11)
+   */
+  new_version?: { lecture_id: string; version_id: string; version_no: number };
+}

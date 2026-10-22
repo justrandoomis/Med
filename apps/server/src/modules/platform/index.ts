@@ -11,6 +11,11 @@
 //   GET  /api/platform/vaults/:vaultId/backups      → VaultBackupsResponse (+ the last restore of this process)
 //   POST /api/platform/vaults/:vaultId/backups      → VaultBackupView (one vault, encrypted when the key is set)
 //   POST /api/platform/vaults/:vaultId/restore      {file_name} → 202; runs in the background (data/vault-backup.ts)
+// AOS-21.1 / X8 (d):
+//   GET  /api/platform/spaces/:spaceId/backups        → SpaceBackupsResponse (+ the last restore check of this process)
+//   POST /api/platform/spaces/:spaceId/backups        → SpaceBackupView (one subject space, encrypted when the key is set)
+//   POST /api/platform/spaces/:spaceId/backups/verify {file_name} → 202; the restore check runs in the background
+//        (data/space-backup.ts; it never changes the live space)
 // (ARCHITECTURE_DELTA §7.12 names the quota routes /api/admin/quotas/…; they are platform-admin operations and live
 // here with the other ones — /api/admin is the channel administration of P1-T4.)
 // Today's whole-instance routes (backups, off-site copies, /export/all, evaluation, health, client-error list) stay
@@ -25,14 +30,18 @@ import {
   restoreVaultSchema,
   runSweepSchema,
   setQuotaSchema,
+  type SpaceBackupsResponse,
+  type SpaceBackupView,
   type VaultBackupsResponse,
   type VaultBackupView,
+  verifySpaceBackupSchema,
 } from '@medlevo/shared';
 import type { AppContext, ModuleOptions } from '../../context';
 import { AppError } from '../../lib/errors';
 import { parseBody, parseParams } from '../../lib/http';
 import type { BlobSweepRow } from '../../system/ops';
 import { PLATFORM_ROUTES } from '../authz/routes';
+import { backupSpace, lastSpaceCheck, listSpaceBackups, SPACE_BACKUP_NOTE_AR, spaceTitle, verifySpaceBackup } from '../data/space-backup';
 import { backupVault, lastVaultRestore, listVaultBackups, restoreVault, VAULT_BACKUP_NOTE_AR } from '../data/vault-backup';
 
 const MiB = 1024 * 1024;
@@ -154,6 +163,45 @@ export default async function platformModule(app: FastifyInstance, { ctx }: Modu
           .then((r) => lastVaultRestore.set(vaultId, { ...r, finished_at: ctx.clock.now() }))
           .catch((e: unknown) => {
             lastVaultRestore.set(vaultId, { vault_id: vaultId, ok: false, checks: [{ name: 'apply', ok: false, detail_ar: (e as Error).message.slice(0, 200) }], rollback_copy: null, sessions_revoked: 0, finished_at: ctx.clock.now() });
+          });
+      }),
+    );
+    return reply.code(202).send({ started: true });
+  });
+
+  // ───────── per-space backups and their restore check (AOS-21.1 / X8 (d)) ─────────
+  app.get('/spaces/:spaceId/backups', async (req): Promise<SpaceBackupsResponse> => {
+    adminOf(req);
+    const { spaceId } = parseParams(spaceParams, req);
+    const backups = listSpaceBackups(ctx, spaceId);
+    return { space_id: spaceId, title: spaceTitle(ctx, spaceId), backups, note_ar: SPACE_BACKUP_NOTE_AR, last_check: lastSpaceCheck.get(spaceId) ?? null };
+  });
+
+  app.post('/spaces/:spaceId/backups', { config: { rateLimit: { max: 6, timeWindow: 10 * 60_000 } } }, async (req, reply): Promise<SpaceBackupView> => {
+    const admin = adminOf(req);
+    const { spaceId } = parseParams(spaceParams, req);
+    // the snapshot reads the space file by path: the request's own binding (the admin's vault) is left alone
+    const view = await ctx.binding.runRoot(() => backupSpace(ctx, spaceId));
+    ctx.system.securityAudit.record({ actorUserId: admin, actorRole: 'platform_admin', action: 'space_backup', targetDb: spaceId, targetType: 'space', targetId: spaceId, summary: 'نسخة احتياطية لمساحة مادة', details: { encrypted: view.encrypted, size: view.size }, ip: req.ip ?? null });
+    return reply.code(201).send(view);
+  });
+
+  app.post('/spaces/:spaceId/backups/verify', { config: { rateLimit: { max: 6, timeWindow: 10 * 60_000 } } }, async (req, reply) => {
+    const admin = adminOf(req);
+    const { spaceId } = parseParams(spaceParams, req);
+    const { file_name } = parseBody(verifySpaceBackupSchema, req);
+    if (!listSpaceBackups(ctx, spaceId).some((b) => b.file_name === file_name)) throw new AppError('NOT_FOUND', 'النسخة غير موجودة.', 404);
+    if (lastSpaceCheck.get(spaceId)?.running) throw new AppError('CONFLICT', 'فحص آخر لنسخة هذه المادة يعمل الآن؛ أعد المحاولة بعد قليل.', 409);
+    const started = ctx.clock.now();
+    lastSpaceCheck.set(spaceId, { space_id: spaceId, file_name, running: true, ok: false, checks: [], started_at: started, finished_at: null });
+    ctx.system.securityAudit.record({ actorUserId: admin, actorRole: 'platform_admin', action: 'space_backup_verify', targetDb: spaceId, targetType: 'space', targetId: spaceId, summary: 'فحص استعادة نسخة مساحة مادة', details: { file_name }, ip: req.ip ?? null });
+    // background work in the root context: this request's own lease (the admin's vault) is released first
+    ctx.binding.runRoot(() =>
+      setImmediate(() => {
+        void verifySpaceBackup(ctx, spaceId, file_name)
+          .then((r) => lastSpaceCheck.set(spaceId, r))
+          .catch((e: unknown) => {
+            lastSpaceCheck.set(spaceId, { space_id: spaceId, file_name, running: false, ok: false, checks: [{ name: 'verify', ok: false, detail_ar: (e as Error).message.slice(0, 200) }], started_at: started, finished_at: ctx.clock.now() });
           });
       }),
     );

@@ -6,6 +6,7 @@
 // layers), so tracks never edit this file to add a resource. Any matching rule's deny wins over every allow.
 import type { ErrorCode } from '@medlevo/shared';
 import { AppError } from '../../lib/errors';
+import { type GrantProvider, NO_GRANTS } from '../../system/acl';
 import type { SpaceAccess, Viewer } from '../../system/binding';
 
 export type Action =
@@ -66,6 +67,11 @@ export const NO_MEMBERSHIPS: MembershipProvider = Object.freeze({ accessToSpace:
 
 export interface AuthzDeps {
   memberships: MembershipProvider;
+  /**
+   * AOS-21.18: per-resource ACL grants (system `acl_grant`); a rule asks `grants?.has(viewer, type, db, id, permission)`.
+   * Always set by the policy; optional for callers that build deps by hand (a missing provider grants nothing).
+   */
+  grants?: GrantProvider;
 }
 
 export interface AuthzRule {
@@ -88,6 +94,8 @@ export interface Authz {
   registerVisibilityKeys(provider: VisibilityKeyProvider): void;
   setMembershipProvider(p: MembershipProvider): void;
   readonly memberships: MembershipProvider;
+  /** AOS-21.18: the ACL grants the rules read (the context wires the system `acl_grant` repository) */
+  setGrantProvider(p: GrantProvider): void;
   /** the registered rules (matrix test) */
   rules(): readonly AuthzRule[];
 }
@@ -111,7 +119,8 @@ export function createAuthz(): Authz {
   const rules: AuthzRule[] = [...CORE_RULES];
   const keyProviders: VisibilityKeyProvider[] = [];
   let memberships: MembershipProvider = NO_MEMBERSHIPS;
-  const deps = (): AuthzDeps => ({ memberships });
+  let grants: GrantProvider = NO_GRANTS;
+  const deps = (): AuthzDeps => ({ memberships, grants });
 
   const can = (viewer: Viewer, action: Action, resource: Resource): Decision => {
     let allowed = false;
@@ -159,6 +168,9 @@ export function createAuthz(): Authz {
     },
     get memberships() {
       return memberships;
+    },
+    setGrantProvider(p) {
+      grants = p;
     },
     rules: () => rules,
   };

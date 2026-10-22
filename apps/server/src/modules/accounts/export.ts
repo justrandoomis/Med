@@ -4,11 +4,16 @@
 // the system DB or another account's vault — and it is the same format a platform per-vault restore reads, so a user
 // can keep it as their own backup. Not encrypted: it is for the user, delivered over the authenticated connection.
 // The newest 3 archives are kept; deleting the account deletes them.
+// AOS-21.43: the kept archives are the account's bytes on the server, so they COUNT IN ITS STORAGE QUOTA
+// (system/quota.ts). An export with no room left is refused before its job starts; a finished archive first makes
+// room by removing that account's OLDER archives; one that does not fit even alone is removed again and the job fails
+// with the reason (the earlier archives stay).
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AccountExportView, JobView } from '@medlevo/shared';
 import type { AppContext } from '../../context';
 import { AppError, JobError } from '../../lib/errors';
+import type { Viewer } from '../../system/binding';
 import { createBackup } from '../data/backup';
 
 export const ACCOUNT_EXPORT_JOB = 'account_export';
@@ -20,7 +25,7 @@ export const EXPORT_INCLUDED_AR = [
   'كل ملف يشير إليه حسابك (الملفات الأصلية والمحوّلة وصور الصفحات) مع بصمة sha256 لكل ملف، وملف manifest.json يصف المحتوى.',
   'لا تحتوي بيانات أي حساب آخر، ولا كلمة المرور ولا مفاتيح الخادم.',
 ];
-export const EXPORT_NOTE_AR = 'تُحفظ آخر 3 نسخ على الخادم لتنزيلها، وتُحذف كلها عند حذف حسابك. النسخة غير مشفّرة لأنها لك: احفظها في مكان آمن.';
+export const EXPORT_NOTE_AR = 'تُحفظ آخر 3 نسخ على الخادم لتنزيلها وتُحسب من مساحة حسابك (تُحذف الأقدم أولًا عند الحاجة)، وتُحذف كلها عند حذف حسابك. النسخة غير مشفّرة لأنها لك: احفظها في مكان آمن.';
 
 function boundVaultId(ctx: AppContext): string {
   const b = ctx.binding.current() ?? ctx.binding.harnessDefault();
@@ -44,6 +49,61 @@ interface ExportOutput {
 /** Said with the export when files are missing from it — never a silent «complete» (P1-T1 step 2 review). */
 export const EXPORT_MISSING_AR = (n: number) =>
   `النسخة جاهزة لكن ينقصها ${n} ملف لم يُعثر عليه سليمًا في مخزن الملفات (ولا في نسخته السحابية إن وُجدت)؛ أسماؤها وبصماتها مذكورة في manifest.json ← files_missing. أبلغ مسؤول المنصة.`;
+
+const MiB = 1024 * 1024;
+const mbAr = (n: number) => `${(n / MiB).toFixed(n >= 100 * MiB ? 0 : 1)} م.ب`;
+
+/** AOS-21.43: why an export does not fit (exports count in the account's storage). */
+export const EXPORT_QUOTA_AR = (usedBytes: number, limitBytes: number, needBytes: number | null) =>
+  `لا توجد مساحة كافية في حسابك لنسخة من بياناتك${needBytes !== null ? ` (تحتاج النسخة ${mbAr(needBytes)})` : ''}: تستخدم ${mbAr(usedBytes)} من ${mbAr(limitBytes)}، والنسخ المحفوظة على الخادم تُحسب من مساحتك. احذف ملفات لا تحتاجها أو اطلب من مسؤول المنصة زيادة المساحة.`;
+
+/** AOS-21.43: before an export job starts — refused when the account has no room left at all (QUOTA_EXCEEDED). */
+export function assertExportHasRoom(ctx: AppContext, v: Viewer): void {
+  const vault = ctx.system.vaults.ofViewer(v);
+  const limit = ctx.quota.storageLimit(v.userId);
+  if (!vault || limit === null) return;
+  const u = ctx.quota.storageUsed(vault.id);
+  // older archives are dropped to make room, so only the vault and its files must leave room for a new one
+  if (u.bytes_db + u.bytes_files >= limit) {
+    throw new AppError('QUOTA_EXCEEDED', EXPORT_QUOTA_AR(u.bytes_db + u.bytes_files + u.bytes_exports, limit, null), 409, {
+      kind: 'storage',
+      used: u.bytes_db + u.bytes_files + u.bytes_exports,
+      limit,
+      wanted: null,
+      resets_at: null,
+    });
+  }
+}
+
+/**
+ * AOS-21.43: after the new archive `fresh` is written — make it fit the quota by removing OLDER archives (oldest first);
+ * if it cannot fit even alone, remove it (the older archives stay) and fail with the reason.
+ */
+function fitInQuota(ctx: AppContext, vaultId: string, userId: string, dir: string, fresh: string): void {
+  const limit = ctx.quota.storageLimit(userId);
+  if (limit === null) return;
+  const older = readdirSync(dir)
+    .filter((n) => EXPORT_NAME_RE.test(n) && n !== fresh)
+    .sort();
+  const sizeOf = (n: string) => {
+    try {
+      return statSync(join(dir, n)).size;
+    } catch {
+      return 0;
+    }
+  };
+  const total = ctx.quota.storageTotal(vaultId);
+  const olderBytes = older.reduce((a, n) => a + sizeOf(n), 0);
+  if (total - olderBytes > limit) {
+    const need = sizeOf(fresh);
+    rmSync(join(dir, fresh), { force: true });
+    throw new JobError('QUOTA_EXCEEDED', EXPORT_QUOTA_AR(total - need, limit, need), { retryable: false });
+  }
+  for (const n of older) {
+    if (ctx.quota.storageTotal(vaultId) <= limit) break;
+    rmSync(join(dir, n), { force: true });
+  }
+}
 
 function keepNewest(dir: string, keep: number): void {
   if (!existsSync(dir)) return;
@@ -85,6 +145,8 @@ export function registerAccountExport(ctx: AppContext): void {
       });
       rmSync(`${res.archivePath}.sha256`, { force: true });
       keepNewest(dir, EXPORTS_KEPT);
+      // AOS-21.43: the archives count in the account's quota — older ones go first, an archive that cannot fit is not kept
+      fitInQuota(ctx, vaultId, vault.user_id, dir, res.fileName);
       ctx.audit.record({ entityType: 'account', entityId: vault.user_id, action: 'export', summary: `نسخة من بياناتك (${res.summary.files} ملفًا)`, actor: 'job', jobId: run.id });
       return { file_name: res.fileName, size: res.size, sha256: res.sha256, missing_files: res.manifest.files_missing.length };
     },

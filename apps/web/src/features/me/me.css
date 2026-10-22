@@ -99,3 +99,14 @@
   color: var(--ml-color-ink-2);
   font-size: var(--ml-text-sm);
 }
+/* AOS-21.42: the AI-processing consent */
+.me-consent__state {
+  display: flex;
+  align-items: center;
+  gap: var(--ml-space-2);
+  font-weight: var(--ml-weight-medium);
+}
+.me-consent__h {
+  margin-block: var(--ml-space-4) var(--ml-space-2);
+  font-size: var(--ml-text-md);
+}

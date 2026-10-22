@@ -115,3 +115,18 @@ export function pagePreviews(items: readonly AnnotationDTO[], limit = 12): PageP
   }
   return [...pages.values()].sort((a, b) => a.pageIndex - b.pageIndex).slice(0, limit);
 }
+
+/**
+ * (C2, AOS-19I.5) Machine-generated content inside a published explanation, said in words with its count: saved AI
+ * answers and text read from handwriting are never presented as the author's own writing, nor as a source. Null when
+ * the version holds none.
+ */
+export function machineContentAr(notes: ReadonlyArray<{ origin: string }>): string | null {
+  const ai = notes.filter((n) => n.origin === 'ai_answer').length;
+  const hw = notes.filter((n) => n.origin === 'handwriting_recognition').length;
+  if (ai === 0 && hw === 0) return null;
+  const aiAr = ai === 1 ? 'إجابة مولَّدة محفوظة كملاحظة' : ai === 2 ? 'إجابتان مولَّدتان محفوظتان كملاحظات' : ai <= 10 ? `${ai} إجابات مولَّدة محفوظة كملاحظات` : `${ai} إجابة مولَّدة محفوظة كملاحظات`;
+  const hwAr = hw === 1 ? 'نص واحد مقروء آليًا من خط اليد' : hw === 2 ? 'نصان مقروءان آليًا من خط اليد' : hw <= 10 ? `${hw} نصوص مقروءة آليًا من خط اليد` : `${hw} نصًا مقروءًا آليًا من خط اليد`;
+  const parts = [ai ? aiAr : null, hw ? hwAr : null].filter((x): x is string => !!x);
+  return `فيه محتوى مولَّد آليًا: ${parts.join('، ')} — ليست مصدرًا، وتحقّق منها قبل الاعتماد عليها.`;
+}

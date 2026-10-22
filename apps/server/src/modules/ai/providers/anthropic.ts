@@ -192,6 +192,8 @@ const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp
 
 export class AnthropicProvider implements AiProvider {
   readonly name = 'anthropic';
+  /** AOS-21.42: a hosted API — a user's content goes only with their ai_processing consent naming 'anthropic' */
+  readonly dataLeavesDeployment = true;
   readonly streamsText = true;
   readonly #client: Anthropic;
   readonly #models: Record<ModelRole, string>;

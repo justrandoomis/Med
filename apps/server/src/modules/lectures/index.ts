@@ -8,7 +8,8 @@
 //              …/versions/:v/publish {preview?} · GET …/versions/:a/compare/:b · POST …/page-map/decisions ·
 //              …/withdraw · …/corrections · …/corrections/:c/decide · GET …/offline-package
 //   subject    GET · POST /subject/attachments · PATCH …/:id · GET /subject/exam-dates · PUT · DELETE …/:id ·
-//              GET /subject/events · GET /subject/corrections · GET /subject/duplicates
+//              GET /subject/events · GET /subject/corrections · GET /subject/duplicates ·
+//              (C2) GET /subject/review · POST /subject/review/:itemId/decide (AOS-3.18, 3.11)
 //   re-mounted GET /sources/:id · …/versions/:v/pages · /sources/pages/:id/regions · /sources/versions/:id/processing ·
 //              POST /sources/versions/:id/reprocess · GET /versions/pages/:id/thumbnail · /versions/versions/:id/toc ·
 //              …/files · GET /files/:id · /files/:id/meta
@@ -20,6 +21,7 @@ import { z } from 'zod';
 import {
   approveOfficialLectureSchema,
   createOfficialLectureSchema,
+  decideSubjectReviewSchema,
   createSubjectAttachmentFieldsSchema,
   createSubjectAttachmentSchema,
   decideOfficialCorrectionSchema,
@@ -57,6 +59,8 @@ import { SpaceReads } from './reads';
 import { LecturesService, OFFICIAL_PAGE_MAP_JOB, pageMapStatus } from './service';
 import { scopeOf } from './store';
 import { SubjectService } from './subject';
+import { mirrorDetectedIdentity, SubjectReviewService } from './review';
+import { onIdentityAnalyzed } from '../versions/identity';
 
 const id = z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/);
 const lectureParams = z.object({ spaceId: id, lectureId: id });
@@ -99,6 +103,10 @@ export default async function lecturesModule(app: FastifyInstance, { ctx }: Modu
   const corrections = new CorrectionsService(ctx, lectures);
   const subject = new SubjectService(ctx);
   const reads = new SpaceReads(ctx);
+  const review = new SubjectReviewService(ctx);
+  // (C2, AOS-3.18) a CERTAIN detected number / date fills an official lecture that has none; uncertain ones wait
+  const offIdentity = onIdentityAnalyzed(mirrorDetectedIdentity);
+  app.addHook('onClose', async () => offIdentity());
 
   ctx.jobs.register<{ lecture_id: string; from: string; to: string }, unknown>(OFFICIAL_PAGE_MAP_JOB, {
     version: '1',
@@ -243,6 +251,12 @@ export default async function lecturesModule(app: FastifyInstance, { ctx }: Modu
   app.get('/:spaceId/subject/corrections', async (req) => ({ corrections: corrections.list(scopeOf(ctx), parseQuery(officialCorrectionsQuerySchema, req)) }));
 
   app.get('/:spaceId/subject/duplicates', async () => subject.duplicates(scopeOf(ctx)));
+
+  // (Phase 1 completion C2) the subject's review queue — official moderators only (AOS-3.18); «إصدار جديد من …» (3.11)
+  app.get('/:spaceId/subject/review', async () => review.list(scopeOf(ctx)));
+  app.post('/:spaceId/subject/review/:itemId/decide', async (req) =>
+    review.decide(scopeOf(ctx), parseParams(z.object({ spaceId: id, itemId: id }), req).itemId, parseBody(decideSubjectReviewSchema, req).action),
+  );
 
   // ───────── existing read routes, re-mounted for official content ─────────
 

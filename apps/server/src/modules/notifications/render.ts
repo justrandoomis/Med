@@ -48,6 +48,12 @@ export function notificationText(c: NotificationContent): string {
     case 'reanchor_ready':
       return `اكتمل نقل ملاحظاتك في «${c.payload.lecture_title}»: نُقل ${n(c.payload.copied)}، وللمراجعة ${n(c.payload.needs_review)}، وبقي في مكانه ${n(c.payload.kept)}`;
     case 'quota_warning':
+      // AOS-21.45: a subject's storage, told to its moderators
+      if (c.payload.subject_title) {
+        return c.payload.percent === 100
+          ? `امتلأت مساحة تخزين مادة «${c.payload.subject_title}»: رُفض ملف لأنه يتجاوز حدها`
+          : `استخدمت مادة «${c.payload.subject_title}» ${n(c.payload.percent)}٪ من مساحة تخزينها`;
+      }
       return c.payload.percent === 100 ? `استنفدت ${QUOTA_AR[c.payload.quota]}` : `استخدمت ${n(c.payload.percent)}٪ ${QUOTA_AR[c.payload.quota]}`;
   }
 }

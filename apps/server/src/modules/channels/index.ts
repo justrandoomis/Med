@@ -14,6 +14,10 @@
 //   POST   /nodes/:id/codes                         CreateJoinCodeRequest → CreateJoinCodeResponse (secret shown once)
 //   DELETE /codes/:id                               → JoinCodeView               (404 to anyone who may not manage it)
 //   POST   /nodes/:id/invitations                   {user_ids} → InvitationsResponse
+//   GET    /nodes/:id/invitations?status=           → InvitationsResponse        (C2: sent into the node; Admin / Assistant)
+//   DELETE /invitations/:id                         → InvitationView             (C2: revoke; 404 to anyone who may not manage it)
+//   GET    /nodes/:id/invitees?q=                   → InviteeSearchResponse      (C2: the person picker — exact username, or
+//                                                    members of channels the inviter manages; never every account)
 //   GET    /invitations                             → InvitationsResponse        (the viewer's own pending ones)
 //   POST   /invitations/:id/decision                {accept} → InvitationDecisionResponse (the invitee only)
 //   GET    /nodes/:id/roles                         → ChannelRolesResponse       (with inherited roles)
@@ -26,6 +30,8 @@
 //   PUT    /subjects/:id/follow                     CourseFollowRequest → CourseFollowView  «تابع المادة» (members of
 //                                                    the subject; step 2)
 //   DELETE /subjects/:id/follow                     → CourseUnfollowResponse     (the viewer's own follow; idempotent)
+//   GET    /course-mappings?library_node_id=        → CourseMappingsResponse     (C1, AOS-21.5: the viewer's personal
+//                                                    course nodes mapped to subjects, read back from the personal side)
 // Registration (POST /api/auth/register) lives in modules/auth behind P1-T1's JoinTokenVerifier, which ./verifier.ts
 // implements on this module's service.
 import type { FastifyInstance, FastifyRequest } from 'fastify';
@@ -40,10 +46,12 @@ import {
   createJoinCodeSchema,
   entityIdSchema,
   invitationDecisionSchema,
+  inviteeSearchQuerySchema,
   joinWithCodeSchema,
   joinWithLinkSchema,
   memberDecisionSchema,
   membersQuerySchema,
+  nodeInvitationsQuerySchema,
   patchChannelNodeSchema,
 } from '@medlevo/shared';
 import type { ModuleOptions } from '../../context';
@@ -51,6 +59,8 @@ import { AppError } from '../../lib/errors';
 import { parseBody, parseParams, parseQuery } from '../../lib/http';
 import type { Viewer } from '../../system/binding';
 import { registerAccountDeletionParticipant } from '../accounts/deletion';
+import { courseMappingsQuerySchema } from '@medlevo/shared';
+import { courseMappings } from './courseMapping';
 import { channelsOf } from './service';
 
 const idParams = z.object({ id: entityIdSchema });
@@ -94,6 +104,13 @@ export default async function channelsModule(app: FastifyInstance, opts: ModuleO
 
   app.post('/nodes/:id/invitations', async (req) => channels.invite(viewerOf(req), parseParams(idParams, req).id, parseBody(createInvitationsSchema, req).user_ids, ipOf(req)));
 
+  // (C2, AOS-18.5) the invitations sent into a node, revoking one, and the person picker of «ادعُ أشخاصًا»
+  app.get('/nodes/:id/invitations', async (req) => channels.nodeInvitations(viewerOf(req), parseParams(idParams, req).id, parseQuery(nodeInvitationsQuerySchema, req).status));
+
+  app.delete('/invitations/:id', async (req) => channels.revokeInvitation(viewerOf(req), parseParams(idParams, req).id, ipOf(req)));
+
+  app.get('/nodes/:id/invitees', { config: { rateLimit: { max: 60, timeWindow: 60_000 } } }, async (req) => channels.searchInvitees(viewerOf(req), parseParams(idParams, req).id, parseQuery(inviteeSearchQuerySchema, req).q));
+
   app.get('/invitations', async (req) => channels.myInvitations(viewerOf(req)));
 
   app.post('/invitations/:id/decision', async (req) => channels.decideInvitation(viewerOf(req), parseParams(idParams, req).id, parseBody(invitationDecisionSchema, req).accept, ipOf(req)));
@@ -107,6 +124,9 @@ export default async function channelsModule(app: FastifyInstance, opts: ModuleO
   app.put('/subjects/:id/follow', async (req) => channels.follow(viewerOf(req), parseParams(idParams, req).id, parseBody(courseFollowSchema, req)));
 
   app.delete('/subjects/:id/follow', async (req) => channels.unfollow(viewerOf(req), parseParams(idParams, req).id));
+
+  // (C1, AOS-21.5) the mapping of a personal course node to the shared channel course, from the personal side
+  app.get('/course-mappings', async (req) => courseMappings(ctx, viewerOf(req), parseQuery(courseMappingsQuerySchema, req).library_node_id));
 
   app.post('/join', async (req) => channels.joinWithCode(viewerOf(req), parseBody(joinWithCodeSchema, req).code, ipOf(req)));
 

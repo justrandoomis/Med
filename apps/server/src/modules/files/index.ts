@@ -121,7 +121,11 @@ export class FileMaintenance {
     this.busy = true;
     try {
       this.uploads.cleanup();
-      if (this.ctx.blobs.objectStore) await this.ctx.blobs.replicatePending();
+      if (this.ctx.blobs.objectStore) {
+        await this.ctx.blobs.replicatePending();
+        // AOS-21.34: then trim the local copies to MEDLEVO_BLOB_CACHE_MB (only blobs whose remote copy is confirmed)
+        await this.ctx.blobs.evictLocal();
+      }
       const schedule = this.ctx.config.blobGc.schedule;
       if (schedule && !this.ctx.gc.isRunning) {
         const slot = lastSlotAt(this.ctx.clock.now(), schedule, this.ctx.config.timezone);

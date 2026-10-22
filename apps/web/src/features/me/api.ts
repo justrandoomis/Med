@@ -4,6 +4,8 @@ import type {
   AccountDeleteResponse,
   AccountExportsResponse,
   AccountExportView,
+  AiConsentPut,
+  AiConsentView,
   DeletionPreview,
   DevicesResponse,
   QuotaView,
@@ -20,6 +22,9 @@ export const meApi = {
   startExport: () => api.post<{ job_id: string; export: AccountExportView }>('/accounts/me/export', {}, T),
   deletePreview: () => api.post<DeletionPreview>('/accounts/me/delete', { preview: true }, T),
   deleteConfirm: (confirm_token: string, password: string) => api.post<AccountDeleteResponse>('/accounts/me/delete', { confirm_token, password }, { timeoutMs: 60_000 }),
+  // AOS-21.42: my ai_processing consent (the provider named, the exact text version)
+  aiConsent: () => api.get<AiConsentView>('/accounts/me/ai-consent', T),
+  setAiConsent: (body: AiConsentPut) => api.put<AiConsentView>('/accounts/me/ai-consent', body, T),
 };
 
 /** «300.0 MB», «1.00 GB» — sizes as the rest of the app writes them. */

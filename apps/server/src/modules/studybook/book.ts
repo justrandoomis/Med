@@ -43,7 +43,7 @@ import type { UntrustedBlock } from '../ai/types';
 import { pageLabelAr, type LabelPage } from '../sources/pagelabel';
 import {
   buildEvidencePack,
-  cacheKey,
+  cacheKeys,
   fromRegion,
   resolveScope,
   retrieve,
@@ -373,7 +373,7 @@ export function createStudyBook(ctx: AppContext, body: z.infer<typeof studyBookB
     if (only.length === 0) throw new AppError('VALIDATION_FAILED', 'الأقسام المطلوبة غير موجودة في هذه النسخة من المصدر.', 400, { section_keys: body.section_keys });
     if (only.length === plans.length) only = null;
   }
-  const key = cacheKey(ctx, {
+  const keys = cacheKeys(ctx, {
     kind: 'study_book',
     scope,
     rulesVersion: rules.rules_version,
@@ -385,8 +385,9 @@ export function createStudyBook(ctx: AppContext, body: z.infer<typeof studyBookB
     settings: keySettings(ctx, 'study_book', { style: 'detailed' }),
     params: { source_id: body.source_id, version_id: src.versionId, sections: plans.map((p) => p.section_key), only },
   });
+  const key = keys.key;
   if (!body.regenerate) {
-    const cached = findReusable(ctx, key, 'study_book');
+    const cached = findReusable(ctx, keys, 'study_book');
     if (cached) return { book: bookView(ctx, cached.id), cached: true };
   }
   // the same request already running → that one (idempotent)
@@ -532,7 +533,7 @@ export function createSummary(ctx: AppContext, body: z.infer<typeof summaryBodyS
   const pageIndexes = body.page_indexes?.length ? [...new Set(body.page_indexes)].sort((a, b) => a - b) : null;
   const plans = summaryPlans(ctx, src.versionId, pageIndexes);
   if (plans.length === 0) throw new AppError('INSUFFICIENT_EVIDENCE', 'لا يوجد في الصفحات المحددة نص معالَج يمكن تلخيصه.', 422, { notes: preview.notes_ar });
-  const key = cacheKey(ctx, {
+  const keys = cacheKeys(ctx, {
     kind: `summary:${body.type}`,
     scope,
     rulesVersion: rules.rules_version,
@@ -544,7 +545,8 @@ export function createSummary(ctx: AppContext, body: z.infer<typeof summaryBodyS
     settings: keySettings(ctx, 'summarize'),
     params: { source_id: body.source_id, version_id: src.versionId, pages: pageIndexes, instruction: body.instruction?.trim() || null },
   });
-  const cached = findReusable(ctx, key, 'summary');
+  const key = keys.key;
+  const cached = findReusable(ctx, keys, 'summary');
   if (cached) return { book: bookView(ctx, cached.id), cached: true };
   const running = ctx.db.get<{ id: string }>(`SELECT id FROM artifact WHERE cache_key = ? AND kind = 'summary' AND status = 'generating' ORDER BY created_at DESC LIMIT 1`, [key]);
   if (running) return { book: bookView(ctx, running.id), cached: false };

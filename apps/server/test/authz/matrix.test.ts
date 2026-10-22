@@ -210,8 +210,12 @@ describe('X9 — route matrix: every channel route applies the policy (status pe
       'DELETE /codes/:id': 'matrix.test.ts «id-addressed routes»',
       'DELETE /roles/:id': 'matrix.test.ts «id-addressed routes»',
       'POST /invitations/:id/decision': 'matrix.test.ts «id-addressed routes»',
+      // (C2, AOS-18.5) revoking an invitation: the 404 of a missing id to anyone who may not manage the node
+      'DELETE /invitations/:id': 'matrix.test.ts «a role id and an invitation id…»; invitations-admin.c2.test.ts',
       // the viewer's own things: every signed-in user, nobody else's rows (join.test.ts «invitations», «CSRF and session»)
       'GET /invitations': 'join.test.ts «invitations (existing accounts only)»',
+      // (C1, AOS-21.5) the viewer's own course mappings (her follows), nobody else's
+      'GET /course-mappings': "course-mapping.c1.test.ts «the mapping is Maryam's own»",
       'POST /join': 'join.test.ts «class codes»',
       'POST /join/link': 'join.test.ts «invite links and the public preview»',
       // public: the title only, the body of a missing route otherwise
@@ -264,6 +268,9 @@ describe('X9 — route matrix: every channel route applies the policy (status pe
         node: 'B',
         run: (h) => call(t, h as never, 'POST', `/api/channels/nodes/${w.nodes.B.id}/invitations`, { user_ids: [w.people.outsider!.user.id] }),
       },
+      // (C2, AOS-18.5) the invitations sent into a node and the person picker: who manages the node's members
+      { name: 'invitations sent', route: 'GET /nodes/:id/invitations', action: 'manage_members', node: 'A', run: (h) => call(t, h as never, 'GET', `/api/channels/nodes/${w.nodes.A.id}/invitations`) },
+      { name: 'invitee picker', route: 'GET /nodes/:id/invitees', action: 'manage_members', node: 'A', run: (h) => call(t, h as never, 'GET', `/api/channels/nodes/${w.nodes.A.id}/invitees?q=nobody-here`) },
       { name: 'create subject', route: 'POST /nodes', action: 'create', node: 'S', run: (h) => call(t, h as never, 'POST', '/api/channels/nodes', { parent_id: w.nodes.S.id, kind: 'subject', title: 'مادة من المصفوفة' }) },
       // P1-T4 step 2: «تابع المادة» — members of the subject; pending 403 MEMBERSHIP_PENDING; anyone else 403
       { name: 'follow subject', route: 'PUT /subjects/:id/follow', action: 'follow', node: 'A', run: (h) => call(t, h as never, 'PUT', `/api/channels/subjects/${w.nodes.A.id}/follow`, { add_new_lectures: true }) },
@@ -303,6 +310,12 @@ describe('X9 — route matrix: every channel route applies the policy (status pe
         const res = await call(t, h, 'DELETE', `/api/channels/roles/${modRole.id}`);
         const missing = await call(t, h, 'DELETE', '/api/channels/roles/NO_SUCH_ROLE');
         if (res.statusCode !== 404 || res.body !== missing.body) failures.push(`revoke role as ${p}: ${res.statusCode}`);
+      }
+      // (C2) revoking it: only who may manage B's members; everyone else meets a missing id (nothing is revoked)
+      if (expectNode(p, 'manage_members', 'B') !== 'allow') {
+        const res = await call(t, h, 'DELETE', `/api/channels/invitations/${invId}`);
+        const missing = await call(t, h, 'DELETE', '/api/channels/invitations/NO_SUCH_INVITATION');
+        if (res.statusCode !== 404 || res.body !== missing.body) failures.push(`revoke invitation as ${p}: ${res.statusCode}`);
       }
       // the invitation: only its invitee
       if (p !== 'outsider') {

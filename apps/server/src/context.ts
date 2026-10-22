@@ -16,6 +16,7 @@ import { deriveKey, loadOrCreateServerSecret } from './lib/secret';
 import { type Clock, systemClock } from './lib/time';
 import { AuditLog } from './modules/audit/audit';
 import { AiBudgetService } from './modules/ai/budget';
+import { AiConsentGate } from './modules/ai/consent';
 import { AiOrchestrator } from './modules/ai/orchestrator';
 import { createProviderFromConfig } from './modules/ai/providers';
 import type { AiProvider } from './modules/ai/types';
@@ -165,6 +166,8 @@ export function createContext(config: AppConfig, log: FastifyBaseLogger, overrid
   // test runs only: code outside every context (test bodies) uses user #1's vault unless the harness says otherwise
   if (config.env === 'test') binding.setHarnessDefault(() => tenancy.platformVaultBinding());
   const authz = createAuthz();
+  // AOS-21.18: the one policy reads per-resource ACL grants from the system DB
+  authz.setGrantProvider(repos.acl);
 
   const secret = loadOrCreateServerSecret(config.dataDir);
   // P1-T1 step 2: quotas, the blob registry (+ the R2 copy when MEDLEVO_BLOB_STORE=r2) and the GC
@@ -173,6 +176,7 @@ export function createContext(config: AppConfig, log: FastifyBaseLogger, overrid
     spaceStorageBytes: config.quota.spaceStorageBytes,
     deploymentAiUsd: config.ai.monthlyBudgetUsd,
     timezone: config.timezone,
+    dataDir: config.dataDir,
   });
   const objectStore: ObjectBlobStore | null =
     config.blobStore.kind === 'r2'
@@ -188,6 +192,8 @@ export function createContext(config: AppConfig, log: FastifyBaseLogger, overrid
     databaseCount: () => repos.vaults.databaseCountInternal(),
     inFlight: (sha) => repos.uploads.inFlightShasInternal().includes(sha),
     objectStore,
+    // AOS-21.34: with r2, the local disk may be a bounded cache (MEDLEVO_BLOB_CACHE_MB)
+    cacheBytes: config.blobStore.cacheBytes,
   });
   const files = new FileStore(db, config.filesDir, config.tmpDir, deriveKey(secret, 'file-token'), clock, () => tenancy.fileTokenScope(), {
     beforeNewFile: (size) => quota.checkStorageForNewFile(size),
@@ -236,6 +242,8 @@ export function createContext(config: AppConfig, log: FastifyBaseLogger, overrid
     monthlyBudgetUsd: config.ai.monthlyBudgetUsd,
     timezone: config.timezone,
     charge: aiBudget,
+    // AOS-21.42: a user's content goes to a provider outside the deployment only with their ai_processing consent
+    consent: new AiConsentGate(repos, binding),
   });
   const capabilities = new CapabilityRegistry(ai, clock, config.appVersion);
   const settings = new SettingsService(db, clock);

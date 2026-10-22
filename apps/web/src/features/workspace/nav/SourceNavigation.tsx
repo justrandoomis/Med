@@ -39,8 +39,10 @@ export function useSourceNavigation(): SourceNavigationApi {
 }
 
 /** URL of a place in the reader (cross-source jumps and deep links). */
-export function studyUrl(req: { sourceId: string; versionId?: string | null; pageIndex?: number | null; pageId?: string | null; bbox?: NormBox | null; regionId?: string | null; offset?: number | null }): string {
+export function studyUrl(req: { sourceId: string; versionId?: string | null; pageIndex?: number | null; pageId?: string | null; bbox?: NormBox | null; regionId?: string | null; offset?: number | null; panel?: 'review' | null }): string {
   const q = new URLSearchParams();
+  // (C2, AOS-19H.3) open «ملاحظاتي ← إعادة ربط» at once (the review list after «اربط بالمحاضرة الرسمية»)
+  if (req.panel) q.set('panel', req.panel);
   if (req.versionId) q.set('v', req.versionId);
   if (req.pageIndex != null) q.set('page', String(req.pageIndex));
   if (req.pageId) q.set('page_id', req.pageId);

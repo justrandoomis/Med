@@ -275,6 +275,8 @@ test.describe('no decorative controls (AOS-23.3)', () => {
       { name: 'me', path: '/me', ready: h1('أنا'), scope: 'main' },
       { name: 'me-devices', path: '/me/devices', ready: h1('أجهزتي'), scope: 'main' },
       { name: 'me-privacy', path: '/me/privacy', ready: h1('الخصوصية والبيانات'), scope: 'main' },
+      // (C1, AOS-21.42) the written data-use policy linked from «أنا» and from the consent section
+      { name: 'me-privacy-policy', path: '/me/privacy/policy', ready: h1('سياسة استخدام البيانات'), scope: 'main' },
       { name: 'me-usage', path: '/me/usage', ready: h1('الاستهلاك'), scope: 'main' },
     ];
     const problems: string[] = [];

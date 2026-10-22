@@ -181,6 +181,25 @@ row buttons in «الأعضاء» are disabled without a reason while another de
 while its impact is still being computed (both a second at most); on tablets the keyboard order is brand → destinations
 (second row) → search / bell / save status (first row).
 
+## Phase 1 completion — track C2: invitations from the screen (AOS-18.5, 2026-10-22)
+
+* `GET /api/channels/nodes/:id/invitations?status=` — the invitations sent into a node, newest first (Admins /
+  Assistants of the node or above; others 403 like the members list). A pending invitation past its time is marked
+  `expired`; one whose sender lost the power to send it is marked `revoked` (R4) before the list is read.
+* `DELETE /api/channels/invitations/:id` — revoke a pending one; audited (`channel_invitation_revoke`); id-addressed: anyone
+  who may not manage the node's members (the invitee included — she declines instead) meets exactly the 404 of a missing
+  id; a decided or expired one answers 409; revoking twice answers the same view.
+* `GET /api/channels/nodes/:id/invitees?q=` — the person picker. Never a directory of every account: the account whose
+  username is EXACTLY `q`, and the approved members of the channels the inviter manages around the node (the subtree of
+  the topmost ancestor they may manage) whose name or username starts with `q`; at most 10, 60 requests a minute; each
+  says `member` / `invited` / `can_invite`.
+* Web: «ادعُ أشخاصًا بالاسم» and «الدعوات المرسلة» in «الرموز والدعوات» (`features/admin/InvitePeople.tsx`, mounted by
+  `CodesSection.tsx`): search, invite (the invitee reads it in their notices), state per invitation, «ألغِ الدعوة».
+* X9: the two node routes are in the route matrix (`manage_members`), the revoke route in the id-addressed test.
+* Evidence: `srv:channels/invitations-admin.c2`, `srv:authz/matrix` (updated), `web:channels/invite-people.c2`,
+  `e2e:aos-c2-official-content` («18.5» step: exact username found, a name prefix outside his channels is not, accepted,
+  revoked; phone + desktop; axe 0 serious in light / dark / e-ink).
+
 ## Not done here (later steps or other owners)
 
 * **Whole-instance backups still leave out `spaces/*.sqlite` (P1-T1's `modules/data/backups.ts` /
@@ -201,8 +220,7 @@ while its impact is still being computed (both a second at most); on tablets the
   the follower's own; idempotent unfollow). Following does not end when a membership is removed: the fan-out and the
   inbox check access, so a removed follower hears nothing until re-admitted.
 * ~~Security-audit view, moderation~~ — step 2 (`modules/moderation`). ~~Web screens~~ — step 3.
-* Step 3 web, not built: sending invitations to named people (the route exists; the admin screens offer codes and links
-  only — a person picker needs a directory search the plan does not give); the moderator names on the subject header
+* Step 3 web, not built: ~~sending invitations to named people~~ (closed by track C2, above); the moderator names on the subject header
   (the roles list needs `manage_members`); «امسح بيانات هذا الجهاز» and the AI-consent rows of «الخصوصية والبيانات»
   (no route yet); web push (the inbox says why it is not offered); the platform area «المنصة»; «قنواتي» comes from the
   tree (depth 7, at most 500 nodes — `truncated` is said) because `/api/accounts/me` lists no memberships.
@@ -212,3 +230,13 @@ while its impact is still being computed (both a second at most); on tablets the
   the same information).
 * A server secret change (restore onto a new host, which regenerates `secret.key`) invalidates every outstanding class
   code and invite link (their HMAC key derives from it); admins issue new ones.
+
+## Course mapping from the personal side (Phase 1 completion C1, AOS-21.5; 2026-10-22)
+
+`GET /api/channels/course-mappings?library_node_id=` → `CourseMappingsResponse` (`packages/shared/src/academic/
+course-mapping-api.ts`, `modules/channels/courseMapping.ts`). The mapping is the user's «تابع المادة» with a node of HER
+vault as `library_folder_id` (a personal `course` node stays a vault row, untouched — ARCHITECTURE_DELTA §4.2); this route
+reads it back from the personal side: the subject, the shared channel `course` node above it (title, term dates), the
+node as it is now (`null` once deleted — new lectures then go to «موادي من القنوات»), `add_new_lectures`, `mapped_at`.
+Only the viewer's live follows and only subjects the policy still lets her view. Test:
+`apps/server/test/channels/course-mapping.c1.test.ts`; route matrix entry in `test/authz/matrix.test.ts`.

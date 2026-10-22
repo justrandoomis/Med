@@ -537,3 +537,106 @@ Two defects of this module were found by the gate and fixed with tests that fail
   end; the helper falls back to the old per-process directory only outside Vitest. Test:
   `test/tenancy/template-dir.gate1.test.ts`. The stale directories left by earlier runs were not removed (shared
   `/tmp`; the environment's permission policy refused it).
+
+## Phase 1 completion — track C1: platform, privacy, quotas, data model (2026-10-22, builder — awaiting review)
+
+Closes the C1 rows of `docs/academic-os/PHASE1_REPORT.md` §5.3 (status per row: `docs/REQUIREMENTS_MATRIX.md`,
+section «Phase 1 completion — track C1»). Every new test below failed before its change unless it is marked
+**evidence** (the behaviour existed; the test now names it).
+
+### What landed
+
+* **AOS-21.35 — refuse a multi-user start with an https origin and a non-Secure cookie.** `loadConfig` throws when
+  `MEDLEVO_COOKIE_SECURE=false` meets any `https://` origin (`.env.example`, `docs/modules/core-server.md`).
+  Test `test/deploy/cookie-secure.c1.test.ts`.
+* **AOS-21.47 — the module boundaries as an ESLint rule.** `tools/eslint/module-boundaries.mjs`
+  (`medlevo/module-boundaries`, enabled for `apps/server/src/**` in `eslint.config.js`): system DB handle, `*Internal(`
+  calls, a second database in one request (`ctx.dbs`), opening a DB by path, the bound proxy, and space routes only in the
+  allow-listed files and only for paths `authz/spaceRoutes.ts` declares MOUNTED. The allow-lists are the single source;
+  `test/tenancy/import-boundary.test.ts` imports them. Test `test/tenancy/module-boundaries.eslint.c1.test.ts` (each
+  violation flagged; the whole tree clean).
+* **AOS-18.17 — AI cache keys carry the viewer / official dimensions.** `evidence/cache.ts` `keyDimensions` /
+  `cacheKeys`: official space versions are `official:<space>`, anything private (own versions, «include my notes») is keyed
+  by a hash of the viewer; a shared (official-only) key stays shared. Study-book explain / book / diagrams use it.
+  Test `test/evidence/cache-key-viewer.c1.test.ts` (one user's private answer is never served to another).
+* **AOS-21.42 — per-user `ai_processing` consent + the written data-use policy.** System `consent_record`
+  (`system/consent.ts`), `GET/PUT /api/accounts/me/ai-consent` (provider + text version, revocable, audited);
+  `ai/consent.ts` `AiConsentGate` refuses (409 `CONSENT_REQUIRED`) any call that would carry a user's content to a
+  provider that sends data out of the deployment, before the budget is touched. Web: «معالجة الذكاء الاصطناعي» in
+  «الخصوصية والبيانات» and «سياسة استخدام البيانات» (`/me/privacy/policy`, linked from «أنا»). Tests
+  `test/ai/consent.c1.test.ts`, `apps/web/test/me/ai-consent.c1.test.tsx`; the page is in `e2e/aos-no-decorative`.
+* **AOS-21.46 — visible remaining AI allowance (server).** `QuotaView.ai.remaining_usd` / `resets_at` /
+  `blocked_reason_ar`, `ai_spaces` for the subjects a viewer moderates (`accounts/allowance.ts`). Test
+  `test/ai/allowance-view.c1.test.ts`. (C3 shows it.)
+* **AOS-21.9 / 21.45 — per-space storage quota on space uploads (default 20 GB, Q22)**, warnings at 80 % to the subject's
+  moderators (once a month, `quota_warning` naming the subject), refusal with `QUOTA_EXCEEDED` kind `space_storage`.
+  Tests `test/lectures/space-quota.c1.test.ts`, `test/notifications/space-quota-warning.c1.test.ts`.
+* **AOS-21.45 — rate limits per user, NAT-sized sign-in ceilings.** The limiter keys signed-in requests by user
+  (`u:<id>`), anonymous ones by address; `/login` and `/recover` allow 600 / min per address (200 sign-ins of one class
+  behind one NAT pass); guessing stays bounded by the per-account progressive delay. Test `test/tenancy/rate-limits.c1.test.ts`.
+* **AOS-21.43 — exports counted in the quota.** Kept «نسخة من بياناتي» archives count in `storage.used_bytes`; an export
+  that cannot fit is refused before a job starts; a new archive drops older ones first; an archive bigger than the room
+  fails with the reason and is not kept. Test `test/accounts/export-quota.c1.test.ts`.
+* **AOS-21.34 — the local disk as a bounded cache of R2.** `MEDLEVO_BLOB_CACHE_MB` (only with `MEDLEVO_BLOB_STORE=r2`):
+  the maintenance tick evicts least-recently-used local copies of blobs whose encrypted R2 copy is confirmed (never a
+  blob not yet copied, quarantined, in flight, or used in the last 10 minutes); reads fetch them back verified.
+  Test `test/tenancy/blob-cache-eviction.c1.test.ts` (against the signature-checking S3 fake — not Cloudflare R2).
+* **AOS-21.1 / X8 (d) — a per-space backup and its restore check, platform admin only.** `data/space-backup.ts`;
+  `createBackup({ spaceOnly })` writes layout `space` (one `spaces/<id>.sqlite` and only the files its rows reference;
+  `manifest.subject`), encrypted with MLVENC01 when the key is set; `verifyBackup` checks it with base + space
+  migrations and boots a sandbox holding that one space; `applyRestore` refuses it (it is not a server). Routes
+  `GET/POST /api/platform/spaces/:spaceId/backups`, `POST …/backups/verify` (202; the check runs in the background and
+  never changes the live space; «this archive is not this space's» fails). Putting a space back in place is not built
+  (a space is shared by every student and holds the versions their copies point at). Test `test/data/space-backup.c1.test.ts`.
+* **AOS-21.29 — SyncOperations.** The actor is the session's user (`sync_operation.actor_user_id`), never the payload;
+  each op's `device_id` must be an active device of that user — an unseen id is registered on its first push (this
+  signed-in client), a revoked one is `rejected/device_unknown` (retryable, never recorded); handler errors
+  `QUOTA_EXCEEDED` → `quota_exceeded`, `MEMBERSHIP_*` → `not_a_member` (retryable, never recorded, the savepoint rolled
+  back); an op id recorded for another actor → `op_id_taken` (no entity, no stored result, never recorded). Final
+  rejections stay recorded. The web engine takes a new device id on `device_unknown` and re-issues an op under a new op id
+  on `op_id_taken`. Tests `test/tenancy/sync-actor.c1.test.ts`, `apps/web/test/tenancy/sync-transient.c1.test.ts`.
+* **AOS-21.18 — ACL grants in use through the one policy.** `system/acl.ts` (`AclGrantRepo`, permission order
+  view ⊂ comment ⊂ suggest ⊂ edit ⊂ manage, expiry, revoke); `Authz.setGrantProvider` (wired in `context.ts`); the
+  publication rule reads a `view` grant as «holds a copy» (a member still — a grant never lets a non-member in). Taking a
+  fork or a followed copy writes the grant with the copy row (`forks/system.ts`); ending copies (account deletion)
+  revokes it. Test `test/authz/acl-grants.c1.test.ts`.
+* **AOS-21.5 — a personal course node mapped to the shared channel course.** `GET /api/channels/course-mappings
+  ?library_node_id=` (`channels/courseMapping.ts`): the viewer's own follows whose library folder is a node of her vault,
+  with the subject, the shared `course` node above it (term dates) and the node as it is now (`null` once deleted —
+  new lectures then go to «موادي من القنوات»). Test `test/channels/course-mapping.c1.test.ts`.
+* **AOS-21.38 / 5.22 — the cross-user file, pull, duplicate, search and export checks, space files included.**
+  **Evidence** suite `test/tenancy/file-privacy.c1.test.ts` (each with a positive control); no leak was found.
+* **AOS-21.12 / NFR-P3 — the 5,000-stroke page ≤ 8 MB on the wire.** `lib/compress.ts`: JSON answers ≥ 1 KiB are sent
+  br- or gzip-encoded when the request accepts it (`Vary: Accept-Encoding`; files, Range answers, streams and SSE
+  untouched). Measured here (224-sample strokes, the spike's page): v2 JSON identity 11.67 MB, gzip 5.01 MB, br 3.72 MB
+  **on the wire**. Test `test/annotations/ink-wire-compressed.c1.test.ts`.
+* **AOS-21.8, 21.14 — evidence.** `test/forks/versions-shared.c1.test.ts` (every holder holds the space's version ids; a
+  new version reaches all of them under the same id; publisher and state per version), `test/forks/fork-graph.c1.test.ts`
+  (copy → publication version → official lecture version; holder index; the per-item hop; no blob / chunk / FTS
+  duplication; fork pinned, follow moves).
+
+### Edits outside C1-owned files (smallest exact-string changes)
+
+`modules/notifications/render.ts` + `packages/shared/src/academic/notifications-api.ts` (`quota_warning.subject_title`),
+`app.ts` (limiter key, compression hook), `modules/auth/index.ts` + `lib/http.ts` (sign-in ceilings),
+`modules/files/index.ts` (eviction in the tick), `modules/control/evaluation/harness.ts` (live mode records consent),
+the study-book call sites of `cacheKeys`, `modules/channels/index.ts` (one route + import), `modules/forks/system.ts`
+(grant with the copy row), `modules/platform/index.ts` (space backup routes), `test/authz/matrix.test.ts` (one
+«elsewhere» entry for `GET /course-mappings`), `e2e/aos-no-decorative.spec.ts` (one screen: the policy page),
+`apps/web/src/lib/sync.ts` + `lib/deviceId.ts` (transient answers).
+
+### Tests changed
+
+* `test/ai-provider/anthropic.test.ts`: records the consent before a real-provider call (the gate is new).
+* `test/tenancy/migrations-0041-0050.test.ts`: a NEW op now records the session user as its actor (was NULL before 21.29).
+* `test/tenancy/legacy-fixture.ts`: clears `sync_operation.actor_user_id` the way R1-a left it (the fixture's ops are
+  pushed by this build, which records the actor).
+* `test/tenancy/import-boundary.test.ts`: imports the allow-lists from the ESLint plugin.
+
+### Not done (with reason)
+
+* AOS-21.27 «a deck shared from a publication is copied on use» — decks are not publishable in Phase 1 (PRD row says
+  Phase 2); the Phase-1 part (cards per user in her own vault) stands as before.
+* AOS-21.12 «document / fork column» for strokes that live in a SPACE — there are no space strokes before the Phase-2
+  group layers; in a vault the document is the anchor's source and the fork its `document_copy`.
+* A real Cloudflare R2 bucket, a real AI provider, a device: Not run (no account / key / device here).

@@ -3,7 +3,7 @@
 // devices, privacy and data, usage — and «إدارة القنوات» only for someone who holds a channel role (or the platform
 // admin). Later-phase entries (profile, publications, followers) are not listed before their phase (AOS-23.3).
 import { useEffect, useState } from 'react';
-import { ChevronLeft, CloudDownload, Gauge, Network, Settings, ShieldCheck, SlidersHorizontal, Smartphone } from 'lucide-react';
+import { ChevronLeft, CloudDownload, FileText, Gauge, Network, Settings, ShieldCheck, SlidersHorizontal, Smartphone } from 'lucide-react';
 import type { ChannelRole, MeResponse } from '@medlevo/shared';
 import { ErrorState, ListItem, LoadingState } from '../../design';
 import { errorMessage } from '../../lib/api';
@@ -69,7 +69,8 @@ export function MeScreen() {
         <ListItem to="/control" leading={<SlidersHorizontal size={20} />} title="مركز التحكم" subtitle="قائمة المراجعة، والمعالجة، والتخزين، وتعارضات المزامنة، والسجل — لبياناتك أنت." trailing={chevron} />
         <ListItem to="/offline" leading={<CloudDownload size={20} />} title="التنزيلات والنسخ الاحتياطي" subtitle="ما نُزّل على هذا الجهاز للدراسة دون اتصال، والنسخ الاحتياطية، والتصدير." trailing={chevron} />
         <ListItem to="/me/devices" leading={<Smartphone size={20} />} title="أجهزتي" subtitle="الأجهزة التي تستخدم حسابك، وإلغاء جهاز لم تعد تستخدمه." trailing={chevron} />
-        <ListItem to="/me/privacy" leading={<ShieldCheck size={20} />} title="الخصوصية والبيانات" subtitle="نسخة من بياناتي، وحذف الحساب وما يترتب عليه." trailing={chevron} />
+        <ListItem to="/me/privacy" leading={<ShieldCheck size={20} />} title="الخصوصية والبيانات" subtitle="نسخة من بياناتي، وموافقتك على معالجة الذكاء الاصطناعي، وحذف الحساب وما يترتب عليه." trailing={chevron} />
+        <ListItem to="/me/privacy/policy" leading={<FileText size={20} />} title="سياسة استخدام البيانات" subtitle="ما نحفظه ومن يراه، ومتى يُرسل شيء إلى الذكاء الاصطناعي، وحقوقك." trailing={chevron} />
         <ListItem to="/me/usage" leading={<Gauge size={20} />} title="الاستهلاك" subtitle="مساحة التخزين، ورصيد الذكاء الاصطناعي والتفريغ الصوتي هذا الشهر." trailing={chevron} />
       </ul>
 

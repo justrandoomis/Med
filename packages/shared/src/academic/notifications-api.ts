@@ -156,7 +156,8 @@ export const notificationContentSchema = z.discriminatedUnion('kind', [
   z
     .object({
       kind: z.literal('quota_warning'),
-      payload: z.object({ quota: z.enum(['storage', 'ai', 'asr']), percent: z.union([z.literal(80), z.literal(100)]) }).strict(),
+      // AOS-21.45 (C1, additive): `subject_title` when the quota is a SUBJECT's (told to its moderators), not the reader's own
+      payload: z.object({ quota: z.enum(['storage', 'ai', 'asr']), percent: z.union([z.literal(80), z.literal(100)]), subject_title: title.optional() }).strict(),
     })
     .strict(),
 ]);

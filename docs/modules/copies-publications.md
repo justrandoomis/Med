@@ -62,9 +62,21 @@ Server: `test/forks/{stubs,versions,course-follow,link-private}.test.ts`, `test/
   attachments in federated search — not built.
 * `axe-core` is not installed in this repo: «axe 0 serious» on the new screens is **Not run**; no device test, no E2E
   for these screens yet (`e2e/aos-s2-followed-copy.spec.ts`, `aos-s4-official-version.spec.ts` are step 3).
-* (review) Items a link could not place safely stay on the private lecture: no review list of the official copy lists
-  them and they cannot be copied across sources by hand yet (X8 (c), AOS-19H.3 — P1-T2 review list + a cross-source
-  copy); inserted note pages of a private lecture are not copied by the link.
+* ~~(review) Items a link could not place safely stay on the private lecture: no review list …; inserted note pages of a
+  private lecture are not copied by the link.~~ — closed by track C2 (below).
+
+## Phase 1 completion — track C2 (2026-10-22)
+
+| row | built | evidence |
+|---|---|---|
+| AOS-19H.3 / X8 (c) | «اربط بالمحاضرة الرسمية» loses nothing: every item of the private lecture lands on the official copy (copied) or in its review list «ربطت محاضرتك الخاصة …» (the link is recorded in `private_link`, migration `0862_private_link.sql`; `previewReanchorCopy` lists `linked` sources, `reanchorCopyAction` copies across sources with deterministic ids and the attribution chain); inserted note pages are copied with what is written on them (`runReanchorCopyAcross` → `note_pages` counts); a repeated link copies nothing; the private source stays byte-identical; the proof counts every item (total = copied + listed + kept, then copied + kept). The library shows «رسمي · المادة» / «مرتبطة بالنسخة الرسمية · n تنتظر المراجعة» / «موجودة رسميًا في …» (`GET /api/copies/link-status`, batched) and the row menu offers the link; the result dialog opens the review list (`?panel=review`) | `srv:forks/link-review`, `web:copies/linkStatus.c2`, `web:workspace/panels/linkedReview.c2`, `e2e:aos-c2-official-content` (phone + desktop) |
+| AOS-19H.1 | `GET /api/copies/lecture-identity?space_id=&lecture_id=` — one lecture identity links its published versions (which ones the member's copy holds), the member's copies, the private lectures they linked to it, the explanations on it they may see (active ones, their own, the ones they hold), and their own objects mapped to it by KIND (annotations, notes, questions, cards, recordings — later phases add kinds without a contract change). Members only; a draft, an unknown id or another subject is «not found» | `srv:forks/lecture-identity.c2` |
+| AOS-4.18 (export) | exports keep the author and the lineage: a copied note or highlight says «مشتق من منشور «X» (الإصدار n) لـ Y» in Markdown, HTML, Word and JSON (`attributions` with the `derived_from` chain); a copied highlight is «تمييز منقول», never «تمييزي»; the author's own export names nobody. The publication's title comes through a seam (`setPublicationTitleSource`, registered here) so `data/export.ts` never opens the system database | `srv:forks/export-attribution.c2` |
+| AOS-19I.5 | published content containing machine output keeps its origin (`ai_answer`, `handwriting_recognition`) in the publication's items, in a follower's copy and in their export; the publication page says «فيه محتوى مولَّد آليًا: …» with the counts (`machineContentAr`) | `srv:forks/ai-marking.c2`, `web:copies/official-provenance.c2` |
+
+Found by the C2 E2E run and fixed with a regression test: after «اربط وانسخ ملاحظاتي» the result dialog vanished,
+because the row's status turned «linked» and the menu hook returned no dialog (`linkStatus.tsx` now keeps the dialog
+while it is open).
 
 ## Step 3 — course-only explanations (publications)
 

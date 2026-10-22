@@ -36,6 +36,7 @@ import {
   type ReanchorCopyReport,
   type ReanchorCopyRunResponse,
   type ReanchorKeptReason,
+  type ReanchorLinkedSource,
   type ReanchorPageRef,
   type ReanchorReviewItem,
   type ReanchorReviewReason,
@@ -58,11 +59,12 @@ import { computeAndStorePageMap, pageMapIsCurrent, readPageMap } from '../versio
 import { recordAnnotationRevision, recordNoteRevision } from './history';
 import { checkExistingItem } from './layers';
 import { bboxOf, boxOf, translateData } from './reanchor';
-import { getAnnotation, getNote, indexNote, toAnnotationDTO, toNoteDTO, writeAnnotationTarget, type AnnotationRow, type NoteRow } from './repo';
+import { getAnnotation, getNote, getNotePage, indexNote, toAnnotationDTO, toNoteDTO, writeAnnotationTarget, type AnnotationRow, type NotePageRow, type NoteRow } from './repo';
 
 type RunBody = z.output<typeof reanchorCopyRunSchema>;
 type ActionBody = z.output<typeof reanchorCopyActionSchema>;
 type PageAnchor = Extract<AnnotationAnchor, { type: 'page' }>;
+type NotePageAnchor = Extract<AnnotationAnchor, { type: 'note_page' }>;
 
 /** the review list is bounded (the counts never are) */
 const REVIEW_LIMIT = 500;
@@ -258,6 +260,68 @@ function carriedOf(ctx: AppContext, sourceId: string): Set<string> {
 
 function decidedOf(ctx: AppContext, toVersionId: string): Set<string> {
   return new Set(ctx.db.all<{ entity_type: string; entity_id: string }>('SELECT entity_type, entity_id FROM reanchor_copy_decision WHERE to_version_id = ?', [toVersionId]).map((r) => keyOf(r.entity_type, r.entity_id)));
+}
+
+// ───────────────────────────── linked private lectures (Phase 1 completion C2, AOS-19H.3 / X8 c) ─────────────────────
+/** One «اربط بالمحاضرة الرسمية» link of this vault (migration 0862): a private version → a version of the stub. */
+export interface PrivateLinkRow {
+  private_version_id: string;
+  to_version_id: string;
+  private_source_id: string;
+  stub_source_id: string;
+  space_id: string;
+  lecture_id: string;
+  counts_json: string;
+  created_at: number;
+  updated_at: number;
+}
+
+/** The link that lets items of `fromVersionId` (a private version) be copied into the document `toSourceId` (a stub). */
+export function linkedPair(ctx: AppContext, fromVersionId: string, toSourceId: string): PrivateLinkRow | undefined {
+  return ctx.db.get<PrivateLinkRow>('SELECT * FROM private_link WHERE private_version_id = ? AND stub_source_id = ? ORDER BY updated_at DESC LIMIT 1', [fromVersionId, toSourceId]);
+}
+
+/** Record (or refresh) a link and its last report. Called by the forks module after a link's copy ran. */
+export function recordPrivateLink(ctx: AppContext, l: Omit<PrivateLinkRow, 'created_at' | 'updated_at'>): void {
+  const now = ctx.clock.now();
+  ctx.db.run(
+    `INSERT INTO private_link (private_version_id, to_version_id, private_source_id, stub_source_id, space_id, lecture_id, counts_json, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(private_version_id, to_version_id) DO UPDATE SET counts_json = excluded.counts_json, updated_at = excluded.updated_at`,
+    [l.private_version_id, l.to_version_id, l.private_source_id, l.stub_source_id, l.space_id, l.lecture_id, l.counts_json, now, now],
+  );
+}
+
+/** Items of a linked private version still waiting for a decision against `to` (neither carried nor kept). */
+function linkedPending(ctx: AppContext, fromVersion: VersionRow, items: Item[], toVersionId: string): number {
+  const carried = carriedOf(ctx, fromVersion.source_id);
+  const decided = decidedOf(ctx, toVersionId);
+  const live = liveCopiesOf(ctx, items, toVersionId);
+  return items.filter((it) => {
+    const k = keyOf(it.type, it.row.id);
+    return !carried.has(k) && !live.has(k) && !decided.has(k) && writable(ctx, it);
+  }).length;
+}
+
+/** Items of a link's private version still waiting in the review list of its official copy (library badge). */
+export function linkedPendingCount(ctx: AppContext, l: PrivateLinkRow): number {
+  const v = getVersion(ctx, l.private_version_id);
+  return v ? linkedPending(ctx, v, itemsOn(ctx, v.id), l.to_version_id) : 0;
+}
+
+/** The private lectures linked to this stub (for the review list of the official copy). */
+function linkedSourcesOf(ctx: AppContext, stubSourceId: string, toVersionId: string): ReanchorLinkedSource[] {
+  const out: ReanchorLinkedSource[] = [];
+  for (const l of ctx.db.all<PrivateLinkRow>('SELECT * FROM private_link WHERE stub_source_id = ? ORDER BY created_at, private_version_id', [stubSourceId])) {
+    const v = getVersion(ctx, l.private_version_id);
+    const src = v ? ctx.db.get<{ id: string; title: string }>('SELECT id, title FROM source WHERE id = ?', [v.source_id]) : undefined;
+    const linkedTo = getVersion(ctx, l.to_version_id);
+    if (!v || !src || !linkedTo) continue;
+    if (out.some((o) => o.version.id === v.id)) continue;
+    const items = itemsOn(ctx, v.id);
+    out.push({ source: { id: src.id, title: src.title }, version: versionRef(v), to_version: versionRef(linkedTo), items: items.length, pending: linkedPending(ctx, v, items, toVersionId) });
+  }
+  return out;
 }
 
 /**
@@ -534,7 +598,7 @@ function copyAttribution(c: CopyTx, type: 'annotation' | 'note', fromId: string,
 const layerOfCopy = (c: CopyTx, layerId: string | null | undefined): string | null => (c.layerFor ? c.layerFor(layerId ?? null) : (layerId ?? null));
 
 /** Writes (or revives after an undo) the copy of `it` at `anchor` with `data` (annotations). Returns its id and rev. */
-function writeCopy(c: CopyTx, it: Item, anchor: PageAnchor, data: Record<string, unknown> | null): { id: string; rev: number } {
+function writeCopy(c: CopyTx, it: Pick<Item, 'type' | 'row' | 'kind'>, anchor: PageAnchor | NotePageAnchor, data: Record<string, unknown> | null): { id: string; rev: number } {
   const db = c.ctx.db;
   const id = reanchorCopyId(it.row.id, c.to.id);
   const rtx = { db, now: c.now, deviceId: c.device };
@@ -572,7 +636,8 @@ function writeCopy(c: CopyTx, it: Item, anchor: PageAnchor, data: Record<string,
   } else {
     const r = it.row as NoteRow;
     const existing = getNote(db, id);
-    const sourceId = anchor.source_id;
+    // a page anchor names its source; a note page (C2: copied with a link) belongs to the target document
+    const sourceId = anchor.type === 'page' ? anchor.source_id : c.to.source_id;
     if (!existing) {
       db.run(
         `INSERT INTO note (id, node_id, title, body_json, anchor_json, origin, ai_record_json, rev, base_rev, conflict_of_id, device_id, created_at, updated_at, deleted_at,
@@ -592,13 +657,13 @@ function writeCopy(c: CopyTx, it: Item, anchor: PageAnchor, data: Record<string,
     indexNote(db, { id, title: r.title, body: fromJson<RichText>(r.body_json) ?? { v: 1, paragraphs: [] }, origin: r.origin, deleted: false });
     c.ctx.sync.touch('note', id);
   }
-  copyAttribution(c, it.type, it.row.id, id, `source:${anchor.source_id}`);
+  copyAttribution(c, it.type, it.row.id, id, `source:${anchor.type === 'page' ? anchor.source_id : c.to.source_id}`);
   const rev = (it.type === 'annotation' ? getAnnotation(db, id) : getNote(db, id))!.rev;
   db.run(
     `INSERT INTO reanchor_copy_item (entity_type, copy_id, run_id, from_id, to_version_id, to_page_id, copy_rev, created_at, undone_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
      ON CONFLICT(entity_type, copy_id) DO UPDATE SET run_id = excluded.run_id, from_id = excluded.from_id, to_version_id = excluded.to_version_id, to_page_id = excluded.to_page_id,
        copy_rev = excluded.copy_rev, created_at = excluded.created_at, undone_at = NULL`,
-    [it.type, id, c.runId, it.row.id, c.to.id, anchor.page_id, rev, c.now],
+    [it.type, id, c.runId, it.row.id, c.to.id, anchor.type === 'page' ? anchor.page_id : anchor.note_page_id, rev, c.now],
   );
   return { id, rev };
 }
@@ -651,14 +716,27 @@ export function previewReanchorCopy(ctx: AppContext, q: { source_id: string; fro
     .filter((e) => e.items.length > 0);
   const earlier = earlierItems.map((e) => ({ version: versionRef(e.v), items: e.items.length, pending: e.pending }));
   let fromEntry = q.from_version_id ? null : ([...earlierItems].reverse().find((e) => e.pending > 0) ?? earlierItems[earlierItems.length - 1] ?? null);
+  // (C2, AOS-19H.3) on the official copy (stub): the private lectures linked to it; one of them may be asked for by its
+  // version (its items' review list) — any other version of another document is «not found», as before
+  const linked = linkedSourcesOf(ctx, q.source_id, to.id);
+  let linkedFrom: { source_id: string; title: string } | null = null;
   if (q.from_version_id) {
-    const v = versionOf(ctx, q.source_id, q.from_version_id);
-    checkPair(v, to);
-    fromEntry = earlierItems.find((e) => e.v.id === v.id) ?? { v, items: itemsOn(ctx, v.id), pending: 0 };
+    const own = getVersion(ctx, q.from_version_id);
+    const link = own && own.source_id !== q.source_id ? linkedPair(ctx, own.id, q.source_id) : undefined;
+    if (own && link) {
+      linkedFrom = { source_id: own.source_id, title: linked.find((l) => l.version.id === own.id)?.source.title ?? ctx.db.get<{ title: string }>('SELECT title FROM source WHERE id = ?', [own.source_id])?.title ?? '' };
+      fromEntry = { v: own, items: itemsOn(ctx, own.id), pending: 0 };
+    } else {
+      const v = versionOf(ctx, q.source_id, q.from_version_id);
+      checkPair(v, to);
+      fromEntry = earlierItems.find((e) => e.v.id === v.id) ?? { v, items: itemsOn(ctx, v.id), pending: 0 };
+    }
   }
   const empty = { copy: 0, already_moved: 0, needs_review: 0, kept: 0, will_copy: [], by_kind: {}, review: [], kept_by_reason: [], kept_items: [] };
   if (!fromEntry || fromEntry.items.length === 0) {
     return {
+      linked,
+      linked_from: linkedFrom,
       state: 'none',
       reason_ar: 'لا توجد ملاحظات أو كتابة على إصدار سابق من هذا المصدر.',
       source_id: q.source_id,
@@ -675,7 +753,8 @@ export function previewReanchorCopy(ctx: AppContext, q: { source_id: string; fro
   }
   const from = fromEntry.v;
   const pages = new Pages(ctx);
-  const last = lastRun(ctx, q.source_id, from.id, to.id);
+  // a link's own run is not offered for undo here (the link dialog reports it); the tap's runs are
+  const last = linkedFrom ? undefined : lastRun(ctx, q.source_id, from.id, to.id);
   const ms = mapBetween(ctx, from, to);
   const plan = planAll(ctx, from, to, fromEntry.items, ms.state === 'ready' ? ms.map : null);
   const tally = tallyOf(plan);
@@ -698,6 +777,8 @@ export function previewReanchorCopy(ctx: AppContext, q: { source_id: string; fro
     }));
   const base = {
     source_id: q.source_id,
+    linked,
+    linked_from: linkedFrom,
     kept_items: keptItems,
     from_version: versionRef(from),
     to_version: versionRef(to),
@@ -742,7 +823,8 @@ export function previewReanchorCopy(ctx: AppContext, q: { source_id: string; fro
     }
   }
   review.sort((a, b) => a.from.page_index - b.from.page_index);
-  const summary = `سيُنقل ${tally.copy} · يحتاج مراجعة ${tally.needs_review} · يبقى على الإصدار ${from.version_no}: ${tally.kept}${tally.already_moved ? ` · نُقل سابقًا: ${tally.already_moved}` : ''}`;
+  const keptWhere = linkedFrom ? 'يبقى في محاضرتك الخاصة' : `يبقى على الإصدار ${from.version_no}`;
+  const summary = `سيُنقل ${tally.copy} · يحتاج مراجعة ${tally.needs_review} · ${keptWhere}: ${tally.kept}${tally.already_moved ? ` · نُقل سابقًا: ${tally.already_moved}` : ''}`;
   return {
     ...base,
     state: 'ready',
@@ -815,7 +897,11 @@ export function runReanchorCopy(ctx: AppContext, body: RunBody, opts: { deviceId
  * touched. Copies land in the target document's personal layer «ملاحظاتي» (layer_id NULL) — items of read-only layers
  * stay where they are. A second run copies nothing. One transaction.
  */
-export function runReanchorCopyAcross(ctx: AppContext, body: { from_version_id: string; to_version_id: string }, opts: { deviceId: string | null }): ReanchorCopyRunResponse {
+export function runReanchorCopyAcross(
+  ctx: AppContext,
+  body: { from_version_id: string; to_version_id: string },
+  opts: { deviceId: string | null },
+): ReanchorCopyRunResponse & { note_pages: NotePageCopyCounts } {
   const from = getVersion(ctx, body.from_version_id);
   const to = getVersion(ctx, body.to_version_id);
   if (!from || !to) throw new AppError('NOT_FOUND', 'الإصدار غير موجود.', 404);
@@ -828,15 +914,19 @@ export function runReanchorCopyAcross(ctx: AppContext, body: { from_version_id: 
     const plan = planAll(ctx, from, to, itemsOn(ctx, from.id), ms.map);
     const tally = tallyOf(plan);
     const toCopy = plan.filter((p) => p.status === 'copy' && p.plan?.action === 'copy');
+    // (C2, X8 c) the private lecture's inserted note pages go with the link, whole (a note page has no layout to match)
+    const notePages = notePagesToCopy(ctx, from, to);
     const byPage = new Map<string, number>();
     for (const p of toCopy) {
       const pl = p.plan as Extract<ItemPlan, { action: 'copy' }>;
       byPage.set(pl.to_page_id, (byPage.get(pl.to_page_id) ?? 0) + 1);
     }
     const counts: RunCounts = { total: tally.total, copied: tally.copy, already_moved: tally.already_moved, needs_review: tally.needs_review, kept: tally.kept, by_page: [...byPage].map(([page_id, items]) => ({ page_id, items })) };
-    const runId = toCopy.length ? newId(now) : null;
+    const anything = toCopy.length > 0 || notePages.some((np) => np.create || np.items.length > 0);
+    const runId = anything ? newId(now) : null;
     const row: RunRow = { id: runId ?? '', source_id: from.source_id, from_version_id: from.id, to_version_id: to.id, kind: 'run', algo: ms.map.algo, counts_json: JSON.stringify(counts), device_id: device, created_at: now, undone_at: null, undo_json: null };
-    if (!runId) return { report: { ...reportOf(ctx, row), id: null } };
+    const npCounts: NotePageCopyCounts = { total: notePages.length, copied: 0, items: 0 };
+    if (!runId) return { report: { ...reportOf(ctx, row), id: null }, note_pages: npCounts };
     insertRun(ctx, row);
     const c: CopyTx = { ctx, now, device, runId, to, layerFor: () => null };
     for (const p of toCopy) {
@@ -844,17 +934,102 @@ export function runReanchorCopyAcross(ctx: AppContext, body: { from_version_id: 
       const data = pl.rects ? { ...(fromJson<Record<string, unknown>>((p.item.row as AnnotationRow).data_json) ?? {}), rects: pl.rects } : null;
       writeCopy(c, p.item, pageAnchorOn(to, { page_id: pl.to_page_id, page_index: pl.to_page_index }), data);
     }
+    const toPageOf = new Map(ms.map.entries.filter((e) => e.to_page_id && e.to_page_index !== null && e.status !== 'none' && e.status !== 'rejected').map((e) => [e.from_page_id, { id: e.to_page_id!, index: e.to_page_index! }]));
+    for (const np of notePages) {
+      if (np.create) {
+        writeNotePageCopy(c, np.row, np.copyId, from, toPageOf);
+        npCounts.copied++;
+      }
+      for (const it of np.items) {
+        writeCopy(c, it, { type: 'note_page', note_page_id: np.copyId, space: 'page_norm' }, null);
+        npCounts.items++;
+      }
+    }
     const report = reportOf(ctx, row);
     ctx.audit.record({
       entityType: 'source_version',
       entityId: to.id,
       action: 'reanchor_copy',
-      summary: `نسخ المالك ملاحظاته من مصدر خاص إلى المحاضرة الرسمية: ${report.summary_ar}. لم يتغير شيء في المصدر الخاص.`,
+      summary: `نسخ المالك ملاحظاته من مصدر خاص إلى المحاضرة الرسمية: ${report.summary_ar}${npCounts.copied ? `؛ ونُسخت ${npCounts.copied === 1 ? 'صفحة ملاحظات واحدة' : `${npCounts.copied} صفحات ملاحظات`} بما عليها` : ''}. لم يتغير شيء في المصدر الخاص.`,
       before: null,
-      after: { run_id: runId, from_version_id: from.id, to_version_id: to.id, algo: ms.map.algo, ...counts },
+      after: { run_id: runId, from_version_id: from.id, to_version_id: to.id, algo: ms.map.algo, ...counts, note_pages: npCounts },
     });
-    return { report };
+    return { report, note_pages: npCounts };
   });
+}
+
+/** What a link did with the private lecture's inserted note pages. */
+export interface NotePageCopyCounts {
+  /** live note pages of the private lecture */
+  total: number;
+  /** note pages copied by THIS run (deterministic ids: a second link copies none) */
+  copied: number;
+  /** items written on them that this run copied */
+  items: number;
+}
+
+interface NotePagePlan {
+  row: NotePageRow;
+  copyId: string;
+  /** the copy does not exist yet (a tombstoned copy — the owner deleted it — is never revived) */
+  create: boolean;
+  /** live items of the original page not carried yet (written on the copy) */
+  items: Array<Pick<Item, 'type' | 'row' | 'kind'>>;
+}
+
+/** The private source's live note pages and what is written on them that has not been carried to `to` yet. */
+function notePagesToCopy(ctx: AppContext, from: VersionRow, to: VersionRow): NotePagePlan[] {
+  const carried = carriedOf(ctx, from.source_id);
+  const out: NotePagePlan[] = [];
+  for (const row of ctx.db.all<NotePageRow>('SELECT * FROM note_page WHERE source_id = ? AND deleted_at IS NULL ORDER BY sort_order, created_at, id', [from.source_id])) {
+    const copyId = reanchorCopyId(row.id, to.id);
+    const existing = getNotePage(ctx.db, copyId);
+    if (existing && existing.deleted_at !== null) {
+      out.push({ row, copyId, create: false, items: [] });
+      continue;
+    }
+    const items: Array<Pick<Item, 'type' | 'row' | 'kind'>> = [];
+    const anns = ctx.db.all<AnnotationRow>(
+      `SELECT a.* FROM annotation_target t JOIN annotation a ON a.id = t.annotation_id WHERE t.target_type = 'note_page' AND t.target_id = ? AND a.deleted_at IS NULL ORDER BY a.created_at, a.id`,
+      [row.id],
+    );
+    const notes = ctx.db.all<NoteRow>(`SELECT * FROM note WHERE anchor_target_key = ? AND deleted_at IS NULL ORDER BY created_at, id`, [`note_page:${row.id}`]);
+    const candidates: Array<Pick<Item, 'type' | 'row' | 'kind'>> = [...anns.map((r) => ({ type: 'annotation' as const, row: r, kind: r.kind })), ...notes.map((r) => ({ type: 'note' as const, row: r, kind: 'note' }))];
+    for (const it of candidates) {
+      if (carried.has(keyOf(it.type, it.row.id))) continue;
+      const copy = it.type === 'annotation' ? getAnnotation(ctx.db, reanchorCopyId(it.row.id, to.id)) : getNote(ctx.db, reanchorCopyId(it.row.id, to.id));
+      if (copy && copy.deleted_at === null) continue;
+      if (!checkExistingItem(ctx.db, it.row, null).ok) continue; // a read-only layer's item follows its author
+      items.push(it);
+    }
+    out.push({ row, copyId, create: !existing, items });
+  }
+  return out;
+}
+
+/** The copy of an inserted note page in the official copy: same paper and title, placed after the matching page. */
+function writeNotePageCopy(c: CopyTx, np: NotePageRow, copyId: string, from: VersionRow, toPageOf: Map<string, { id: string; index: number }>): void {
+  const db = c.ctx.db;
+  // the page it followed, matched through the page map (by id, else by its index on the linked version)
+  const fromPageId = np.after_page_id ?? (np.after_page_index !== null ? (db.get<{ id: string }>('SELECT id FROM source_page WHERE version_id = ? AND page_index = ?', [from.id, np.after_page_index])?.id ?? null) : null);
+  const mapped = fromPageId ? toPageOf.get(fromPageId) : undefined;
+  const lastIndex = (db.get<{ m: number | null }>('SELECT MAX(page_index) AS m FROM source_page WHERE version_id = ?', [c.to.id])?.m ?? null);
+  const afterIndex = mapped ? mapped.index : np.after_page_index !== null && lastIndex !== null ? Math.min(np.after_page_index, lastIndex) : np.after_page_index;
+  db.run(
+    `INSERT INTO note_page (id, node_id, source_id, after_page_index, title, template, width, height, sort_order, deleted_at, created_at, updated_at, rev, device_id, page_kind, color, after_page_id)
+     VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 1, ?, ?, ?, ?)`,
+    [copyId, c.to.source_id, afterIndex, np.title, np.template, np.width, np.height, np.sort_order, c.now, c.now, c.device, np.page_kind ?? 'page', np.color, mapped?.id ?? null],
+  );
+  const prev = db.get<{ author_user_id: string; author_display: string; derived_from_json: string }>(`SELECT author_user_id, author_display, derived_from_json FROM attribution WHERE entity_type = 'note_page' AND entity_id = ?`, [np.id]);
+  if (prev) {
+    const chain = [...(fromJson<Array<Record<string, unknown>>>(prev.derived_from_json) ?? []), { space_id: null, publication_id: null, version_no: c.to.version_no, item_id: np.id, document_key: `source:${c.to.source_id}` }];
+    db.run(
+      `INSERT INTO attribution (entity_type, entity_id, author_user_id, author_display, derived_from_json, created_at) VALUES ('note_page', ?, ?, ?, ?, ?)
+       ON CONFLICT(entity_type, entity_id) DO UPDATE SET derived_from_json = excluded.derived_from_json`,
+      [copyId, prev.author_user_id, prev.author_display, toJson(chain), c.now],
+    );
+  }
+  c.ctx.sync.touch('note_page', copyId);
 }
 
 // ───────────────────────────── undo ─────────────────────────────
@@ -927,12 +1102,16 @@ export function reanchorCopyAction(ctx: AppContext, body: ActionBody, opts: { de
   const fromIds = new Set(items.map((i) => i.anchor.version_id));
   if (fromIds.size !== 1) throw new AppError('VALIDATION_FAILED', 'اختر عناصر من إصدار واحد في كل مرة.', 400);
   const from = getVersion(ctx, [...fromIds][0]!);
-  if (!from || from.source_id !== to.source_id || items.some((i) => i.anchor.source_id !== to.source_id)) throw new AppError('VALIDATION_FAILED', 'تُنسخ الملاحظات إلى إصدار من المصدر نفسه فقط.', 400);
-  checkPair(from, to);
+  // (C2, AOS-19H.3) a private lecture linked to this official copy: its review list copies ACROSS the two documents
+  const link = from && from.source_id !== to.source_id ? linkedPair(ctx, from.id, to.source_id) : undefined;
+  if (!from || (from.source_id !== to.source_id && !link) || items.some((i) => i.anchor.source_id !== from.source_id)) throw new AppError('VALIDATION_FAILED', 'تُنسخ الملاحظات إلى إصدار من المصدر نفسه فقط.', 400);
+  if (!link) checkPair(from, to);
   const now = ctx.clock.now();
   const device = opts.deviceId ?? 'server';
   const n = items.length;
   const what = items.every((i) => i.type === 'note') ? (n === 1 ? 'الملاحظة' : 'الملاحظات') : n === 1 ? 'العنصر' : itemsCountAr(n);
+  // where the originals stay: the earlier version, or (a link) the private lecture
+  const origin = link ? 'محاضرتك الخاصة' : `الإصدار ${from.version_no}`;
 
   if (body.action === 'keep_on_previous' || body.action === 'review_again') {
     ctx.db.tx(() => {
@@ -947,7 +1126,7 @@ export function reanchorCopyAction(ctx: AppContext, body: ActionBody, opts: { de
         entityType: 'source_version',
         entityId: to.id,
         action: body.action === 'keep_on_previous' ? 'reanchor_copy_keep' : 'reanchor_copy_review_again',
-        summary: body.action === 'keep_on_previous' ? `أبقى المالك ${what} على الإصدار ${from.version_no} (لم يُنسخ ولم يتغير شيء).` : `أعاد المالك ${what} إلى قائمة المراجعة.`,
+        summary: body.action === 'keep_on_previous' ? `أبقى المالك ${what} على ${origin} (لم يُنسخ ولم يتغير شيء).` : `أعاد المالك ${what} إلى قائمة المراجعة.`,
         before: null,
         after: { to_version_id: to.id, items: items.map((i) => ({ kind: i.type, id: i.row.id })) },
       });
@@ -958,13 +1137,16 @@ export function reanchorCopyAction(ctx: AppContext, body: ActionBody, opts: { de
       report: null,
       summary_ar:
         body.action === 'keep_on_previous'
-          ? `${what} ${n === 1 ? 'تبقى' : 'تبقى'} على الإصدار ${from.version_no} كما ${n === 1 ? 'هي' : 'هي'}، ولا تُنسخ إلى الإصدار ${to.version_no}. يمكنك إعادتها إلى المراجعة في أي وقت.`
+          ? link
+            ? `${what} تبقى في محاضرتك الخاصة كما هي، ولا تُنسخ إلى النسخة الرسمية (الإصدار ${to.version_no}). يمكنك إعادتها إلى المراجعة في أي وقت.`
+            : `${what} ${n === 1 ? 'تبقى' : 'تبقى'} على الإصدار ${from.version_no} كما ${n === 1 ? 'هي' : 'هي'}، ولا تُنسخ إلى الإصدار ${to.version_no}. يمكنك إعادتها إلى المراجعة في أي وقت.`
           : `أُعيدت ${what} إلى قائمة «تحتاج مراجعة».`,
     };
   }
 
-  // copy to the page the owner picked
-  const carried = carriedOf(ctx, to.source_id);
+  // copy to the page the owner picked (the originals' runs are recorded under their own source: the earlier version's,
+  // which is the same lecture, or the linked private lecture's)
+  const carried = carriedOf(ctx, from.source_id);
   const live = liveCopiesOf(ctx, items, to.id);
   const already = items.filter((i) => carried.has(keyOf(i.type, i.row.id)) || live.has(keyOf(i.type, i.row.id)));
   if (already.length) throw new AppError('CONFLICT', 'نُسخ هذا العنصر إلى إصدار أحدث من قبل؛ لم يُنسخ مرة ثانية. حدّث القائمة.', 409, { ids: already.map((i) => i.row.id) });
@@ -999,9 +1181,10 @@ export function reanchorCopyAction(ctx: AppContext, body: ActionBody, opts: { de
   return ctx.db.tx(() => {
     const runId = newId(now);
     const counts: RunCounts = { total: n, copied: n, already_moved: 0, needs_review: 0, kept: 0, by_page: [{ page_id: page.id, items: n }] };
-    const row: RunRow = { id: runId, source_id: to.source_id, from_version_id: from.id, to_version_id: to.id, kind: 'manual', algo: null, counts_json: JSON.stringify(counts), device_id: device, created_at: now, undone_at: null, undo_json: null };
+    const row: RunRow = { id: runId, source_id: from.source_id, from_version_id: from.id, to_version_id: to.id, kind: 'manual', algo: null, counts_json: JSON.stringify(counts), device_id: device, created_at: now, undone_at: null, undo_json: null };
     insertRun(ctx, row);
-    const c: CopyTx = { ctx, now, device, runId, to };
+    // a linked copy lands in the official copy's «ملاحظاتي» (as the link's own copies)
+    const c: CopyTx = { ctx, now, device, runId, to, ...(link ? { layerFor: () => null } : {}) };
     const annOut: AnnotationDTO[] = [];
     const noteOut: NoteDTO[] = [];
     for (const it of items) {
@@ -1011,7 +1194,9 @@ export function reanchorCopyAction(ctx: AppContext, body: ActionBody, opts: { de
       if (it.type === 'annotation') annOut.push(toAnnotationDTO(getAnnotation(ctx.db, id)!));
       else noteOut.push(toNoteDTO(getNote(ctx.db, id)!));
     }
-    const summary = `نُسخت ${what} إلى «${label}» في الإصدار ${to.version_no}${region ? ' عند الفقرة المختارة' : ''}. ${n === 1 ? 'بقي الأصل' : 'بقيت الأصول'} على الإصدار ${from.version_no} كما ${n === 1 ? 'هو' : 'هي'}.`;
+    const summary = link
+      ? `نُسخت ${what} إلى «${label}» في النسخة الرسمية (الإصدار ${to.version_no})${region ? ' عند الفقرة المختارة' : ''}. ${n === 1 ? 'بقي الأصل' : 'بقيت الأصول'} في محاضرتك الخاصة كما ${n === 1 ? 'هو' : 'هي'}.`
+      : `نُسخت ${what} إلى «${label}» في الإصدار ${to.version_no}${region ? ' عند الفقرة المختارة' : ''}. ${n === 1 ? 'بقي الأصل' : 'بقيت الأصول'} على الإصدار ${from.version_no} كما ${n === 1 ? 'هو' : 'هي'}.`;
     ctx.audit.record({
       entityType: 'source_version',
       entityId: to.id,

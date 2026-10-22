@@ -3,12 +3,14 @@
 //  * deleting the account: an impact preview first (what is deleted, that the name shows «طالب سابق», that forks
 //    others already made stay), then the password — nothing is deleted by the preview;
 //  * the operator note of IA §4.14, said plainly.
-// AI-processing and transcription consents arrive with the features that need them; they are not shown before.
+//  * (AOS-21.42) «معالجة الذكاء الاصطناعي»: the consent naming the provider configured on the server, its exact text and
+//    version, «أوافق» / «اسحب موافقتي» and the record of earlier consents; the written policy is its own page
+//    (/me/privacy/policy). Transcription consent arrives with the feature that needs it (Phase 3); it is not shown before.
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Download, Trash2 } from 'lucide-react';
-import type { AccountExportsResponse, AccountExportView, DeletionPreview, JobStatus } from '@medlevo/shared';
-import { Breadcrumbs, Button, Dialog, ErrorState, LoadingState, PasswordField, StatusPill, useToast } from '../../design';
+import { Link, useNavigate } from 'react-router-dom';
+import { Check, Download, Trash2 } from 'lucide-react';
+import type { AccountExportsResponse, AccountExportView, AiConsentView, DeletionPreview, JobStatus } from '@medlevo/shared';
+import { Breadcrumbs, Button, ConfirmDialog, Dialog, ErrorState, LoadingState, PasswordField, StatusPill, useToast } from '../../design';
 import { errorMessage } from '../../lib/api';
 import { forgetAuth } from '../../lib/auth';
 import { formatDateTime } from '../../lib/time';
@@ -111,6 +113,8 @@ export function PrivacyScreen() {
         )}
       </section>
 
+      <AiConsentSection />
+
       <section className="me-section" aria-labelledby="me-delete-h">
         <h2 id="me-delete-h" className="me-section__title">
           حذف الحساب
@@ -132,6 +136,120 @@ export function PrivacyScreen() {
 
       {deleteOpen && <DeleteAccountDialog onClose={() => setDeleteOpen(false)} />}
     </div>
+  );
+}
+
+/** AOS-21.42: the ai_processing consent of this account (nothing of its content leaves for a provider without it). */
+function AiConsentSection() {
+  const toast = useToast();
+  const online = useOnline();
+  const [view, setView] = useState<AiConsentView | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [withdrawing, setWithdrawing] = useState(false);
+  const load = useCallback(() => {
+    meApi
+      .aiConsent()
+      .then((v) => {
+        setView(v);
+        setError(null);
+      })
+      .catch((e) => setError(errorMessage(e)));
+  }, []);
+  useEffect(load, [load]);
+
+  const agree = async () => {
+    if (!view?.provider) return;
+    setBusy(true);
+    try {
+      setView(await meApi.setAiConsent({ granted: true, provider: view.provider.id, text_version: view.current_text_version }));
+      toast.show({ title: 'سُجّلت موافقتك.', tone: 'success' });
+    } catch (e) {
+      toast.show({ title: errorMessage(e), tone: 'danger' });
+      load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const p = view?.provider ?? null;
+  return (
+    <section className="me-section" aria-labelledby="me-ai-h">
+      <h2 id="me-ai-h" className="me-section__title">
+        معالجة الذكاء الاصطناعي
+      </h2>
+      <p className="me-note">لا يُرسل شيء من ملاحظاتك وملفاتك إلى مزوّد خارجي دون موافقتك.</p>
+      {error && !view ? (
+        <ErrorState inline message={error} onRetry={load} />
+      ) : !view ? (
+        <LoadingState inline stage="جارٍ التحميل…" />
+      ) : !p ? (
+        <p className="me-note">لا يوجد مزوّد ذكاء اصطناعي مضبوط على هذا الخادم، فلا يُرسل شيء من محتواك إلى أي جهة.</p>
+      ) : !p.leaves_deployment ? (
+        <p className="me-note">مزوّد الذكاء الاصطناعي المضبوط ({p.label_ar}) يعمل داخل هذا الخادم، فلا يخرج شيء من محتواك ولا تلزم موافقة.</p>
+      ) : (
+        <div className="ml-stack">
+          <p>
+            المزوّد المضبوط على الخادم: <strong>{p.label_ar}</strong>
+          </p>
+          {view.granted ? (
+            <p className="me-consent__state">
+              <Check size={18} aria-hidden="true" /> وافقت على إرسال محتواك إلى {p.label_ar} منذ {formatDateTime(view.granted_at!)}.
+            </p>
+          ) : (
+            <p className="me-consent__state">لم توافق بعد؛ ميزات الذكاء الاصطناعي متوقفة لحسابك، وباقي الميزات تعمل.</p>
+          )}
+          <p className="me-note">نص الموافقة (الإصدار <bdi dir="ltr">{view.current_text_version}</bdi>):</p>
+          <ul className="me-bullets">
+            {view.text_ar.map((t) => (
+              <li key={t}>{t}</li>
+            ))}
+          </ul>
+          {view.granted ? (
+            <ReasonedButton variant="secondary" reason={online ? null : 'سحب الموافقة يحتاج اتصالًا بالخادم.'} onClick={() => setWithdrawing(true)}>
+              اسحب موافقتي
+            </ReasonedButton>
+          ) : (
+            <ReasonedButton variant="primary" loading={busy} reason={online ? null : 'تسجيل الموافقة يحتاج اتصالًا بالخادم.'} onClick={() => void agree()}>
+              أوافق على الإرسال إلى {p.label_ar}
+            </ReasonedButton>
+          )}
+        </div>
+      )}
+      {view && view.history.length > 0 && (
+        <>
+          <h3 className="me-consent__h">سجل موافقاتك</h3>
+          <ul role="list" className="ml-list">
+            {view.history.map((h) => (
+              <li key={`${h.granted_at}-${h.text_version}`} className="ml-list__row me-export">
+                <span className="me-export__text">
+                  <span>
+                    {h.providers.join('، ')} — منذ {formatDateTime(h.granted_at)}
+                  </span>
+                  <span className="me-export__meta">{h.revoked_at ? `سُحبت في ${formatDateTime(h.revoked_at)}` : 'سارية'}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      <p className="ml-group-footer">
+        <Link to="/me/privacy/policy">اقرأ سياسة استخدام البيانات</Link>
+      </p>
+      <ConfirmDialog
+        open={withdrawing}
+        title="سحب الموافقة"
+        impact="يتوقف إرسال أي شيء من محتواك إلى مزوّد الذكاء الاصطناعي فورًا، وتتوقف ميزاته لحسابك. ما عولج قبل السحب لا يمكن استرجاعه."
+        confirmLabel="اسحب الموافقة"
+        destructive
+        onCancel={() => setWithdrawing(false)}
+        onConfirm={async () => {
+          setView(await meApi.setAiConsent({ granted: false }));
+          setWithdrawing(false);
+          toast.show({ title: 'سُحبت موافقتك.', tone: 'success' });
+        }}
+      />
+    </section>
   );
 }
 

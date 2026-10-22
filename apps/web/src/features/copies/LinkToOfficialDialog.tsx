@@ -1,7 +1,8 @@
 // «اربط بالمحاضرة الرسمية» (P1-T5 step 2; PRD AOS-19H.3; ARCHITECTURE_DELTA §6.9). A lecture the student uploaded
 // privately exists officially in one of their subjects (same file, or most pages): one tap COPIES their ink, highlights
-// and notes onto the official version in a personal copy; what cannot be placed safely is listed for review; the private
-// file and everything on it stay exactly as they were. The candidates come from the server (subjects the viewer belongs
+// and notes onto the official version in a personal copy, with the inserted note pages; what cannot be placed safely is
+// listed in the review list of the OFFICIAL copy («ملاحظاتي ← إعادة ربط», Phase 1 completion C2 — X8 c), to copy there by
+// hand or keep on the private lecture; the private file and everything on it stay exactly as they were. The candidates come from the server (subjects the viewer belongs
 // to only); the client id is fixed for the dialog's life, so a retry never makes a second copy.
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -12,11 +13,25 @@ import { errorMessage } from '../../lib/api';
 import { useOnline } from '../../lib/useOnline';
 import { studyUrl } from '../workspace/nav/SourceNavigation';
 import { copiesApi } from './api';
+import { dropLinkStatus } from './linkStatusStore';
 import './copies.css';
 
 const keyOf = (c: OfficialLinkCandidate) => `${c.space_id}/${c.lecture_id}/${c.version_id}`;
 
-export function LinkToOfficialDialog({ open, onClose, sourceId, candidates }: { open: boolean; onClose: () => void; sourceId: string; candidates: OfficialLinkCandidate[] }) {
+export function LinkToOfficialDialog({
+  open,
+  onClose,
+  sourceId,
+  candidates,
+  unavailable,
+}: {
+  open: boolean;
+  onClose: () => void;
+  sourceId: string;
+  candidates: OfficialLinkCandidate[];
+  /** (C2) opened from the library menu and the twin is gone (or could not be fetched): say so instead of a dead form */
+  unavailable?: string;
+}) {
   const online = useOnline();
   const navigate = useNavigate();
   const [clientId] = useState(() => newId());
@@ -31,7 +46,10 @@ export function LinkToOfficialDialog({ open, onClose, sourceId, candidates }: { 
     setBusy(true);
     setError(null);
     try {
-      setDone(await copiesApi.link({ id: clientId, source_id: sourceId, space_id: pick.space_id, lecture_id: pick.lecture_id, to_version_id: pick.version_id }));
+      const res = await copiesApi.link({ id: clientId, source_id: sourceId, space_id: pick.space_id, lecture_id: pick.lecture_id, to_version_id: pick.version_id });
+      // the library rows of both documents say «مرتبطة» / «رسمي» from now on
+      dropLinkStatus([sourceId, res.copy.source_id]);
+      setDone(res);
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -52,6 +70,7 @@ export function LinkToOfficialDialog({ open, onClose, sourceId, candidates }: { 
               البقاء في نسختي الخاصة
             </Button>
             <Button
+              variant={s && s.needs_review > 0 ? 'secondary' : 'primary'}
               onClick={() => {
                 onClose();
                 navigate(studyUrl({ sourceId: done.copy.source_id }));
@@ -59,6 +78,16 @@ export function LinkToOfficialDialog({ open, onClose, sourceId, candidates }: { 
             >
               افتح النسخة الرسمية
             </Button>
+            {s && s.needs_review > 0 && (
+              <Button
+                onClick={() => {
+                  onClose();
+                  navigate(studyUrl({ sourceId: done.copy.source_id, panel: 'review' }));
+                }}
+              >
+                راجع ما لم يُنسخ
+              </Button>
+            )}
           </>
         }
       >
@@ -71,15 +100,23 @@ export function LinkToOfficialDialog({ open, onClose, sourceId, candidates }: { 
                   <span className="cp-counts__n">{s.copied}</span> نُسخ إلى مكانه
                 </li>
                 <li>
-                  <span className="cp-counts__n">{s.needs_review}</span> لم يُنسخ (تغيّرت صفحته)
+                  <span className="cp-counts__n">{s.needs_review}</span> ينتظر مراجعتك (تغيّرت صفحته)
                 </li>
                 <li>
                   <span className="cp-counts__n">{s.kept}</span> بقي في نسختك الخاصة فقط
                 </li>
+                {s.note_pages && s.note_pages.total > 0 && (
+                  <li>
+                    <span className="cp-counts__n">{s.note_pages.copied}</span>
+                    {` من ${s.note_pages.total} صفحة ملاحظات مضافة نُسخت بما عليها`}
+                  </li>
+                )}
               </ul>
-              {/* review P1-T5 s2 R-C: no review list of the official copy holds them — they stay on the private lecture */}
+              {/* C2 (X8 c): they are listed in the review list of the official copy; the originals stay where they are */}
               {s.needs_review > 0 && (
-                <p className="cp-sheet__line cp-sheet__line--muted">ما لم يُنسخ بقي في محاضرتك الخاصة كما هو، ولا يُنقل إلى النسخة الرسمية تلقائيًا؛ افتح محاضرتك الخاصة لتراه.</p>
+                <p className="cp-sheet__line cp-sheet__line--muted">
+                  ما لم يُنسخ تلقائيًا تجده في «ملاحظاتي ← إعادة ربط» في النسخة الرسمية: انسخه إلى الصفحة المقترحة أو إلى صفحة تختارها، أو أبقِه في محاضرتك الخاصة. لا يضيع منه شيء.
+                </p>
               )}
             </>
           ) : (
@@ -87,6 +124,25 @@ export function LinkToOfficialDialog({ open, onClose, sourceId, candidates }: { 
           )}
           <p className="cp-sheet__line cp-sheet__line--muted">ملفك الخاص وكل ما كتبته عليه لم يتغيّر.</p>
         </div>
+      </Dialog>
+    );
+  }
+
+  if (unavailable && candidates.length === 0) {
+    return (
+      <Dialog
+        open={open}
+        onClose={onClose}
+        title="اربط بالمحاضرة الرسمية"
+        footer={
+          <Button variant="secondary" onClick={onClose}>
+            إغلاق
+          </Button>
+        }
+      >
+        <p className="cp-sheet__line" role="status">
+          {unavailable}
+        </p>
       </Dialog>
     );
   }

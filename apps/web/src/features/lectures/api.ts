@@ -5,6 +5,7 @@ import type {
   ChannelTreeResponse,
   CreateReportRequest,
   CursorPage,
+  DecideSubjectReviewResponse,
   LecturePublicationsResponse,
   LayersResponse,
   MeResponse,
@@ -24,6 +25,7 @@ import type {
   PublishOfficialVersionResponse,
   SubjectDuplicatesResponse,
   SubjectEventView,
+  SubjectReviewResponse,
   UpstreamPreview,
   UploadOfficialVersionResponse,
   VersionCompareResponse,
@@ -57,6 +59,10 @@ export const lecturesApi = {
   decideCorrection: (spaceId: string, lectureId: string, correctionId: string, decision: 'accept' | 'reject', note?: string) =>
     api.post<OfficialCorrectionView>(S(spaceId, `/lectures/${encodeURIComponent(lectureId)}/corrections/${encodeURIComponent(correctionId)}/decide`), { decision, ...(note ? { note_ar: note } : {}) }, T),
   duplicates: (spaceId: string) => api.get<SubjectDuplicatesResponse>(S(spaceId, '/subject/duplicates'), T),
+  // (C2, AOS-3.18 / 3.11) the subject's review queue — Subject Moderators only (403 for anyone else)
+  review: (spaceId: string) => api.get<SubjectReviewResponse>(S(spaceId, '/subject/review'), T),
+  decideReview: (spaceId: string, itemId: string, action: 'accept' | 'reject') =>
+    api.post<DecideSubjectReviewResponse>(S(spaceId, `/subject/review/${encodeURIComponent(itemId)}/decide`), { action }, T),
   events: (spaceId: string, cursor?: string | null) => api.get<CursorPage<SubjectEventView>>(S(spaceId, '/subject/events'), { ...T, query: { cursor: cursor ?? undefined } }),
   /** the original (or converted) file of a version, as a same-origin link */
   fileUrl: (spaceId: string, fileId: string) => `/api${S(spaceId, `/files/${encodeURIComponent(fileId)}`)}`,

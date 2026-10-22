@@ -5,6 +5,11 @@
 //    (append-only insert-if-absent, rev-based keep-both, tombstones, ...). The engine never does blind LWW.
 //  * modules call touch(entityType, id) inside the same transaction as their write; pull reads the
 //    monotonic sync_change feed (one row per entity at its latest seq).
+//  * (AOS-21.29, ARCHITECTURE_DELTA §8.2–§8.3) the actor is the SESSION's user (`PushContext.actorUserId`, recorded in
+//    sync_operation.actor_user_id), never a payload field. Rejections whose cause can go away are answered
+//    `retryable: true` with their `detail_code` and NEVER recorded — `device_unknown` (the route's device check),
+//    `quota_exceeded` and `not_a_member` (a handler's QUOTA_EXCEEDED / MEMBERSHIP_* error), `op_id_taken` (an op_id
+//    recorded for another actor: no entity, no stored result) — so a queued op succeeds once the cause is fixed.
 import type { SyncChange, SyncDetailCode, SyncOp, SyncOpResult, SyncPullResponse, SyncPushResponse, SyncResult } from '@medlevo/shared';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/db';
@@ -55,7 +60,28 @@ export interface SyncEntityHandler {
   serialize(id: string, opts?: SerializeOptions): unknown | null;
 }
 
+/** (AOS-21.29) who pushes, from the session; and which of the request's device ids may write. */
+export interface PushContext {
+  actorUserId?: string | null;
+  /** false → that op is answered `rejected/device_unknown`, retryable, not recorded (the route's device check) */
+  deviceAllowed?: (deviceId: string) => boolean;
+}
+
+/** handler errors whose cause can go away: answered retryable, never recorded (§8.2) */
+const TRANSIENT_CODES: Record<string, SyncDetailCode> = {
+  QUOTA_EXCEEDED: 'quota_exceeded',
+  MEMBERSHIP_PENDING: 'not_a_member',
+  MEMBERSHIP_REQUIRED: 'not_a_member',
+};
+
+export const SYNC_TRANSIENT_AR: Record<'device_unknown' | 'op_id_taken', string> = {
+  device_unknown: 'هذا الجهاز أُلغي من «أجهزتي»؛ لم يُحفظ التغيير. سيُرسله التطبيق من جديد باسم جهاز جديد.',
+  op_id_taken: 'معرّف هذه العملية مستخدم من قبل؛ سيُعيد التطبيق إرسالها بمعرّف جديد.',
+};
+
 interface SyncOperationRow {
+  /** migration 0041: who sent it; NULL in a vault = the vault's user (ops recorded before AOS-21.29) */
+  actor_user_id?: string | null;
   op_id: string;
   entity_type: string;
   entity_id: string;
@@ -116,14 +142,27 @@ export class SyncRegistry {
     return r?.seq ?? 0;
   }
 
-  push(ops: SyncOp[], opts?: SerializeOptions): SyncPushResponse {
+  push(ops: SyncOp[], opts?: SerializeOptions, who: PushContext = {}): SyncPushResponse {
     const results: SyncOpResult[] = [];
-    for (const op of ops) results.push(this.applyOne(op, opts));
+    for (const op of ops) results.push(this.applyOne(op, opts, who));
     return { results, server_seq: this.headSeq() };
   }
 
-  private applyOne(op: SyncOp, opts?: SerializeOptions): SyncOpResult {
+  /** an op_id recorded for ANOTHER actor (NULL = the vault's own user, i.e. ops recorded before the actor was kept) */
+  private takenByOther(row: SyncOperationRow, who: PushContext): boolean {
+    return !!who.actorUserId && row.actor_user_id != null && row.actor_user_id !== who.actorUserId;
+  }
+
+  private transient(op: SyncOp, code: SyncDetailCode, detail: string): SyncOpResult {
+    return { op_id: op.op_id, result: 'rejected', detail, detail_code: code, retryable: true };
+  }
+
+  private applyOne(op: SyncOp, opts?: SerializeOptions, who: PushContext = {}): SyncOpResult {
+    // 1. the device (never recorded: the client re-sends from a registered device)
+    if (who.deviceAllowed && !who.deviceAllowed(op.device_id)) return this.transient(op, 'device_unknown', SYNC_TRANSIENT_AR.device_unknown);
+    // 2. idempotency per actor
     const seen = this.db.get<SyncOperationRow>('SELECT * FROM sync_operation WHERE op_id = ?', [op.op_id]);
+    if (seen && this.takenByOther(seen, who)) return this.transient(op, 'op_id_taken', SYNC_TRANSIENT_AR.op_id_taken);
     if (seen) return this.duplicateOf(op, seen, opts);
 
     const handler = this.handlers.get(op.entity_type);
@@ -136,6 +175,7 @@ export class SyncRegistry {
       return this.db.tx(() => {
         // re-check inside the write lock (two concurrent pushes of the same op)
         const again = this.db.get<SyncOperationRow>('SELECT * FROM sync_operation WHERE op_id = ?', [op.op_id]);
+        if (again && this.takenByOther(again, who)) return this.transient(op, 'op_id_taken', SYNC_TRANSIENT_AR.op_id_taken);
         if (again) return this.duplicateOf(op, again, opts);
         const now = this.clock.now();
         const tx: SyncTx = { db: this.db, now, deviceId: op.device_id, touch: (t, id) => void this.touch(t, id), ...(opts ? { format: opts } : {}) };
@@ -145,12 +185,15 @@ export class SyncRegistry {
           applied = this.db.tx(() => handler.apply(op, tx));
         } catch (e) {
           if (!isAppError(e)) throw e;
+          // a cause that can go away: answered retryable and NOT recorded (the handler's savepoint is rolled back)
+          const transient = TRANSIENT_CODES[e.code];
+          if (transient) return this.transient(op, transient, e.messageAr);
           applied = { result: 'rejected', detail: e.messageAr };
         }
         const seqAfter = this.headSeq();
         this.db.run(
-          `INSERT INTO sync_operation (op_id, device_id, entity_type, entity_id, op, base_rev, payload_json, result, result_detail, client_ts, server_seq, received_at, detail_code)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO sync_operation (op_id, device_id, entity_type, entity_id, op, base_rev, payload_json, result, result_detail, client_ts, server_seq, received_at, detail_code, actor_user_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             op.op_id,
             op.device_id,
@@ -165,6 +208,7 @@ export class SyncRegistry {
             seqAfter,
             now,
             applied.detail_code ?? null,
+            who.actorUserId ?? null,
           ],
         );
         // server_seq (track D1, additive): a client keeps it with the acknowledged op (see shared SyncOpResult)

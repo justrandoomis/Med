@@ -76,6 +76,24 @@ upload of the same bytes answers 409 (`details.version_no`), not the first answe
 `compareVersions`); a processing job already running when a takedown lands may write text back before it sees the
 cancel (reads of a taken-down lecture refuse regions, TOC, files and thumbnails regardless).
 
+## Phase 1 completion — track C2 (2026-10-22)
+
+| row | what was missing | built | evidence |
+|---|---|---|---|
+| AOS-2.3 / 18.3 | only PDF exercised in a space; no bulk upload | PPTX, DOCX and image files go through the same space ingest (processed in the space, uploader recorded, the file answers 404 to a stranger and to another subject's moderator); «ارفع عدة محاضرات» in «المحتوى الرسمي»: one draft per file named from the file, uploaded one after the other with a result per file (a refused file says why; a draft whose file failed says so) | `srv:lectures/formats-duplicates.c2`, `web:copies/official-admin.c2`, `e2e:aos-c2-official-content` |
+| AOS-2.2 | the student-facing list | the subject's «المحاضرات» tab keeps the server order (number → date → title) and marks every published lecture «رسمي» with «نشرها …» (`head_version.published_by`, additive); a number read from the file says «(مقروء من الملف)» | `web:copies/official-provenance.c2`, `e2e:aos-c2-official-content` (order 3, 5, 6, 7) |
+| AOS-3.6 | a space-scoped duplicate answer | `POST …/lectures/:id/upload` answers `duplicate_of` / `duplicate_note_ar` only when the uploader may SEE the other lecture (`authz view` + `versionVisibleTo`): another contributor's hidden draft gives no title and no hint; the moderator is told. The single-file form and the bulk list show the note as given | `srv:lectures/formats-duplicates.c2` |
+| AOS-3.11 | the followers were not told | the subject's review queue proposes «إصدار جديد من …» (P1-T3's analysis run in the space); accepting turns the stored file into a new DRAFT version of the existing lecture (same blob, `official_version_upload` keeps the original uploader), withdraws the duplicate draft (`replaced`) and writes a moderators-only feed line; publishing it fans out to the holders through P1-T4's notifications (`official_version`) | `srv:lectures/review-queue.c2` |
+| AOS-3.18 | the role-scoped queue | `GET /api/spaces/:s/subject/review` + `POST …/subject/review/:itemId/decide` (official moderators only — an Assistant, a student, another subject: 403 / 404; declared on the space allow-list). Uncertain numbers / dates / titles / new-version proposals change nothing until accepted; a certain number read from the file fills an EMPTY number (`lecture_no_origin: 'detected'`) through the `onIdentityAnalyzed` seam of `versions/identity.ts`; a moderator's number is never overwritten; a rejected value does not come back on reprocessing. The web queue «مراجعة ما اقترحه التحليل» marks every proposal «اقتراح آلي — مؤكد / غير مؤكد» with its reasons and what accepting does (19I.5) | `srv:lectures/review-queue.c2`, `web:copies/official-admin.c2` |
+| AOS-4.5 / 18.18 / 19I.2 | «رسمي» and the publisher on the student page | the lecture page says «رسمي · <المادة>», «نشر الإصدار n: <name>», and each published version «رفعه …», «نشره …», «يحلّ محل الإصدار n−1»; the admin list names each version's uploader and publisher and «رقم مقروء آليًا من الملف» | `web:copies/official-provenance.c2`, `e2e:aos-c2-official-content` |
+| AOS-18.4 | the E2E through «المحتوى الرسمي» | a Contributor adds a lecture with its file there, the Subject Moderator approves and publishes it there (students never saw the draft) | `e2e:aos-c2-official-content` (phone + desktop) |
+| AOS-11.27 (space part) | per-viewer feeds | `subject_event` rows carry a visibility key (none = members, `mod` = official moderators, `u:<id>` = one person); the read asks only the viewer's keys AND re-checks each row's target for that viewer (a withdrawn or moderators-only attachment's line leaves the members' feed); a withdrawn never-published draft tells only its uploader («لم تُعتمد مسودتك …»); paging never skips or repeats a visible line | `srv:lectures/feed-visibility.c2` |
+
+Edits outside this module (smallest exact edits, reported): `modules/versions/identity.ts` (an observer seam,
+`onIdentityAnalyzed`), `modules/authz/spaceRoutes.ts` (two declarations), `apps/web/src/features/channels/SubjectScreen.tsx`
+(the row's «رسمي» / publisher). Still open: chunked (resumable) uploads into a space (P1-T1's uploads refuse a space
+target; bulk upload is one multipart request per file); ZIP import (AOS-3.1).
+
 ## Tests
 
 `apps/server/test/lectures/{lectures,corrections,subject-content,rules,channels-integration,space-routes.contract,review-step1}.test.ts`

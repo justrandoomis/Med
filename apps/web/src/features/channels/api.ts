@@ -16,6 +16,9 @@ import type {
   CreateJoinCodeResponse,
   InvitationDecisionResponse,
   InvitationsResponse,
+  InvitationStatus,
+  InvitationView,
+  InviteeSearchResponse,
   JoinCodesResponse,
   JoinPreviewResponse,
   JoinResponse,
@@ -46,6 +49,11 @@ export const channelsApi = {
 
   invitations: () => api.get<InvitationsResponse>('/channels/invitations', T),
   decideInvitation: (id: string, accept: boolean) => api.post<InvitationDecisionResponse>(`/channels/invitations/${enc(id)}/decision`, { accept }, T),
+  // (C2, AOS-18.5) inviting named people from the screen: the picker, sending, the list sent into a node, revoking
+  searchInvitees: (nodeId: string, q: string) => api.get<InviteeSearchResponse>(`/channels/nodes/${enc(nodeId)}/invitees`, { ...T, query: { q } }),
+  invite: (nodeId: string, userIds: string[]) => api.post<InvitationsResponse>(`/channels/nodes/${enc(nodeId)}/invitations`, { user_ids: userIds }, T),
+  nodeInvitations: (nodeId: string, status?: InvitationStatus) => api.get<InvitationsResponse>(`/channels/nodes/${enc(nodeId)}/invitations`, { ...T, query: { status } }),
+  revokeInvitation: (id: string) => api.del<InvitationView>(`/channels/invitations/${enc(id)}`, T),
 
   follow: (subjectId: string) => api.put<CourseFollowView>(`/channels/subjects/${enc(subjectId)}/follow`, { add_new_lectures: true }, T),
   unfollow: (subjectId: string) => api.del<CourseUnfollowResponse>(`/channels/subjects/${enc(subjectId)}/follow`, T),

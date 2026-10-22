@@ -87,7 +87,8 @@ export interface AppConfig {
     spaceStorageBytes: number;
   };
   /** P1-T1 step 2: where blobs live — 'local' (the disk only, default) or 'r2' (the disk + an encrypted copy in R2) */
-  blobStore: { kind: 'local' | 'r2' };
+  /** cacheBytes (AOS-21.34): with r2, keep at most this many bytes of local blob copies (null: the disk is a full cache) */
+  blobStore: { kind: 'local' | 'r2'; cacheBytes: number | null };
   /** P1-T1 step 2: the daily mark-and-sweep of the blob store (MEDLEVO_BLOB_GC_SCHEDULE, deployment timezone) */
   blobGc: { schedule: OffsiteSchedule | null };
   /** P1-T1 step 2: chunked, resumable uploads */
@@ -163,6 +164,8 @@ const envSchema = z.object({
   MEDLEVO_USER_STORAGE_QUOTA_MB: z.preprocess(emptyToUndefined, z.coerce.number().positive().max(10_000_000).default(2048)),
   MEDLEVO_SPACE_STORAGE_QUOTA_MB: z.preprocess(emptyToUndefined, z.coerce.number().positive().max(100_000_000).default(20_480)),
   MEDLEVO_BLOB_STORE: z.preprocess(emptyToUndefined, z.enum(['local', 'r2']).default('local')),
+  // AOS-21.34: with the r2 blob store, a budget for the LOCAL copies (the rest is fetched back on demand)
+  MEDLEVO_BLOB_CACHE_MB: z.preprocess(emptyToUndefined, z.coerce.number().positive().max(100_000_000).optional()),
   MEDLEVO_BLOB_GC_SCHEDULE: z.preprocess(emptyToUndefined, z.string().optional()),
   MEDLEVO_UPLOAD_CHUNK_MB: z.preprocess(emptyToUndefined, z.coerce.number().positive().max(64).default(8)),
   // P1-T1 step 3: the owner migration at boot (off = the maintenance page waits for the owner)
@@ -249,6 +252,13 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   const dataDir = isAbsolute(e.MEDLEVO_DATA_DIR) ? e.MEDLEVO_DATA_DIR : resolve(cwd, e.MEDLEVO_DATA_DIR);
   const { origins, source: originSource } = resolveOrigins(e);
   if (origins.length === 0) throw new ConfigError('MEDLEVO_ORIGIN is required');
+  // AOS-21.35 (NFR-S2): the server is multi-user (release R1-b on). A session cookie without `Secure` on an https
+  // deployment can leave in clear on a downgraded request — refuse to start rather than serve accounts that way.
+  if (e.MEDLEVO_COOKIE_SECURE === false && origins.some((o) => o.startsWith('https://'))) {
+    throw new ConfigError(
+      'MEDLEVO_COOKIE_SECURE=false is refused with an https origin: session cookies of a multi-user server must be Secure over https. Remove MEDLEVO_COOKIE_SECURE (https makes it true) or set it to true.',
+    );
+  }
   const proxy = resolveProxy(e);
 
   let webDistDir: string | null = null;
@@ -272,6 +282,9 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     throw new ConfigError(`MEDLEVO_BLOB_GC_SCHEDULE must be HH:MM (24-hour, in MEDLEVO_TIMEZONE) or off (got "${e.MEDLEVO_BLOB_GC_SCHEDULE}")`);
   }
   // an explicit opt-in must be complete: blobs are never «silently local only» when r2 was asked for
+  if (e.MEDLEVO_BLOB_CACHE_MB !== undefined && e.MEDLEVO_BLOB_STORE !== 'r2') {
+    throw new ConfigError('MEDLEVO_BLOB_CACHE_MB needs MEDLEVO_BLOB_STORE=r2: without the remote copy the local disk is the only copy and is never evicted');
+  }
   if (e.MEDLEVO_BLOB_STORE === 'r2' && !offsite.offsite.configured) {
     throw new ConfigError(
       `MEDLEVO_BLOB_STORE=r2 needs the R2 settings and the encryption key of the off-site backups: ${offsite.offsite.missing.join(', ') || offsite.offsite.problems_ar.join(' ')}`,
@@ -336,7 +349,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       userStorageBytes: Math.floor(e.MEDLEVO_USER_STORAGE_QUOTA_MB * MB),
       spaceStorageBytes: Math.floor(e.MEDLEVO_SPACE_STORAGE_QUOTA_MB * MB),
     },
-    blobStore: { kind: e.MEDLEVO_BLOB_STORE },
+    blobStore: { kind: e.MEDLEVO_BLOB_STORE, cacheBytes: e.MEDLEVO_BLOB_CACHE_MB !== undefined ? Math.floor(e.MEDLEVO_BLOB_CACHE_MB * MB) : null },
     blobGc: { schedule: blobGcSchedule },
     uploads: { chunkBytes: Math.floor(e.MEDLEVO_UPLOAD_CHUNK_MB * MB), ttlMs: 24 * 60 * 60 * 1000 },
     ownerMigration: e.MEDLEVO_OWNER_MIGRATION,

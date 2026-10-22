@@ -9,6 +9,7 @@ import { loadConfig } from '../../src/config';
 import { AnthropicProvider, createProviderFromConfig, priceFor, toStructuredOutputSchema } from '../../src/modules/ai/providers';
 import { ProviderError, type ProviderRequest } from '../../src/modules/ai/types';
 import { createTestApp, type TestApp } from '../helpers/app';
+import { grantAiConsent } from '../helpers/consent';
 
 const FAKE_KEY = 'sk-ant-test-not-a-real-key-000';
 
@@ -327,6 +328,7 @@ describe('orchestrator + Anthropic adapter (mocked HTTP)', () => {
   it('records usage with provider, served model, request id and an estimated cost; no prompt text stored', async () => {
     const m = mockFetch([{ kind: 'sse', text: JSON.stringify(VALID), requestId: 'req_orch_1', usage: { input: 3000, output: 900 } }]);
     t = await createTestApp({ ai: new AnthropicProvider({ apiKey: FAKE_KEY, fetch: m.fn, maxRetries: 0 }) });
+    grantAiConsent(t); // AOS-21.42: the owner agreed to send their content to Anthropic
     const res = await gen(t);
     expect(res.output).toEqual(VALID);
     const row = t.ctx.db.get<Record<string, unknown>>('SELECT * FROM usage_record WHERE id = ?', [res.usageId])!;
@@ -347,6 +349,7 @@ describe('orchestrator + Anthropic adapter (mocked HTTP)', () => {
       { kind: 'error', status: 401, type: 'authentication_error', requestId: 'req_401' },
     ]);
     t = await createTestApp({ ai: new AnthropicProvider({ apiKey: FAKE_KEY, fetch: m.fn, maxRetries: 0 }) });
+    grantAiConsent(t); // AOS-21.42: the owner agreed to send their content to Anthropic
     const e1 = (await gen(t).catch((x: unknown) => x)) as { code: string; messageAr: string; details: { provider_error: string } };
     expect(e1).toMatchObject({ code: 'AI_PROVIDER_ERROR', details: { provider_error: 'truncated', retryable: false } });
     expect(e1.messageAr).toContain('انقطع');
@@ -366,6 +369,7 @@ describe('orchestrator + Anthropic adapter (mocked HTTP)', () => {
     const m = mockFetch([{ kind: 'sse', text: JSON.stringify(VALID) }]);
     // 2000 visible + 16000 reasoning headroom at $20/1M ≈ $0.36 worst case > $0.30 budget
     t = await createTestApp({ ai: new AnthropicProvider({ apiKey: FAKE_KEY, fetch: m.fn, maxRetries: 0 }), env: { MEDLEVO_AI_MONTHLY_BUDGET_USD: '0.30' } });
+    grantAiConsent(t); // AOS-21.42: the owner agreed to send their content to Anthropic
     await expect(gen(t)).rejects.toMatchObject({ code: 'AI_BUDGET_EXCEEDED' });
     expect(m.calls).toHaveLength(0);
     expect(t.ctx.db.get<{ status: string }>('SELECT status FROM usage_record')!.status).toBe('budget_blocked');

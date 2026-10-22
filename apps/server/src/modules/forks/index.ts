@@ -7,6 +7,8 @@
 //   GET    /api/copies?source_id=&space_id=&lecture_id=     the user's copies
 //   GET    /api/copies/link-candidates?source_id=           official twins of a private upload (19H.3)
 //   POST   /api/copies/link                  «اربط بالمحاضرة الرسمية» (copy, never move)
+//   GET    /api/copies/link-status?source_ids=   (C2) library rows: official copy / linked (+ pending review) / twin offered
+//   GET    /api/copies/lecture-identity?space_id=&lecture_id=   (C2, 19H.1) versions, copies, linked lectures, explanations, objects
 //   GET    /api/copies/:id · PATCH /api/copies/:id           one copy · its update / note-move policies
 //   GET    /api/copies/:id/upstream          (P1-T5 step 3) what «طبّق التحديث» would change in a followed copy
 //   POST   /api/copies/:id/upstream/apply    «طبّق التحديث» / «تخطَّ هذا الإصدار» (ApplyUpstreamRequest)
@@ -16,19 +18,22 @@
 // used by P1-T2's note copy.
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { applyUpstreamSchema, documentCopiesQuerySchema, linkCandidatesQuerySchema, linkToOfficialSchema, patchDocumentCopySchema, startStudyingSchema } from '@medlevo/shared';
+import { applyUpstreamSchema, documentCopiesQuerySchema, lectureIdentityQuerySchema, linkCandidatesQuerySchema, linkStatusQuerySchema, linkToOfficialSchema, patchDocumentCopySchema, startStudyingSchema } from '@medlevo/shared';
 import type { ModuleOptions } from '../../context';
 import { AppError } from '../../lib/errors';
 import { parseBody, parseParams, parseQuery } from '../../lib/http';
 import { setStubRegionSource } from '../annotations/reanchorCopy';
+import { setPublicationTitleSource } from '../data/export';
 import { setStubPageRegions } from '../sources/service';
 import type { RegionRow } from '../sources/views';
 import { CopiesService } from './copies';
 import { registerFanoutJobs, registerHoldersAudience } from './fanout';
 import { applyUpstream, upstream } from './following';
+import { lectureIdentity } from './identity';
 import { registerPublicationHooks } from './pubFanout';
-import { linkCandidates, linkToOfficial } from './link';
+import { linkCandidates, linkStatus, linkToOfficial } from './link';
 import { stubSpace } from './pin';
+import { publicationIndex } from './system';
 import { registerForksPurgeExtension } from './purgeExtension';
 
 const idParams = z.object({ id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/) });
@@ -40,6 +45,8 @@ export default async function forksModule(app: FastifyInstance, { ctx }: ModuleO
   await registerHoldersAudience(ctx);
   // P1-T5 step 3: publication fan-out jobs, the followers audience, moderation targets, the account-deletion participant
   await registerPublicationHooks(ctx);
+  // (C2, AOS-4.18) exports name the explanation a copied item came from (its title lives in the system index)
+  setPublicationTitleSource((c, publicationId) => publicationIndex(c).get(publicationId)?.title ?? null);
   // P1-T2's note copy finds a highlight's quote on a stub page in the subject's space (regions are never copied)
   setStubRegionSource((c, pageId) => {
     const page = c.db.get<{ origin_space_id: string | null }>(
@@ -78,6 +85,10 @@ export default async function forksModule(app: FastifyInstance, { ctx }: ModuleO
   app.get('/', async (req) => copies.list(viewerOf(), parseQuery(documentCopiesQuerySchema, req)));
 
   app.get('/link-candidates', async (req) => linkCandidates(ctx, viewerOf(), parseQuery(linkCandidatesQuerySchema, req).source_id));
+
+  // (C2) the official state of library rows: «رسمي», «مرتبطة بالنسخة الرسمية», «موجودة رسميًا — اربطها؟»
+  app.get('/link-status', async (req) => linkStatus(ctx, viewerOf(), parseQuery(linkStatusQuerySchema, req).source_ids));
+  app.get('/lecture-identity', async (req) => lectureIdentity(ctx, viewerOf(), parseQuery(lectureIdentityQuerySchema, req)));
 
   app.post('/link', async (req) => {
     const viewer = viewerOf();

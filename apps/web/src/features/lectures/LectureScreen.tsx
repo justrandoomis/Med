@@ -1,7 +1,9 @@
 // The official lecture page of a subject (P1-T5 steps 2–3): /subjects/:spaceId/lectures/:lectureId — reached from a
 // search hit in a subject's official text, a notification or the copy bar of the reader. It shows the lecture as the
 // server lets the viewer see it (a lecture the viewer may not see answers «not found», like a missing one) in two tabs:
-//   * «الرسمي» — its published versions and «ابدأ الدراسة» (or «افتح نسختي» when the viewer already studies it);
+//   * «الرسمي» — its published versions and «ابدأ الدراسة» (or «افتح نسختي» when the viewer already studies it); the page
+//     is marked «رسمي · <المادة>» with the current version's publisher, and each version names its uploader, publisher
+//     and the version it replaces (C2: AOS-4.5, 18.18, 19I.2);
 //   * «الشروحات» (step 3) — the explanations classmates published on it, labelled «شرح طالب — ليس مصدرًا», and
 //     «انشر شرحك» (PublicationsTab). `?tab=explanations` opens it directly (a notification of a new explanation).
 import { useCallback, useEffect, useState } from 'react';
@@ -88,9 +90,12 @@ export function LectureScreen() {
         </h1>
       </header>
       <p className="cp-lecture__meta">
-        {lecture.lecture_no !== null && <span>{`المحاضرة ${lecture.lecture_no}`}</span>}
+        {/* (C2, AOS-4.5 / 19I.2) official content is marked as such, with the subject, the version and its publisher */}
+        {(lecture.status === 'published' || lecture.status === 'withdrawn') && head && <StatusPill tone="accent">{`رسمي · ${lecture.subject.title}`}</StatusPill>}
+        {lecture.lecture_no !== null && <span>{`المحاضرة ${lecture.lecture_no}${lecture.lecture_no_origin === 'detected' ? ' (مقروء من الملف)' : ''}`}</span>}
         {lecture.held_on && <span>{lecture.held_on}</span>}
         {head && <span>{`الإصدار ${head.version_no}${head.page_count ? ` · ${head.page_count} صفحة` : ''}`}</span>}
+        {head?.published_by && <span>{`نشر الإصدار ${head.version_no}: ${head.published_by.display_name}`}</span>}
         {lecture.status === 'withdrawn' ? <StatusPill tone="warning">مسحوبة</StatusPill> : lecture.status === 'published' ? <StatusPill tone="success">منشورة</StatusPill> : null}
       </p>
       {lecture.withdrawn && (
@@ -130,15 +135,22 @@ export function LectureScreen() {
               <h2 id="cp-lecture-versions" className="cp-lecture__h2">
                 الإصدارات المنشورة
               </h2>
-              <ul className="cp-lecture__versions">
-                {published.map((v) => (
-                  <li key={v.id} className="cp-lecture__version">
-                    <span>{`الإصدار ${v.version_no}`}</span>
-                    {v.published_at !== null && <span>{`نُشر ${formatDate(v.published_at)}`}</span>}
-                    {v.change_note && <span>{v.change_note}</span>}
-                    {v.id === head?.id && <StatusPill tone="accent">الحالي</StatusPill>}
-                  </li>
-                ))}
+              <ul className="cp-lecture__versions" aria-label="الإصدارات المنشورة">
+                {published.map((v) => {
+                  // (C2, AOS-18.18) where each file comes from: who uploaded it, who published it, which version it replaces
+                  const previous = v.previous_version_id ? lecture.versions.find((x) => x.id === v.previous_version_id) : null;
+                  return (
+                    <li key={v.id} className="cp-lecture__version">
+                      <span>{`الإصدار ${v.version_no}`}</span>
+                      {v.published_at !== null && <span>{`نُشر ${formatDate(v.published_at)}`}</span>}
+                      {v.uploaded_by && <span>{`رفعه ${v.uploaded_by.display_name}`}</span>}
+                      {v.published_by && <span>{`نشره ${v.published_by.display_name}`}</span>}
+                      {previous && <span>{`يحلّ محل الإصدار ${previous.version_no}`}</span>}
+                      {v.change_note && <span>{v.change_note}</span>}
+                      {v.id === head?.id && <StatusPill tone="accent">الحالي</StatusPill>}
+                    </li>
+                  );
+                })}
               </ul>
             </section>
           )}

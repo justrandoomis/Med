@@ -13,6 +13,7 @@ import { channelsApi } from '../channels/api';
 import { QrCard } from '../channels/QrCard';
 import { ReasonedButton, useCopy } from '../channels/ui';
 import { useFetched } from '../channels/useFetched';
+import { InvitePeople } from './InvitePeople';
 import { ScopeBar, useAdminScope, useAdminViewer } from './viewer';
 
 const EXPIRY = [
@@ -173,6 +174,8 @@ export function CodesSection() {
               </ul>
             )}
           </section>
+          {/* (C2, AOS-18.5) inviting named people from the screen, and the invitations sent into this node */}
+          <InvitePeople node={node} offline={offline} />
         </>
       )}
       <ConfirmDialog

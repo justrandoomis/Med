@@ -123,6 +123,19 @@ export class BlobRegistry {
     );
   }
 
+  /**
+   * AOS-21.34: blobs whose encrypted remote copy is confirmed and that the GC does not hold (not orphaned, not
+   * quarantined) — the only ones whose LOCAL copy may be evicted from the cache.
+   */
+  evictableInternal(): BlobRow[] {
+    return this.db.all<BlobRow>(`SELECT * FROM blob WHERE storage = 'r2' AND quarantined_at IS NULL AND orphaned_at IS NULL ORDER BY sha256`);
+  }
+
+  /** AOS-21.34: every registered blob that is not in quarantine (what may have a local copy in the store). */
+  liveInternal(): BlobRow[] {
+    return this.db.all<BlobRow>(`SELECT * FROM blob WHERE quarantined_at IS NULL ORDER BY sha256`);
+  }
+
   /** How many databases reference this blob, according to the hints. */
   hintCountInternal(sha256: string): number {
     return this.db.get<{ n: number }>('SELECT COALESCE(SUM(ref_count), 0) AS n FROM blob_ref WHERE sha256 = ?', [sha256])!.n;

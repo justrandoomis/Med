@@ -46,7 +46,7 @@ import { AppError } from '../../lib/errors';
 import { parseBody, parseParams, parseQuery, RATE_LIMITS } from '../../lib/http';
 import { newId } from '../../lib/ids';
 import type { UntrustedBlock } from '../ai/types';
-import { abstainFor, checkCriticalTokens, getClaimViews, packFromCandidates, resolveScope, retrieve, suggestWiderScope, toResolvedScope, validateClaims, VERIFIER_VERSION } from '../evidence/services';
+import { abstainFor, checkCriticalTokens, getClaimViews, keyDimensions, packFromCandidates, resolveScope, retrieve, suggestWiderScope, toResolvedScope, validateClaims, VERIFIER_VERSION } from '../evidence/services';
 
 export const DIAGRAM_GENERATOR_VERSION = 'diagram-2026.10-2'; // -2: labels checked against their statement (F3 review)
 const ID = z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/);
@@ -336,12 +336,17 @@ export async function createDiagram(ctx: AppContext, body: unknown, opts: { sign
     anchor: req.anchor ? { page_id: req.anchor.page_id, region_ids: [...(req.anchor.region_ids ?? [])].sort(), quote: req.anchor.quote?.trim() || null } : null,
     topic: req.topic?.trim() || null,
   };
-  const key = createHash('sha256')
-    .update(stableStringify({ ...normalizedRequest, scope: scope.hash, versions: [...scope.versionIds].sort(), generator: DIAGRAM_GENERATOR_VERSION, verifier: VERIFIER_VERSION }))
-    .digest('hex');
+  const keyBase = { ...normalizedRequest, scope: scope.hash, versions: [...scope.versionIds].sort(), generator: DIAGRAM_GENERATOR_VERSION, verifier: VERIFIER_VERSION };
+  // AOS-18.17: the viewer and official dimensions (evidence/cache.ts); a diagram made before them is found by its old key
+  // only when the request touches no shared (official) content — i.e. only this vault's own diagrams
+  const dims = keyDimensions(ctx, scope);
+  const key = createHash('sha256').update(stableStringify({ ...keyBase, viewer: dims.viewer, origins: dims.origins })).digest('hex');
+  const legacyKey = dims.sharedParts ? null : createHash('sha256').update(stableStringify(keyBase)).digest('hex');
   if (!req.force) {
-    const hit = ctx.db.get<DiagramRow>(`SELECT * FROM study_diagram WHERE cache_key = ? AND status = 'published' ORDER BY created_at DESC LIMIT 1`, [key]);
-    if (hit && !staleReason(ctx, fromJson<string[]>(hit.version_ids_json, []) ?? [])) return diagramView(ctx, hit, true);
+    for (const k of legacyKey ? [key, legacyKey] : [key]) {
+      const hit = ctx.db.get<DiagramRow>(`SELECT * FROM study_diagram WHERE cache_key = ? AND status = 'published' ORDER BY created_at DESC LIMIT 1`, [k]);
+      if (hit && !staleReason(ctx, fromJson<string[]>(hit.version_ids_json, []) ?? [])) return diagramView(ctx, hit, true);
+    }
   }
   const diagramId = newId(ctx.clock.now());
   const base = { id: diagramId, kind: req.kind, sourceId: source.id, scope, request: normalizedRequest, key };

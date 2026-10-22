@@ -219,7 +219,7 @@ async function authModule(app: FastifyInstance, opts: ModuleOptions, tokenOpts: 
     });
   }
 
-  app.post('/login', { config: { rateLimit: RATE_LIMITS.auth } }, async (req, reply): Promise<LoginResponse> => {
+  app.post('/login', { config: { rateLimit: RATE_LIMITS.signIn } }, async (req, reply): Promise<LoginResponse> => {
     const body = parseBody(loginBody, req);
     const ip = clientIp(req);
     if (users.countInternal() === 0) {
@@ -298,7 +298,7 @@ async function authModule(app: FastifyInstance, opts: ModuleOptions, tokenOpts: 
     return { ok: true, revoked_sessions: revoked };
   });
 
-  app.post('/recover', { config: { rateLimit: RATE_LIMITS.auth } }, async (req, reply): Promise<RecoverResponse> => {
+  app.post('/recover', { config: { rateLimit: RATE_LIMITS.signIn } }, async (req, reply): Promise<RecoverResponse> => {
     const body = parseBody(recoverBody, req);
     const ip = clientIp(req);
     if (users.countInternal() === 0) throw new AppError('SETUP_REQUIRED', 'لم يُنشأ أي حساب بعد. أكمل الإعداد الأولي أولًا.', 409);

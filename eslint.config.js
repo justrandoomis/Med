@@ -11,6 +11,7 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import { defineConfig, globalIgnores } from 'eslint/config';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
+import medlevo from './tools/eslint/module-boundaries.mjs';
 
 export default defineConfig(
   globalIgnores([
@@ -69,6 +70,13 @@ export default defineConfig(
         ]),
       ],
     },
+  },
+  {
+    // AOS-21.47 (ARCHITECTURE_DELTA §1.1, §5.5): cross-database access stays inside the allow-listed modules and space
+    // routes inside the space-route allow-list — tools/eslint/module-boundaries.mjs holds the allow-lists
+    files: ['apps/server/src/**/*.ts'],
+    plugins: { medlevo },
+    rules: { 'medlevo/module-boundaries': 'error' },
   },
   {
     // Playwright fixtures that need no other fixture are declared as `async ({}, use) => …`

@@ -7,6 +7,7 @@
 //   DELETE /api/accounts/me/devices/:deviceId        revokes the device and its key
 //   PUT    /api/accounts/me/devices/:deviceId/key    {public_key, alg: 'Ed25519'} → DeviceView
 //   GET    /api/accounts/me/quota                    → QuotaView (P1-T1 step 2: storage + AI allowance of MY account)
+//   GET/PUT /api/accounts/me/ai-consent              → AiConsentView (AOS-21.42: my ai_processing consent; ./consent.ts)
 //   POST   /api/accounts/me/export                   → {job_id, export} «نسخة من بياناتي» (MY vault only; ./export.ts)
 //   GET    /api/accounts/me/exports                  → AccountExportsResponse
 //   GET    /api/accounts/me/exports/:jobId/download  → the archive (application/gzip)
@@ -35,8 +36,11 @@ import { AppError } from '../../lib/errors';
 import { parseBody, parseParams } from '../../lib/http';
 import type { Viewer } from '../../system/binding';
 import type { DeviceRow } from '../../system/repos';
+import { quotaViewFor } from './allowance';
+import { registerAiConsentRoutes } from './consent';
+import { registerSpaceQuotaWarnings } from './spaceQuota';
 import { confirmDeletion, deletionPreview, finishPendingDeletions } from './deletion';
-import { ACCOUNT_EXPORT_JOB, EXPORT_INCLUDED_AR, EXPORT_NOTE_AR, exportFile, exportView, listExports, registerAccountExport } from './export';
+import { ACCOUNT_EXPORT_JOB, assertExportHasRoom, EXPORT_INCLUDED_AR, EXPORT_NOTE_AR, exportFile, exportView, listExports, registerAccountExport } from './export';
 
 /** A cap on one account's active devices (a client cannot fill the device table). */
 export const MAX_ACTIVE_DEVICES = 50;
@@ -67,6 +71,9 @@ export function toDeviceView(d: DeviceRow, currentDeviceId: string | null): Devi
 export default async function accountsModule(app: FastifyInstance, { ctx }: ModuleOptions): Promise<void> {
   const { devices, users, vaults, securityAudit } = ctx.system;
   registerAccountExport(ctx);
+  // AOS-21.45: a subject crossing 80 % of its storage tells its moderators (./spaceQuota.ts)
+  const stopSpaceWarnings = registerSpaceQuotaWarnings(ctx);
+  app.addHook('onClose', async () => stopSpaceWarnings());
   // deletions a restart interrupted are finished at boot and every minute (a vault still in use is retried)
   app.addHook('onReady', async () => {
     await ctx.binding.runRoot(() => finishPendingDeletions(ctx)).catch((e: unknown) => ctx.log.warn({ err: e }, 'pending account deletions will be retried'));
@@ -97,18 +104,24 @@ export default async function accountsModule(app: FastifyInstance, { ctx }: Modu
       timezone: me.timezone,
       memberships: [],
       roles: [],
-      quota: ctx.quota.view(v),
+      quota: quotaViewFor(ctx, v),
       legacy_owner: me.legacy_owner === 1,
     };
   });
 
-  app.get('/me/quota', async (req): Promise<QuotaView> => ctx.quota.view(viewerOf(req)));
+  // AOS-21.46: + the remaining allowance, why AI is refused now (if it is) and the subjects I moderate (./allowance.ts)
+  app.get('/me/quota', async (req): Promise<QuotaView> => quotaViewFor(ctx, viewerOf(req)));
+
+  // AOS-21.42: my ai_processing consent (./consent.ts)
+  registerAiConsentRoutes(app, ctx);
 
   // ───────── «نسخة من بياناتي» (my vault only) ─────────
   app.post('/me/export', { config: { rateLimit: { max: 3, timeWindow: 10 * 60_000 } } }, async (req): Promise<{ job_id: string; export: AccountExportView }> => {
-    viewerOf(req);
+    const v = viewerOf(req);
     const busy = ctx.jobs.list({ kind: ACCOUNT_EXPORT_JOB, status: ['queued', 'running'], limit: 1 }).jobs[0];
     if (busy) throw new AppError('CONFLICT', ACCOUNTS_LABELS_AR.export_running, 409, { job_id: busy.id });
+    // AOS-21.43: the kept archives count in my storage quota
+    assertExportHasRoom(ctx, v);
     const job = ctx.jobs.enqueue(ACCOUNT_EXPORT_JOB, {}, { idempotencyKey: `account_export:${ctx.clock.now()}` });
     return { job_id: job.id, export: exportView(ctx, ctx.jobs.get(job.id)!) };
   });

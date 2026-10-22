@@ -146,6 +146,8 @@ export function registerForksPurgeExtension(ctx: AppContext): () => void {
       );
       c.db.run(`DELETE FROM document_copy WHERE source_id IN ${set.in('source')}`);
       c.db.run(`DELETE FROM pinned_region WHERE version_id IN ${set.in('version')}`);
+      // (C2, X8 c) a link dies with either of its two documents (the copies already made stay where they are)
+      c.db.run(`DELETE FROM private_link WHERE private_source_id IN ${set.in('source')} OR stub_source_id IN ${set.in('source')}`);
       const userId = vaultUser(c);
       if (userId) for (const s of stubs) if (s.origin_space_id && s.origin_lecture_id) forksSystem(c).dropHoldings(userId, s.origin_space_id, s.origin_lecture_id);
       return undefined;

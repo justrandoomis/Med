@@ -211,27 +211,30 @@ describe('review P1-T5 s2', () => {
     }
   });
 
-  it('R-C: after a link, what could not be copied is said to stay on the private lecture (no promised review list)', async () => {
+  it('R-C → C2 (X8 c): after a link, what could not be copied waits in the review list of the official copy, one tap away', async () => {
     serve((method, path) => {
       if (path === '/api/copies' && method === 'GET') return json({ copies: [] });
       if (path === '/api/copies/link-candidates') return json({ source_id: 'SRC1', candidates: [CANDIDATE] });
       if (path === '/api/copies/link' && method === 'POST')
-        return json({ copy: copy({ id: 'C9', source_id: 'OFFICIAL_SRC' }), job_id: null, summary: { total: 2, copied: 1, needs_review: 1, kept: 0, summary_ar: 'نُسخ عنصر واحد إلى النسخة الرسمية.' } });
+        return json({ copy: copy({ id: 'C9', source_id: 'OFFICIAL_SRC' }), job_id: null, summary: { total: 2, copied: 1, needs_review: 1, kept: 0, summary_ar: 'نُسخ عنصر واحد إلى النسخة الرسمية.', note_pages: { total: 1, copied: 1, items: 2 } } });
       return undefined;
     });
     render(
       <ToastProvider>
         <MemoryRouter initialEntries={['/study/SRC1']}>
           <StudyCopyBar sourceId="SRC1" sourceType="lecture" online />
+          <Where />
         </MemoryRouter>
       </ToastProvider>,
     );
     fireEvent.click(await screen.findByRole('button', { name: 'اربط بالنسخة الرسمية…' }));
     const dialog = await screen.findByRole('dialog');
     fireEvent.click(within(dialog).getByRole('button', { name: 'اربط وانسخ ملاحظاتي' }));
-    expect(await screen.findByText(/ما لم يُنسخ بقي في محاضرتك الخاصة كما هو/)).toBeTruthy();
-    expect(screen.queryByText(/إعادة ربط/)).toBeNull();
-    expect(screen.getByText(/لم يُنسخ \(تغيّرت صفحته\)/)).toBeTruthy();
+    expect(await screen.findByText(/تجده في «ملاحظاتي ← إعادة ربط» في النسخة الرسمية/)).toBeTruthy();
+    expect(screen.getByText(/ينتظر مراجعتك \(تغيّرت صفحته\)/)).toBeTruthy();
+    expect(screen.getByText(/من 1 صفحة ملاحظات مضافة نُسخت بما عليها/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'راجع ما لم يُنسخ' }));
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/study/OFFICIAL_SRC?panel=review'));
   });
 });
 

@@ -45,7 +45,7 @@ import {
   type SyncState,
 } from '@medlevo/shared';
 import { api, ApiError, isApiError } from './api';
-import { getDeviceId } from './deviceId';
+import { getDeviceId, replaceDeviceId } from './deviceId';
 import {
   ENTITY_TABLE,
   getDb,
@@ -634,6 +634,7 @@ export class SyncEngine {
     const byId = new Map(results.map((r) => [r.op_id, r]));
     const toApply: Array<{ op: OutboxRecord; res: PushResultItem }> = [];
     const rejected: Array<{ seq: number }> = [];
+    let deviceRevoked = false;
     const tables = this.entityTables();
     await db.transaction('rw', [db.outbox, ...tables], async () => {
       for (const op of batch) {
@@ -645,7 +646,11 @@ export class SyncEngine {
         if (!res || !isSyncResult(effective) || res.retryable) {
           // no verdict, or a transient server failure for this op: keep it queued with backoff
           const attempts = fresh.attempts + 1;
+          // AOS-21.29 (§8.2): this device id was revoked → the next push comes from a new one; the op id was recorded
+          // for another actor → the same write is re-issued under a new op id (never recorded by the server either way)
+          if (res?.detail_code === 'device_unknown') deviceRevoked = true;
           await db.outbox.update(op.seq!, {
+            ...(res?.detail_code === 'op_id_taken' ? { op_id: newId(now) } : {}),
             attempts,
             nextAttemptAt: now + backoffDelay(attempts, this.base, this.max, this.random),
             lastError: res?.detail || 'لم يُكمل الخادم هذه العملية؛ ستُعاد المحاولة تلقائيًا.',
@@ -680,6 +685,7 @@ export class SyncEngine {
       }
       await this.mirrorRowStates(batch.map((o) => [o.entity_type, o.entity_id] as const));
     });
+    if (deviceRevoked) this.deviceId = await replaceDeviceId(db);
 
     const prunedBefore = now - this.retention;
     await db.outbox

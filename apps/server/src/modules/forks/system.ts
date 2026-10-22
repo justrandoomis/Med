@@ -277,6 +277,8 @@ export class PublicationIndex {
     return this.db.tx(() => {
       const r = this.db.run(`UPDATE publication SET status = 'author_deleted', withdrawn_at = COALESCE(withdrawn_at, ?), updated_at = ? WHERE author_user_id = ? AND status <> 'author_deleted'`, [now, now, userId]);
       this.db.run('UPDATE publication_copy SET ended_at = ?, updated_at = ? WHERE user_id = ? AND ended_at IS NULL', [now, now, userId]);
+      // AOS-21.18: the grants the account held as a copy holder go with its copies
+      this.ctx.system.acl.revokeAllOfUserInternal(userId);
       return { publications: r.changes };
     });
   }
@@ -318,6 +320,10 @@ export class PublicationIndex {
 
   upsertCopy(userId: string, publicationId: string, mode: PublicationCopyRow['mode'], applied: number, pending: number | null): void {
     const now = this.ctx.clock.now();
+    // AOS-21.18: holding a fork or a followed copy is a durable `view` grant on the publication (system `acl_grant`),
+    // read by the one policy (authz/rules/publications.ts) — written with the copy row, in the same system DB
+    const space = this.db.get<{ space_id: string }>('SELECT space_id FROM publication WHERE id = ?', [publicationId])?.space_id;
+    if (space) this.ctx.system.acl.grantInternal({ resourceType: 'publication', resourceDb: space, resourceId: publicationId, granteeUserId: userId, permission: 'view', grantedBy: userId });
     this.db.run(
       `INSERT INTO publication_copy (user_id, publication_id, mode, applied_version_no, pending_version_no, created_at, updated_at, ended_at) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
        ON CONFLICT(user_id, publication_id) DO UPDATE SET mode = excluded.mode, applied_version_no = excluded.applied_version_no,
@@ -329,6 +335,8 @@ export class PublicationIndex {
   endCopy(userId: string, publicationId: string): void {
     const now = this.ctx.clock.now();
     this.db.run('UPDATE publication_copy SET ended_at = ?, updated_at = ? WHERE user_id = ? AND publication_id = ? AND ended_at IS NULL', [now, now, userId, publicationId]);
+    const space = this.db.get<{ space_id: string }>('SELECT space_id FROM publication WHERE id = ?', [publicationId])?.space_id;
+    if (space) this.ctx.system.acl.revokeInternal({ resourceType: 'publication', resourceDb: space, resourceId: publicationId, granteeUserId: userId });
   }
 
   /** Followers of a publication (live followed copies of active accounts), keyset-paged by user id. */

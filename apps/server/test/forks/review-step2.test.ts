@@ -349,10 +349,12 @@ describe('review findings', () => {
     expect(c.version_id).toBe(v2);
     const res = await w.ok<LinkToOfficialResponse>('owner', 'POST', '/api/copies/link', { id: newId(), source_id: priv.sourceId, space_id: SPACE_A, lecture_id: lectureId, to_version_id: v2 });
     expect(res.summary).toMatchObject({ total: 2, copied: 1, needs_review: 1, kept: 0 });
-    // nothing lists the private note for review on the official copy (a cross-source review list does not exist): the
-    // summary must say where it is instead of promising a review list
-    expect(res.summary!.summary_ar).not.toMatch(/يحتاج مراجعتك|تحتاج مراجعتك/);
-    expect(res.summary!.summary_ar).toContain('بقي في محاضرتك الخاصة كما هو');
+    // (Phase 1 completion C2, X8 c) the item it could not place IS listed for review on the official copy now — the
+    // summary says where («إعادة ربط» of the official copy) and that the original stays on the private lecture
+    expect(res.summary!.summary_ar).toContain('«ملاحظاتي ← إعادة ربط» في النسخة الرسمية');
+    expect(res.summary!.summary_ar).toContain('محاضرتك الخاصة وكل ما عليها لم يتغيّر');
+    const review = await w.ok<ReanchorCopyPreview>('owner', 'GET', `/api/annotations/reanchor-copy?source_id=${res.copy.source_id}&to_version_id=${v2}&from_version_id=${priv.versionId}`);
+    expect(review.review.map((r) => r.id)).toEqual([noteId]);
     expect(itemRows([inkId, noteId])).toBe(before);
   });
 

@@ -126,7 +126,8 @@ describe('base migrations 0041 / 0050 (P1-T1 step 0)', () => {
       expect(pushed.statusCode).toBe(200);
       expect(pushed.json().results[0].result).toBe('applied');
       const rec = ctx.db.get<{ actor_user_id: string | null }>(`SELECT actor_user_id FROM sync_operation WHERE op_id = '01J00000000000000000000001'`);
-      expect(rec).toEqual({ actor_user_id: null });
+      // AOS-21.29 (C1): a NEW op records the session's user as its actor; the legacy rows above keep NULL
+      expect(rec).toEqual({ actor_user_id: ctx.system.users.findForAuth('owner')!.id });
       const pulled = (await app.inject({ method: 'GET', url: `/api/sync/pull?since=${before.head}`, headers })).json();
       expect(pulled.changes.map((c: { entity_id: string }) => c.entity_id)).toContain('01J00000000000000000000002');
       // the audit log still lists the legacy entries, with today's shape (no new fields leak into the API)

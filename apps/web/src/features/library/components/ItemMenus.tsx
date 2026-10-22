@@ -11,6 +11,7 @@ import { MoveDialog } from './FolderPicker';
 import { NodeDialog } from './NodeDialog';
 import { TagsDialog } from './TagsDialog';
 import { useOfflineDownloadAction } from '../../offline/OnDevice';
+import { useLinkToOfficialAction } from '../../copies/linkStatus';
 
 export function ImpactList({ report }: { report: ImpactReport | null }) {
   if (!report) return <p>جارٍ حساب الأثر…</p>;
@@ -145,6 +146,8 @@ export function SourceMenu({ source, index }: { source: SourceSummary; index: Li
   const [dialog, setDialog] = useState<null | 'move' | 'tags'>(null);
   const trash = useTrashFlow('source', source.id, source.title);
   const offline = useOfflineDownloadAction(source.id, source.title);
+  // (C2, AOS-19H.3) «the library offers the link»: a private lecture with an official twin in one of my subjects
+  const linkAction = useLinkToOfficialAction(source.id);
   const run = async (fn: () => Promise<unknown>, done?: string) => {
     try {
       await mutate(fn);
@@ -169,6 +172,7 @@ export function SourceMenu({ source, index }: { source: SourceSummary; index: Li
           {source.is_favorite ? 'إزالة من المفضلة' : 'إضافة إلى المفضلة'}
         </MenuItem>
         {offline.item}
+        {linkAction.item}
         <MenuSeparator />
         <MenuItem
           icon={source.archived_at ? <ArchiveRestore size={16} /> : <Archive size={16} />}
@@ -195,6 +199,7 @@ export function SourceMenu({ source, index }: { source: SourceSummary; index: Li
       />
       <TagsDialog open={dialog === 'tags'} entity={{ type: 'source', id: source.id, title: source.title, tags: source.tags }} onClose={() => setDialog(null)} />
       {offline.dialog}
+      {linkAction.dialog}
       {trash.dialog}
     </>
   );

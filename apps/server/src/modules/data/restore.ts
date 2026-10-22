@@ -21,6 +21,9 @@
 //   (layout 'vault') is verified like a single-owner one (sandbox boot) and restored only into its account by the
 //   platform's vault restore (./vault-restore.ts), never as a whole data directory. The boot check runs a blob mark pass
 //   on the restored directory, which rebuilds the registry hints from the restored vaults.
+// AOS-21.1 / X8 (d): a per-space archive (layout 'space': ONE subject space and the files its rows reference) is
+//   verified with base + space migrations and booted on a SANDBOX whose registry holds that one space (the restored file
+//   itself is never touched); it is never restored as a whole data directory (applyRestore refuses it).
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, rmdirSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve, sep } from 'node:path';
@@ -61,7 +64,9 @@ const manifestSchema = z.object({
   created_at: z.number().int().nonnegative(),
   root: z.literal(BACKUP_ROOT),
   db: z.object({
-    path: z.string().regex(DB_PATH_RE),
+    // a vault / the single-owner database; or (layout 'space', AOS-21.1) the one archived space — the layout checks
+    // below hold every layout to its own path
+    path: z.string().regex(new RegExp(`${DB_PATH_RE.source}|${SPACE_PATH_RE.source}`)),
     sha256: sha,
     size: z.number().int().nonnegative(),
     migrations: migrationList,
@@ -70,7 +75,8 @@ const manifestSchema = z.object({
     server_epoch: z.string().max(64).nullable(),
   }),
   // P1-T1: a whole multi-user instance (system DB + every vault); step 2: ONE account's vault
-  layout: z.enum(['multi_user', 'vault']).optional(),
+  layout: z.enum(['multi_user', 'vault', 'space']).optional(),
+  subject: z.object({ space_id: z.string().max(80), title: z.string().max(400) }).optional(),
   account: z.object({ user_id: z.string().max(64), username: z.string().max(200), display_name: z.string().max(200) }).optional(),
   system: z
     .object({ path: z.literal(BACKUP_SYSTEM_PATH), sha256: sha, size: z.number().int().nonnegative(), migrations: migrationList, row_counts: rowCountsSchema })
@@ -351,6 +357,75 @@ async function bootCheckSingleOwner(work: string, restoredDb: string, expected: 
   }
 }
 
+/**
+ * AOS-21.1 / X8 (d): a per-space archive boots on a SANDBOX — a fresh multi-user directory whose registry holds that
+ * one space, a COPY of the restored file (never the file itself): health, the space's counts, auth required, and a
+ * blob mark pass over it.
+ */
+async function bootCheckSpace(work: string, restoredDb: string, space: { space_id: string; db_file: string }, title: string, expected: Record<string, number>): Promise<BootResult> {
+  const sandbox = join(work, 'boot-sandbox');
+  rmSync(sandbox, { recursive: true, force: true });
+  mkdirSync(join(sandbox, 'spaces'), { recursive: true });
+  try {
+    const { prepareDataDir } = await import('../../system/layout');
+    prepareDataDir(
+      { dataDir: sandbox, legacyDbPath: join(sandbox, 'medlevo.sqlite'), systemDbPath: join(sandbox, 'system.sqlite'), vaultsDir: join(sandbox, 'vaults'), spacesDir: join(sandbox, 'spaces') },
+      Date.now,
+    );
+    copyFileSync(restoredDb, join(sandbox, 'spaces', space.db_file));
+    const sys = openDb(join(sandbox, 'system.sqlite'));
+    try {
+      const t = Date.now();
+      sys.run(`INSERT INTO space (id, title, db_file, status, created_at, updated_at) VALUES (?, ?, ?, 'active', ?, ?)`, [space.space_id, title || space.space_id, space.db_file, t, t]);
+    } finally {
+      sys.close();
+    }
+    const { buildApp } = await import('../../app');
+    const { loadConfig } = await import('../../config');
+    const config = loadConfig({
+      NODE_ENV: 'development',
+      MEDLEVO_DATA_DIR: sandbox,
+      MEDLEVO_LOG_LEVEL: 'silent',
+      MEDLEVO_HOST: '127.0.0.1',
+      MEDLEVO_ORIGIN: 'http://127.0.0.1:1',
+      MEDLEVO_SCRYPT_LOG_N: '12',
+    });
+    const app = await buildApp({ config, overrides: { aiProvider: null } });
+    try {
+      await app.ready();
+      const health = await app.inject({ method: 'GET', url: '/api/health' });
+      // the restored space, bound as background work of a moderator would see it (no viewer, no route)
+      const bound = { kind: 'space' as const, spaceId: space.space_id, subjectNodeId: '', viewer: null, access: 'moderator' as const, route: null };
+      const { sources, lectures } = app.ctx.binding.run(bound, () => ({
+        sources: app.ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM source')!.n,
+        lectures: app.ctx.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'official_lecture'")!.n
+          ? app.ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM official_lecture')!.n
+          : 0,
+      }));
+      const unauth = await app.inject({ method: 'GET', url: `/api/spaces/${encodeURIComponent(space.space_id)}/lectures` });
+      const mark = await app.ctx.gc.run('mark');
+      const ok =
+        health.statusCode === 200 &&
+        (health.json() as { ok: boolean }).ok &&
+        sources === (expected.source ?? 0) &&
+        lectures === (expected.official_lecture ?? 0) &&
+        unauth.statusCode === 401 &&
+        mark.status === 'completed';
+      return {
+        ok,
+        detail: ok
+          ? `شُغّل الخادم على نسخة تجريبية تضم مساحة المادة المستعادة وحدها: /api/health سليم، ${lectures} محاضرة رسمية و${sources} مصدر، والمسارات المحمية تطلب تسجيل الدخول.`
+          : `فشل تشغيل الخادم على نسخة تجريبية من مساحة المادة كما يجب (health ${health.statusCode}، محاضرات ${lectures}/${expected.official_lecture ?? 0}، مصادر ${sources}/${expected.source ?? 0}).`,
+        details: { health: health.statusCode, sources, lectures, protected_status: unauth.statusCode, scope: 'sandbox', blob_mark: { status: mark.status, databases: mark.databases_marked, blobs: mark.blobs_marked } },
+      };
+    } finally {
+      await app.close();
+    }
+  } finally {
+    rmSync(sandbox, { recursive: true, force: true });
+  }
+}
+
 function onDiskShas(dataDir: string): Set<string> {
   return new Set(listFilesUnder(join(dataDir, 'files')).map((p) => p.split('/').pop() ?? ''));
 }
@@ -530,7 +605,25 @@ export async function verifyBackup(archivePath: string, opts: VerifyOptions = {}
     manifest = parsed.data as BackupManifest;
     const multi = manifest.layout === 'multi_user';
     const vaultOnly = manifest.layout === 'vault';
-    if (vaultOnly) {
+    const spaceOnly = manifest.layout === 'space';
+    if (spaceOnly) {
+      const sps = manifest.spaces ?? [];
+      const ok =
+        !manifest.system &&
+        !manifest.vaults &&
+        !!manifest.subject &&
+        sps.length === 1 &&
+        sps[0]!.space_id === manifest.subject.space_id &&
+        sps[0]!.path === manifest.db.path &&
+        sps[0]!.path === `${BACKUP_ROOT}/spaces/${sps[0]!.db_file}`;
+      if (!ok) {
+        add(checks, 'manifest', false, 'ملف manifest.json لنسخة مساحة مادة واحدة غير متّسق.');
+        return finish();
+      }
+    } else if (manifest.db.path.startsWith(`${BACKUP_ROOT}/spaces/`)) {
+      add(checks, 'manifest', false, 'ملف manifest.json لا يطابق صيغة نسخ MedLevo الاحتياطية.');
+      return finish();
+    } else if (vaultOnly) {
       const vs = manifest.vaults ?? [];
       const ok = !manifest.system && !manifest.spaces?.length && vs.length === 1 && vs[0]!.primary && vs[0]!.path === manifest.db.path && vs[0]!.path === `${BACKUP_ROOT}/vaults/${vs[0]!.db_file}`;
       if (!ok) {
@@ -561,7 +654,7 @@ export async function verifyBackup(archivePath: string, opts: VerifyOptions = {}
       checks,
       'manifest',
       true,
-      `نسخة ${manifest.backup_id} من الإصدار ${manifest.app_version}، أُنشئت ${new Date(manifest.created_at).toISOString()}${multi ? `؛ تشمل قاعدة النظام و${manifest.vaults!.length} خزنة و${(manifest.spaces ?? []).length} مساحة مادة` : vaultOnly ? '؛ خزنة حساب واحد وملفاتها' : ''}.`,
+      `نسخة ${manifest.backup_id} من الإصدار ${manifest.app_version}، أُنشئت ${new Date(manifest.created_at).toISOString()}${multi ? `؛ تشمل قاعدة النظام و${manifest.vaults!.length} خزنة و${(manifest.spaces ?? []).length} مساحة مادة` : vaultOnly ? '؛ خزنة حساب واحد وملفاتها' : spaceOnly ? `؛ مساحة مادة واحدة (${manifest.subject!.title}) وملفاتها` : ''}.`,
     );
     const dbEntries = multi
       ? [
@@ -649,7 +742,10 @@ export async function verifyBackup(archivePath: string, opts: VerifyOptions = {}
 
       // migrations: the snapshot's list equals the manifest; all are known to this build with the same checksum
       const applied = db.all<{ name: string; checksum: string }>('SELECT name, checksum FROM schema_migration ORDER BY name');
-      const build = new Map(readMigrations().map((m) => [m.name, m.checksum]));
+      // a subject space carries the base AND the space migrations (AOS-21.1: a per-space archive)
+      const build = new Map(
+        spaceOnly ? [...readMigrations(MIGRATIONS_DIR, 'base'), ...readMigrations(SPACE_MIGRATIONS_DIR, 'space')].map((m) => [m.name, m.checksum]) : readMigrations().map((m) => [m.name, m.checksum]),
+      );
       const sameAsManifest = JSON.stringify(applied) === JSON.stringify(manifest.db.migrations);
       const unknown = applied.filter((m) => !build.has(m.name));
       const changed = applied.filter((m) => build.has(m.name) && build.get(m.name) !== m.checksum);
@@ -759,7 +855,9 @@ export async function verifyBackup(archivePath: string, opts: VerifyOptions = {}
       try {
         const b = multi
           ? await bootCheckMultiUser(dataDir, manifest.vaults!.find((v) => v.primary)!.vault_id, counts)
-          : await bootCheckSingleOwner(work, join(extractDir, manifest.db.path), counts);
+          : spaceOnly
+            ? await bootCheckSpace(work, join(extractDir, manifest.db.path), manifest.spaces![0]!, manifest.subject!.title, counts)
+            : await bootCheckSingleOwner(work, join(extractDir, manifest.db.path), counts);
         add(checks, 'boot', b.ok, b.detail, b.details);
       } catch (e) {
         add(checks, 'boot', false, `تعذّر تشغيل الخادم على البيانات المستعادة: ${(e as Error).message.slice(0, 200)}`);
@@ -823,6 +921,10 @@ export async function applyRestore(
     throw new RestoreTargetError(
       'هذه نسخة خزنة حساب واحد، لا نسخة خادم كاملة: تُستعاد داخل حسابها على الخادم العامل (استعادة خزنة من أدوات مسؤول المنصة)، لا في مجلد بيانات جديد.',
     );
+  }
+  if (res.manifest?.layout === 'space') {
+    rmSync(staging, { recursive: true, force: true });
+    throw new RestoreTargetError('هذه نسخة مساحة مادة واحدة، لا نسخة خادم كاملة: يُتحقق منها من أدوات مسؤول المنصة، ولا تُستعاد في مجلد بيانات جديد.');
   }
   try {
     const t = now();

@@ -17,7 +17,7 @@ import {
 import type { AppContext } from '../../context';
 import { fromJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
-import { canReuse, getClaimViews } from '../evidence/services';
+import { canReuse, getClaimViews, lookupKeys, type CacheKeys } from '../evidence/services';
 import { claimIdsOf } from './text';
 
 export type ArtifactKind = ArtifactView['kind'];
@@ -179,13 +179,19 @@ export function artifactView(ctx: AppContext, idOrRow: string | ArtifactRow): St
   };
 }
 
-/** A published, non-abstained artifact with exactly this key whose dependencies are still valid. */
-export function findReusable(ctx: AppContext, cacheKey: string, kind: ArtifactKind): ArtifactRow | null {
-  const rows = ctx.db.all<ArtifactRow>(
-    `SELECT * FROM artifact WHERE cache_key = ? AND kind = ? AND status = 'published' AND abstain_json IS NULL ORDER BY created_at DESC, id DESC LIMIT 5`,
-    [cacheKey, kind],
-  );
-  for (const r of rows) if (canReuse(ctx, 'artifact', r.id).usable) return r;
+/**
+ * A published, non-abstained artifact with exactly this key whose dependencies are still valid. Given the CacheKeys of
+ * a request (AOS-18.17), the current key is tried first, then the pre-18.17 key of a request that touches no shared
+ * content (an artifact of this same vault made before the viewer / official dimensions existed).
+ */
+export function findReusable(ctx: AppContext, cacheKey: string | CacheKeys, kind: ArtifactKind): ArtifactRow | null {
+  for (const key of lookupKeys(cacheKey)) {
+    const rows = ctx.db.all<ArtifactRow>(
+      `SELECT * FROM artifact WHERE cache_key = ? AND kind = ? AND status = 'published' AND abstain_json IS NULL ORDER BY created_at DESC, id DESC LIMIT 5`,
+      [key, kind],
+    );
+    for (const r of rows) if (canReuse(ctx, 'artifact', r.id).usable) return r;
+  }
   return null;
 }
 

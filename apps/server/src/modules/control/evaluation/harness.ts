@@ -6,7 +6,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { PROCESS_JOB_KIND, SESSION_COOKIE_NAME, type EvalMode, type EvalSystemFingerprint } from '@medlevo/shared';
+import { AI_CONSENT_TEXT_VERSION, MIN_CLIENT_VERSION, PROCESS_JOB_KIND, SESSION_COOKIE_NAME, type EvalMode, type EvalSystemFingerprint } from '@medlevo/shared';
 import { buildApp } from '../../../app';
 import { REPO_ROOT, loadConfig } from '../../../config';
 import type { AppContext } from '../../../context';
@@ -116,6 +116,17 @@ export async function createHarness(opts: HarnessOptions): Promise<EvalHarness> 
   const raw = setup.headers['set-cookie'];
   const cookie = (Array.isArray(raw) ? raw : [raw ?? '']).find((c) => c.startsWith(`${SESSION_COOKIE_NAME}=`))?.split(';')[0] ?? '';
   const headers = { cookie, 'x-medlevo-csrf': '1', 'user-agent': 'medlevo-eval' };
+  // AOS-21.42: live mode sends the Golden Set FIXTURES of this throwaway account to the configured provider — the
+  // operator chose that by running `--mode=live`; it is recorded as that account's ai_processing consent (the gate of
+  // modules/ai/consent.ts) through the same route a user uses
+  if (opts.mode === 'live' && ctx.ai.providerName) {
+    await app.inject({
+      method: 'PUT',
+      url: '/api/accounts/me/ai-consent',
+      headers: { ...headers, 'x-medlevo-client': MIN_CLIENT_VERSION },
+      payload: { granted: true, provider: ctx.ai.providerName, text_version: AI_CONSENT_TEXT_VERSION },
+    });
+  }
 
   const inject: EvalHarness['inject'] = async (method, url, payload) => {
     const res = await app.inject({ method, url, headers, ...(payload === undefined ? {} : { payload: payload as never }) });

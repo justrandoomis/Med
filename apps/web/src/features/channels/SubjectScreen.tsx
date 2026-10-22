@@ -292,7 +292,15 @@ function LecturesTab({ subject, spaceId }: { subject: ChannelNodeDetail; spaceId
         {items.map((l) => {
           const copy = copyOf.get(l.id);
           const head = l.head_version;
-          const meta = [l.lecture_no !== null ? `المحاضرة ${l.lecture_no}` : null, l.held_on ? formatDate(Date.parse(`${l.held_on}T12:00:00Z`)) : null, head ? `الإصدار ${head.version_no}` : null].filter(Boolean).join(' · ');
+          // (C2, AOS-2.2 / 4.5 / 19I.2 / 19I.5) a number read from the file says so; a published lecture names its publisher
+          const meta = [
+            l.lecture_no !== null ? `المحاضرة ${l.lecture_no}${l.lecture_no_origin === 'detected' ? ' (مقروء من الملف)' : ''}` : null,
+            l.held_on ? formatDate(Date.parse(`${l.held_on}T12:00:00Z`)) : null,
+            head ? `الإصدار ${head.version_no}` : null,
+            l.status === 'published' && head?.published_by ? `نشرها ${head.published_by.display_name}` : null,
+          ]
+            .filter(Boolean)
+            .join(' · ');
           return (
             <li key={l.id} className="ml-list__row">
               <Link to={lectureUrl(spaceId, l.id)} className="ml-list-item ml-list-item--interactive">
@@ -306,6 +314,7 @@ function LecturesTab({ subject, spaceId }: { subject: ChannelNodeDetail; spaceId
                   </span>
                 </span>
                 <span className="ml-list-item__trailing ch-row__badges">
+                  {l.status === 'published' && <StatusPill tone="accent">رسمي</StatusPill>}
                   {l.status !== 'published' && <StatusPill tone="warning">{OFFICIAL_LECTURE_STATUS_LABELS_AR[l.status]}</StatusPill>}
                   {copy ? <StatusPill tone="success">لديك نسخة</StatusPill> : copies !== null && l.status === 'published' && <StatusPill tone="neutral">لم تبدأ دراستها</StatusPill>}
                   {copy?.newer_official_version && <StatusPill tone="info">إصدار جديد</StatusPill>}

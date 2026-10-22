@@ -163,6 +163,9 @@ export async function buildLegacyFixture(parent: string): Promise<LegacyFixture>
       session(newId(), tokens.ipad, IPAD, 'Safari على iPad', real + 25 * 86_400_000);
       session(newId(), tokens.phone, PHONE, 'Chrome على هاتف Android', real + 20 * 86_400_000);
       session(newId(), tokens.expired, 'OLD_LAPTOP_03', 'Firefox على Linux', real - 86_400_000);
+      // R1-a never recorded the actor of a sync op (the column of 0041 stayed NULL): the fixture's ops were pushed by
+      // this build, which records it (AOS-21.29) — clear it as R1-a left it
+      db.run('UPDATE sync_operation SET actor_user_id = NULL');
       for (let i = 0; i < 3; i++) db.run('INSERT INTO login_attempt (id, ip, succeeded, created_at) VALUES (?, ?, ?, ?)', [newId(), '203.0.113.7', i === 2 ? 1 : 0, now - i * 60_000]);
     } finally {
       db.close();

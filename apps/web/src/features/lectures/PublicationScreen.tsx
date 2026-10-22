@@ -30,7 +30,7 @@ import { StartFromExplanationDialog } from '../copies/StartFromExplanationDialog
 import { UpdatePreviewDialog } from '../copies/UpdatePreviewDialog';
 import { publicationsApi } from './api';
 import { PagePreviewFrame } from './PagePreviewFrame';
-import { pagePreviews, type PagePreview } from './publicationPreview';
+import { machineContentAr, pagePreviews, type PagePreview } from './publicationPreview';
 import { PublishDialog } from './PublishDialog';
 import { ReportDialog } from './ReportDialog';
 import '../copies/copies.css';
@@ -106,6 +106,8 @@ export function PublicationScreen() {
   const [state, setState] = useState<{ loading: boolean; error: string | null; data: Loaded | null }>({ loading: true, error: null, data: null });
   const [attempt, setAttempt] = useState(0);
   const [previews, setPreviews] = useState<PagePreview[] | null>(null);
+  // (C2, AOS-19I.5) the version's machine-generated parts, said in words (null: none, or not known yet)
+  const [machineAr, setMachineAr] = useState<string | null>(null);
   const [lastChange, setLastChange] = useState<UpstreamPreview | null>(null);
   const [dialog, setDialog] = useState<null | 'start' | 'report' | 'republish' | 'edit' | 'withdraw' | 'update'>(null);
   usePageTitle(state.data?.pub.title ?? 'شرح منشور');
@@ -139,7 +141,11 @@ export function PublicationScreen() {
     let cancelled = false;
     publicationsApi
       .items(spaceId, publicationId, head)
-      .then((r) => !cancelled && setPreviews(pagePreviews(r.items)))
+      .then((r) => {
+        if (cancelled) return;
+        setPreviews(pagePreviews(r.items));
+        setMachineAr(machineContentAr(r.notes));
+      })
       // previews are an addition: without them the page still says everything in words
       .catch(() => !cancelled && setPreviews([]));
     if (head > 1)
@@ -195,6 +201,11 @@ export function PublicationScreen() {
         {headVersion && <span>{`مبني على الإصدار ${headVersion.lecture_version_no} من المحاضرة`}</span>}
         {!active && <StatusPill tone="warning">{PUBLICATION_STATUS_LABELS_AR[pub.status]}</StatusPill>}
       </p>
+      {machineAr && (
+        <p className="pb-notice" role="note">
+          {machineAr}
+        </p>
+      )}
       <p className="pb-meta">
         <Link className="cp-bar__link" to={lectureUrl(pub.space_id, pub.lecture.id)}>
           {`المحاضرة: ${pub.lecture.title}`}

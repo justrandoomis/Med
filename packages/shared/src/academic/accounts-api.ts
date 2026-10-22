@@ -21,9 +21,37 @@ export interface MeLite {
 
 /** Storage / AI / ASR allowance of an account (filled by P1-T1 step 2: blob registry, quotas, AI reservations). */
 export interface QuotaView {
-  storage: { used_bytes: number; limit_bytes: number | null };
-  ai: { month: string; used_usd_est: number; limit_usd: number | null };
+  /** `exports_bytes` (AOS-21.43, additive): the «نسخة من بياناتي» archives kept on the server — part of used_bytes */
+  storage: { used_bytes: number; limit_bytes: number | null; exports_bytes?: number };
+  ai: {
+    month: string;
+    used_usd_est: number;
+    limit_usd: number | null;
+    /**
+     * AOS-21.46 (additive; absent from older servers): what may still be spent this month — the smaller of the
+     * allowance left and the deployment ceiling left. ESTIMATED, the numbers the atomic reservation checks.
+     */
+    remaining_usd?: number;
+    /** AOS-21.46: when this month's allowance starts again (ms; the account's timezone) */
+    resets_at?: number;
+    /** AOS-21.46: null when an AI call may be tried now; otherwise why AI is refused before any call */
+    blocked_reason_ar?: string | null;
+  };
   asr: { month: string; used_minutes: number; limit_minutes: number | null };
+  /** AOS-21.46: the AI allowance of each subject the viewer moderates (never shown to members) */
+  ai_spaces?: SpaceAiAllowanceView[];
+}
+
+/** AOS-21.46: one subject space's monthly AI allowance (official-only shared work is charged to it). */
+export interface SpaceAiAllowanceView {
+  space_id: string;
+  title: string;
+  month: string;
+  used_usd_est: number;
+  /** 0 until the platform admin sets one */
+  limit_usd: number;
+  remaining_usd: number;
+  resets_at: number;
 }
 
 /** Channel membership and roles arrive with P1-T4 (R1-c); until then both lists are empty. */

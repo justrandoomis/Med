@@ -84,7 +84,9 @@ Fixed (each with a regression test):
 Open (minor, not fixed):
 * First-run setup is public until the owner exists (whoever reaches the server first can claim it). Default bind is
   `127.0.0.1`; exposing the server before setup is a deployment risk. A one-time setup token would need a web change.
-* `MEDLEVO_COOKIE_SECURE` defaults to `false` even when `MEDLEVO_ORIGIN` is https (documented in `.env.example`).
+* ~~`MEDLEVO_COOKIE_SECURE` defaults to `false` even when `MEDLEVO_ORIGIN` is https~~ — out of date: the default follows
+  the origin (https → `Secure`), and since Phase 1 completion C1 (AOS-21.35) `MEDLEVO_COOKIE_SECURE=false` with any https
+  origin stops the start (`test/deploy/cookie-secure.c1.test.ts`).
 * The AI budget pre-check is not atomic across concurrent calls (overshoot ≤ one worst-case call per extra concurrent call).
   `ai.status()` can report a task available while the worst-case estimate of the next call no longer fits.
 * `GET /api/sync/pull` returns `entity: null` both for deleted entities and for entity types without a registered
@@ -130,3 +132,11 @@ through with where they live now; the rest still hold.*
   unchanged (no duplicated regions / review items / assets; checkpointed pages not redone).
   Tests: `test/jobs-crash.test.ts` (4 of 5 fail on the old code; the 5th is the safety property),
   `test/perf/crash-resume.perf.test.ts` (real process, `MEDLEVO_PERF=1`).
+
+## JSON compression (Phase 1 completion C1, AOS-21.12 / NFR-P3; 2026-10-22)
+
+`lib/compress.ts` (registered in `app.ts`): a JSON answer of 1 KiB or more goes **br** (quality 4) or **gzip** (level 6)
+encoded when the request's `Accept-Encoding` allows it (q-values honoured), with `Vary: Accept-Encoding`; files, Range
+answers, streams / server-sent events, HEAD, small answers and a client that accepts neither are sent as before. Reason:
+packed ink points travel as base64 inside JSON; the spike's 5,000-stroke page is 11.67 MB of JSON, 5.01 MB gzip and
+3.72 MB br **on the wire** (`test/annotations/ink-wire-compressed.c1.test.ts`).

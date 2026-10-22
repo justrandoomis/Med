@@ -7,6 +7,9 @@
 //  * VersionReview — the «من إصدار سابق» part of «إعادة ربط» (ReanchorSection): each item that could not be copied safely,
 //    with its old page and the page map's candidate side by side; «انسخها إلى ص …» (one tap on the candidate),
 //    «اختر مكانها…» (Round 7's re-anchoring dialog, as a COPY) or «اتركها على الإصدار السابق».
+//  * LinkedReviews (Phase 1 completion C2, AOS-19H.3 / X8 c) — on the official copy of a lecture: the same review list for
+//    each PRIVATE lecture linked to it with «اربط بالمحاضرة الرسمية» — what the link could not place is copied here by
+//    hand (across the two documents) or kept on the private lecture; nothing is ever lost or moved.
 // Online only (the copy is one server transaction, audited); offline, the controls are disabled with the reason.
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -34,13 +37,13 @@ import { ReanchorDialog } from './ReanchorSection';
 import './noteMigration.css';
 
 /** Loads the preview for (source → target version) while online; refreshes on every change signal. */
-function usePreview(sourceId: string, toVersionId: string | null, online: boolean): { preview: ReanchorCopyPreview | null; failed: boolean; reload: () => void } {
+function usePreview(sourceId: string, toVersionId: string | null, online: boolean, fromVersionId: string | null = null): { preview: ReanchorCopyPreview | null; failed: boolean; reload: () => void } {
   const [preview, setPreview] = useState<ReanchorCopyPreview | null>(null);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const signal = useMigrationVersion(sourceId);
   // (review) going offline keeps what was loaded: the banner and the list stay, their controls disabled with the reason
-  const key = `${sourceId}|${toVersionId}`;
+  const key = `${sourceId}|${toVersionId}|${fromVersionId ?? ''}`;
   const [loadedFor, setLoadedFor] = useState(key);
   if (loadedFor !== key) {
     setLoadedFor(key);
@@ -50,7 +53,7 @@ function usePreview(sourceId: string, toVersionId: string | null, online: boolea
   useEffect(() => {
     if (!online || !toVersionId) return;
     let cancelled = false;
-    fetchMigrationPreview(sourceId, { toVersionId })
+    fetchMigrationPreview(sourceId, { toVersionId, fromVersionId })
       .then((p) => {
         if (cancelled) return;
         setPreview(p);
@@ -60,7 +63,7 @@ function usePreview(sourceId: string, toVersionId: string | null, online: boolea
     return () => {
       cancelled = true;
     };
-  }, [sourceId, toVersionId, online, signal, attempt]);
+  }, [sourceId, toVersionId, fromVersionId, online, signal, attempt]);
   const reload = useCallback(() => setAttempt((n) => n + 1), []);
   // (review) while P1-T3's page analysis runs, look again by itself (every 5 s, at most 10 minutes) instead of saying
   // «يجري تحليل…» until the reader is reopened
@@ -360,19 +363,37 @@ export function MigrationDialog({
 // ─────────────────────────────── the review list (inside «إعادة ربط») ───────────────────────────────
 const thumbUrl = (pageId: string) => `/api/versions/pages/${encodeURIComponent(pageId)}/thumbnail`;
 
-function PageThumb({ page, version }: { page: ReanchorPageRef | null; version: number }) {
+function PageThumb({ page, version, label }: { page: ReanchorPageRef | null; version: number; label?: string | undefined }) {
+  const where = label ?? versionLabel(version);
   return (
     <figure className="ml-migrate-thumb">
-      {page?.thumbnail ? <img src={thumbUrl(page.page_id)} alt={`صورة ${page.label_ar} من ${versionLabel(version)}`} loading="lazy" decoding="async" /> : <div className="ml-migrate-thumb__none" aria-hidden="true" />}
-      <figcaption>{page ? `${page.label_ar} — ${versionLabel(version)}` : `لا صفحة مقابلة في ${versionLabel(version)}`}</figcaption>
+      {page?.thumbnail ? <img src={thumbUrl(page.page_id)} alt={`صورة ${page.label_ar} من ${where}`} loading="lazy" decoding="async" /> : <div className="ml-migrate-thumb__none" aria-hidden="true" />}
+      <figcaption>{page ? `${page.label_ar} — ${where}` : `لا صفحة مقابلة في ${where}`}</figcaption>
     </figure>
   );
 }
 
-export function VersionReview({ doc, online, onGoToPage }: { doc: SourceDocument; online: boolean; onGoToPage: (i: number) => void }) {
+/**
+ * (C2, AOS-19H.3 / X8 c) The review lists of the private lectures linked to this official copy: one VersionReview per
+ * linked private lecture that still has items to decide (or kept ones that can go back to review).
+ */
+export function LinkedReviews({ doc, online, onGoToPage }: { doc: SourceDocument; online: boolean; onGoToPage: (i: number) => void }) {
+  const { preview } = usePreview(doc.detail.id, doc.version.id, online);
+  const linked = preview?.linked ?? [];
+  if (linked.length === 0) return null;
+  return (
+    <>
+      {linked.map((l) => (
+        <VersionReview key={l.version.id} doc={doc} online={online} onGoToPage={onGoToPage} linked={{ versionId: l.version.id, title: l.source.title }} />
+      ))}
+    </>
+  );
+}
+
+export function VersionReview({ doc, online, onGoToPage, linked = null }: { doc: SourceDocument; online: boolean; onGoToPage: (i: number) => void; linked?: { versionId: string; title: string } | null }) {
   const toast = useToast();
   const sourceId = doc.detail.id;
-  const { preview, failed, reload } = usePreview(sourceId, doc.version.id, online);
+  const { preview, failed, reload } = usePreview(sourceId, doc.version.id, online, linked?.versionId ?? null);
   const [placing, setPlacing] = useState<VersionReviewGroup | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   if (!preview || !preview.from_version || preview.state === 'none') {
@@ -380,7 +401,10 @@ export function VersionReview({ doc, online, onGoToPage }: { doc: SourceDocument
   }
   const from = preview.from_version;
   const to = preview.to_version;
-  const groups = versionReviewGroups(preview.review, from.version_no);
+  // a linked private lecture is named as such («محاضرتك الخاصة «…»»), never as an earlier version of this one
+  const fromName = linked ? `محاضرتك الخاصة «${linked.title}»` : versionLabel(from.version_no);
+  const fromShort = linked ? 'محاضرتك الخاصة' : versionLabel(from.version_no);
+  const groups = versionReviewGroups(preview.review, from.version_no).map((g) => (linked ? { ...g, where: `${g.from.label_ar} — ${fromShort}` } : g));
   const pageIndexOf = (pageId: string) => doc.pages.findIndex((p) => p.id === pageId);
   if (groups.length === 0 && preview.kept_items.length === 0) return null;
 
@@ -414,15 +438,21 @@ export function VersionReview({ doc, online, onGoToPage }: { doc: SourceDocument
   };
 
   return (
-    <section className="ml-migrate-review" aria-labelledby="ml-migrate-review-h">
-      <h3 id="ml-migrate-review-h" className="ml-migrate__h">{`من ${versionLabel(from.version_no)}: تحتاج مراجعة (${preview.needs_review})`}</h3>
-      <p className="wk-muted">
-        {`هذه عناصر من ${versionLabel(from.version_no)} لم تُنسخ إلى ${versionLabel(to.version_no)} لأن صفحتها لم تتطابق بثقة. اختر لكل منها: انسخها إلى الصفحة المقترحة أو إلى صفحة تختارها (يبقى الأصل على ${versionLabel(from.version_no)})، أو اتركها على ${versionLabel(from.version_no)}.`}{' '}
-        <Link to={`/sources/${encodeURIComponent(sourceId)}/compare?from=${encodeURIComponent(from.id)}&to=${encodeURIComponent(to.id)}`}>قارن الإصدارين صفحة بصفحة</Link>
-      </p>
+    <section className="ml-migrate-review" aria-labelledby={`ml-migrate-review-h-${from.id}`}>
+      <h3 id={`ml-migrate-review-h-${from.id}`} className="ml-migrate__h">{`من ${fromName}: تحتاج مراجعة (${preview.needs_review})`}</h3>
+      {linked ? (
+        <p className="wk-muted">
+          {`ربطت ${fromName} بهذه النسخة الرسمية. هذه عناصر منها لم تُنسخ تلقائيًا لأن صفحتها لم تتطابق بثقة مع ${versionLabel(to.version_no)}. اختر لكل منها: انسخها إلى الصفحة المقترحة أو إلى صفحة تختارها (يبقى الأصل في محاضرتك الخاصة)، أو اتركها في محاضرتك الخاصة.`}
+        </p>
+      ) : (
+        <p className="wk-muted">
+          {`هذه عناصر من ${versionLabel(from.version_no)} لم تُنسخ إلى ${versionLabel(to.version_no)} لأن صفحتها لم تتطابق بثقة. اختر لكل منها: انسخها إلى الصفحة المقترحة أو إلى صفحة تختارها (يبقى الأصل على ${versionLabel(from.version_no)})، أو اتركها على ${versionLabel(from.version_no)}.`}{' '}
+          <Link to={`/sources/${encodeURIComponent(sourceId)}/compare?from=${encodeURIComponent(from.id)}&to=${encodeURIComponent(to.id)}`}>قارن الإصدارين صفحة بصفحة</Link>
+        </p>
+      )}
       {!online && <p className="wk-muted">{MIGRATION_OFFLINE_AR}</p>}
       {groups.length > 0 && (
-        <ul className="wk-marks" role="list" aria-label={`تحتاج مراجعة من ${versionLabel(from.version_no)}`}>
+        <ul className="wk-marks" role="list" aria-label={`تحتاج مراجعة من ${fromName}`}>
           {groups.map((g) => {
             const suggestedIdx = g.suggested ? pageIndexOf(g.suggested.page_id) : -1;
             return (
@@ -432,10 +462,10 @@ export function VersionReview({ doc, online, onGoToPage }: { doc: SourceDocument
                   <StatusPill tone="warning">تحتاج مراجعة</StatusPill>
                 </div>
                 {g.preview && <p className="wk-reanchor__preview">«<bdi>{g.preview}</bdi>»</p>}
-                <p className="wk-muted">{`مكانها في ${versionLabel(from.version_no)}: ${g.from.label_ar}`}</p>
+                <p className="wk-muted">{`مكانها في ${fromName}: ${g.from.label_ar}`}</p>
                 <p className="wk-muted">{g.reason_ar}</p>
                 <div className="ml-migrate-side" aria-label="الصفحة السابقة والصفحة المقترحة جنبًا إلى جنب">
-                  <PageThumb page={g.from} version={from.version_no} />
+                  <PageThumb page={g.from} version={from.version_no} label={linked ? fromShort : undefined} />
                   <PageThumb page={g.suggested} version={to.version_no} />
                 </div>
                 <div className="wk-rail-actions">
@@ -463,7 +493,7 @@ export function VersionReview({ doc, online, onGoToPage }: { doc: SourceDocument
                     title={!online ? MIGRATION_OFFLINE_AR : undefined}
                     onClick={() => void decide(null, { action: 'keep_on_previous', items: g.items, to_version_id: to.id }, `k:${g.key}`)}
                   >
-                    {`اتركها على ${versionLabel(from.version_no)}`}
+                    {linked ? 'اتركها في محاضرتك الخاصة' : `اتركها على ${versionLabel(from.version_no)}`}
                   </Button>
                   {suggestedIdx >= 0 && (
                     <Button size="sm" variant="plain" onClick={() => onGoToPage(suggestedIdx)}>
@@ -478,13 +508,13 @@ export function VersionReview({ doc, online, onGoToPage }: { doc: SourceDocument
       )}
       {preview.kept_items.length > 0 && (
         <details className="wk-reanchor__detached">
-          <summary>{`بقيت على ${versionLabel(from.version_no)} باختيارك (${preview.kept_items.length})`}</summary>
-          <ul className="wk-marks" role="list" aria-label={`بقيت على ${versionLabel(from.version_no)}`}>
+          <summary>{`بقيت ${linked ? 'في محاضرتك الخاصة' : `على ${versionLabel(from.version_no)}`} باختيارك (${preview.kept_items.length})`}</summary>
+          <ul className="wk-marks" role="list" aria-label={`بقيت ${linked ? 'في محاضرتك الخاصة' : `على ${versionLabel(from.version_no)}`}`}>
             {preview.kept_items.map((k) => (
               <li key={`${k.kind}:${k.id}`} className="wk-region-row">
                 <div className="wk-region-row__head">
                   <span className="wk-region-row__kind">{k.label_ar}</span>
-                  <StatusPill tone="neutral">{`على ${versionLabel(from.version_no)}`}</StatusPill>
+                  <StatusPill tone="neutral">{linked ? 'في محاضرتك الخاصة' : `على ${versionLabel(from.version_no)}`}</StatusPill>
                 </div>
                 {k.preview && <p className="wk-reanchor__preview">«<bdi>{k.preview}</bdi>»</p>}
                 <p className="wk-muted">{`مكانها: ${k.from.label_ar}`}</p>
@@ -510,7 +540,7 @@ export function VersionReview({ doc, online, onGoToPage }: { doc: SourceDocument
         initialPage={placing?.suggested ? Math.max(0, pageIndexOf(placing.suggested.page_id)) : 0}
         busy={busy !== null}
         title={placing ? `أين تنسخ ${placing.kind === 'note' ? 'الملاحظة' : placing.label} في ${versionLabel(to.version_no)}؟` : undefined}
-        description={`تُنسخ إلى الصفحة التي تختارها في ${versionLabel(to.version_no)}، ويبقى الأصل على ${versionLabel(from.version_no)} كما هو. لا يضعها التطبيق فوق فقرة من تلقاء نفسه.`}
+        description={`تُنسخ إلى الصفحة التي تختارها في ${versionLabel(to.version_no)}، ويبقى الأصل ${linked ? 'في محاضرتك الخاصة' : `على ${versionLabel(from.version_no)}`} كما هو. لا يضعها التطبيق فوق فقرة من تلقاء نفسه.`}
         submitLabel="انسخها هنا"
         onClose={() => setPlacing(null)}
         onPlace={(target) => placing && target.type === 'page' && void decide(placing, { action: 'copy', items: placing.items, to_version_id: to.id, target: { type: 'page', version_id: target.version_id, page_id: target.page_id, region_id: target.region_id ?? null } }, `p:${placing.key}`)}

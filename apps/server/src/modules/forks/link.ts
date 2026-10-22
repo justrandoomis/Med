@@ -8,14 +8,14 @@
 //    official version with P1-T2's copy rules (`runReanchorCopyAcross`): deterministic ids, previous anchors kept,
 //    uncertain items left for review. The private source and its rows stay byte-identical. A repeated link copies
 //    nothing.
-import { itemsCountAr, type LinkCandidateInput, type LinkToOfficialRequest, type LinkToOfficialResponse, type OfficialLinkCandidate, type OfficialLinkCandidatesResponse, type PageFingerprintInput } from '@medlevo/shared';
+import { itemsCountAr, type LinkCandidateInput, type LinkToOfficialRequest, type LinkToOfficialResponse, type OfficialLinkCandidate, type OfficialLinkCandidatesResponse, type OfficialLinkStatus, type OfficialLinkStatusResponse, type PageFingerprintInput } from '@medlevo/shared';
 import { createHash } from 'node:crypto';
 import type { AppContext } from '../../context';
 import type { Db } from '../../db/db';
 import { AppError } from '../../lib/errors';
 import type { Viewer } from '../../system/binding';
 import { publicDirectory } from '../../system/directory';
-import { runReanchorCopyAcross } from '../annotations/reanchorCopy';
+import { linkedPendingCount, recordPrivateLink, runReanchorCopyAcross, type PrivateLinkRow } from '../annotations/reanchorCopy';
 import { FINGERPRINT_ALGO, minhashFromBlob, readFingerprints } from '../processing/fingerprint';
 import { matchLinkCandidates } from '../versions/candidates';
 import { CopiesService, ensurePersonalLayer, getCopy, memberOf, notFound, refreshHoldings } from './copies';
@@ -151,25 +151,74 @@ export function linkToOfficial(ctx: AppContext, viewer: Viewer, body: LinkToOffi
   });
   // the copy itself (one transaction in the vault); nothing of the private source changes
   const run = runReanchorCopyAcross(ctx, { from_version_id: src.version_id, to_version_id: version.id }, { deviceId });
-  refreshHoldings(ctx, viewer.userId, stub.sourceId);
   const r = run.report;
-  return {
-    copy: copies.view(viewer, row),
-    job_id: null,
-    summary: { total: r.total, copied: r.copied + r.already_moved, needs_review: r.needs_review, kept: r.kept, summary_ar: linkSummaryAr(r.copied + r.already_moved, r.needs_review, r.kept) },
+  const summary = {
+    total: r.total,
+    copied: r.copied + r.already_moved,
+    needs_review: r.needs_review,
+    kept: r.kept,
+    summary_ar: linkSummaryAr(r.copied + r.already_moved, r.needs_review, r.kept, run.note_pages),
+    note_pages: run.note_pages,
   };
+  // (C2, X8 c) the link itself is remembered, so what could not be placed is listed in the review list of the official
+  // copy and can be copied across by hand later — even when this link copied nothing
+  recordPrivateLink(ctx, { private_version_id: src.version_id, to_version_id: version.id, private_source_id: src.id, stub_source_id: stub.sourceId, space_id: body.space_id, lecture_id: lecture.id, counts_json: JSON.stringify(summary) });
+  refreshHoldings(ctx, viewer.userId, stub.sourceId);
+  return { copy: copies.view(viewer, row), job_id: null, summary };
 }
 
 /**
- * What the link did, said where everything is (review P1-T5 s2 R-C). Items that could not be placed safely are NOT on
- * the official copy and no review list of the official copy lists them (P1-T2's review list is per source): they stay
- * on the private lecture, unchanged — the wording says so instead of promising a review list.
+ * What the link did, said where everything is (review P1-T5 s2 R-C; C2 X8 c). Items that could not be placed safely
+ * are listed in the review list of the OFFICIAL copy («ملاحظاتي ← إعادة ربط»), from where they are copied by hand or
+ * kept on the private lecture; the originals stay on the private lecture, unchanged.
  */
-export function linkSummaryAr(copied: number, notPlaced: number, kept: number): string {
+export function linkSummaryAr(copied: number, notPlaced: number, kept: number, notePages: { total: number; copied: number; items: number } = { total: 0, copied: 0, items: 0 }): string {
   const parts = [copied > 0 ? `نُسخ ${itemsCountAr(copied)} إلى النسخة الرسمية` : 'لم يُنسخ شيء إلى النسخة الرسمية'];
+  if (notePages.copied === 1) parts.push('ونُسخت صفحة الملاحظات المضافة بما عليها');
+  else if (notePages.copied > 1) parts.push(`ونُسخت ${notePages.copied} صفحات ملاحظات مضافة بما عليها`);
   // verb before its subject stays singular in Arabic («لم يُنسخ عنصران»); the clause after it agrees with the count
-  if (notPlaced === 1) parts.push('لم يُنسخ عنصر واحد لأن صفحته تغيّرت أو لم يُعثر على مكانه بأمان: بقي في محاضرتك الخاصة كما هو');
-  else if (notPlaced > 1) parts.push(`لم يُنسخ ${itemsCountAr(notPlaced)} لأن صفحاتها تغيّرت أو لم يُعثر على أماكنها بأمان: بقيت في محاضرتك الخاصة كما هي`);
+  if (notPlaced === 1) parts.push('لم يُنسخ عنصر واحد تلقائيًا لأن صفحته تغيّرت أو لم يُعثر على مكانه بأمان: تجده في «ملاحظاتي ← إعادة ربط» في النسخة الرسمية لتنسخه بنفسك أو تبقيه');
+  else if (notPlaced > 1) parts.push(`لم يُنسخ ${itemsCountAr(notPlaced)} تلقائيًا لأن صفحاتها تغيّرت أو لم يُعثر على أماكنها بأمان: تجدها في «ملاحظاتي ← إعادة ربط» في النسخة الرسمية لتنسخها بنفسك أو تبقيها`);
   if (kept > 0) parts.push(`بقي ${itemsCountAr(kept)} من طبقات القراءة فقط في محاضرتك الخاصة`);
   return `${parts.join('؛ ')}. محاضرتك الخاصة وكل ما عليها لم يتغيّر.`;
+}
+
+/**
+ * (Phase 1 completion C2, AOS-19H.3 «the library offers the link», 19I.2) The official state of a few library rows, in
+ * the viewer's own vault: a stub names its official lecture; a linked private lecture names its official copy and the
+ * items still waiting in its review list; an unlinked LECTURE with an official twin in a member subject offers it. Ids
+ * not in this vault are absent from the answer (another user's ids tell nothing).
+ */
+export function linkStatus(ctx: AppContext, viewer: Viewer, sourceIds: readonly string[]): OfficialLinkStatusResponse {
+  const dir = publicDirectory(ctx.system);
+  const members = new Set(forksSystem(ctx).spacesOfViewer(viewer).map((m) => m.spaceId));
+  const subjectTitle = (spaceId: string) => dir.spaceTitle(viewer, spaceId) ?? '';
+  const out: OfficialLinkStatus[] = [];
+  for (const id of sourceIds) {
+    const s = ctx.db.get<{ id: string; is_stub: number; deleted_at: number | null; source_type: string; origin_space_id: string | null; origin_lecture_id: string | null }>(
+      'SELECT id, is_stub, deleted_at, source_type, origin_space_id, origin_lecture_id FROM source WHERE id = ?',
+      [id],
+    );
+    if (!s || s.deleted_at !== null) continue;
+    const row: OfficialLinkStatus = { source_id: id, official: null, linked: null, candidate: null };
+    if (s.is_stub === 1) {
+      if (s.origin_space_id && s.origin_lecture_id) row.official = { space_id: s.origin_space_id, lecture_id: s.origin_lecture_id, subject_title: subjectTitle(s.origin_space_id) };
+      out.push(row);
+      continue;
+    }
+    const link = ctx.db.get<PrivateLinkRow>('SELECT * FROM private_link WHERE private_source_id = ? ORDER BY updated_at DESC LIMIT 1', [id]);
+    if (link && ctx.db.get('SELECT 1 AS x FROM source WHERE id = ? AND deleted_at IS NULL', [link.stub_source_id])) {
+      row.linked = { stub_source_id: link.stub_source_id, space_id: link.space_id, lecture_id: link.lecture_id, subject_title: subjectTitle(link.space_id), pending: linkedPendingCount(ctx, link) };
+    } else if (s.source_type === 'lecture' && members.size > 0) {
+      // only lectures are matched (the reader's copy bar asks the same), and only while the viewer belongs to a subject
+      try {
+        const best = linkCandidates(ctx, viewer, id).candidates[0];
+        if (best) row.candidate = { space_id: best.space_id, lecture_id: best.lecture_id, title: best.title, subject_title: best.subject.title };
+      } catch (e) {
+        if (!(e instanceof AppError)) throw e; // a source without a version yet: nothing to offer
+      }
+    }
+    out.push(row);
+  }
+  return { statuses: out };
 }

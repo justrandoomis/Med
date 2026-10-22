@@ -24,7 +24,7 @@ import { newId } from '../../lib/ids';
 import type { AiTextEvent } from '../ai';
 import type { ProviderImage, UntrustedBlock } from '../ai/types';
 import { pageLabelAr } from '../sources/pagelabel';
-import { cacheKey, resolveScope, VERIFIER_VERSION, type ScopeReport } from '../evidence/services';
+import { cacheKeys, resolveScope, VERIFIER_VERSION, type ScopeReport } from '../evidence/services';
 import { abstainView, artifactView, findReusable, nextVersionNo, requireArtifact, type ArtifactRow } from './artifacts';
 import {
   assertAnchorInScope,
@@ -183,7 +183,7 @@ export async function explainSelection(ctx: AppContext, body: ExplainBody, opts:
     lineage = { lineageId: previous.lineage_id, versionNo: nextVersionNo(ctx, previous.lineage_id), parentArtifactId: previous.id };
   }
 
-  const key = cacheKey(ctx, {
+  const keys = cacheKeys(ctx, {
     kind: `explanation:${body.action}`,
     scope,
     rulesVersion: rules.rules_version,
@@ -200,6 +200,7 @@ export async function explainSelection(ctx: AppContext, body: ExplainBody, opts:
       strategy: body.retry_of?.strategy ?? null,
     },
   });
+  const key = keys.key;
   const selection = selectionText(anchor, regions);
   const base: ArtifactBase = {
     kind: body.action === 'explain_image' ? 'figure_explanation' : 'explanation',
@@ -227,7 +228,7 @@ export async function explainSelection(ctx: AppContext, body: ExplainBody, opts:
   if (isRealPatientRequest(body.instruction)) return { artifact: publishAbstention(ctx, base, realPatientAbstain()), cached: false };
 
   requireAi(ctx, 'explain');
-  const cached = findReusable(ctx, key, base.kind);
+  const cached = findReusable(ctx, keys, base.kind);
   if (cached) return { artifact: artifactView(ctx, cached), cached: true };
 
   if (body.action === 'explain_image') return { artifact: await explainFigure(ctx, base, body, anchor, regions, scope, opts), cached: false };
@@ -527,7 +528,7 @@ export async function compareItems(ctx: AppContext, body: CompareBody, opts: Exp
   const primarySourceId = anchor?.source_id ?? scope.sourceIds[0] ?? null;
   const rules = resolveRules(ctx, { sourceId: primarySourceId });
   const items = [...new Set(body.items.map((s) => s.trim()))];
-  const key = cacheKey(ctx, {
+  const keys = cacheKeys(ctx, {
     kind: 'comparison',
     scope,
     rulesVersion: rules.rules_version,
@@ -539,6 +540,7 @@ export async function compareItems(ctx: AppContext, body: CompareBody, opts: Exp
     settings: keySettings(ctx, 'compare', { style: body.style }),
     params: { items, anchor: anchor ? normalizedAnchor(anchor) : null, instruction: body.instruction?.trim() || null },
   });
+  const key = keys.key;
   const base: ArtifactBase = {
     kind: 'comparison',
     title: `مقارنة: ${items.map((i) => shorten(i, 40)).join(' × ')}`,
@@ -551,7 +553,7 @@ export async function compareItems(ctx: AppContext, body: CompareBody, opts: Exp
   };
   if (isRealPatientRequest(body.instruction) || items.some((i) => isRealPatientRequest(i))) return { artifact: publishAbstention(ctx, base, realPatientAbstain()), cached: false };
   requireAi(ctx, 'compare');
-  const cached = findReusable(ctx, key, 'comparison');
+  const cached = findReusable(ctx, keys, 'comparison');
   if (cached) return { artifact: artifactView(ctx, cached), cached: true };
 
   // retrieve per item so each side gets its own evidence (never only the first item's)

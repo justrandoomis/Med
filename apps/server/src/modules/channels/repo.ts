@@ -388,6 +388,47 @@ export class ChannelRepo {
     this.db.run('UPDATE channel_invitation SET status = ?, decided_at = ? WHERE id = ?', [status, this.clock.now(), id]);
   }
 
+  /** (C2, AOS-18.5) The invitations sent into a node, newest first (pending ones past their time are marked expired). */
+  invitationsOfNode(nodeId: string, status: InvitationRow['status'] | undefined, limit = 200): InvitationRow[] {
+    const now = this.clock.now();
+    this.db.run(`UPDATE channel_invitation SET status = 'expired', decided_at = ? WHERE node_id = ? AND status = 'pending' AND expires_at <= ?`, [now, nodeId, now]);
+    return status
+      ? this.db.all<InvitationRow>('SELECT * FROM channel_invitation WHERE node_id = ? AND status = ? ORDER BY created_at DESC, id DESC LIMIT ?', [nodeId, status, limit])
+      : this.db.all<InvitationRow>('SELECT * FROM channel_invitation WHERE node_id = ? ORDER BY created_at DESC, id DESC LIMIT ?', [nodeId, limit]);
+  }
+
+  /** (C2, AOS-18.5) The active account whose normalised username is exactly this (the picker's «exact username»). */
+  activePersonByUsername(usernameNorm: string): PersonRow | null {
+    return this.db.get<PersonRow>(`SELECT id, display_name, status FROM user_account WHERE username_norm = ? AND status = 'active'`, [usernameNorm]) ?? null;
+  }
+
+  /**
+   * (C2, AOS-18.5) Approved members of these nodes whose display name or username STARTS with `prefix` (the picker,
+   * inside the channels the inviter manages): at most `limit`, one row per person (their first matching channel).
+   */
+  searchMembers(nodeIds: readonly string[], prefix: string, limit: number): Array<{ user_id: string; display_name: string; node_id: string }> {
+    if (nodeIds.length === 0 || !prefix) return [];
+    const like = `${prefix.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    const out: Array<{ user_id: string; display_name: string; node_id: string }> = [];
+    const seen = new Set<string>();
+    for (let i = 0; i < nodeIds.length && out.length < limit; i += 400) {
+      const chunk = nodeIds.slice(i, i + 400);
+      for (const r of this.db.all<{ user_id: string; display_name: string; node_id: string }>(
+        `SELECT m.user_id, u.display_name, m.node_id FROM channel_membership m JOIN user_account u ON u.id = m.user_id
+          WHERE m.node_id IN (${inList(chunk.length)}) AND m.status = 'approved' AND u.status = 'active'
+            AND (lower(u.display_name) LIKE lower(?) ESCAPE '\\' OR u.username_norm LIKE lower(?) ESCAPE '\\')
+          ORDER BY u.display_name, u.id LIMIT ?`,
+        [...chunk, like, like, limit * 4],
+      )) {
+        if (seen.has(r.user_id)) continue;
+        seen.add(r.user_id);
+        out.push(r);
+        if (out.length >= limit) break;
+      }
+    }
+    return out;
+  }
+
   // ───────── roles ─────────
 
   role(id: string): RoleRow | null {

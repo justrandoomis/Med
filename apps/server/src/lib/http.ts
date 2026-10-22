@@ -84,8 +84,14 @@ export function parseParams<S extends z.ZodType>(schema: S, req: FastifyRequest)
  * Use as: `app.post('/x', { config: { rateLimit: RATE_LIMITS.upload } }, handler)`.
  */
 export const RATE_LIMITS = {
-  /** coarse limit on credential endpoints; the precise login limiter lives in modules/auth */
+  /** coarse limit on credential endpoints of a SIGNED-IN user (per user); the precise login limiter lives in modules/auth */
   auth: { max: 30, timeWindow: 60_000 },
+  /**
+   * AOS-21.45: sign-in and recovery come from no session, so they are counted per ADDRESS — and a whole class signs in
+   * from one campus NAT at the start of a lecture. The ceiling is sized for that; guessing stays bounded by the
+   * per-account progressive delay and the per-address failure ceiling (modules/auth/limiter.ts).
+   */
+  signIn: { max: 600, timeWindow: 60_000 },
   setup: { max: 5, timeWindow: 60_000 },
   upload: { max: 60, timeWindow: 60_000 },
   ai: { max: 30, timeWindow: 60_000 },

@@ -29,7 +29,7 @@ import { fetchNeedsReanchor, fetchRegions } from '../data/api';
 import { mergeServerAnnotations, mergeServerNotes } from '../data/local';
 import type { SourceDocument } from '../data/useSourceDocument';
 import { fullPageLabel } from '../model/pages';
-import { VersionReview } from './NoteMigration';
+import { LinkedReviews, VersionReview } from './NoteMigration';
 
 const OFFLINE_REASON_AR = 'إعادة الربط قرار يُحفظ على الخادم ويُسجَّل في سجل التغييرات؛ تحتاج اتصالًا. القائمة تبقى محفوظة حتى تتصل.';
 const INK_FAMILY = new Set(['ink', 'shape', 'text', 'sticky', 'image', 'link', 'highlight', 'underline']);
@@ -207,6 +207,8 @@ export function ReanchorSection({ doc, local, online, onGoToPage, currentPageInd
   return (
     <>
       {(doc.detail.versions?.length ?? 0) > 1 && <VersionReview doc={doc} online={online} onGoToPage={onGoToPage} />}
+      {/* (C2, AOS-19H.3) on an official copy: what a linked private lecture could not place, to copy here or keep there */}
+      <LinkedReviews doc={doc} online={online} onGoToPage={onGoToPage} />
       <p className="wk-muted">
         عندما يتغير المصدر أو تخطيطه ولا يمكن إعادة ربط كتابة أو ملاحظة بثقة، تظهر هنا مع مكانها السابق. لا يُحذف شيء ولا يضعها التطبيق فوق فقرة أخرى: أنت تختار مكانها الجديد،
         أو تبقيها دون ربط. يبقى مكانها السابق محفوظًا ويُسجَّل قرارك.

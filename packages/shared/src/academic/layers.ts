@@ -361,6 +361,27 @@ export interface ReanchorCopyPreview {
   last_run: ReanchorCopyReport | null;
   /** «سيُنقل 2 · يحتاج مراجعة 1 · يبقى على الإصدار 1: 0» */
   summary_ar: string;
+  /**
+   * (Phase 1 completion C2, AOS-19H.3 / X8 (c), additive) On the official copy (stub) of a lecture: the PRIVATE lectures
+   * linked to it with «اربط بالمحاضرة الرسمية», each with its items and how many still wait for a decision (`pending`:
+   * neither copied here nor kept on the private lecture). Ask the preview again with `from_version_id` = that version to
+   * get its review list; `POST /api/annotations/reanchor` copies across the two documents for a linked pair only.
+   */
+  linked?: ReanchorLinkedSource[];
+  /** (C2, additive) set when `from_version_id` is a linked private version: the private lecture the items come from */
+  linked_from?: { source_id: string; title: string } | null;
+}
+
+/** A private lecture linked to this official copy (AOS-19H.3). */
+export interface ReanchorLinkedSource {
+  source: { id: string; title: string };
+  version: ReanchorVersionRef;
+  /** the official version it was linked to */
+  to_version: ReanchorVersionRef;
+  /** personal items on the private version (page items; note pages are copied whole) */
+  items: number;
+  /** items still waiting: not copied to this official copy and not kept on the private lecture by your choice */
+  pending: number;
 }
 
 /** The report of one run (the tap) or one review decision; stored, so it can be shown again and undone. */

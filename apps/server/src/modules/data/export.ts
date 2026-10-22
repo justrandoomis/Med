@@ -269,6 +269,51 @@ export async function exportArtifact(ctx: AppContext, forward: Forward, artifact
   return fileFor('كتاب', title, format, htmlDocument(title, body.join('\n')));
 }
 
+// ───────────────────────────── attribution (C2, AOS-4.18) ─────────────────────────────
+// A copied item (a followed or forked explanation, a layer copied from a classmate) keeps its author and its lineage in
+// every export: «مشتق من منشور «X» (الإصدار n) لـ Y». The publication's title lives in the system index, read through a
+// seam the forks module registers (this module never opens the system database); without it (an offline restore) the
+// line says «شرح منشور». The author's name is the vault's own row, kept current (a deleted account reads «طالب سابق»).
+export type PublicationTitleOf = (ctx: AppContext, publicationId: string) => string | null;
+let publicationTitleOf: PublicationTitleOf = () => null;
+export function setPublicationTitleSource(fn: PublicationTitleOf): void {
+  publicationTitleOf = fn;
+}
+export interface ExportLineage {
+  entity_type: 'annotation' | 'note';
+  entity_id: string;
+  author_user_id: string;
+  author_display: string;
+  derived_from: Array<{ space_id: string | null; publication_id: string | null; version_no: number | null; item_id: string }>;
+  lineage_ar: string;
+}
+/** The lineage of the given items that came from someone else (own items — the vault's user — have none). */
+export function lineageOf(ctx: AppContext, type: 'annotation' | 'note', ids: readonly string[]): Map<string, ExportLineage> {
+  const out = new Map<string, ExportLineage>();
+  const self = ctx.binding.viewer()?.userId ?? null;
+  const titles = new Map<string, string | null>();
+  for (let i = 0; i < ids.length; i += 400) {
+    const chunk = ids.slice(i, i + 400);
+    for (const r of ctx.db.all<{ entity_id: string; author_user_id: string; author_display: string; derived_from_json: string }>(
+      `SELECT entity_id, author_user_id, author_display, derived_from_json FROM attribution WHERE entity_type = ? AND entity_id IN (${chunk.map(() => '?').join(',')})`,
+      [type, ...chunk],
+    )) {
+      if (r.author_user_id === 'vault:self' || r.author_user_id === self) continue;
+      const chain = fromJson<ExportLineage['derived_from']>(r.derived_from_json) ?? [];
+      const hop = chain.find((h) => h.publication_id);
+      let lineage = `مأخوذ من ${r.author_display}`;
+      if (hop?.publication_id) {
+        if (!titles.has(hop.publication_id)) titles.set(hop.publication_id, publicationTitleOf(ctx, hop.publication_id));
+        const title = titles.get(hop.publication_id);
+        const version = hop.version_no ? ` (الإصدار ${hop.version_no})` : '';
+        lineage = title ? `مشتق من منشور «${title}»${version} لـ ${r.author_display}` : `مشتق من شرح منشور${version} لـ ${r.author_display}`;
+      }
+      out.set(r.entity_id, { entity_type: type, entity_id: r.entity_id, author_user_id: r.author_user_id, author_display: r.author_display, derived_from: chain, lineage_ar: lineage });
+    }
+  }
+  return out;
+}
+
 // ───────────────────────────── notes ─────────────────────────────
 function noteOriginLabel(n: NoteDTO): string | null {
   if (n.origin === 'ai_answer') return 'إجابة مولَّدة محفوظة كملاحظة — ليست مصدرًا مستقلًا';
@@ -326,11 +371,12 @@ export function selectNotes(ctx: AppContext, filter: { sourceId?: string; nodeId
 
 function notesSection(ctx: AppContext, notes: NoteDTO[], format: 'md' | 'html'): string {
   const out: string[] = [];
+  const lineage = lineageOf(ctx, 'note', notes.map((n) => n.id));
   for (const n of notes) {
     const where = describeAnchorAr(ctx.db, n.anchor);
     const origin = noteOriginLabel(n);
     const head = [n.title ?? 'ملاحظة', where.text ? `${where.sourceTitle ? `${where.sourceTitle} — ` : ''}${where.text}` : null].filter((x): x is string => !!x);
-    const flags = [origin, n.conflict_of_id ? 'نسخة محفوظة من تعارض بين جهازين' : null].filter((x): x is string => !!x);
+    const flags = [lineage.get(n.id)?.lineage_ar ?? null, origin, n.conflict_of_id ? 'نسخة محفوظة من تعارض بين جهازين' : null].filter((x): x is string => !!x);
     if (format === 'md') {
       out.push(`### ${mdEscape(head[0]!)}`, '');
       if (head[1]) out.push(`*${mdEscape(head[1])}*`, '');
@@ -349,10 +395,13 @@ function notesSection(ctx: AppContext, notes: NoteDTO[], format: 'md' | 'html'):
 /** (track F5) the notes as DOCX blocks: title, where it is anchored, origin labels (generated / recognized), body. */
 function notesDocxBlocks(ctx: AppContext, notes: NoteDTO[]): DocBlock[] {
   const out: DocBlock[] = [];
+  const lineage = lineageOf(ctx, 'note', notes.map((n) => n.id));
   for (const n of notes) {
     const where = describeAnchorAr(ctx.db, n.anchor);
     out.push(heading(n.title ?? 'ملاحظة', 3));
     if (where.text) out.push(para(`${where.sourceTitle ? `${where.sourceTitle} — ` : ''}${where.text}`, 'meta'));
+    const lin = lineage.get(n.id);
+    if (lin) out.push(para(lin.lineage_ar, 'label'));
     const origin = noteOriginLabel(n);
     if (origin) out.push(para(origin, n.origin === 'ai_answer' ? 'generated' : 'label'));
     if (n.conflict_of_id) out.push(para('نسخة محفوظة من تعارض بين جهازين', 'label'));
@@ -384,8 +433,10 @@ export function exportNotes(ctx: AppContext, filter: { sourceId?: string; nodeId
   if (format === 'json') {
     const manifest = manifestOf(ctx, 'notes', notes.map((n) => ({ type: 'note', id: n.id, version: n.rev, sha256: sha(n) })), [], [
       'الملاحظات بصيغتها المنظمة (RichText) كما حُفظت؛ الإجابات المولّدة محفوظة بأصلها origin=ai_answer.',
+      'attributions: صاحب كل ملاحظة منقولة من شرح زميل وسلسلة اشتقاقها (المنشور والإصدار)؛ ملاحظاتك أنت بلا سطر.',
     ]);
-    return fileFor('ملاحظات', scopeTitle, format, JSON.stringify({ manifest, notes }, null, 2));
+    const attributions = [...lineageOf(ctx, 'note', notes.map((n) => n.id)).values()];
+    return fileFor('ملاحظات', scopeTitle, format, JSON.stringify({ manifest, notes, attributions }, null, 2));
   }
   if (format === 'md') {
     const body = [`# ${mdEscape(title)}`, '', notes.length ? notesSection(ctx, notes, 'md') : 'لا توجد ملاحظات في هذا النطاق.'];
@@ -432,7 +483,8 @@ export async function exportSource(ctx: AppContext, forward: Forward, sourceId: 
       files,
       ['الملفات الأصلية غير مضمّنة في هذا الملف؛ هي مُعرّفة ببصمة sha256 وموجودة في النسخة الاحتياطية.', 'النص المستخرج كما خزّنه الخادم (رقمي أو OCR) دون تعديل.'],
     );
-    return fileFor('مصدر', title, format, JSON.stringify({ manifest, source: detail, version, pages: regions, annotations: liveAnn, note_pages: ann.note_pages, notes }, null, 2));
+    const attributions = [...lineageOf(ctx, 'annotation', liveAnn.map((a) => a.id)).values(), ...lineageOf(ctx, 'note', notes.map((n) => n.id)).values()];
+    return fileFor('مصدر', title, format, JSON.stringify({ manifest, source: detail, version, pages: regions, annotations: liveAnn, note_pages: ann.note_pages, notes, attributions }, null, 2));
   }
 
   const pageText = (r: PageRegionsResponse) =>
@@ -441,6 +493,10 @@ export async function exportSource(ctx: AppContext, forward: Forward, sourceId: 
       .sort((a, b) => a.reading_order - b.reading_order);
   const ocrNote = (t: string) => (t === 'ocr' || t === 'mixed' ? 'نص مقروء آليًا (OCR) — قد يحتوي أخطاء' : t === 'no_text_found' || t === 'needs_ocr' || t === 'failed' ? 'لا يوجد نص مقروء لهذه الصفحة' : null);
   const hlOn = (pageId: string) => highlights.filter((h) => h.anchor.type === 'page' && h.anchor.page_id === pageId);
+  // (C2, AOS-4.18) a highlight copied from a classmate's explanation is not «تمييزي»: it names its lineage
+  const hlLineage = lineageOf(ctx, 'annotation', highlights.map((h) => h.id));
+  const hlLabel = (id: string) => (hlLineage.has(id) ? 'تمييز منقول' : 'تمييزي');
+  const hlTail = (id: string) => (hlLineage.has(id) ? ` — ${hlLineage.get(id)!.lineage_ar}` : '');
 
   if (format === 'docx') {
     const out: DocBlock[] = [heading(title, 1), para(meta.join(' · '), 'meta'), para('النص المستخرج من الملف الأصلي، صفحة صفحة، مع ما كتبته عليه.', 'label')];
@@ -456,7 +512,7 @@ export async function exportSource(ctx: AppContext, forward: Forward, sourceId: 
       }
       for (const h of hlOn(r.page.id)) {
         const q = (h.data as { quote?: { exact?: string } }).quote?.exact;
-        if (q) out.push({ kind: 'para', dir: 'rtl', style: 'quote', segs: [...textSegs('تمييزي: «', 'rtl'), ...textSegs(q), ...textSegs('»', 'rtl')] });
+        if (q) out.push({ kind: 'para', dir: 'rtl', style: 'quote', segs: [...textSegs(`${hlLabel(h.id)}: «`, 'rtl'), ...textSegs(q), ...textSegs(`»${hlTail(h.id)}`, 'rtl')] });
       }
     }
     if (notes.length) out.push(heading('ملاحظاتي على هذا المصدر', 2), ...notesDocxBlocks(ctx, notes));
@@ -476,7 +532,7 @@ export async function exportSource(ctx: AppContext, forward: Forward, sourceId: 
       }
       for (const h of hlOn(r.page.id)) {
         const q = (h.data as { quote?: { exact?: string } }).quote?.exact;
-        if (q) out.push(`> تمييزي: «${mdEscape(q)}»`, '');
+        if (q) out.push(`> ${hlLabel(h.id)}: «${mdEscape(q)}»${mdEscape(hlTail(h.id))}`, '');
       }
     }
     if (notes.length) out.push('## ملاحظاتي على هذا المصدر', '', notesSection(ctx, notes, 'md'));
@@ -492,7 +548,7 @@ export async function exportSource(ctx: AppContext, forward: Forward, sourceId: 
     for (const reg of pageText(r)) body.push(textToHtml(reg.text!, reg.kind === 'heading' ? 'h3' : 'p', reg.kind === 'caption' ? 'caption' : undefined));
     for (const h of hlOn(r.page.id)) {
       const q = (h.data as { quote?: { exact?: string } }).quote?.exact;
-      if (q) body.push(`<blockquote dir="rtl" lang="ar">تمييزي: «${inlineHtml(q)}»</blockquote>`);
+      if (q) body.push(`<blockquote dir="rtl" lang="ar">${hlLabel(h.id)}: «${inlineHtml(q)}»${inlineHtml(hlTail(h.id))}</blockquote>`);
     }
     body.push('</section>');
   }

@@ -13,6 +13,9 @@
 //   A single-owner archive (medlevo.sqlite) of releases up to R1-a stays readable and restorable.
 // Vault layout (P1-T1 step 2): ONE account's vault (vaults/<id>.sqlite) and the files it references — the per-vault
 //   backup of the platform admin and the user's own «نسخة من بياناتي»; no system DB, no other account.
+// Space layout (AOS-21.1 / X8 (d)): ONE subject space (spaces/<id>.sqlite) and the files its rows reference — the
+//   platform admin's per-space backup; no system DB, no vault, no other space. Verified on a sandbox, never restored as
+//   a whole data directory.
 // Excluded (never in a backup): DATA_DIR/secret.key (the server regenerates one; old signed file links simply expire),
 //   environment variables / .env (ANTHROPIC_API_KEY and any other key), DATA_DIR/tmp, OCR model caches
 //   (tessdata*), earlier backups (DATA_DIR/backups), blobs no database row references.
@@ -96,8 +99,10 @@ export interface CreateBackupOptions extends BackupPaths {
   instance?: BackupInstance;
   /** P1-T1 step 2: back up ONE vault and the files it references (layout 'vault'); `dbPath` / `db` unused */
   vaultOnly?: { vault: BackupVaultSource; account: { user_id: string; username: string; display_name: string } };
+  /** AOS-21.1 / X8 (d): back up ONE subject space and the files its rows reference (layout 'space'); `dbPath` / `db` unused */
+  spaceOnly?: { space: BackupSpaceSource; subject: { space_id: string; title: string } };
   /** archive file name prefix (default «medlevo-backup»; exports use «medlevo-export») */
-  namePrefix?: 'medlevo-backup' | 'medlevo-vault' | 'medlevo-export';
+  namePrefix?: 'medlevo-backup' | 'medlevo-vault' | 'medlevo-export' | 'medlevo-space';
   /** progress callback with real counts */
   onProgress?: (p: { stage: string; done?: number; total?: number; unit?: string }) => void;
   signal?: AbortSignal;
@@ -261,7 +266,20 @@ export async function createBackup(opts: CreateBackupOptions): Promise<BackupRes
     const archiveDbs: Array<{ path: string; abs: string; sha256: string }> = [];
     const fileRowsAll: Array<{ id: string; sha256: string; size: number; storage_key: string }> = [];
     let totalRows = 0;
-    if (opts.vaultOnly) {
+    if (opts.spaceOnly) {
+      // AOS-21.1 / X8 (d): one subject space only
+      const src = opts.spaceOnly.space;
+      if (!DB_FILE_NAME_RE.test(src.dbFile)) throw new ArchiveError('WRITE_FAILED', 'اسم ملف مساحة مادة غير صالح في السجل؛ لم تُنشأ نسخة.');
+      mkdirSync(join(work, 'spaces'), { recursive: true, mode: 0o700 });
+      const out = join(work, 'spaces', src.dbFile);
+      const v = await snapshotVault(undefined, src.path, out, warnings, '');
+      const path = backupSpacePath(src.dbFile);
+      manifestSpaces = [{ space_id: src.id, db_file: src.dbFile, path, sha256: v.sha256, size: v.size, migrations: v.migrations, row_counts: v.row_counts }];
+      manifestDb = { path, sha256: v.sha256, size: v.size, migrations: v.migrations, row_counts: v.row_counts, sync_head_seq: v.sync_head_seq, server_epoch: v.server_epoch };
+      archiveDbs.push({ path, abs: out, sha256: v.sha256 });
+      fileRowsAll.push(...v.fileRows);
+      totalRows = Object.values(v.row_counts).reduce((a, b) => a + b, 0);
+    } else if (opts.vaultOnly) {
       // P1-T1 step 2: one account's vault only
       const src = opts.vaultOnly.vault;
       if (!DB_FILE_NAME_RE.test(src.dbFile)) throw new ArchiveError('WRITE_FAILED', 'اسم ملف خزنة غير صالح في السجل؛ لم تُنشأ نسخة.');
@@ -390,7 +408,11 @@ export async function createBackup(opts: CreateBackupOptions): Promise<BackupRes
       files_missing: missing,
       excluded: BACKUP_EXCLUDED,
     };
-    if (opts.vaultOnly) {
+    if (opts.spaceOnly) {
+      manifest.layout = 'space';
+      manifest.spaces = manifestSpaces!;
+      manifest.subject = opts.spaceOnly.subject;
+    } else if (opts.vaultOnly) {
       manifest.layout = 'vault';
       manifest.vaults = manifestVaults!;
       manifest.account = opts.vaultOnly.account;

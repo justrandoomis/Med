@@ -43,11 +43,11 @@ afterAll(() => {
 });
 
 describe('GATE-1: an R1-a database reaching a release that adds base migrations', () => {
-  it('R1-a’s base migrations are frozen, all still shipped; R1-c adds exactly 0163 and 0860 after them', () => {
+  it('R1-a’s base migrations are frozen, all still shipped; R1-c adds exactly 0163 and 0860 after them (Phase 1 completion C2: + 0862)', () => {
     const shipped = readMigrations().map((m) => m.name);
     expect(R1A_BASE_MIGRATIONS).toHaveLength(44);
     expect(R1A_BASE_MIGRATIONS.every((m) => shipped.includes(m))).toBe(true);
-    expect(shipped.filter((m) => !R1A_BASE_MIGRATIONS.includes(m))).toEqual(['0163_pinned_region.sql', '0860_document_copy.sql']);
+    expect(shipped.filter((m) => !R1A_BASE_MIGRATIONS.includes(m))).toEqual(['0163_pinned_region.sql', '0860_document_copy.sql', '0862_private_link.sql']);
   });
 
   it('the plan names the way that works (the multi-user release R1-b first), never «older than R1-a»', () => {

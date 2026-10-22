@@ -13,6 +13,7 @@ import { validationError } from './lib/http';
 import { loggerOptions } from './lib/log';
 import { fastifyTrustProxy, registerClientIpHeader } from './lib/proxy';
 import { createStaticSite } from './lib/static';
+import { registerJsonCompression } from './lib/compress';
 import { isApiRequest, registerAuthGuard } from './modules/auth/guard';
 import { registerBindingHook } from './modules/authz/hook';
 import { createSpaceRouteAllowList } from './modules/authz/routes';
@@ -127,6 +128,10 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   });
   await app.register(rateLimit, {
     global: false,
+    // AOS-21.45 (ARCHITECTURE_DELTA §14): a signed-in request is counted per USER (the guard set req.viewer in the
+    // instance onRequest hook, which runs before the route's limiter) — classmates behind one campus NAT share an
+    // address, not a budget; a request without a session is counted per address
+    keyGenerator: (req) => (req.viewer ? `u:${req.viewer.userId}` : `ip:${req.ip}`),
     errorResponseBuilder: (_req, context) => Errors.rateLimited(Math.ceil(context.ttl / 1000)),
   });
 
@@ -156,6 +161,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     }
     return payload;
   });
+
+  // AOS-21.12 / NFR-P3: JSON answers ≥ 1 KiB go br / gzip-encoded when the client accepts it (packed ink in JSON)
+  registerJsonCompression(app);
 
   registerAuthGuard(app, ctx);
   // gate 2: binds the viewer's own vault (or an allow-listed subject space), refuses platform routes to non-admins and

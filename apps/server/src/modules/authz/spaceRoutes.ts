@@ -90,6 +90,10 @@ export const SPACE_ROUTE_DECLARATIONS: readonly SpaceRouteDeclaration[] = [
   declare('GET', '/subject/corrections', 'moderator', 'lectures', 1, ['list', 'space'], 'ARCHITECTURE_DELTA §6.7; P1-T5 step 1', MOUNTED),
   declare('POST', '/lectures/:lectureId/corrections/:correctionId/decide', 'moderator', 'lectures', 1, ['edit', 'official_lecture'], 'ARCHITECTURE_DELTA §6.7; P1-T5 step 1', MOUNTED),
   declare('GET', '/subject/duplicates', 'moderator', 'lectures', 1, ['list', 'space'], 'ARCHITECTURE_DELTA §5.3; P1-T5 step 1 (AOS-18.11)', MOUNTED),
+  // Phase 1 completion C2 (AOS-3.18 role-scoped review, 3.11 «إصدار جديد من …»): the import intelligence's open
+  // proposals on the subject's official uploads — official moderators of THIS subject (an Assistant gets 403, Q5)
+  declare('GET', '/subject/review', 'moderator', 'lectures', 1, ['approve', 'official_lecture'], 'ARCHITECTURE_DELTA §6.1 «through the review queue (§19H)»; C2', MOUNTED),
+  declare('POST', '/subject/review/:itemId/decide', 'moderator', 'lectures', 1, ['approve', 'official_lecture'], 'ARCHITECTURE_DELTA §6.1, §6.2; C2', MOUNTED),
 
   // ───── existing read routes re-mounted on the space for official content (§5.5; published versions only, drafts
   //       for moderators — the handler checks the lecture's status). Paths keep the existing modules' own params.

@@ -156,15 +156,16 @@ export function visibleVersion(ctx: AppContext, scope: SpaceScope, lecture: Lect
 /** Append one entry of the subject updates feed (AOS-2.9) — call it INSIDE the transaction of the change it reports. */
 export function appendSubjectEvent(
   ctx: AppContext,
-  e: { subjectNodeId: string; kind: SubjectEventKind; refType: string; refId: string; title: string; moderatorsOnly?: boolean },
+  e: { subjectNodeId: string; kind: SubjectEventKind; refType: string; refId: string; title: string; moderatorsOnly?: boolean; forUser?: string },
 ): void {
+  // (C2, AOS-11.27) the visibility key: none = every member, `mod` = the official moderators, `u:<id>` = one person
   ctx.db.run(`INSERT INTO subject_event (subject_node_id, kind, ref_type, ref_id, title, visibility_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`, [
     e.subjectNodeId,
     e.kind,
     e.refType,
     e.refId,
     e.title.slice(0, 300),
-    e.moderatorsOnly ? 'mod' : null,
+    e.forUser ? `u:${e.forUser}` : e.moderatorsOnly ? 'mod' : null,
     ctx.clock.now(),
   ]);
 }
@@ -211,13 +212,19 @@ export class ViewBuilder {
       lecture_no_origin: row.lecture_no_origin,
       held_on: row.held_on,
       status: row.status,
-      head_version: head ? { id: head.id, version_no: head.version_no, page_count: head.page_count, processing_status: head.processing_status } : null,
+      head_version: head ? { id: head.id, version_no: head.version_no, page_count: head.page_count, processing_status: head.processing_status, ...this.publisherOf(head.id) } : null,
       uploaded_by: this.user(row.uploaded_by),
       approved: row.approved_by && row.approved_at !== null ? { by: this.user(row.approved_by), at: row.approved_at } : null,
       // publications arrive with step 3; a count the viewer could not open is never shown
       counts: { explanations: 0 },
       updated_at: row.updated_at,
     };
+  }
+
+  /** (C2, AOS-4.5 / 19I.2) who published the head version and when — shown with «رسمي» on the student's screens */
+  private publisherOf(versionId: string): { published_by: UserRef | null; published_at: number | null } {
+    const p = this.ctx.db.get<{ published_by: string; published_at: number }>('SELECT published_by, published_at FROM official_version_publish WHERE version_id = ?', [versionId]);
+    return p ? { published_by: this.user(p.published_by), published_at: p.published_at } : { published_by: null, published_at: null };
   }
 
   versions(row: LectureRow): Array<OfficialVersionView & OfficialVersionUploader> {

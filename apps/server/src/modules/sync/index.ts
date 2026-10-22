@@ -1,12 +1,16 @@
 // Sync API.
 //   POST /api/sync/push { ops: SyncOp[] }  → per-op results (idempotent by op_id)
 //   GET  /api/sync/pull?since=&limit=      → change feed page
+// (AOS-21.29) the actor of every op is the session's user; each op's device_id must be an active device of that user —
+// a device id the account never saw is registered on its first push (it is this signed-in client), a revoked one is
+// answered `rejected/device_unknown` (retryable, never recorded; the client re-sends from a new device id).
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { ACCEPT_INK_HEADER, parseAcceptInk, SYNC_OPS, type SyncPullResponse, type SyncPushResponse } from '@medlevo/shared';
 import type { ModuleOptions } from '../../context';
 import { AppError } from '../../lib/errors';
 import { parseBody, parseQuery, RATE_LIMITS } from '../../lib/http';
+import { MAX_ACTIVE_DEVICES } from '../accounts';
 import { isOldClient } from '../auth/clientGate';
 import { currentEpoch } from '../data/epoch';
 import { MAX_PULL_LIMIT, MAX_PUSH_OPS } from './registry';
@@ -66,9 +70,25 @@ export default async function syncModule(app: FastifyInstance, opts: ModuleOptio
     // (P1-T2) `accept-ink: 2` → ink entities in the answer carry packed points; without it, today's v1 (old clients)
     // (R1-b) `legacyClient`: an R1-a app (no supported `x-medlevo-client`; only user #1 gets this far) — see
     // annotations/sync.ts for the edit it cannot make safely
+    // (AOS-21.29) the device check, once per device id of the request, against the session user's devices
+    const viewer = req.viewer;
+    const allowed = new Map<string, boolean>();
+    if (viewer) {
+      for (const id of new Set(body.ops.map((o) => o.device_id))) {
+        const row = ctx.system.devices.get(viewer, id);
+        if (row) allowed.set(id, row.revoked_at === null);
+        else if (ctx.system.devices.activeCount(viewer) < MAX_ACTIVE_DEVICES) {
+          const { device, created } = ctx.system.devices.register(viewer, { device_id: id });
+          // the same security-history entry as POST /api/accounts/me/devices («أجهزتي» lists it)
+          if (created) ctx.system.securityAudit.record({ actorUserId: viewer.userId, actorRole: 'self', action: 'device_register', targetType: 'device', targetId: device.device_uid, summary: 'تسجيل جهاز جديد (أول مزامنة)', ip: req.ip ?? null });
+          allowed.set(id, device.revoked_at === null);
+        } else allowed.set(id, false);
+      }
+    }
     const res = ctx.sync.push(
       body.ops.map((o) => ({ ...o, payload: o.payload ?? null })),
       { inkFormat: parseAcceptInk(req.headers[ACCEPT_INK_HEADER]), ...(isOldClient(req) ? { legacyClient: true } : {}) },
+      viewer ? { actorUserId: viewer.userId, deviceAllowed: (id) => allowed.get(id) === true } : {},
     );
     // remember which device this session syncs from (sessions list shows it)
     const deviceId = body.ops[0]?.device_id;

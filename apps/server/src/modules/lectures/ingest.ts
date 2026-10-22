@@ -92,6 +92,8 @@ export interface Ingested {
   jobId: string;
   fileId: string | null;
   format: SourceFormat;
+  /** (C2, AOS-3.6) sha256 of the uploaded bytes — the caller says «duplicate of …» only for what the uploader may see */
+  contentHash: string;
 }
 
 /**
@@ -162,7 +164,7 @@ export async function ingestVersion(ctx: AppContext, file: IncomingFile, target:
     }
     const job = finishProcessingSetup(ctx, versionId, insp.format, insp.pageCount, versionNo === 1 ? 'upload' : 'replacement');
     if (!job) throw new AppError('INTERNAL', 'حُفظ الملف لكن تعذّر بدء معالجته. أعد المعالجة من «المحتوى الرسمي».', 500);
-    return { versionId, versionNo, jobId: job.id, fileId: parts.fileId ?? parts.originalFileId, format: insp.format };
+    return { versionId, versionNo, jobId: job.id, fileId: parts.fileId ?? parts.originalFileId, format: insp.format, contentHash };
   } finally {
     if (insp.ok && insp.cleanupDir) rmSync(insp.cleanupDir, { recursive: true, force: true });
   }

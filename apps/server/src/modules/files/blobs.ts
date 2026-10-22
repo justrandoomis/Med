@@ -15,7 +15,7 @@
 //
 // With MEDLEVO_BLOB_STORE=r2 the registry also tracks the encrypted copy in the object store (./r2.ts): new blobs are
 // replicated in the background, and a blob whose local copy is missing is fetched back before it is read.
-import { existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
@@ -78,6 +78,17 @@ export interface BlobServiceOptions {
   /** open upload sessions for this content (their bytes may complete into it) */
   inFlight: (sha256: string) => boolean;
   objectStore: ObjectBlobStore | null;
+  /** AOS-21.34: budget of the local copies with the r2 store (null / absent: the disk is a full cache) */
+  cacheBytes?: number | null;
+  /** AOS-21.34: a local copy written or read more recently than this is never evicted (default 10 min) */
+  cacheGraceMs?: number;
+}
+
+export interface EvictionResult {
+  evicted: number;
+  freedBytes: number;
+  /** bytes of local copies of live blobs after the pass */
+  localBytes: number;
 }
 
 export interface ReplicationResult {
@@ -267,6 +278,49 @@ export class BlobService {
     })();
     this.fetching.set(sha256, p);
     return p;
+  }
+
+  /**
+   * AOS-21.34: keep the local disk a BOUNDED cache of the object store. When the local copies of live blobs exceed
+   * `cacheBytes`, remove the local copies of blobs whose encrypted remote copy is confirmed (storage 'r2', neither
+   * orphaned nor quarantined, no upload in flight, not being fetched), least recently used first (file mtime / atime),
+   * never one used within the grace period. A read fetches an evicted blob back, verified (ensureLocal). Without a
+   * budget (or without the object store) nothing is evicted — the disk stays the full cache it was.
+   */
+  async evictLocal(): Promise<EvictionResult> {
+    const budget = this.o.cacheBytes ?? null;
+    const out: EvictionResult = { evicted: 0, freedBytes: 0, localBytes: 0 };
+    const sizes = new Map<string, { size: number; usedAt: number }>();
+    for (const b of this.o.registry.liveInternal()) {
+      try {
+        const st = statSync(this.localPath(b.sha256));
+        sizes.set(b.sha256, { size: st.size, usedAt: Math.max(st.mtimeMs, st.atimeMs) });
+        out.localBytes += st.size;
+      } catch {
+        // no local copy
+      }
+    }
+    if (!this.o.objectStore || budget === null || out.localBytes <= budget) return out;
+    const grace = this.o.cacheGraceMs ?? 10 * 60_000;
+    const now = Date.now();
+    const candidates = this.o.registry
+      .evictableInternal()
+      .map((b) => ({ b, local: sizes.get(b.sha256) }))
+      .filter((c): c is { b: BlobRow; local: { size: number; usedAt: number } } => !!c.local && c.local.size === c.b.size && now - c.local.usedAt >= grace)
+      .sort((x, y) => x.local.usedAt - y.local.usedAt);
+    for (const { b, local } of candidates) {
+      if (out.localBytes <= budget) break;
+      if (this.fetching.has(b.sha256) || this.o.inFlight(b.sha256)) continue;
+      // re-check right before removing: still a confirmed remote copy the GC does not hold
+      const now2 = this.o.registry.getInternal(b.sha256);
+      if (!now2 || now2.storage !== 'r2' || now2.quarantined_at !== null || now2.orphaned_at !== null) continue;
+      rmSync(this.localPath(b.sha256), { force: true });
+      out.evicted++;
+      out.freedBytes += local.size;
+      out.localBytes -= local.size;
+    }
+    if (out.evicted > 0) this.o.log.info({ evicted: out.evicted, freedBytes: out.freedBytes, localBytes: out.localBytes }, 'local blob cache trimmed');
+    return out;
   }
 
   /**

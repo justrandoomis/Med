@@ -9,6 +9,8 @@ import { newId } from '../lib/ids';
 import type { Clock } from '../lib/time';
 import type { Viewer } from './binding';
 import { AiBudgetLedger, BlobRegistry, QuotaRepo, UploadSessionRepo } from './ops';
+import { ConsentRepo } from './consent';
+import { AclGrantRepo } from './acl';
 
 /** NFKC + trim + lower-case: the login key (ARCHITECTURE_DELTA §4.1 user_account.username_norm). */
 export function normalizeUsername(u: string): string {
@@ -281,6 +283,11 @@ export class VaultRegistry {
     this.db.run('UPDATE vault SET last_opened_at = ? WHERE id = ?', [this.clock.now(), id]);
   }
 
+  /** Internal (quota views, per-space backups): every registered subject space. */
+  listSpacesInternal(): SpaceRow[] {
+    return this.db.all<SpaceRow>('SELECT * FROM space ORDER BY created_at, id');
+  }
+
   spaceByIdInternal(id: string): SpaceRow | null {
     return this.db.get<SpaceRow>('SELECT * FROM space WHERE id = ?', [id]) ?? null;
   }
@@ -493,6 +500,10 @@ export interface SystemRepos {
   readonly quotas: QuotaRepo;
   readonly aiLedger: AiBudgetLedger;
   readonly uploads: UploadSessionRepo;
+  // Phase 1 completion C1 (./consent.ts): the consent registry (ai_processing, AOS-21.42)
+  readonly consents: ConsentRepo;
+  // Phase 1 completion C1 (./acl.ts): per-resource grants read by the one policy (AOS-21.18)
+  readonly acl: AclGrantRepo;
 }
 
 export function createSystemRepos(db: Db, clock: Clock): SystemRepos {
@@ -507,5 +518,7 @@ export function createSystemRepos(db: Db, clock: Clock): SystemRepos {
     quotas: new QuotaRepo(db, clock),
     aiLedger: new AiBudgetLedger(db, clock),
     uploads: new UploadSessionRepo(db, clock),
+    consents: new ConsentRepo(db, clock),
+    acl: new AclGrantRepo(db, clock),
   };
 }

@@ -12,6 +12,7 @@ import { type LibraryIndex, subtreeCounts } from '../model';
 import { folderTone, libraryIcon } from './Cover';
 import { NodeMenu, SourceMenu } from './ItemMenus';
 import { OnDeviceBadge } from '../../offline/OnDevice';
+import { OfficialRowBadge } from '../../copies/linkStatus';
 
 type Dnd = ReturnType<typeof useLibraryDnd>;
 
@@ -84,6 +85,8 @@ export function SourceRow({
           <span className="ml-row__status">
             <ProcessingPill status={source.processing_status} format={source.format} />
             <OnDeviceBadge sourceId={source.id} />
+            {/* (C2, AOS-19H.3 / 19I.2) «رسمي» / «مرتبطة بالنسخة الرسمية» / «موجودة رسميًا في …» */}
+            {!readOnly && <OfficialRowBadge sourceId={source.id} />}
             {source.tags.slice(0, 3).map((t) => (
               <StatusPill key={t.id} tone="neutral" icon={false}>
                 <bdi>{t.name}</bdi>

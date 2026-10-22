@@ -205,7 +205,13 @@ export interface BackupManifest {
    * (P1-T1, additive) `multi_user`: the archive is a whole multi-user instance — the system DB and every vault at their
    * data-directory paths; `db` then describes the primary vault. Absent in single-owner archives (R1-a and earlier).
    */
-  layout?: 'multi_user' | 'vault';
+  layout?: 'multi_user' | 'vault' | 'space';
+  /**
+   * (AOS-21.1 / X8 (d), additive) `layout: 'space'`: ONE subject space (`spaces/<db_file>`, described by `db` and the
+   * single entry of `spaces`) and the files its rows reference — the platform admin's per-space backup. No system DB,
+   * no vault. Which subject it is, as recorded when it was made. Verified on a sandbox; never restored as a server.
+   */
+  subject?: { space_id: string; title: string };
   /**
    * (P1-T1 step 2, additive) `layout: 'vault'`: ONE account's vault and the files it references — a per-vault backup
    * (platform) or «نسخة من بياناتي» (the user's own export). Whose it is, as recorded when it was made.

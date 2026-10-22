@@ -87,6 +87,8 @@ interface UrlPlace {
   offset: number | null;
   /** an inserted note page to open (a page link from elsewhere, track F1) */
   noteId: string | null;
+  /** (C2, AOS-19H.3) `?panel=review` opens «ملاحظاتي ← إعادة ربط» (the review list after a link) */
+  review: boolean;
 }
 
 function readUrl(params: URLSearchParams): UrlPlace {
@@ -100,6 +102,7 @@ function readUrl(params: URLSearchParams): UrlPlace {
     regionId: params.get('region'),
     offset: off != null && Number.isFinite(Number(off)) ? Math.min(1, Math.max(0, Number(off))) : null,
     noteId: params.get('note'),
+    review: params.get('panel') === 'review',
   };
 }
 
@@ -248,9 +251,9 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
   // ── panels ──
   // phones open on the book (§23): sheets are never restored open over it
   const startsOnPhone = width < 768;
-  const [railOpen, setRailOpen] = useState(startsOnPhone ? false : (loc0.rail?.open ?? settings.rail_open));
-  const [railTab, setRailTab] = useState<RailTab>((['explain', 'questions', 'cases', 'sources', 'mine'] as const).find((t) => t === loc0.rail?.tab) ?? 'sources');
-  const [mineTab, setMineTab] = useState<MineTabValue>('notes');
+  const [railOpen, setRailOpen] = useState(url.review ? true : startsOnPhone ? false : (loc0.rail?.open ?? settings.rail_open));
+  const [railTab, setRailTab] = useState<RailTab>(url.review ? 'mine' : ((['explain', 'questions', 'cases', 'sources', 'mine'] as const).find((t) => t === loc0.rail?.tab) ?? 'sources'));
+  const [mineTab, setMineTab] = useState<MineTabValue>(url.review ? 'reanchor' : 'notes');
   const [leftOpen, setLeftOpen] = useState(startsOnPhone ? false : (loc0.left_panel?.open ?? defaultLeftOpen(width)));
   const [leftTab, setLeftTab] = useState<LeftTab>(loc0.left_panel?.tab ?? 'thumbnails');
   // (P1-T2) the layers this study session hides and the layer new writing goes to (saved with the place)

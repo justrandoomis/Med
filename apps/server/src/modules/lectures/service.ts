@@ -46,6 +46,7 @@ import {
   publishOf,
   type SpaceScope,
   versionOf,
+  versionVisibleTo,
   ViewBuilder,
   visibleLecture,
   visibleVersion,
@@ -213,7 +214,33 @@ export class LecturesService {
         ctx.audit.record({ entityType: 'official_lecture', entityId: id, action: 'upload', summary: `رفع الإصدار ${versionNo} من «${current.title}»`, after: { version_id: versionId, file_name: file.fileName } });
       },
     });
-    return { version_id: res.versionId, job_id: res.jobId };
+    const dup = this.visibleDuplicate(scope, row, res.contentHash, res.versionId);
+    return {
+      version_id: res.versionId,
+      job_id: res.jobId,
+      duplicate_of: dup,
+      duplicate_note_ar: dup ? `هذا الملف مطابق للإصدار ${dup.version_no} من «${dup.title}» في هذه المادة؛ رُفع كما طلبت، وتجده المادة في «الملفات المكررة».` : null,
+    };
+  }
+
+  /**
+   * (Phase 1 completion C2, AOS-3.6 / 2.3) Another official lecture of this subject holding the same bytes — named only
+   * when the uploader may see that lecture AND that version (a contributor never learns of another's hidden draft).
+   */
+  private visibleDuplicate(scope: SpaceScope, row: LectureRow, contentHash: string, newVersionId: string): UploadOfficialVersionResponse['duplicate_of'] {
+    const { ctx } = this;
+    for (const v of ctx.db.all<{ id: string; source_id: string; version_no: number }>('SELECT id, source_id, version_no FROM source_version WHERE content_hash = ? AND id <> ? AND source_id <> ? ORDER BY created_at', [
+      contentHash,
+      newVersionId,
+      row.source_id,
+    ])) {
+      const other = ctx.db.get<LectureRow>('SELECT * FROM official_lecture WHERE source_id = ?', [v.source_id]);
+      if (!other || other.takedown_at) continue;
+      if (!ctx.authz.can(scope.viewer, 'view', lectureResource(scope, other)).allowed) continue;
+      if (!versionVisibleTo(ctx, scope, other, v.id)) continue;
+      return { lecture_id: other.id, title: other.title, version_no: v.version_no };
+    }
+    return null;
   }
 
   /** The upload check alone (the route asks it before reading the multipart body; `upload` asks it again). */
@@ -362,8 +389,11 @@ export class LecturesService {
         `UPDATE official_lecture SET status = 'withdrawn', withdrawn_reason = ?, withdrawn_note = ?, withdrawn_by = ?, withdrawn_at = COALESCE(withdrawn_at, ?), updated_at = ? WHERE id = ?`,
         [body.reason, body.note_ar, scope.viewer.userId, now, now, id],
       );
-      // a lecture students never saw (a rejected draft) leaves no public line in the updates feed (review R1)
+      // a lecture students never saw (a rejected draft) leaves no public line in the updates feed (review R1) — its
+      // uploader alone reads why (C2, AOS-11.27: a per-viewer line, key `u:<uploader>`)
       if (first && everPublished) appendSubjectEvent(ctx, { subjectNodeId: row.subject_node_id, kind: 'lecture_withdrawn', refType: 'official_lecture', refId: id, title: `سُحبت: ${row.title}` });
+      else if (first && row.uploaded_by !== scope.viewer.userId)
+        appendSubjectEvent(ctx, { subjectNodeId: row.subject_node_id, kind: 'lecture_withdrawn', refType: 'official_lecture', refId: id, title: `لم تُعتمد مسودتك «${row.title}»: ${body.note_ar}`, forUser: row.uploaded_by });
       // P1-T5 step 2: a withdrawn lecture leaves the federated search (its head loses the «published head» token)
       retokenizeVersions(ctx.db, [row.head_version_id]);
       if (takedown) {

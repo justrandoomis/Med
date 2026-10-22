@@ -236,6 +236,17 @@ export interface IdentityAnalysis {
   subjects: number;
 }
 
+/** (Phase 1 completion C2) Called after every identity analysis of a source (in the bound database). */
+type IdentityObserver = (ctx: AppContext, sourceId: string) => void;
+const identityObservers: IdentityObserver[] = [];
+export function onIdentityAnalyzed(fn: IdentityObserver): () => void {
+  identityObservers.push(fn);
+  return () => {
+    const i = identityObservers.indexOf(fn);
+    if (i >= 0) identityObservers.splice(i, 1);
+  };
+}
+
 /**
  * Detect lecture number, date, title and subject for the version the owner studies (current or frozen) and store the
  * results by the rules above. Idempotent; called by the analysis job after every processing run.
@@ -337,6 +348,15 @@ export function analyzeIdentity(ctx: AppContext, sourceId: string, versionId: st
     }
     supersedeOthers(ctx, sourceId, 'subject', keys);
   });
+  // (Phase 1 completion C2) observers of a finished analysis — the lectures module mirrors a CERTAIN detected number /
+  // date onto an official lecture that has none (an uncertain one waits in the subject's review queue, AOS-3.18)
+  for (const fn of identityObservers) {
+    try {
+      fn(ctx, sourceId);
+    } catch (e) {
+      ctx.log.warn({ err: e instanceof Error ? e.message : String(e), sourceId }, 'an identity observer failed');
+    }
+  }
   return out;
 }
 

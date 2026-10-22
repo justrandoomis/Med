@@ -258,19 +258,60 @@ export class SubjectService {
 
   // ───────────────────────────── updates feed ─────────────────────────────
 
+  /**
+   * The updates feed, per viewer (C2, AOS-11.27; ARCHITECTURE_DELTA §8.4): only the rows whose visibility key the viewer
+   * holds (none = every member, `mod` = official moderators, `u:<id>` = that person), then a second gate on each row's
+   * target for THIS viewer (a lecture or attachment they may no longer see drops out). Paged by `seq`; hidden rows
+   * between visible ones are skipped without ever ending a page early.
+   */
   events(scope: SpaceScope, q: { cursor?: string; limit: number }): CursorPage<SubjectEventView> {
-    const before = q.cursor && /^[A-Za-z0-9_-]+$/.test(q.cursor) ? Number(Buffer.from(q.cursor, 'base64url').toString('utf8')) : null;
-    const rows = this.ctx.db.all<{ seq: number; kind: SubjectEventView['kind']; ref_type: string; ref_id: string; title: string; created_at: number }>(
-      `SELECT seq, kind, ref_type, ref_id, title, created_at FROM subject_event
-        WHERE (visibility_key IS NULL OR (visibility_key = 'mod' AND ?)) ${before !== null && Number.isFinite(before) ? 'AND seq < ?' : ''}
-        ORDER BY seq DESC LIMIT ?`,
-      [scope.powers.officialModerator ? 1 : 0, ...(before !== null && Number.isFinite(before) ? [before] : []), q.limit + 1],
-    );
-    const page = rows.slice(0, q.limit);
+    const keys = [`u:${scope.viewer.userId}`, ...(scope.powers.officialModerator ? ['mod'] : [])];
+    let before = q.cursor && /^[A-Za-z0-9_-]+$/.test(q.cursor) ? Number(Buffer.from(q.cursor, 'base64url').toString('utf8')) : null;
+    if (before !== null && !Number.isFinite(before)) before = null;
+    type Row = { seq: number; kind: SubjectEventView['kind']; ref_type: string; ref_id: string; title: string; created_at: number };
+    const out: Row[] = [];
+    let exhausted = false;
+    // a bounded number of passes: each reads the next rows by seq and keeps the visible ones
+    for (let pass = 0; pass < 20 && out.length <= q.limit && !exhausted; pass++) {
+      const batch = this.ctx.db.all<Row>(
+        `SELECT seq, kind, ref_type, ref_id, title, created_at FROM subject_event
+          WHERE (visibility_key IS NULL OR visibility_key IN (${keys.map(() => '?').join(',')})) ${before !== null ? 'AND seq < ?' : ''}
+          ORDER BY seq DESC LIMIT ?`,
+        [...keys, ...(before !== null ? [before] : []), Math.max(50, q.limit + 1)],
+      );
+      if (batch.length === 0) exhausted = true;
+      for (const r of batch) {
+        before = r.seq;
+        if (this.eventVisible(scope, r)) out.push(r);
+        if (out.length > q.limit) break;
+      }
+      if (batch.length < Math.max(50, q.limit + 1)) exhausted = true;
+    }
+    const page = out.slice(0, q.limit);
+    // the next page starts after the last line shown — or, when the passes ran out among hidden rows, after the last
+    // row read (so a long run of hidden rows never ends the feed early)
+    const resumeAt = out.length > q.limit ? page[page.length - 1]!.seq : !exhausted ? before : null;
     return {
       items: page.map((r) => ({ seq: r.seq, kind: r.kind, ref: { type: r.ref_type, id: r.ref_id }, title: r.title, created_at: r.created_at })),
-      next_cursor: rows.length > q.limit && page.length ? Buffer.from(String(page[page.length - 1]!.seq)).toString('base64url') : null,
+      next_cursor: resumeAt !== null ? Buffer.from(String(resumeAt)).toString('base64url') : null,
     };
+  }
+
+  /** The second gate of the feed: may THIS viewer still see what the line is about? */
+  private eventVisible(scope: SpaceScope, r: { ref_type: string; ref_id: string }): boolean {
+    const { ctx } = this;
+    if (r.ref_type === 'official_lecture') {
+      const l = getLecture(ctx, r.ref_id);
+      if (!l) return false;
+      // the uploader's own line about a draft that was not accepted is theirs to read
+      if (l.uploaded_by === scope.viewer.userId) return true;
+      return ctx.authz.can(scope.viewer, 'view', lectureResource(scope, l)).allowed;
+    }
+    if (r.ref_type === 'subject_attachment') {
+      const a = ctx.db.get<AttachmentRow>('SELECT * FROM subject_attachment WHERE id = ?', [r.ref_id]);
+      return !!a && attachmentVisible(scope, a);
+    }
+    return true; // exam dates: their own title only, cancelled ones say so
   }
 
   // ───────────────────────────── duplicate files (AOS-18.11) ─────────────────────────────

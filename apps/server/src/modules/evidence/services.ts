@@ -44,5 +44,5 @@ export {
   type VersionChangeInput,
 } from './dependencies';
 export { buildQuery, type BuiltQuery, type Expansion } from './terms';
-export { cacheKey, canReuse, type CacheKeyInput, type ReuseCheck } from './cache';
+export { cacheKey, cacheKeys, canReuse, keyDimensions, lookupKeys, type CacheKeyInput, type CacheKeys, type KeyDimensions, type ReuseCheck } from './cache';
 export { hasPseudoCitation, inventedCitations, pseudoCitations, stripPseudoCitations } from './textcite';

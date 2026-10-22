@@ -26,6 +26,9 @@ import {
   type CreateJoinCodeResponse,
   type InvitationDecisionResponse,
   type InvitationsResponse,
+  type InvitationView,
+  type InviteeCandidate,
+  type InviteeSearchResponse,
   isDescendingKind,
   type JoinCodesResponse,
   type JoinCodeView,
@@ -42,6 +45,7 @@ import { AppError } from '../../lib/errors';
 import { newId } from '../../lib/ids';
 import { deriveKey, loadOrCreateServerSecret } from '../../lib/secret';
 import type { Viewer } from '../../system/binding';
+import { normalizeUsername } from '../../system/repos';
 import type { Action, Resource } from '../authz/policy';
 import { CHANNEL_ROOT_ID, registerChannelRules } from '../authz/rules/channels';
 import { ChannelAccess, type EffectiveAccess } from './access';
@@ -665,6 +669,64 @@ export class ChannelService {
       membership: membership ? membershipView(membership, node) : null,
       message_ar: accept ? `انضممت إلى «${node.title}».` : 'رفضت الدعوة.',
     };
+  }
+
+  /** (C2, AOS-18.5) The invitations sent into a node (Admins / Assistants of it; others 403 like the members list). */
+  nodeInvitations(viewer: Viewer, nodeId: string, status: InvitationView['status'] | undefined): InvitationsResponse {
+    this.assert(viewer, 'manage_members', { type: 'channel_node', id: nodeId });
+    const node = this.existing(nodeId);
+    // a pending invitation whose sender lost the power to send it is taken back (review P1-T4 step 1, R4) — said so here
+    for (const r of this.repo.invitationsOfNode(nodeId, 'pending')) if (!this.inviterMayStill(r)) this.repo.decideInvitation(r.id, 'revoked');
+    const rows = this.repo.invitationsOfNode(nodeId, status);
+    const people = this.repo.people(rows.flatMap((i) => [i.invitee_user_id, i.invited_by]));
+    return { invitations: rows.map((r) => invitationView(r, node, people)) };
+  }
+
+  /** (C2, AOS-18.5) Revoke a pending invitation. Id-addressed: anyone who may not manage the node meets a missing id. */
+  revokeInvitation(viewer: Viewer, id: string, ip: string | null): InvitationView {
+    const inv = this.repo.invitation(id);
+    if (!inv || !this.can(viewer, 'manage_members', { type: 'channel_node', id: inv.node_id })) throw notFound();
+    const node = this.existing(inv.node_id);
+    if (inv.status === 'pending' && inv.expires_at <= this.now()) this.repo.decideInvitation(inv.id, 'expired');
+    const current = this.repo.invitation(id)!;
+    if (current.status === 'pending') {
+      this.ctx.system.db.tx(() => {
+        this.repo.decideInvitation(id, 'revoked');
+        this.audit(viewer, { action: 'channel_invitation_revoke', nodeId: node.id, targetType: 'channel_invitation', targetId: id, summary: `إلغاء دعوة إلى: ${node.title}`, ip });
+      });
+    } else if (current.status !== 'revoked') {
+      throw new AppError('CONFLICT', current.status === 'expired' ? 'انتهت صلاحية هذه الدعوة من قبل؛ لا حاجة لإلغائها.' : 'قُرّرت هذه الدعوة من قبل؛ لم يتغير شيء.', 409);
+    }
+    const fresh = this.repo.invitation(id)!;
+    return invitationView(fresh, node, this.repo.people([fresh.invitee_user_id, fresh.invited_by]));
+  }
+
+  /**
+   * (C2, AOS-18.5) The person picker: the account whose username is exactly `q`, and the approved members of the
+   * channels the inviter manages around this node (below the topmost ancestor they manage) whose name or username
+   * starts with `q`. Never a directory of every account; at most 10.
+   */
+  searchInvitees(viewer: Viewer, nodeId: string, q: string): InviteeSearchResponse {
+    this.assert(viewer, 'manage_members', { type: 'channel_node', id: nodeId });
+    this.existing(nodeId);
+    const found = new Map<string, { display_name: string; match: InviteeCandidate['match']; where: string | null }>();
+    const exact = this.repo.activePersonByUsername(normalizeUsername(q));
+    if (exact && exact.id !== viewer.userId) found.set(exact.id, { display_name: exact.display_name, match: 'username', where: null });
+    const managed = [...this.repo.ancestors(nodeId)].reverse().find((a) => this.can(viewer, 'manage_members', { type: 'channel_node', id: a.id }));
+    if (managed) {
+      const rows = this.repo.searchMembers(this.repo.subtreeIds(managed.id), q.normalize('NFKC').trim(), 10);
+      const titles = new Map(this.repo.nodesByIds(rows.map((r) => r.node_id)).map((n) => [n.id, n.title]));
+      for (const r of rows) {
+        if (r.user_id === viewer.userId || found.has(r.user_id)) continue;
+        found.set(r.user_id, { display_name: r.display_name, match: 'member', where: titles.has(r.node_id) ? `عضو في «${titles.get(r.node_id)}»` : null });
+      }
+    }
+    const candidates: InviteeCandidate[] = [...found].slice(0, 10).map(([userId, f]) => {
+      const e = this.access.effective({ userId, deviceId: null, isPlatformAdmin: false }, nodeId)!;
+      const state: InviteeCandidate['state'] = ChannelAccess.nearest(e, 'approved') ? 'member' : this.repo.pendingInvitation(nodeId, userId) ? 'invited' : 'can_invite';
+      return { user: { id: userId, display_name: f.display_name, avatar_url: null }, match: f.match, where_ar: f.where, state };
+    });
+    return { candidates };
   }
 
   // ───────────────────────── roles ─────────────────────────

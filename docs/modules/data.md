@@ -420,3 +420,37 @@ write, and a vector copy of the original needs a PDF writer; nothing native).
   `test/data/gate1-backup-download.test.ts`, web `features/offline/screens.test.tsx` «GATE-1 …». The E2E servers run
   with a test key (as `render.yaml` generates one) and `e2e/g7-ac30-restore.spec.ts` restores the `.mlenc` archive.
 
+
+## Phase 1 completion — track C2: attribution in exports (AOS-4.18, 2026-10-22)
+
+* `export.ts` `lineageOf(ctx, type, ids)` reads the vault's `attribution` rows of the exported items: an item copied
+  from a classmate's published explanation says «مشتق من منشور «X» (الإصدار n) لـ Y» (the first hop of `derived_from`
+  that names a publication; without the publication's title — an offline restore — «مشتق من شرح منشور (الإصدار n) لـ
+  Y»); an item copied from someone without a publication «مأخوذ من Y»; the vault's own items carry nothing.
+* Notes (Markdown, HTML, Word): the lineage line under the note's place, before its origin label. JSON notes and the
+  source JSON carry `attributions` (author id and name, `derived_from` chain, `lineage_ar`). The lecture export: a copied
+  highlight is «تمييز منقول: «…» — <lineage>», never «تمييزي».
+* The publication's title lives in the system index: the forks module registers `setPublicationTitleSource`, so this
+  module never opens the system database (`medlevo/module-boundaries`). Author names are the vault's rows, kept current
+  by the forks module (a deleted account reads «طالب سابق»).
+* Evidence: `apps/server/test/forks/export-attribution.c2.test.ts` (md, html, docx, json; the author's own export names
+  nobody), `ai-marking.c2.test.ts` (generated answers keep their label in a follower's export).
+
+## Per-space backups and their restore check (Phase 1 completion C1, AOS-21.1 / X8 (d); 2026-10-22)
+
+* `createBackup({ spaceOnly: { space, subject } })` → layout **`space`**: one `spaces/<db_file>` (described by `db` and
+  the single entry of `spaces`), the files its rows reference only, `manifest.subject` = `{space_id, title}`; no system DB,
+  no vault, no other space. Archive name `medlevo-space-<stamp>-<id>.tar.gz` (`.mlenc` with MLVENC01 when
+  `MEDLEVO_BACKUP_ENCRYPTION_KEY` is set — the plain archive never stays on disk), kept in
+  `DATA_DIR/backups/spaces/<space id>/` with its `.sha256`.
+* `verifyBackup` accepts it: manifest consistency for the layout, hashes, integrity and foreign keys, base **+ space**
+  migrations of this build, row counts, files, FTS and relational samples, then a **sandbox** boot (a fresh multi-user
+  directory whose registry holds a copy of that one space: health, its lectures and sources counted, protected routes
+  401, a blob mark pass). `applyRestore` refuses a space archive (`RestoreTargetError`) — it is not a server.
+* Platform admin only (`/api/platform/*`, 404 to anyone else — the space's own moderator included):
+  `GET /api/platform/spaces/:spaceId/backups` (list + the last check), `POST …/backups` (make one; audited
+  `space_backup`), `POST …/backups/verify {file_name}` (202; the check runs in the background, audited
+  `space_backup_verify`, adds a `space` check «this archive is this space's»; it never changes the live space).
+* Not built: putting a space back in place on the running server (a space is shared by every student of the subject and
+  holds the versions their copies point at; an in-place swap needs the fan-out design of an official version change).
+* Test: `apps/server/test/data/space-backup.c1.test.ts` (failed before: the module did not exist).

@@ -159,7 +159,7 @@ describe('the release rule (BUILD_PLAN §1.3)', () => {
     try {
       const applied = db.all<{ name: string }>('SELECT name FROM schema_migration ORDER BY name').map((r) => r.name);
       expect(applied).toEqual(readMigrations().map((m) => m.name));
-      expect(applied.at(-1)).toBe('0861_attribution.sql'); // R1-a's last base migration: R1-b adds none
+      expect(applied).toContain('0861_attribution.sql'); // R1-a's last base migration: R1-b adds none (Phase 1 completion C2 adds 0862 after it)
     } finally {
       db.close();
     }

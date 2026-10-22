@@ -79,6 +79,9 @@ const FIXTURES: Record<string, { valid: unknown[]; invalid: unknown[] }> = {
   },
   createInvitationsSchema: { valid: [{ user_ids: [ID] }, { user_ids: [ID, ID2] }], invalid: [{ user_ids: [] }, { user_ids: [ID, ID] }] },
   invitationDecisionSchema: { valid: [{ accept: true }, { accept: false }], invalid: [{}, { accept: 'yes' }] },
+  // (C2, AOS-18.5) the invitations sent into a node, and the person picker
+  nodeInvitationsQuerySchema: { valid: [{}, { status: 'pending' }, { status: 'revoked' }], invalid: [{ status: 'lost' }, { other: 1 }] },
+  inviteeSearchQuerySchema: { valid: [{ q: 'زي' }, { q: 'zainab_ali' }, { q: '  noor  ' }], invalid: [{}, { q: 'z' }, { q: 'x'.repeat(65) }, { q: 'ab', extra: 1 }] },
   createJoinCodeSchema: {
     valid: [
       { kind: 'class_code', expires_in_hours: 72, requires_approval: true },
@@ -203,6 +206,8 @@ const FIXTURES: Record<string, { valid: unknown[]; invalid: unknown[] }> = {
     invalid: [{ title: 'x', exam_on: '2027-01-15', starts_at: '25:00' }, { title: 'x', exam_on: 'tomorrow' }],
   },
   subjectEventsQuerySchema: { valid: [{}, { cursor: 'MTIz', limit: 10 }], invalid: [{ limit: 1000 }] },
+  // (C2, AOS-3.18) the subject's review queue: a moderator's decision
+  decideSubjectReviewSchema: { valid: [{ action: 'accept' }, { action: 'reject' }], invalid: [{}, { action: 'maybe' }, { action: 'accept', note: 'x' }] },
   // P1-T5 step 1 additions (additive): the corrections queue, its decision, the attachment multipart fields
   officialCorrectionsQuerySchema: { valid: [{}, { status: 'open' }, { status: 'applied', lecture_id: ID }], invalid: [{ status: 'pending' }, { lecture_id: '' }] },
   decideOfficialCorrectionSchema: {
@@ -234,6 +239,9 @@ const FIXTURES: Record<string, { valid: unknown[]; invalid: unknown[] }> = {
   patchDocumentCopySchema: { valid: [{ update_policy: 'auto' }, { reanchor_policy: 'preview' }], invalid: [{}, { mode: 'personal' }] },
   applyUpstreamSchema: { valid: [{ version_no: 2 }, { version_no: 3, skip: true }], invalid: [{ version_no: 0 }, {}] },
   linkCandidatesQuerySchema: { valid: [{ source_id: ID }], invalid: [{}] },
+  // (C2, AOS-19H.3 / 19H.1) the library rows' link status; one lecture identity's links
+  linkStatusQuerySchema: { valid: [{ source_ids: ID }, { source_ids: `${ID},${ID2}` }, { source_ids: `${ID}, ${ID}` }], invalid: [{}, { source_ids: '' }, { source_ids: 'a b' }, { source_ids: Array.from({ length: 31 }, (_, i) => `id${i}`).join(',') }] },
+  lectureIdentityQuerySchema: { valid: [{ space_id: ID, lecture_id: ID2 }], invalid: [{}, { space_id: ID }, { space_id: "x'", lecture_id: ID }] },
   linkToOfficialSchema: {
     valid: [{ id: ID, source_id: ID2, space_id: ID, lecture_id: ID2, to_version_id: ID }],
     invalid: [{ id: ID, source_id: ID2, space_id: ID, lecture_id: ID2 }],

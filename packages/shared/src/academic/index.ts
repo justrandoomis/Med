@@ -20,3 +20,7 @@ export * from './moderation-api';
 export * from './lectures-api';
 export * from './copies-api';
 export * from './publications-api';
+// Phase 1 completion, track C1 (AOS-21.42): AI-processing consent and the written data-use policy
+export * from './consent-api';
+// Phase 1 completion, track C1 (AOS-21.5): a personal course node mapped to the shared channel course
+export * from './course-mapping-api';

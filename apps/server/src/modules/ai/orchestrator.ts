@@ -17,6 +17,7 @@ import { newId } from '../../lib/ids';
 import { type Clock, startOfMonthInTz } from '../../lib/time';
 import { isNoTenantBound } from '../../system/binding';
 import type { AiBudgetService } from './budget';
+import type { AiConsentGate } from './consent';
 import { buildPrompt, estimateTokens } from './prompt';
 import { ProviderError, type AiProvider, type ProviderErrorKind, type ProviderImage, type ProviderResponse, type UntrustedBlock } from './types';
 
@@ -63,6 +64,8 @@ export interface AiOrchestratorOptions {
   timezone: string;
   /** P1-T1 step 2: per-user / per-space allowances with atomic reservations (absent: the single budget of R1-a) */
   charge?: AiBudgetService | null;
+  /** AOS-21.42: a user's content leaves the deployment only with their ai_processing consent (absent: no gate) */
+  consent?: AiConsentGate | null;
 }
 
 type UsageStatus = 'ok' | 'error' | 'schema_rejected' | 'budget_blocked';
@@ -115,6 +118,7 @@ export class AiOrchestrator {
   private monthlyBudgetUsd: number;
   private readonly timezone: string;
   private readonly charge: AiBudgetService | null;
+  private readonly consent: AiConsentGate | null;
 
   constructor(
     private readonly db: Db,
@@ -126,6 +130,7 @@ export class AiOrchestrator {
     this.monthlyBudgetUsd = opts.monthlyBudgetUsd;
     this.timezone = opts.timezone;
     this.charge = opts.charge ?? null;
+    this.consent = opts.consent ?? null;
   }
 
   get providerName(): string | null {
@@ -134,6 +139,11 @@ export class AiOrchestrator {
 
   get configured(): boolean {
     return this.provider !== null;
+  }
+
+  /** (AOS-21.42) does what the configured provider is sent leave the deployment? (null: no provider) */
+  get providerLeavesDeployment(): boolean | null {
+    return this.provider ? this.provider.dataLeavesDeployment === true : null;
   }
 
   budget(): AiBudgetStatus {
@@ -172,6 +182,9 @@ export class AiOrchestrator {
     if (!p) return { available: false, reason_ar: MSG.notConfigured };
     if (!p.supports(task)) return { available: false, reason_ar: MSG.unsupported };
     const model = p.modelFor(task);
+    // AOS-21.42: no consent of the user whose content it is → unavailable with the reason (nothing is sent)
+    const noConsent = this.consent?.blockedReason(p) ?? null;
+    if (noConsent) return { available: false, model, reason_ar: noConsent };
     if (blocked) return { available: false, model, reason_ar: blocked };
     if (budget.monthly_usd <= 0 || budget.remaining_usd <= 0) return { available: false, model, reason_ar: budgetMessage(budget.monthly_usd) };
     return { available: true, model };
@@ -245,6 +258,8 @@ export class AiOrchestrator {
     const allowed = new Set(req.scope.versionIds);
     const outside = req.sourceVersionIds.filter((v) => !allowed.has(v));
     if (outside.length > 0) throw new AppError('OUT_OF_SCOPE', MSG.outOfScope, 409, { scope: req.scope.describeAr });
+    // AOS-21.42: the user's ai_processing consent naming this provider, before anything is reserved or sent
+    this.consent?.assert(provider);
 
     const rulesVersion = req.rulesVersion ?? AI_RULES_VERSION;
     const model = provider.modelFor(req.task);

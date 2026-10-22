@@ -4,9 +4,12 @@
 //   * a second database in one request (`ctx.dbs`) only by the copy services of later tracks (none in R1-b step 1);
 //   * database files are opened by path (`openDb`, `new DatabaseSync`) only by the pool, the boot guard, the context,
 //     the backup / restore code and the command-line tools — never by a module behind the pool's back.
+// AOS-21.47: the allow-lists live in tools/eslint/module-boundaries.mjs, the ESLint rule `medlevo/module-boundaries`
+// that `npm run lint` applies (module-boundaries.eslint.c1.test.ts); this scan keeps checking the same lists.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { INTERNAL_CALL_FILES, OPEN_DB_FILES, SECOND_DB_FILES, SECOND_DB_MODULES, SYSTEM_DB_FILES } from '../../../../tools/eslint/module-boundaries.mjs';
 
 const SRC = join(__dirname, '..', '..', 'src');
 
@@ -35,74 +38,27 @@ function usersOf(re: RegExp): string[] {
 
 describe('tenancy import boundaries', () => {
   it('the system DB handle is used only by the system layer, the context, auth, health, platform status and the instance backup', () => {
-    const allowed = new Set([
-      'src/app.ts', // GET /api/health: SELECT 1
-      'src/context.ts',
-      'src/modules/auth/index.ts', // limiter + session revocation transactions
-      'src/modules/data/backups.ts', // the instance backup snapshots the system DB (VACUUM INTO)
-      'src/modules/platform/index.ts', // counts only
-      'src/modules/accounts/deletion.ts', // step 2: one system transaction per deletion step
-      'src/modules/channels/service.ts', // P1-T4: the channel repository (tree, memberships, codes, roles) on the system DB
-      'src/modules/notifications/service.ts', // P1-T4 step 2: the inbox, preferences and the fan-out queue (system DB)
-      'src/modules/notifications/fanout.ts', // P1-T4 step 2: the fan-out worker writes notification rows in batches
-      'src/modules/moderation/service.ts', // P1-T4 step 2: reports, moderation actions and the scoped audit view
-      'src/modules/forks/system.ts', // P1-T5 step 2: lecture_copy (holders, counts only) and read-only course_follow / space / vault lookups
-    ]);
+    const allowed = new Set(SYSTEM_DB_FILES);
     const users = usersOf(/\bsystem\.db\b/).filter((f) => !f.startsWith('src/system/'));
     expect(users.filter((f) => !allowed.has(f))).toEqual([]);
   });
 
   it('*Internal repository methods (no viewer) are used only by the binding / auth / jobs / boot-time code', () => {
-    const allowed = new Set([
-      'src/context.ts',
-      'src/modules/auth/guard.ts',
-      'src/modules/auth/index.ts',
-      'src/modules/auth/clientGate.ts', // step 3: is the session's account user #1 (an old client may act only as user #1)
-      'src/modules/authz/hook.ts',
-      'src/modules/data/backups.ts',
-      'src/modules/data/offsite.ts',
-      'src/modules/files/blobs.ts', // bytes are kept while several databases share the blob store
-      'src/modules/jobs/queue.ts',
-      // P1-T1 step 2 — the blob registry / GC, uploads, quotas and the AI ledger are internal APIs of these files:
-      'src/modules/files/gc.ts', // mark-and-sweep over every registered database
-      'src/modules/files/index.ts', // maintenance tick (last sweep)
-      'src/modules/files/uploads.ts', // expiry of upload sessions
-      'src/modules/ai/budget.ts', // atomic reservations in the system ledger
-      'src/modules/accounts/deletion.ts', // finishing a deletion (no viewer: background)
-      'src/modules/accounts/export.ts', // the export job (bound to the user's own vault)
-      'src/modules/platform/index.ts', // platform-admin quotas and counts
-      'src/modules/data/vault-backup.ts', // platform-admin per-vault backup / restore
-      'src/modules/channels/service.ts', // P1-T4: a subject's space is registered through the registry (registerSpaceInternal)
-    ]);
+    const allowed = new Set(INTERNAL_CALL_FILES);
     const users = usersOf(/\.[a-zA-Z]+Internal\(/).filter((f) => !f.startsWith('src/system/'));
     expect(users.filter((f) => !allowed.has(f))).toEqual([]);
   });
 
   it('a second database in one request (ctx.dbs) only in the copy services of later tracks — none yet', () => {
-    const copyServices = /^src\/modules\/(forks|channels|social|search|evidence|studybook|data)\//;
+    const copyServices = SECOND_DB_MODULES;
     const users = usersOf(/\bdbs\.(vault|space)\(/).filter((f) => f !== 'src/context.ts');
     expect(users.filter((f) => !copyServices.test(f))).toEqual([]);
     // P1-T5 step 2: the copy services — stubs from the space, lazy pinning, the purge recount in vaults, promote from a vault
-    expect(users).toEqual(['src/modules/forks/promote.ts', 'src/modules/forks/purgeExtension.ts', 'src/modules/forks/stubs.ts', 'src/modules/search/federation.ts']);
+    expect(users).toEqual([...SECOND_DB_FILES].sort());
   });
 
   it('database files are opened by path only by the pool, the boot guard, the context, backup / restore and the CLIs', () => {
-    const allowed = new Set([
-      'src/cli/backup.ts',
-      'src/cli/eval.ts',
-      'src/context.ts',
-      'src/db/db.ts',
-      'src/modules/data/backup.ts',
-      'src/modules/data/restore.ts',
-      'src/modules/data/vault-backup.ts', // step 2: the new epoch of a vault restored in place (pool closed first)
-      'src/modules/files/gc.ts', // step 2: the GC mark pass reads every database READ-ONLY (never creates a file)
-      'src/system/layout.ts',
-      'src/system/pool.ts',
-      // step 3: the owner migration reads / moves the single-owner database and builds the system DB beside it; the
-      // maintenance page reads the owner row to check the owner's password (nothing is written)
-      'src/system/ownerMigration.ts',
-      'src/system/maintenance.ts',
-    ]);
+    const allowed = new Set(OPEN_DB_FILES);
     const users = usersOf(/\bopenDb\(|new DatabaseSync\(/);
     expect(users.filter((f) => !allowed.has(f))).toEqual([]);
   });

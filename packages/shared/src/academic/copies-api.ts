@@ -190,6 +190,63 @@ export interface ApplyUpstreamResponse {
 
 /** GET /api/copies/link-candidates?source_id= — official lectures THE VIEWER may see that match a private source. */
 export const linkCandidatesQuerySchema = z.object({ source_id: entityIdSchema });
+
+/**
+ * GET /api/copies/link-status?source_ids=a,b,… (Phase 1 completion C2, AOS-19H.3 «the library offers the link», 19I.2;
+ * additive). For the rows of a library list (at most 30 ids): an official copy says which official lecture it is; a
+ * private lecture says whether it is linked to its official twin (and how many of its items still wait for review), or
+ * whether an official twin exists in a subject the viewer belongs to. Computed in the viewer's own vault; ids of other
+ * vaults are simply absent from the answer.
+ */
+export const linkStatusQuerySchema = z.object({
+  // a comma-separated query value, or (re-parsing a parsed value) the array itself — no lossy transform
+  source_ids: z
+    .union([
+      z
+        .string()
+        .min(1)
+        .max(30 * 65)
+        .transform((s) => s.split(',').map((x) => x.trim()).filter(Boolean)),
+      z.array(z.string()).max(30),
+    ])
+    .transform((ids) => [...new Set(ids)])
+    .pipe(z.array(entityIdSchema).min(1).max(30)),
+});
+export interface OfficialLinkStatus {
+  source_id: string;
+  /** the source is the viewer's copy of an official lecture */
+  official: { space_id: string; lecture_id: string; subject_title: string } | null;
+  /** a private lecture linked with «اربط بالمحاضرة الرسمية»: its official copy, and the items still waiting for review */
+  linked: { stub_source_id: string; space_id: string; lecture_id: string; subject_title: string; pending: number } | null;
+  /** a private lecture with an official twin not linked yet (the best candidate) */
+  candidate: { space_id: string; lecture_id: string; title: string; subject_title: string } | null;
+}
+export interface OfficialLinkStatusResponse {
+  statuses: OfficialLinkStatus[];
+}
+
+/**
+ * (C2, AOS-19H.1) GET /api/copies/lecture-identity?space_id=&lecture_id= — what hangs on ONE official lecture identity
+ * for the signed-in member: its published versions (and which ones their copy holds), their copies, the private
+ * lectures they linked to it, the explanations published on it they may see, and their own objects mapped to it (by
+ * kind — later phases add kinds without a contract change). A non-member, a pending member, a moderator of another
+ * subject, a draft or an unknown id: the body of a missing item.
+ */
+export const lectureIdentityQuerySchema = z.object({ space_id: entityIdSchema, lecture_id: entityIdSchema });
+export type LectureIdentityQuery = z.infer<typeof lectureIdentityQuerySchema>;
+/** kinds of personal objects mapped to a lecture identity in Phase 1 (cards, questions, recordings: later phases add more) */
+export const LECTURE_IDENTITY_OBJECT_KINDS = ['annotation', 'note', 'question', 'card', 'recording'] as const;
+export type LectureIdentityObjectKind = (typeof LECTURE_IDENTITY_OBJECT_KINDS)[number];
+export interface LectureIdentityLinks {
+  identity: { space_id: string; lecture_id: string; title: string; lecture_no: number | null; held_on: string | null; subject_title: string; status: 'published' | 'withdrawn' };
+  versions: Array<{ id: string; version_no: number; published_at: number; held: boolean }>;
+  /** the viewer's stub of the lecture (null before «ابدأ الدراسة») */
+  stub_source_id: string | null;
+  copies: Array<{ id: string; mode: DocumentCopyView['mode']; publication_id: string | null }>;
+  linked_private: Array<{ source_id: string; title: string }>;
+  publications: Array<{ id: string; title: string; head_version_no: number; status: PublicationStatus; mine: boolean; held: boolean }>;
+  objects: Array<{ kind: LectureIdentityObjectKind; count: number }>;
+}
 export interface OfficialLinkCandidate {
   space_id: string;
   subject: NodeRef;
@@ -229,5 +286,17 @@ export interface LinkToOfficialResponse {
   /** the copy job (null when it already ran: a repeated link changes nothing) */
   job_id: string | null;
   /** total = copied + needs_review + kept (the job's report; null while the job runs) */
-  summary: { total: number; copied: number; needs_review: number; kept: number; summary_ar: string } | null;
+  summary: {
+    total: number;
+    copied: number;
+    needs_review: number;
+    kept: number;
+    summary_ar: string;
+    /**
+     * (Phase 1 completion C2, X8 (c), additive) the private lecture's inserted note pages: how many there are, how many
+     * this link copied onto the official copy (with deterministic ids — a second link copies none), and the items written
+     * on them that were copied with them
+     */
+    note_pages?: { total: number; copied: number; items: number };
+  } | null;
 }

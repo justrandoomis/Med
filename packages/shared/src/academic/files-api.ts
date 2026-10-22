@@ -107,6 +107,32 @@ export interface VaultBackupsResponse {
 
 export const restoreVaultSchema = z.object({ file_name: z.string().min(1).max(200).regex(/^[A-Za-z0-9._-]+$/) }).strict();
 
+/** AOS-21.1 / X8 (d): one per-space backup archive (platform admin; names, sizes and checks only — never content). */
+export type SpaceBackupView = VaultBackupView;
+
+/** AOS-21.1 / X8 (d): the last restore check of one space backup in this process. */
+export interface SpaceBackupCheckView {
+  space_id: string;
+  file_name: string;
+  /** true while the check runs (it runs in the background) */
+  running: boolean;
+  ok: boolean;
+  checks: Array<{ name: string; ok: boolean; detail_ar: string }>;
+  started_at: number;
+  finished_at: number | null;
+}
+
+export interface SpaceBackupsResponse {
+  space_id: string;
+  title: string;
+  backups: SpaceBackupView[];
+  note_ar: string;
+  last_check: SpaceBackupCheckView | null;
+}
+
+/** POST /api/platform/spaces/:spaceId/backups/verify */
+export const verifySpaceBackupSchema = restoreVaultSchema;
+
 export interface VaultRestoreResponse {
   vault_id: string;
   ok: boolean;

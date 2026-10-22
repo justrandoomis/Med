@@ -14,6 +14,9 @@
 //   * edit / withdraw — the author only (another member who can see it: 403); a withdrawn publication is not edited;
 //   * fork / follow   — a member who is not the author, while it is active;
 //   * suggest, rate, vote, comment … — Phase 2: refused (403 to someone who can see it).
+// AOS-21.18: «holds a copy» is a per-resource ACL grant — taking a fork or a followed copy writes a durable `view`
+// grant (system `acl_grant`, forks/system.ts), and this rule reads it through the policy's grant provider (a member
+// still; a grant never lets a non-member in).
 // Moderation itself (hide / restore) is P1-T4's `moderate` on the subject's channel node, reached through the target
 // registry the forks module fills (moderation/targets.ts).
 import type { Viewer } from '../../../system/binding';
@@ -64,7 +67,7 @@ function decidePublication(viewer: Viewer, action: Action, r: PublicationResourc
     return action === 'create' ? ALLOW : HIDDEN;
   }
   const author = r.authorUserId !== '' && r.authorUserId === viewer.userId;
-  const holder = r.viewerHoldsCopy === true;
+  const holder = r.viewerHoldsCopy === true || deps.grants?.has(viewer, 'publication', r.spaceId, r.id, 'view') === true;
   const canSee =
     r.status === 'active' || author || holder || (r.status === 'hidden_by_moderator' && p.moderator);
   if (!canSee) return HIDDEN;

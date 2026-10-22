@@ -7,6 +7,8 @@ export const routes: FeatureRoutes = {
     { path: 'me', lazy: () => import('./MeScreen').then((m) => ({ Component: m.MeScreen })) },
     { path: 'me/devices', lazy: () => import('./DevicesScreen').then((m) => ({ Component: m.DevicesScreen })) },
     { path: 'me/privacy', lazy: () => import('./PrivacyScreen').then((m) => ({ Component: m.PrivacyScreen })) },
+    // AOS-21.42: the written data-use policy
+    { path: 'me/privacy/policy', lazy: () => import('./DataPolicyScreen').then((m) => ({ Component: m.DataPolicyScreen })) },
     { path: 'me/usage', lazy: () => import('./UsageScreen').then((m) => ({ Component: m.UsageScreen })) },
   ],
 };

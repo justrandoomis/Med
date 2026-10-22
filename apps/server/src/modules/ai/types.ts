@@ -105,6 +105,12 @@ export interface AiProvider {
   generateStructured(req: ProviderRequest): Promise<ProviderResponse>;
   /** (Round 7 H4) whether `onTextDelta` receives real incremental deltas (else it is never called) */
   readonly streamsText?: boolean;
+  /**
+   * (AOS-21.42) true when what this provider is sent LEAVES the deployment (a hosted API — Anthropic). Then a user's
+   * content is sent only after that user's `ai_processing` consent naming `name` (modules/ai/consent.ts). A provider
+   * that runs inside the deployment (a local model, the test-only fakes) omits it or says false.
+   */
+  readonly dataLeavesDeployment?: boolean;
 }
 
 /** Untrusted content block (uploaded files, OCR, web pages, owner notes…). */

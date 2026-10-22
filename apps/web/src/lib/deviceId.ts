@@ -46,6 +46,24 @@ export async function getDeviceId(db: MedLevoDB = getDb()): Promise<string> {
   return id;
 }
 
+/**
+ * AOS-21.29 (ARCHITECTURE_DELTA §8.2): the server answered `device_unknown` — this device id was revoked in «أجهزتي»
+ * (a revoked id is never revived). Take a NEW id for this account on this device and persist it; queued ops are then
+ * re-sent from it.
+ */
+export async function replaceDeviceId(db: MedLevoDB = getDb()): Promise<string> {
+  const id = newId();
+  try {
+    await kvSet(db, KV_KEY, id);
+  } catch {
+    // IndexedDB unavailable: keep the in-memory id
+  }
+  cached = id;
+  cachedFor = db.name;
+  writeLocalStorage(id);
+  return id;
+}
+
 /** Synchronous best-effort read (null before getDeviceId() resolved once and nothing was stored). */
 export function peekDeviceId(): string | null {
   return (cachedFor === currentLocalDbName() ? cached : null) ?? readLocalStorage();

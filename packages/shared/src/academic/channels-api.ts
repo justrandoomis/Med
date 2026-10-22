@@ -433,6 +433,36 @@ export interface InvitationDecisionResponse {
   message_ar: string;
 }
 
+/**
+ * (C2, AOS-18.5) GET /api/channels/nodes/:id/invitations?status= — the invitations sent into a node, newest first (the
+ * node's Admins / Assistants; others 403 like the members list). A pending invitation past its time reads «expired».
+ * DELETE /api/channels/invitations/:id — revoke a pending one (audited; id-addressed: the 404 of a missing id to anyone
+ * who may not manage the node's members) → InvitationView.
+ */
+export const nodeInvitationsQuerySchema = z.object({ status: z.enum(INVITATION_STATUSES).optional() }).strict();
+export type NodeInvitationsQuery = z.infer<typeof nodeInvitationsQuerySchema>;
+
+/**
+ * (C2, AOS-18.5) GET /api/channels/nodes/:id/invitees?q= — the person picker of «ادعُ أشخاصًا». Never a directory of
+ * every account: it finds (a) the account whose username is EXACTLY `q` (the inviter knows it) and (b) the approved
+ * members of the channels the inviter already manages around this node (the university / college / stage above it and
+ * what lies below the topmost one they manage) whose name or username starts with `q`. At most 10; rate-limited.
+ */
+export const inviteeSearchQuerySchema = z.object({ q: z.string().trim().min(2, 'اكتب حرفين على الأقل.').max(64) }).strict();
+export type InviteeSearchQuery = z.infer<typeof inviteeSearchQuerySchema>;
+export interface InviteeCandidate {
+  user: UserRef;
+  /** how they were found: the exact username, or a member of a channel the inviter manages */
+  match: 'username' | 'member';
+  /** «عضو في …» — the channel they belong to (only for `member`) */
+  where_ar: string | null;
+  /** already in this node (or above it), already invited, or can be invited now */
+  state: 'can_invite' | 'member' | 'invited';
+}
+export interface InviteeSearchResponse {
+  candidates: InviteeCandidate[];
+}
+
 // ───────────────────────────── class codes and invite links ─────────────────────────────
 
 export const JOIN_CODE_KINDS = ['class_code', 'invite_link'] as const;
