@@ -1720,3 +1720,239 @@ every defect was reproduced by a failing test before its fix (`apps/server/test/
 
 Not run: iPad + Apple Pencil, S Pen, BOOX (no device); VoiceOver / TalkBack; a second browser engine; Render; Cloudflare
 R2; a real AI model; the full E2E suite (the release run's job — this review ran the three step-3 specs and smoke).
+
+## GATE-1 — Phase 1 exit gate (2026-10-22, 03:28 → 07:16 UTC, run in this container)
+
+The whole tree at the end of release R1-c «channels and the vertical slice» (wave-2 contracts, P1-T4 steps 1–3, P1-T5
+steps 1–3, each built and reviewed adversarially — entries above), base `514f356` (release R1-b). BUILD_PLAN §3.9: every
+suite and E2E spec, the performance gate against R1-b, X8, X9, AC-01a, AC-01b, Scenarios 2 and 4, the minimal
+moderation flow, the owner migration from a realistic R1-a data directory, a critic pass of every new screen. No product
+feature was built. Same environment as above (Node 22.22, Chromium 141 at `/opt/pw-browsers/chromium`, no
+`ANTHROPIC_API_KEY`, `NODE_OPTIONS='--disable-warning=ExperimentalWarning'`); no other track was editing the tree. A
+container restart interrupted the gate at 04:37 (after the fixes, the owner-migration run and the critic pass; the work
+was kept as the snapshot commit `48bc41e`); it resumed from there. The verdict, the open Musts, the Not-run list and the
+owner's update steps: [`docs/academic-os/PHASE1_REPORT.md`](academic-os/PHASE1_REPORT.md). Logs, screenshots and scratch
+scripts: session scratchpad `gate1/` (outside the repository).
+
+### 1. First pass (before any change of this gate, 03:28 → 04:19)
+
+| # | command | exit | duration | result |
+|---|---|---|---|---|
+| 1 | `npm run typecheck` | 0 | 62 s | no type errors (shared, server, web, e2e) |
+| 2 | `npm run lint` | 0 | 71 s | no problems |
+| 3 | `npm test` | 0 | 544 s | shared 14 files · **229 passed** · server 235 files passed, 7 skipped · **2 307 passed**, 7 skipped · web 179 files passed, 1 skipped · **1 203 passed**, 1 skipped (3 739 passed) |
+| 4 | `npm run build` | 0 | 5 s | PWA **337 precache entries** (5 292 KiB) |
+| 5 | `npm run eval -- --set=regression --compare=docs/eval/baseline.json --no-record` | 0 | 10 s | regression **80 / 80**, `no_regressions` (`eval-20261022T034208-ee9024f4`) |
+| 6 | `E2E_BUILD=0 npx playwright test --output <scratch>` (full suite, phone + desktop) | 1 | 36.3 min | 196 tests: **177 passed, 2 failed, 17 skipped** — `g7-ac30-restore` phone and desktop (defects 1 and 2 below) |
+
+The 17 skipped are project-conditional or opt-in: `perf.spec.ts` 6 × 2 (`MEDLEVO_PERF=1`), `aos-p1-layers` × 2
+(desktop-only flow / phone-only panel check), `aos-ac01a` «the shell fits a 390 px phone and iPad sizes» on the phone
+project (it sets its own viewports from desktop), `h3-reader-notes` item 5 on desktop (phone only), `r1b-final-critic`
+on the phone (desktop only).
+
+### 2. Defects found and fixed (each reproduced by a test that failed first)
+
+Details, root causes and severity: PHASE1_REPORT §4.
+
+| # | defect | test that failed first → passes |
+|---|---|---|
+| 1 | whole-instance backups (app + `npm run backup`) held no subject space — official lectures and published explanations lost on restore; the restore check failed whenever a subject existed | `apps/server/test/data/gate1-space-backup.test.ts` (4) |
+| 2 | «نزّل النسخة» offered while the server refuses the download (several accounts, no `MEDLEVO_BACKUP_ENCRYPTION_KEY`) | `apps/server/test/data/gate1-backup-download.test.ts` (3), web `features/offline/screens.test.tsx` «GATE-1 …», `e2e/g7-ac30-restore.spec.ts` |
+| 3 | R1-c on an R1-a data directory: «older than R1-a … install R1-a and run it once» — wrong and a loop | `apps/server/test/tenancy/owner-migration.gate1.test.ts` (4) + the scripted run of section 3 |
+| 4 | axe `label-content-name-mismatch` (serious) on the reader's page indicator, every look and width | `apps/web/src/features/workspace/chrome/GoToPage.gate1.test.tsx` (6) |
+| 5 | breadcrumb links 24 px tall («أنا» 10 px wide) on a phone | `apps/web/test/breadcrumbs-css.gate1.critic.test.ts` |
+| 6 | every server test worker left a `/tmp/medlevo-vault-template-*` directory behind (≈ 17 GB) | `apps/server/test/tenancy/template-dir.gate1.test.ts` |
+| 7 | (harness, not product) `e2e/perf.spec.ts` «dense page, 5 layers» clicked a layer row before the sync pull had delivered the seeded layers — failed on R1-b and on R1-c alike, so the opt-in suite had not run since R1-a | the spec waits for the row (≤ 5 min) before the timed click; the same change in the R1-b copy used for the comparison |
+| 8 | (test) `e2e/f1-notebook-pages.spec.ts` still asserted the page indicator's pre-fix name («، 2 من 4.») — 4 failures in the final full run, caused by fix 4 | the spec matches the spoken position in either form (`at(n, N)`): 6 / 6 after |
+| 9 | (harness) `e2e/critic-screens.spec.ts` probed 250 ms after the dark-scheme switch while the top-bar link's background transition was still running under load (1.29:1) — 1 failure, desktop | waits for finite animations after the switch (≤ 2 s): 4 / 4 after |
+
+`e2e/g7-ac30-restore.spec.ts` alone after fixes 1–2: 14 passed with `aos-p1-join` (phone + desktop, 1.9 min).
+
+### 3. Owner migration end to end against the real R1-a and R1-b releases
+
+Scratch script `gate1/mig/e2e-migration-r1c.mjs` on fresh copies of the realistic R1-a data directory of the R1-b final
+verification (`legacy-fixture.ts`), with the real `git archive` builds of R1-a (`d0c8ab4`) and R1-b (`514f356`):
+
+* **R1-a → R1-b → R1-c: 43 / 43 checks** — R1-b's upgrade page migrates byte for byte (13 feed entities, every read API,
+  file and recording identical as user #1), R1-b's backup restore-verifies, a note written under R1-b; R1-c boots straight
+  into the app on that directory, everything still identical, base migrations 0163 / 0860 applied at the first open,
+  the owner creates university → college → subject with its space, a whole-instance backup of R1-c holds the space and
+  restore-verifies (19 checks), R1-c's `restore:verify` passes on the R1-b archive, and R1-b refuses to start on the
+  migrated directory.
+* **R1-a → R1-c directly: refused, nothing changed — 8 / 8 checks after fix 3** (before the fix: 3 passed, 3 failed — the refusal
+  named the wrong cause — and the script stopped).
+
+Server code has not changed since this run (only web files, the perf harness and docs).
+
+### 4. Critic pass of the new screens (390 and 1280 px; light, dark, e-ink)
+
+Scratch spec `gate1/critic/gate1-critic.spec.ts` against the real server: 30 R1-c screens × 3 looks × 2 widths = **180
+screenshots** (`gate1/shots/`, inspected), probes (one `h1`, named controls, contrast ≥ 4.5:1, overflow, icon alone,
+red-flag text, 44 px targets and switch rings on the phone) and axe-core serious / critical. Run 1 (04:21 → 04:25):
+2 failed — defect 4 (axe) on every look and width, defect 5 (targets) on the phone. Run 2 after the fixes (04:29 →
+04:33): **2 passed, 0 findings on all 180**.
+
+### 5. Performance gate — this build (R1-c) against R1-b, same machine, same suites
+
+Method, tables and the budget check: `docs/PERFORMANCE.md` «GATE-1 (2026-10-22) — release R1-c against release R1-b»;
+verdict: PHASE1_REPORT §7. R1-b = `git archive 514f356` in the scratch area (sharing this checkout's `node_modules`), run
+one after the other with this tree on the quiet VM.
+
+| # | command (per tree) | runs | result |
+|---|---|---|---|
+| 1 | `cd apps/server && MEDLEVO_PERF=1 MEDLEVO_PERF_OUT=<scratch> npx vitest run test/perf --no-file-parallelism` | R1-b × 3, R1-c × 3, alternating (04:44 → 05:36) | 7 / 7 passed in every run (each ≈ 4 min) |
+| 2 | `E2E_BUILD=0 MEDLEVO_PERF=1 npx playwright test e2e/perf.spec.ts --project=desktop` before the harness fix (04:52 → 05:00) | R1-b, R1-c | both: 2 passed, 1 failed («dense page, 5 layers»: layer row not there after 15 s), 3 did not run (serial) — defect 7 |
+| 3 | the same after the harness fix (05:04 → 05:21) | R1-b, R1-c | **6 / 6 passed** each (8.4 / 8.5 min) |
+| 4 | diagnostic copy of «dense page» on R1-c with 3 s between opening and the first zoom (scratch) | 1 | 1 passed; zoom back 6 / 6 tiles warm, 6.1 ms (the harness run: 4 / 6, both releases) |
+| 5 | `npx vitest run test/search/federation.test.ts -t "NFR-P5" --silent=false` (R1-c only) | 1 | 1 passed: 250 000 chunks, raw p50 26.0 ms, raw p95 42.4 ms |
+| 6 | `MEDLEVO_MEASURE_OUT=<scratch> npx vitest run test/tenancy/isolation.test.ts` | R1-b, R1-c | 12 / 12 each; pool miss p95 7.9 / 6.8 ms (NFR-P6 ≤ 50 ms) |
+
+Medians against R1-b: all within ± 10 % except one page with 5 000 strokes (+11 %, route unchanged) and the server boot
+(+17 %); no PRD NFR-P budget broken (P1 Not run, P4 not before Phase 4).
+
+### 6. Final runs (after every change of this gate)
+
+| # | command | exit | duration | result |
+|---|---|---|---|---|
+| 1 | `npm run typecheck` | 0 | 66 s | no type errors (shared, server, web, e2e) |
+| 2 | `npm run lint` | 0 | 77 s | no problems |
+| 3 | `npm test` | 0 | 542 s | shared 14 files · **229 passed** · server 239 files passed, 7 skipped · **2 319 passed**, 7 skipped · web 181 files passed, 1 skipped · **1 211 passed**, 1 skipped (3 759 = 3 739 + 12 server + 8 web GATE-1 tests) |
+| 4 | `npm run build` | 0 | 5 s | PWA **337 precache entries** (5 292.71 KiB) |
+| 5 | `npm run eval -- --set=regression --compare=docs/eval/baseline.json --no-record` | 0 | 11 s | regression **80 / 80**, `no_regressions` (`eval-20261022T055252-79bbf356`) |
+| 6 | `E2E_BUILD=0 npx playwright test --output <scratch>` (full suite, phone + desktop, 05:53 → 06:31) | 1 | 38.1 min | 196 tests: **174 passed, 5 failed, 17 skipped** — `f1-notebook-pages` × 4 (fix 8) and `critic-screens` desktop × 1 (fix 9); no product failure |
+| 7 | `npx tsc -p e2e --noEmit` and `npx eslint` on the three changed specs; at the end again `npm run typecheck` and `npm run lint` on the whole tree | 0 / 0; 0 / 0 | —; 65 s / 76 s | after fixes 7–9; no type error, no lint problem |
+| 8 | `E2E_BUILD=0 npx playwright test e2e/f1-notebook-pages.spec.ts e2e/critic-screens.spec.ts` (06:32 → 06:38) | 0 | 5.5 min | **10 passed** (phone + desktop) |
+| 9 | `E2E_BUILD=0 npx playwright test --output <scratch>` again, full suite (06:38 → 07:16) | 0 | 37.7 min | 196 tests: **179 passed, 0 failed, 17 skipped** (no retry, `retries: 0`) |
+
+E2E per spec (run 6; phone + desktop): `aos-ac01a` 5 (+1 skipped) · `aos-eink` 4 · `aos-no-decorative` 10 · `aos-p1-admin` 4 ·
+`aos-p1-join` 12 · `aos-p1-layers` 2 (+2 skipped) · `aos-p1-note-migration` 2 · `aos-p1-versions` 2 · `aos-p1-vertical-slice` 2
+· `aos-s2-followed-copy` 2 · `aos-s4-official-version` 2 · `critic-screens` 3 (1 failed) · `f1-notebook-pages` 2 (4 failed) ·
+`f2-course-brain` 4 · `f3-study-modes` 4 · `f4-handwriting-audio` 6 · `f5-quality-ops` 6 · `g1-ac02` 2 · `g1-ac03` 2 ·
+`g1-ac04` 4 · `g2-ac05` 2 · `g2-ac06` 2 · `g2-ac29` 2 · `g3-ac08` 2 · `g3-ac09` 2 · `g3-ac13` 2 · `g4-ac10-ac11` 2 ·
+`g4-ac12-ac14-ac15` 2 · `g5-ac16` 6 · `g5-ac17-ac19` 6 · `g6-ac20` 4 · `g6-ac21` 4 · `g6-ac22` 6 · `g6-ac28` 6 · `g7-ac23` 2 ·
+`g7-ac24` 4 · `g7-ac30` 2 · `g8-ac26` 2 · `g8-ac27` 2 · `g8-security` 8 · `h3-reader-notes` 5 (+1 skipped) · `h4-exports-sources` 4
+· `n1-writing` 12 · `r1b-final-critic` 1 (+1 skipped) · `smoke` 4; `perf` 12 skipped (opt-in).
+
+### 7. Acceptance files by name (final tree, `vitest --reporter=json`)
+
+For `docs/REQUIREMENTS_MATRIX.md` «GATE-1 — Phase 1 exit» and PHASE1_REPORT §3 (06:31 → 06:32):
+
+| suite | files and passed tests |
+|---|---|
+| server (26 files, **233 passed**, 0 failed) | `acceptance/` ac01a 7 · ac01b 7 · ac01b-content 8 · g7-ac30 9; `authz/matrix` 10; `data/` **gate1-space-backup 4** · **gate1-backup-download 3**; `moderation/` minimal 14 · review-step2 7 · audit-view 4; `tenancy/` owner-migration 38 · owner-migration.review 11 · **owner-migration.gate1 4** · vault-backup 9 · isolation 12 · **template-dir.gate1 1**; `forks/` followed-copies 11 · publications 12 · publication-moderation 8 · publication-versions 3 · versions 8 · stubs 8 · link-private 6 · course-follow 3 · review-step2 14 · review-step3 12 |
+| web (17 files, **142 passed**, 0 failed) | `test/channels/` admin-sections 4 · admin 14 · channels-screens 11 · join 8 · me 5 · model 10 · notifications 4 · qr 4 · review-step3 14; `test/copies/` copies 13 · lectures-admin-css 3 · lectures-admin 16 · publications 18 · wave2-step0-routes 3; **`GoToPage.gate1` 6** · **`breadcrumbs-css.gate1.critic` 1** · `features/offline/screens` 8 (one GATE-1 case) |
+
+New in this gate (bold): 20 unit / integration tests in 6 files, plus the scratch end-to-end migration script, the
+scratch critic spec and the three spec fixes.
+
+### Files changed by this gate
+
+Code: `apps/server/src/modules/data/{backup,backups,restore,index}.ts`, `apps/server/src/cli/backup.ts`,
+`apps/server/src/system/ownerMigration.ts`, `packages/shared/src/data-api.ts` (additive: `BackupManifest.spaces?`,
+`BackupView.download_blocked_ar`), `apps/web/src/features/offline/BackupsPanel.tsx`,
+`apps/web/src/features/workspace/chrome/GoToPage.tsx`, `apps/web/src/design/components.css`. Test harness:
+`apps/server/test/global-setup.ts` (new), `apps/server/test/helpers/template.ts`, `apps/server/vitest.config.ts`,
+`e2e/support/server.ts` (backup key), `e2e/g7-ac30-restore.spec.ts`, `e2e/perf.spec.ts` (wait for the layer row),
+`e2e/f1-notebook-pages.spec.ts` (indicator name), `e2e/critic-screens.spec.ts` (wait for transitions). Tests
+(new): `apps/server/test/data/gate1-space-backup.test.ts`, `gate1-backup-download.test.ts`,
+`apps/server/test/tenancy/owner-migration.gate1.test.ts`, `template-dir.gate1.test.ts`,
+`apps/web/src/features/workspace/chrome/GoToPage.gate1.test.tsx`, `apps/web/test/breadcrumbs-css.gate1.critic.test.ts`,
+`apps/web/src/features/offline/screens.test.tsx` (one case). Docs: this entry, `docs/academic-os/PHASE1_REPORT.md` (new),
+`docs/academic-os/BUILD_PLAN.md` §1.3 «Release R1-c», `README.md`, `docs/REQUIREMENTS_MATRIX.md`,
+`docs/CAPABILITY_MATRIX.md`, `docs/PERFORMANCE.md`, `docs/BACKUP_RESTORE.md`, `docs/DEPLOY_PHONE_AR.md`,
+`docs/modules/{data,tenancy}.md`. No migration was added or changed.
+
+### Not run in this gate (and why)
+
+Every row with what unblocks it: PHASE1_REPORT §6. In short: any device (iPad + Apple Pencil, S Pen, BOOX, iPhone /
+iPad Safari, a real camera), Render, Cloudflare R2, the phone-only dry run, an installed PWA updating itself, a live AI
+provider (no `ANTHROPIC_API_KEY`), VoiceOver / TalkBack, Safari / Firefox, Web Push, the NFR-OP2 load test and NFR-P1
+pen latency, the Docker image rebuild (no daemon), CI on a GitHub runner (not pushed).
+
+## GATE-1 — adversarial review (2026-10-22, run in this container)
+
+Reviewer of GATE-1 (BUILD_PLAN §1.2, §3.9). Scope: the gate itself — a sample of its claimed checks re-run, every
+acceptance criterion counted «pass», every «Not run», leak paths between users and spaces in the gate's own changes
+(whole-instance backups now holding the subject spaces, the download reason, the owner-migration refusal, the test
+template directory), and whether the Phase 1 report is accurate and readable for the owner. Same environment as the
+gate (Node 22.22, Chromium 141 at `/opt/pw-browsers/chromium`, no `ANTHROPIC_API_KEY`); no other track was editing the
+tree. Read: every file of the gate's list (the six fixes in the snapshot `48bc41e`, the working-tree diff of the three
+specs and the docs).
+
+### 1. Sampled re-runs of the gate's claims
+
+| claim | re-run | result |
+|---|---|---|
+| server acceptance by name (gate: 233 passed in 26 files) | `npx vitest run test/data/gate1-* test/tenancy/{owner-migration,template-dir}.gate1.test.ts test/acceptance/{ac01a,ac01b,ac01b-content,g7-ac30}.test.ts test/authz/matrix.test.ts test/moderation/` | **12 files, 78 passed** — 4 + 3 + 4 + 1 + 7 + 7 + 8 + 9 + 10 + 25, the gate's per-file numbers exactly |
+| one template directory per run (defect 6) | count of `/tmp/medlevo-vault-template-*` before and after that run | 442 → 442 (no new directory left behind) |
+| R1-a's frozen base-migration list (defect 3) | the list in `ownerMigration.ts` against `git ls-tree d0c8ab4 apps/server/src/db/migrations` | identical, 44 names (R1-b `514f356` has the same 44) |
+| Must-row counts of PHASE1_REPORT §5 (63 / 12 / 48 = 123) | script over PRD §7 (`Ph` starts with 1, `Pri` M) and the report's lists | 123 rows, no duplicate, none missing — the arithmetic holds; the classification did not (§2 below) |
+| the two medians > 10 % slower than R1-b (by-targets +11 %, boot +17 %) | the two tests alone, R1-b (`git archive 514f356`) and R1-c alternating: `learning-ink.perf` R1-b × 5 / R1-c × 6, `crash-resume.perf` R1-b × 4 / R1-c × 5 | by-targets p50 median 311 → 300 ms (**−4 %**); restart boot 2 376 → 2 168 ms (**−9 %**), first boot 2 004 → 2 121 ms (+6 %): **not reproduced** — `docs/PERFORMANCE.md` «GATE-1 review» |
+
+### 2. Findings (each reproduced before it was called real)
+
+| # | severity | finding | how it was shown | outcome |
+|---|---|---|---|---|
+| R1 | major (honesty of the verdict) | the report called Phase 1 «closed with blocked Musts» while 48 buildable Must rows and exit criterion X8 (c), (d) were open; PRD §5.2 gives that label only when every runnable Must passes, and BUILD_PLAN §3.9 allows only «complete» or «closed with blocked Musts» — the owner would read that a sign-off closes the phase | PRD §5.2 text against PHASE1_REPORT §1 | **fixed**: «not complete and not closed — the gate does not pass» in PHASE1_REPORT §1, README, BUILD_PLAN §1.3 and status line, REQUIREMENTS_MATRIX «GATE-1» |
+| R2 | major (a «Not run» counted as pass) | 1.10 counted «pass here» although its own reviewer named a blocked part (AC-21 against native-shell strokes; no shell build, OC.2) | REQUIREMENTS_MATRIX P1-T2 row 1.10 | **fixed**: moved to the blocked rows (§5.2: 13) |
+| R3 | major (criterion passed without a test) | 1.16 counted «pass»: only the channel part was ever verified (`srv:channels/tree`); its `[web][e2e]` check of the new editors (publication titles, change notes, reasons) does not exist — the very gap the gate held 20.3 open for | P1-T4 step-1 row «1.16 (channels part) … remains: other editors» | **fixed**: Partial (§5.3) |
+| R4 | major (criterion passed without its CI part) | 23.3 counted «pass»: «it runs in CI from Phase 1» — the CI E2E job runs only on a manual dispatch and CI has never run on a runner; the gate held 23.2 open for the same reason | `.github/workflows/ci.yml` (`if: github.event_name == 'workflow_dispatch' && inputs.e2e`) | **fixed**: Partial (§5.3) |
+| R5 | minor (criterion part without its E2E) | 2.18 «pressing again reopens the same copy» `[e2e]`: S2, S4 and the slice only press «ابدأ الدراسة» once (server and web tests cover the re-press) | grep of every E2E spec for «افتح نسختي»: none | **fixed**: `e2e/aos-p1-vertical-slice.spec.ts` now goes back to the lecture page, presses «افتح نسختي», checks `/study/<same source>` and that the server still has one personal copy (phone + desktop, §3) |
+| R6 | major (process) | the gate's builder set row statuses («GATE-1: Implemented & Tested» on 2.1, 18.2, 2.18, 1.31, 20.18, 18.12); BUILD_PLAN §1.2 lets only the reviewer do that | REQUIREMENTS_MATRIX «GATE-1» table | **fixed**: each verified against the PRD criterion and the named tests (2.1 / 18.2: `aos-p1-admin` archives with its impact first; 1.31: S2 step 3 offline ink lands in her layer; 20.18: S2 step 6; 18.12: X9) and set by the reviewer |
+| R7 | minor (performance honesty) | the performance gate was reported «pass» while AOS-23.2 says a regression > 10 % blocks the exit until fixed or accepted by the owner | AOS-23.2 text against PHASE1_REPORT §2 | **resolved by re-measuring** (§1): neither regression reproduces; PHASE1_REPORT §2 / §7 and PERFORMANCE say so with the numbers; 23.2 stays Partial (not in CI) |
+| R8 | major (owner safety, docs) | the owner's update steps assume a `main` branch; `git ls-remote origin` shows only `claude/sweet-pascal-uafn2f` (the default branch, head = the unverified snapshot `48bc41e`). If Render was set up on that branch with `autoDeployTrigger: commit`, every snapshot pushed during the work deploys at once — R1-c could be live without the pre-upgrade backup the steps require | `git ls-remote origin` (read-only) | **documented** (cannot be fixed or checked from here): PHASE1_REPORT §12 step 0 and `DEPLOY_PHONE_AR.md` tell the owner to check Render's branch and live commit first, and what to do in each case; Not run on Render |
+| R9 | minor (readability for the owner) | the Phase 1 report was English only, full of row ids, and did not say what the owner must decide or how | — | **fixed**: an Arabic «ملخص للمالك» at the top and §13 «The owner's decisions» (the Not-run list; owner question N4) |
+| R10 | minor (wording) | the vertical-slice row said «pass» without its `[dev]` part (offline writing on a real iPad) | the spec's own header | **fixed**: «pass here; `[dev]` Not run (no device)» |
+| R11 | minor (docs) | `BACKUP_RESTORE.md` described the snapshot order without the spaces: a version written while spaces are copied can be in its space but not in the system index; `npm run backup` beside a running server reads the registry a moment before its snapshot | code reading (`backup.ts`, `backups.ts`, `cli/backup.ts`, `forks/publications.ts` — the next republish numbers past every stored version) | **documented**; no data loss (the restore check refuses an archive whose registry names a missing space) |
+
+Probed and found sound (no change): the whole-instance backup routes are platform-admin only
+(`authz/routes.ts` list, `GET/POST/DELETE /api/data/backups*`), so a student, a pending member, a moderator or another
+subject's admin never reaches an archive that now holds every space; `download_blocked_ar` is shown only on that list;
+manifest `spaces[]` paths are pattern-checked (`spaces/<[A-Za-z0-9_-]{1,80}>.sqlite`) and must equal
+`spaces/<db_file>`, so a crafted archive cannot write outside the restore directory; a per-vault archive («نسخة من
+بياناتي», platform per-vault backup) refuses any `spaces` entry; the space list and the system snapshot are taken with no
+await in between in the app; the off-site run uses the same `performBackup`; the shared template directory is written
+atomically (`pool.ts`: build → `VACUUM INTO` tmp → fsync → rename) by every worker.
+
+Not changed (reported): 4.11's layer copy still runs inside the request (392 ms for 5 000 strokes; the P1-T2 reviewer
+accepted it as the Phase 1 part, NFR-OP2 asks for a job); 2.14's «every route, sync pull, search, export and AI scope»
+is met across several reviewers' rows (X9, federated search, stub retrieval) rather than one; ≈ 440 stale
+`/tmp/medlevo-vault-template-*` directories from runs before defect 6 remain (shared `/tmp`, not this review's).
+
+### 3. Final runs of the review (after every change of this review)
+
+| # | command | exit | duration | result |
+|---|---|---|---|---|
+| 1 | `npm run typecheck` | 0 | 70 s | no type errors (shared, server, web, e2e) |
+| 2 | `npm run lint` | 0 | 88 s | no problems |
+| 3 | `E2E_BUILD=0 npx playwright test e2e/aos-p1-vertical-slice.spec.ts e2e/smoke.spec.ts e2e/g7-ac30-restore.spec.ts e2e/aos-no-decorative.spec.ts e2e/f1-notebook-pages.spec.ts e2e/critic-screens.spec.ts --output <scratch>` (phone + desktop, 07:44 → 07:57) | 0 | 12.9 min | **28 passed**, 0 failed — the vertical slice with the new «افتح نسختي» step on both projects |
+| 4 | `npm test` | 0 | 574 s | shared 14 files · **229 passed**; server 239 files + 7 skipped · **2 319 passed** + 7 skipped; web 181 files + 1 skipped · **1 211 passed** + 1 skipped (the gate's 3 759 exactly — this review added no unit test) |
+| 5 | `npm run build` | 0 | 5 s | PWA **337 precache entries** (5 292.71 KiB) |
+| 6 | `npm run eval -- --set=regression --compare=docs/eval/baseline.json --no-record` | 0 | 9 s | regression **80 / 80**, `no_regressions` (`eval-20261022T080740-20d5ca25`) |
+| 7 | perf re-measurement (§1) | 0 | ≈ 15 min | 20 runs, all passed; numbers in `docs/PERFORMANCE.md` «GATE-1 review» |
+
+`/tmp/medlevo-vault-template-*`: 442 before the review, 442 after `npm test` (the R1-b tree used for the perf
+comparison still has the old helper and left 5 directories, which the reviewer removed).
+
+### 4. Statuses the reviewer set (`docs/REQUIREMENTS_MATRIX.md` «GATE-1 — Phase 1 exit»)
+
+2.1, 18.2, 2.18 Implemented & Tested; 1.31, 20.18, 18.12 Implemented & Tested (Phase 1 part); 23.4 Implemented
+(Phase 1 part); **1.16 Partial; 23.3 Partial** (was Implemented & Tested); 1.10 Implemented & Tested here with a
+**Blocked part** (native-shell strokes); 23.1, 23.2 Partial. Phase 1 Must rows: **60 pass here, 13 blocked, 50 open
+although buildable** (PHASE1_REPORT §5) — the gate does not pass (PHASE1_REPORT §1).
+
+### Files changed by this review
+
+`e2e/aos-p1-vertical-slice.spec.ts` (one step: «افتح نسختي» reopens the same copy — AOS-2.18 `[e2e]`; P1-T5's spec, a
+minimal addition); docs: `docs/academic-os/PHASE1_REPORT.md` (Arabic owner summary, verdict, §2, §5 counts, §7
+re-measurement, §9, §11, §12 step 0, §13), `docs/REQUIREMENTS_MATRIX.md` («GATE-1» statuses), `docs/PERFORMANCE.md`
+(«GATE-1 review»), `docs/BACKUP_RESTORE.md` (snapshot order with spaces), `docs/DEPLOY_PHONE_AR.md` (check Render's
+branch first), `docs/academic-os/BUILD_PLAN.md` (status line, §1.3 verdict and update steps), `README.md`, this entry.
+No product code, contract or migration changed.
+
+### Not run in this review (and why)
+
+Everything of PHASE1_REPORT §6 (devices, Render, R2, AI key, Safari / Firefox, screen readers, Docker daemon, a CI
+runner). Not re-run here: the full E2E suite (the gate's second full run passed 179 / 0 / 17; this review re-ran the six
+specs its changes and the gate's changes touch, plus smoke), the owner-migration script against the real R1-a / R1-b
+builds (no server code changed since it ran), the browser perf suite, the critic screenshots (no screen changed).

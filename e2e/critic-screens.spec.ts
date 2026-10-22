@@ -240,6 +240,29 @@ async function touchProbe(page: Page): Promise<string[]> {
   });
 }
 
+/**
+ * (GATE-1) After a colour-scheme switch, wait for the transitions it started before probing: the top-bar link animates
+ * its background (140 ms) while its text colour switches at once, so a probe that runs before the transition ends reads
+ * the light pill behind the dark text (the final full run hit it once under load: «المراجعة» 1.29:1). A fixed 250 ms
+ * was not always enough; finite animations are awaited (capped at 2 s).
+ */
+async function afterSchemeSwitch(page: Page) {
+  await page.waitForTimeout(250);
+  await page
+    .evaluate(() =>
+      Promise.race([
+        Promise.all(
+          document
+            .getAnimations()
+            .filter((a) => Number.isFinite(Number(a.effect?.getComputedTiming().endTime)))
+            .map((a) => a.finished.catch(() => undefined)),
+        ),
+        new Promise((resolve) => setTimeout(resolve, 2_000)),
+      ]),
+    )
+    .catch(() => undefined);
+}
+
 async function settle(page: Page) {
   await page.waitForLoadState('networkidle', { timeout: 6_000 }).catch(() => undefined);
   await expect(page.locator('.ml-spinner:visible, .ml-skeleton:visible').first()).toHaveCount(0, { timeout: 12_000 }).catch(() => undefined);
@@ -346,7 +369,7 @@ test('screen sweep: every top-level screen, light and dark', async ({ page, api 
       const light = await probe(page);
       await page.screenshot({ path: join(outDir, `${name}-light.png`), fullPage: true });
       await page.emulateMedia({ colorScheme: 'dark' });
-      await page.waitForTimeout(250);
+      await afterSchemeSwitch(page);
       const dark = await probe(page);
       await page.screenshot({ path: join(outDir, `${name}-dark.png`), fullPage: true });
       report[name] = { light, dark };
@@ -381,7 +404,7 @@ test('screen sweep: public screens (signed out), light and dark', async ({ brows
     const light = await probe(page);
     await page.screenshot({ path: join(outDir, `${name}-light.png`), fullPage: true });
     await page.emulateMedia({ colorScheme: 'dark' });
-    await page.waitForTimeout(250);
+    await afterSchemeSwitch(page);
     const dark = await probe(page);
     await page.screenshot({ path: join(outDir, `${name}-dark.png`), fullPage: true });
     report[name] = { light, dark };

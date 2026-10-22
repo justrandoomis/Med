@@ -293,6 +293,19 @@
 فانشر R1-b أولًا وأكمل ترقيته. إن نُشر R1-c على بيانات R1-a فإن صفحة الترقية ترفض البدء وتقول: «قاعدة بياناتك من الإصدار R1-a.
 هذا الإصدار يضيف ترحيلات أساسية … انشر أولًا إصدار الترقية إلى الحسابات المتعددة (R1-b)…» — ولا يتغير شيء من بياناتك.
 
+**تحقّق أولًا من الفرع الذي ينشره Render:** Render ← خدمتك ← <bdi dir="ltr">Settings</bdi> ← <bdi dir="ltr">Branch</bdi>، ثم
+<bdi dir="ltr">Events</bdi> لترى الإيداع المنشور الآن. في 2026-10-22 لم يكن في المستودع على GitHub فرع <bdi dir="ltr">main</bdi>؛ الفرع
+الوحيد (والافتراضي) كان <bdi dir="ltr">claude/sweet-pascal-uafn2f</bdi> وآخر إيداع فيه لقطة عمل غير نهائية من هذا الإصدار
+(<bdi dir="ltr">48bc41e</bdi>). إن كان Render ينشر هذا الفرع فكل لقطة تُرفع تُنشر فورًا، وقد يكون R1-c يعمل عندك الآن دون
+النسخة الاحتياطية المطلوبة قبله: إن رأيت في <bdi dir="ltr">Events</bdi> الإيداع <bdi dir="ltr">48bc41e</bdi> أو أحدث وخادمك كان على
+R1-b فخذ نسخة احتياطية الآن وتحقّق منها؛ وإن كان خادمك على R1-a فصفحة الترقية ترفض ولا يتغير شيء. (لم يُجرَّب على Render.)
+
+إن كان الفرع <bdi dir="ltr">main</bdi> يحتوي R1-c بالفعل وخادمك ما زال على R1-a: Render ← <bdi dir="ltr">Manual Deploy</bdi> ←
+<bdi dir="ltr">Deploy a specific commit</bdi> ← اختر إيداع الإصدار R1-b (عنوانه يبدأ بـ «Academic OS Phase 1 release R1-b»، ورمزه
+<bdi dir="ltr">514f356</bdi>) وأكمل ترقيته حتى «اكتملت الترقية» (القسم السابق)، ثم <bdi dir="ltr">Manual Deploy</bdi> ←
+<bdi dir="ltr">Deploy latest commit</bdi>. لكي يبقى هذا الإيداع ظاهرًا في <bdi dir="ltr">main</bdi> ادمج طلب الدمج بـ
+<bdi dir="ltr">Create a merge commit</bdi> لا بـ <bdi dir="ltr">Squash</bdi>. (لم يُجرَّب على Render؛ إن اختلفت الشاشة فما تراه هو الصحيح.)
+
 **قبل الدمج:**
 
 1. تأكّد أن <bdi dir="ltr">MEDLEVO_BACKUP_ENCRYPTION_KEY</bdi> موجود في Render ← <bdi dir="ltr">Environment</bdi> وأن نسخة منه

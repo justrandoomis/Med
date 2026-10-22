@@ -75,8 +75,15 @@ revokes every session and gives every vault a new sync epoch. An archive made by
 `medlevo.sqlite`) still verifies and restores to `medlevo.sqlite` — but this build refuses to **serve** a single-owner
 directory until the owner migration (P1-T1 step 3) ships; its boot check runs on a sandbox copy.
 
-The snapshots are taken one after the other (the system DB first, then each vault), so they are each consistent but
-not one instant: a job enqueued while the vaults were being copied is in its vault but not in the restored job index.
+The snapshots are taken one after the other (the system DB first, then each vault, then each subject space — GATE-1
+review), so they are each consistent but not one instant: a job enqueued while the vaults were being copied is in its
+vault but not in the restored job index, and a publication version or an official version written while the spaces
+were being copied can be in its space but not in the system index (the restored `head_version_no` is the older one; the
+next republish numbers past every version the space holds, `forks/publications.ts`). In the app the registry is read
+and the system DB snapshotted with no await in between, so the archive holds exactly the spaces its registry names;
+`npm run backup` beside a running server reads the registry a moment before its snapshot, so a subject created in that
+moment makes the archive fail its restore check («the space registry does not name exactly the archived spaces») — never
+a silent loss; run the command again.
 The restored server re-indexes every unfinished job of a vault when it first opens that vault (and entries met while a
 vault was locked once it is usable again), so such a job still runs exactly once (P1-T1 step 1 review,
 `apps/server/test/tenancy/step1.review.test.ts`).

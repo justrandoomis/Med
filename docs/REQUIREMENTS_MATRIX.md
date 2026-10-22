@@ -334,10 +334,16 @@ multi-user requirement), not to the single-owner feature it extends. Release nam
 ### GATE-1 — Phase 1 exit (2026-10-22)
 
 The whole R1-c tree verified by GATE-1 (BUILD_PLAN §3.9; gates: `docs/TEST_LOG.md` «GATE-1 — Phase 1 exit gate»; the
-phase verdict, every open Must and the Not-run list: `docs/academic-os/PHASE1_REPORT.md`). **Phase 1 is not complete**:
-«closed with blocked Musts», pending the owner's sign-off, with 48 buildable Must rows still open. The reviewers'
-statuses below are unchanged except where a row's own `[e2e]` criterion is now met by a spec that passed in this gate
-(marked **GATE-1**). Six defects were found and fixed with tests that failed first (PHASE1_REPORT §4).
+phase verdict, every open Must and the Not-run list: `docs/academic-os/PHASE1_REPORT.md`). **Phase 1 is not complete
+and not closed**: the gate does not pass while 50 buildable Must rows and X8 (c), (d) are open (PRD §5.2 — «closed with
+blocked Musts» needs every runnable Must to pass); the owner's decisions are PHASE1_REPORT §13. Six defects were found
+and fixed with tests that failed first, plus three defects of the test harnesses (PHASE1_REPORT §4).
+
+**Reviewer's statuses** (GATE-1 adversarial review, 2026-10-22; BUILD_PLAN §1.2 — the gate proposed the changes marked
+GATE-1, its reviewer verified each against the PRD criterion and the named files and tests and set the status below).
+The reviewer also re-read every row the gate counted as «pass here» against its criterion and the earlier reviewers'
+«remains»: 1.10, 1.16 and 23.3 were moved (rows below); review findings and regression tests: `docs/TEST_LOG.md`
+«GATE-1 — adversarial review».
 
 | row | status after GATE-1 | evidence added by GATE-1 |
 |---|---|---|
@@ -348,16 +354,19 @@ statuses below are unchanged except where a row's own `[e2e]` criterion is now m
 | X9 | Implemented & Tested | `srv:authz/matrix` (10) on the final tree |
 | AC-01a, AC-01b | Implemented & Tested | `srv:acceptance/ac01a` (7), `ac01b` (7), `ac01b-content` (8), `e2e:aos-ac01a` |
 | Scenarios 2 and 4, vertical slice, minimal moderation | Implemented & Tested (env) | `e2e:aos-s2-followed-copy`, `aos-s4-official-version`, `aos-p1-vertical-slice`, `aos-p1-admin` «fixture report»; `srv:moderation/*` (25) |
-| 2.1, 18.2 | **GATE-1: Implemented & Tested** | the `[e2e]` part now runs: `e2e:aos-p1-admin` (tree CRUD, codes, members, roles, audit) phone + desktop |
-| 2.18 | **GATE-1: Implemented & Tested** | «ابدأ الدراسة» through the screens in `e2e:aos-s2`, `aos-s4` and the slice |
-| 1.31, 20.18 | **GATE-1: Implemented & Tested (Phase 1 part)** | writing on a followed copy lands in the personal layer above read-only layers; «تحديث متاح» / update states — `e2e:aos-s2` |
-| 18.12 | **GATE-1: Implemented & Tested (Phase 1 part)** | per-resource access policy — X9 |
+| 2.1, 18.2 | **Implemented & Tested** (GATE-1; reviewer: confirmed) | the `[e2e]` part now runs: `e2e:aos-p1-admin` (add / edit / move, archive with its impact first, codes, members, roles, audit by scope) phone + desktop; server `srv:channels/tree` |
+| 2.18 | **Implemented & Tested** (GATE-1; reviewer: after adding the missing `[e2e]` step) | «ابدأ الدراسة» through the screens in `e2e:aos-s2`, `aos-s4` and the slice; «pressing again reopens the same copy» had only `srv:forks/stubs` / `web:copies` — the reviewer added it to `e2e:aos-p1-vertical-slice` («افتح نسختي» reopens `/study/<same source>`, one personal copy) |
+| 1.31, 20.18 | **Implemented & Tested (Phase 1 part)** (GATE-1; reviewer: confirmed) | writing on a followed copy lands in the personal layer above read-only layers (offline ink over حسن's strokes → her layer); «تحديث متاح» → preview → «طبّق التحديث» — `e2e:aos-s2-followed-copy` steps 3, 4, 6 |
+| 18.12 | **Implemented & Tested (Phase 1 part)** (GATE-1; reviewer: confirmed) | per-resource access policy — `srv:authz/matrix` (X9, every resource type × action × 20 principals) |
+| 1.10 | **Implemented & Tested here; Blocked part** (reviewer: moved out of «pass here») | codec and AC-21 inside a vault as the P1-T2 reviewer set; AC-21 against **native-shell** strokes needs a shell build (OC.2, Apple account) — Not run (no shell). PHASE1_REPORT §5.2 |
+| 1.16 | **Partial** (reviewer) | channel titles and reasons: `srv:channels/tree` «bidi control refused»; publication titles / change notes use the same `plainTextSchema` (`sh:academic-wave2-step0`) — but the criterion's `[web][e2e]` check of the new editors does not exist (same gap as 20.3) |
+| 23.3 | **Partial** (reviewer; was Implemented & Tested) | the sweep `e2e:aos-no-decorative` passes here (every new screen, 390 / 1280); «it runs in CI from Phase 1» is not met: `.github/workflows/ci.yml` runs the E2E job only on a manual dispatch, and CI has not run on a runner |
 | 20.2, 20.20, OC.5 | as set (env); devices Not run | GATE-1 critic: 30 new screens × light / dark / e-ink × 390 / 1280 px, axe 0 serious after **defect 4** (page indicator `label-content-name-mismatch`, `web:features/workspace/chrome/GoToPage.gate1`) |
 | 20.5 | Partial | **defect 5**: breadcrumb links 44 × 44 on a coarse pointer (`web:test/breadcrumbs-css.gate1.critic`); a real phone / iPad Safari Not run |
-| 23.3 | Implemented & Tested | **defect 2**: «نزّل النسخة» was a dead link when the server refuses the download (several accounts, no key) → disabled with the server's reason (`srv:data/gate1-backup-download` (3), `web:features/offline/screens` «GATE-1 …») |
-| 23.1 | **Partial — awaiting the owner's sign-off** | `docs/academic-os/PHASE1_REPORT.md` |
-| 23.2 | Partial (run here, not in CI) | PHASE1_REPORT §7: this build against R1-b on the same machine, same tests |
-| 23.4 | Implemented (Phase 1 part) | PHASE1_REPORT §8 (measured database sizes; no deployment yet, so no real usage numbers) |
+| 23.3 (backups screen) | evidence for the row above | **defect 2**: «نزّل النسخة» was a dead link when the server refuses the download (several accounts, no key) → disabled with the server's reason (`srv:data/gate1-backup-download` (3), `web:features/offline/screens` «GATE-1 …») |
+| 23.1 | **Partial** (reviewer) | `docs/academic-os/PHASE1_REPORT.md` exists with every PRD §5.2 part (an Arabic owner summary and the owner's decisions §13 added by the review); the phase is not closed and the next phase may not start (§1) |
+| 23.2 | **Partial** (reviewer: run here, not in CI; the gate's two medians > 10 % did not reproduce in the reviewer's alternating re-runs, −4 % / −9 % — PHASE1_REPORT §7) | PHASE1_REPORT §7 / `docs/PERFORMANCE.md` «GATE-1»: R1-b (`514f356`) and this build on the same VM, same suites (server × 3 each, browser × 1 each): no NFR-P budget broken (P2, P5, P6 met; P3 as before; P1 Not run), two server medians > 10 % slower (5 000-stroke page read +11 %, boot +17 %) recorded; the opt-in browser suite could not run before (harness fix in `e2e/perf.spec.ts`) |
+| 23.4 | **Implemented (Phase 1 part)** (reviewer: confirmed) | PHASE1_REPORT §8, §11 (measured database sizes; no deployment yet, so no real usage numbers) |
 | 21.45, 21.9 | Partial | unchanged: no per-space storage quota on space uploads |
 
 ### AOS-P1-T4 step 3 — the web: app shell, «القنوات», subject page, join + QR, «أنا», «التنبيهات», «إدارة القنوات» (builder 2026-10-22; reviewed 2026-10-22)

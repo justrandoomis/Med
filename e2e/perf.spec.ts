@@ -413,8 +413,12 @@ test('dense page, 5 layers: ink repaint before / after the tile cache (zoom, war
     const tab = page.getByRole('tab', { name: 'الطبقات' });
     if (!(await tab.isVisible())) await page.getByRole('button', { name: 'الصفحات والفهرس والعلامات' }).first().click();
     await tab.click();
+    // (GATE-1) the 4 seeded layers reach this browser through the sync pull, which may still be applying the 5 000
+    // strokes after the reader has painted them from its own download: wait for the row (not part of the measurement)
+    const eye = page.getByRole('button', { name: new RegExp(`^(أخفِ|أظهر) طبقة «${title}»`) });
+    await expect(eye).toBeVisible({ timeout: 300_000 });
     const at = await now(page);
-    await page.getByRole('button', { name: new RegExp(`^(أخفِ|أظهر) طبقة «${title}»`) }).click();
+    await eye.click();
     return at;
   }
 

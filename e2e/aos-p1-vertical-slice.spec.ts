@@ -75,6 +75,19 @@ test('Phase 1 vertical slice: join → study → write offline → follow a clas
       personal = await eventually(async () => (await zainab!.api.get<{ copies: DocumentCopyView[] }>(`/api/copies?space_id=${w.spaceId}&lecture_id=${w.lecture.id}`)).copies.find((c) => c.mode === 'personal') ?? null, Boolean, 'her personal copy');
       await expect(page.getByRole('region', { name: 'نسختي من المحاضرة الرسمية' })).toBeVisible({ timeout: 30_000 });
     });
+    await test.step('(GATE-1 review, AOS-2.18 `[e2e]`) pressing again reopens the same copy: «افتح نسختي» on the lecture page, no second copy', async () => {
+      await page.goBack();
+      await expect(page.getByRole('heading', { level: 1, name: w.lecture.title })).toBeVisible();
+      const reopen = page.getByRole('link', { name: 'افتح نسختي' });
+      await expect(reopen).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByRole('button', { name: 'ابدأ الدراسة', exact: true })).toHaveCount(0);
+      await reopen.click();
+      await waitForWorkspace(page);
+      expect(new URL(page.url()).pathname).toBe(`/study/${encodeURIComponent(personal!.source_id)}`);
+      await expect(page.getByRole('region', { name: 'نسختي من المحاضرة الرسمية' })).toBeVisible({ timeout: 30_000 });
+      const mine = (await zainab!.api.get<{ copies: DocumentCopyView[] }>(`/api/copies?space_id=${w.spaceId}&lecture_id=${w.lecture.id}`)).copies.filter((c) => c.mode === 'personal');
+      expect(mine.map((c) => c.id), 'still exactly one personal copy of the lecture').toEqual([personal!.id]);
+    });
     const src = personal!.source_id;
     const v1 = personal!.lecture!.version_id;
     const ids = await pageIds(zainab!, src, v1);

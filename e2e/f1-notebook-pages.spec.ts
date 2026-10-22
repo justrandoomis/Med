@@ -12,6 +12,10 @@ import { deflateSync, crc32 } from 'node:zlib';
 import { CSRF_HEADERS, expect, openWorkspace, screenshot, setupOwner, test, waitForWorkspace } from './support';
 import { mouseStroke, pickInkTool, viewMenuItem } from './g6-helpers';
 
+/** (GATE-1) the page indicator's spoken position «n من N», whatever the shown words before it (WCAG 2.5.3 fix:
+  the name now starts with the shown words, e.g. «ص 12، 2/4 (2 من 4)، الصفحة 2 في الملف. الانتقال إلى صفحة») */
+const at = (n: number, of: number) => new RegExp(`(\\(|، )${n} من ${of}(\\)|\\.|،)`);
+
 // offline, the browser reports the failing background requests (sync, capabilities) as console errors — expected here
 test.use({ serviceWorkers: 'allow', allowedConsoleErrors: [/ERR_INTERNET_DISCONNECTED|Failed to load resource|Failed to fetch|NetworkError|net::ERR/i] });
 
@@ -281,13 +285,13 @@ test('reader: a note page inserted after a lecture page sits in the page sequenc
   // restored offset there lands one page later even without note pages — a separate, pre-existing reader issue.)
   const indicator = page.locator('.wk-pageind').first();
   await openWorkspace(page, up.source_id, { pageIndex: 1 });
-  await expect(indicator).toHaveAttribute('aria-label', /، 2 من 4\./);
+  await expect(indicator).toHaveAttribute('aria-label', at(2, 4));
   await page.waitForTimeout(2000); // note pages loaded, the session saved (debounced)
-  await expect(indicator).toHaveAttribute('aria-label', /، 2 من 4\./);
+  await expect(indicator).toHaveAttribute('aria-label', at(2, 4));
   await page.goto(`/study/${up.source_id}`); // no place in the URL: the saved session decides
   await waitForWorkspace(page);
   await page.waitForTimeout(1000);
-  await expect(indicator).toHaveAttribute('aria-label', /، 2 من 4\./);
+  await expect(indicator).toHaveAttribute('aria-label', at(2, 4));
 });
 
 /**
@@ -356,16 +360,16 @@ test('PDF links: an internal link opens its page (Back returns); an external URL
 
   await openWorkspace(page, up.source_id, { pageIndex: 0 });
   const indicator = page.locator('.wk-pageind').first();
-  await expect(indicator).toHaveAttribute('aria-label', /، 1 من 3\./);
+  await expect(indicator).toHaveAttribute('aria-label', at(1, 3));
   const firstPage = page.locator('.wk-page[data-page-index="0"]');
 
   // internal: «رابط داخلي إلى الصفحة 3 في الملف» → page 3, Back returns to page 1
   const internal = firstPage.getByRole('button', { name: 'رابط داخلي إلى الصفحة 3 في الملف' });
   await expect(internal).toHaveCount(1, { timeout: 30_000 });
   await internal.click();
-  await expect(indicator).toHaveAttribute('aria-label', /، 3 من 3\./);
+  await expect(indicator).toHaveAttribute('aria-label', at(3, 3));
   await page.getByRole('button', { name: 'العودة إلى موضعك' }).first().click();
-  await expect(indicator).toHaveAttribute('aria-label', /، 1 من 3\./);
+  await expect(indicator).toHaveAttribute('aria-label', at(1, 3));
 
   // external: a confirmation first — cancelling opens nothing; confirming opens a NEW window (no opener)
   const ext = firstPage.getByRole('button', { name: 'رابط خارجي: example.org' });
@@ -390,5 +394,5 @@ test('PDF links: an internal link opens its page (Back returns); an external URL
   expect(await popup.evaluate(() => window.opener)).toBeNull();
   await popup.close();
   // the reader did not move
-  await expect(indicator).toHaveAttribute('aria-label', /، 1 من 3\./);
+  await expect(indicator).toHaveAttribute('aria-label', at(1, 3));
 });

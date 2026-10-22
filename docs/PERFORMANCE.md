@@ -213,6 +213,108 @@ canvas lives on a GPU — the tiles use CPU surfaces for that reason), Safari an
   a dense page once in greys (cold), and both palettes' grids stay warm afterwards (`test/ink/tiles.test.ts`). The
   warm-repaint numbers above are unaffected (same key within one palette); re-run in the review's E2E (see TEST_LOG).
 
+## GATE-1 (2026-10-22) — release R1-c against release R1-b, same machine, same suites
+
+AOS-23.2 performance gate of Phase 1 (BUILD_PLAN §3.9). **One harness, two builds:** the R1-b release (`git archive
+514f356`, sharing this checkout's `node_modules`) and this tree (R1-c), run one after the other on a quiet VM (no other
+agent; load average 1–3.5 during the browser runs, ≈ 1.2 during the server runs), same fixtures cache. Server: `MEDLEVO_PERF=1
+npx vitest run test/perf --no-file-parallelism`, **3 runs per release** alternating (04:44 → 05:36 UTC), medians below
+(range in brackets). Browser: `MEDLEVO_PERF=1 npx playwright test e2e/perf.spec.ts --project=desktop`, one run per
+release (05:04 → 05:21). Raw JSON and logs: scratch `gate1/perf/`.
+
+**Harness fix first (both trees, identical spec).** «dense page, 5 layers» clicked a layer row in the layers panel 15 s
+after opening; the four seeded layers reach the browser through the sync pull, which on a page of 1.13 M points may
+still be running then — the click timed out on R1-b **and** R1-c, and because the file is serial the three tests after
+it never ran (so the opt-in suite had silently stopped working since R1-a). The spec now waits (≤ 5 min) for the row
+before the timed click; the measurement itself is unchanged.
+
+**Server (median of 3)** — everything within ± 10 % of R1-b except two medians (marked):
+
+| scenario | R1-b | R1-c | change |
+|---|---|---|---|
+| 300-page lecture: processing job (ms) | 22 945 (21 936–23 141) | 23 337 (23 302–23 434) | +2 % |
+| 300-page lecture: per page p50 / p95 (ms) | 31.8 / 122.5 | 32.9 / 124.8 | +3 % / +2 % |
+| 300-page lecture: process max RSS (MB) | 777 (770–787) | 827 (816–834) | +6 % |
+| scoped FTS p50 («mmol» / an Arabic phrase, ms) | 1.1 / 1.0 | 1.2 / 1.0 | — |
+| `GET /api/search` universal p50 / p95 (ms) | 33.2 / 47.5 | 33.9 / 52.0 | +2 % / +10 % |
+| page list of 300 pages p50 (ms) | 6.6 | 6.4 | −3 % |
+| dense two-column page p50 / p95 (ms) | 84.5 / 120.4 | 87.3 / 132.0 | +3 % / +10 % |
+| scanned page OCR p50 (ms) | 7 453 | 7 310 | −2 % |
+| 48 MP photo: processing job (ms) | 16 | 17 | — |
+| 2 000-question bank: processing / extraction (ms) | 10 517 / 23 116 | 10 616 / 23 145 | +1 % / 0 % |
+| Question Vault first page / by source p50 (ms) | 57.3 / 62.5 | 56.8 / 58.9 | −1 % / −6 % |
+| sync push: cards / review events / ink strokes (ops / s) | 649 / 1 686 / 1 530 | 606 / 1 730 / 1 497 | −7 % / +3 % / −2 % |
+| review queue / learning home / forecast p50 (ms) | 124.8 / 133.4 / 423.9 | 125.2 / 130.8 / 446.1 | 0 % / −2 % / +5 % |
+| **one page with 5 000 strokes (`by-targets`) p50 (ms)** | 258 (257–279) | 286 (278–346) | **+11 %** |
+| that page's payload (MB, JSON, no HTTP compression) | 7.6 | 7.6 | 0 % |
+| fresh device: 20 000-change pull (ms) | 1 240 | 1 206 | −3 % |
+| **restart after SIGKILL: boot (ms)** | 1 849 (1 847–1 963) | 2 157 (1 950–2 159) | **+17 %** |
+| restart → job resumed / completed (ms) | 2 257 / 15 250 | 2 284 / 16 100 | +1 % / +6 % |
+| Course Brain cold / warm recompute (ms) | 1 390 / 843 | 1 480 / 876 | +6 % / +4 % |
+| Course Brain map / knowledge view (ms) | 207 / 467 | 215 / 459 | +4 % / −2 % |
+
+The two marked medians: the `by-targets` route's own code is unchanged since R1-b (on its request path R1-c only
+added two entries to the guard's list of public routes; the gap is ≈ 28 ms on a 7.6 MB JSON answer, inside R1-c's own
+run-to-run spread of 278–346 ms) and the boot registers six more server modules (channels, notifications, moderation,
+the admin audit view, lectures, copies / publications) — the crashed job resumes only 1 % later all the same. Neither has a budget; both are recorded, not fixed. Every perf assertion of the suite
+(Course Brain map < 1 s, recompute < 4 s, longest slice < 500 ms, crash resume without duplicates, …) passed in all
+six runs.
+
+**Browser (desktop 1280 × 800, headless Chromium 141; one run each)**
+
+| scenario | R1-b | R1-c |
+|---|---|---|
+| 300-page lecture: navigation → first page canvas (ms) | 1 369 | 1 320 |
+| scroll 300 pages: page painted p50 / p95 (ms) | 217 / 449 | 229 / 407 |
+| scroll 300 pages: longest task (ms) · page canvases in the DOM (max) | 328 · 3 | 164 · 3 |
+| JS heap after visiting all pages (MB) | 23.2 | 23.2 |
+| 5 000 strokes × 40 samples: open → all painted (ms) · longest task (ms) | 7 389 · 278 | 7 860 · 149 |
+| a new stroke: pointerup → committed (ms) · long tasks | 74 · 0 | 71 · 0 |
+| dense page (1.13 M points, tiles): show a hidden layer again — warm 6 / 6 (ms) | 0 | 0.1 |
+| dense page: zoom back to a scale built 1.5 s after opening (ms until the last tile) | 2 580 (4 / 6 warm) | 2 409 (4 / 6 warm) |
+| dense page: longest task during that zoom (ms) | 82 | 67 |
+| dense page: longest task while writing during a re-raster (ms) | 84 | 87 |
+| dense page without tiles (reference): one zoom repaint (ms) | 1 660 | 1 658 |
+| review hub first visit: sync + fold of 3 000 cards / 12 000 events (s) · longest task (ms) | 130 · 384 | 134 · 495 |
+| review hub later visit: fold from IndexedDB (ms) | 726 | 785 |
+| reload right after typing a note: note back (ms after ready) · strokes kept | 14 · 3 / 3 | 69 · 3 / 3 |
+| offline → online: everything on the server after (s) | 42.8 | 46.0 |
+
+No browser number moved beyond what one run on this VM varies (the I2 runs above: note recovery 49–141 ms, review-hub
+longest task up to 639 ms). **Zoom back on a dense page:** with the harness's 1.5 s between opening and the first zoom,
+2 of the 6 tiles of the first grid were rebuilt on the way back, on R1-b and R1-c alike (P1-T2's run on 2026-10-21 found
+6 / 6). A diagnostic run of R1-c that let the page settle 3 s before zooming got **6 / 6 warm, 6.1 ms, 0 long tasks** —
+so the tiles built in the first seconds after opening a dense page are being invalidated by something still landing on
+the page (probably the reader's background merge of the page's strokes); the cold tiles are drawn in slices behind the
+scaled stand-in, never as a long task. Recorded as a finding, not fixed (same in R1-b).
+
+**PRD NFR-P budgets on this build**
+
+| budget | measured here (R1-c) | status |
+|---|---|---|
+| NFR-P1 pen-to-pixel latency per device | — | **Not run** (no iPad, S Pen, BOOX; needs ≥ 240 fps video) |
+| NFR-P2 warm repaint < 200 ms; no long task > 100 ms while writing | warm grids 0.1 ms (layer) and 6.1 ms (zoom, settled page); writing during a re-raster: longest task 87 ms | **met** in the CI harness (desktop Chromium); zoom back within ~1.5 s of opening re-rasters 2 of 6 tiles in slices (finding above); devices Not run |
+| NFR-P3 5 000-stroke page ≤ 8 MB on the wire | 7.6 MB (40-sample strokes, v1 JSON); 7.84 MB for the realistic page with `accept-ink: 2` (P1-T2, unchanged) | met for packed points only, no HTTP compression (unchanged since R1-a) |
+| NFR-P4 merge of two offline deltas ≤ 50 ms | — | not applicable before Phase 4 (no multi-writer layers) |
+| NFR-P5 scoped search p95 ≤ 50 ms on a 250k-chunk space | raw p50 **26.0 ms**, raw p95 **42.4 ms** over 48 runs; p95 of each query's best of 3 = 40.2 ms (`test/search/federation.test.ts`, alone on the quiet VM; built in 37.9 s) | **met** (new in R1-c) |
+| NFR-P6 vault binding p95 ≤ 50 ms on a pool miss | pool miss p50 3.0 ms / p95 **6.8 ms** (R1-b 3.5 / 7.9); bound-statement overhead p50 0.46 µs, p95 2.2 µs (R1-b 0.03 / 0.6 µs) | **met** |
+
+### GATE-1 review (2026-10-22) — the two medians > 10 % re-measured
+
+AOS-23.2 blocks a phase exit on a regression of more than 10 % until it is fixed or the owner accepts it, so the gate's
+reviewer re-ran exactly the two tests that showed one, alone, R1-b (the same `git archive 514f356` tree) and R1-c
+**alternating** on the quiet VM (load average ≈ 1), each run a fresh `npx vitest run` with `MEDLEVO_PERF=1`:
+
+| test | R1-b runs (p50 or value per run) | R1-c runs | median R1-b → R1-c |
+|---|---|---|---|
+| `learning-ink.perf` — one page with 5 000 strokes (`by-targets`), p50 of 10 reads | 311, 318, 314, 310, 302 ms | 323 (run alone first), 272, 317, 293, 284, 307 ms | 311 → 300 ms (**−4 %**) |
+| `crash-resume.perf` — restart after SIGKILL, boot | 2 488, 2 578, 2 056, 2 264 ms | 2 168, 2 158, 2 357, 2 266, 2 058 ms | 2 376 → 2 168 ms (**−9 %**) |
+| `crash-resume.perf` — first boot | 2 008, 1 999, 1 996, 2 110 ms | 2 121, 2 414, 2 207, 2 105, 2 007 ms | 2 004 → 2 121 ms (+6 %) |
+
+Neither +11 % nor +17 % reproduces; both fall inside one release's run-to-run spread on this VM (R1-b's own restart boot
+spans 2 056–2 578 ms). **No regression > 10 % is established**; the gate's medians of 3 stay recorded above. Raw JSON
+and logs: scratch `gate1-review/perf/`. Still run here, not in CI (AOS-23.2 asks for CI).
+
 ## Resilience (§58)
 
 | scenario | result |

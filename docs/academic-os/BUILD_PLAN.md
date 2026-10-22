@@ -4,8 +4,9 @@
 > P1-T3, with PL-0 beside them) is built, reviewed and verified as of 2026-10-21 (§1.3, «Release R1-a»); release R1-b
 > (P1-T1 steps 1–3, with parity N1 waves 1–2 beside it) is built, reviewed and verified in this container as of
 > 2026-10-21 (§1.3, «Release R1-b»); release R1-c (wave-2 contracts, P1-T4, P1-T5) is built, reviewed and verified
-> by GATE-1 as of 2026-10-22 (§1.3, «Release R1-c»). **Phase 1 is not complete**: it is reported «closed with blocked
-> Musts», pending the owner's sign-off, with buildable Musts still open ([PHASE1_REPORT.md](PHASE1_REPORT.md)).
+> by GATE-1 as of 2026-10-22 (§1.3, «Release R1-c»). **Phase 1 is not complete and not closed**: the gate does not pass
+> while buildable Musts are open; the owner signs off only the Not-run list
+> ([PHASE1_REPORT.md](PHASE1_REPORT.md) §1, §13).
 > **What it is:** the delivery plan for the Academic OS in the spec's phase order (spec §23 «Implementation Priority»).
 > Each phase is split into **build tracks**; each track is built by **one builder agent** and checked by **one adversarial
 > reviewer agent**. Phase 1 is planned in full detail; Phases 2–5 at track level.
@@ -241,7 +242,7 @@ Nothing was run on a device, on Render, on Cloudflare R2 or with an AI key.
 | P1-T5 step 1 — official lectures | official lectures and versions in the subject space, approval, publish with the page map, corrections, withdraw / rights takedown, attachments, exam dates, the updates feed, duplicates, «المحتوى الرسمي» / «الملفات المكررة» | «AOS P1-T5 step 1 — adversarial review» |
 | P1-T5 step 2 — study copies | «ابدأ الدراسة» (a stub in the student's vault, no page bytes copied), course-follow and new-version fan-out with safe note copying, link a private lecture to its official twin (Partial), promote a moderator's lecture, federated search with scope tokens, stub retrieval | «AOS P1-T5 step 2 — adversarial review» |
 | P1-T5 step 3 — course-only explanations | publish chosen layers course-only, independent fork and followed copy, update preview / apply / skip / auto, moderation hide / restore, withdrawal, account deletion | «AOS P1-T5 step 3 — adversarial review» |
-| GATE-1 fixes | spaces in every whole-instance backup; the backup download says why it is unavailable; R1-c tells an R1-a owner to deploy R1-b first; the page indicator's accessible name; breadcrumb touch targets; one test template directory per run | PHASE1_REPORT §4 |
+| GATE-1 fixes | spaces in every whole-instance backup; the backup download says why it is unavailable; R1-c tells an R1-a owner to deploy R1-b first; the page indicator's accessible name; breadcrumb touch targets; one test template directory per run; the opt-in browser perf suite runs again | PHASE1_REPORT §4 |
 
 **Migrations actually shipped:** base `0163_pinned_region`, `0860_document_copy` (applied to each vault when it is first
 opened); system `2050_directory`, `2060_lecture_copy`, `2100_permissions`, `2150_publications`, `2200_notifications`,
@@ -252,13 +253,26 @@ R1-b release) and **R1-c refuses to migrate an R1-a owner itself** (it says to d
 **GATE-1 verification:** first pass on the whole tree — typecheck, lint, build, evaluation (80 / 80) and `npm test`
 green, full E2E 177 passed / 2 failed / 17 skipped (`g7-ac30-restore` phone + desktop); the owner migration end to end
 against the real R1-a and R1-b releases (R1-a → R1-b → R1-c 43 / 43 checks; R1-a → R1-c refused, nothing changed,
-8 / 8); the critic pass of the 30 new screens at 390 / 1280 px in light, dark and e-ink; the performance gate against
-R1-b. Six defects found and fixed with tests that failed first (PHASE1_REPORT §4). Final gates on the final tree:
-⟦FINAL_GATES_SHORT⟧
+8 / 8); the critic pass of the 30 new screens at 390 / 1280 px in light, dark and e-ink (180 screenshots, 0 findings
+after the fixes); the performance gate against R1-b (same VM, same suites: no PRD NFR-P budget broken — P2, P5, P6 met,
+P1 Not run; two server medians > 10 % slower in the gate's run, not reproduced by its reviewer — PHASE1_REPORT §7). Six defects found and fixed with tests that
+failed first, plus three defects of the test harnesses (PHASE1_REPORT §4). Final gates on the final tree:
+typecheck, lint, `npm test` (shared 229, server 2 319 + 7 skipped, web 1 211 + 1 skipped), build (337 precache
+entries) and the evaluation (80 / 80, `no_regressions`) green; full E2E 174 passed / 5 failed / 17 skipped, the 5 being
+test defects (an E2E assertion of the page indicator's old name, a probe reading a colour transition) — fixed, the two
+specs re-run 10 / 10, then a **second full E2E: 179 passed, 0 failed, 17 skipped**. **Phase 1 verdict (after the gate's adversarial
+review): not complete and not closed** — the gate does not pass while 50 buildable Must rows and X8 (c), (d) are open
+(«closed with blocked Musts» needs every runnable Must to pass, PRD §5.2); 13 rows are device- or account-blocked; the
+owner signs off the Not-run list (PHASE1_REPORT §1, §5, §13). The two medians > 10 % slower than R1-b did not
+reproduce in the review's alternating re-runs (−4 %, −9 %; PHASE1_REPORT §7). The review's findings and runs:
+`docs/TEST_LOG.md` «GATE-1 — adversarial review».
 
 **Updating the owner's Render deployment (owner-facing steps).** The Arabic version is `docs/DEPLOY_PHONE_AR.md`
-«التحديث إلى الإصدار R1-c»; PHASE1_REPORT §12 has the same steps in English. In short: (1) be on R1-b with «اكتملت
-الترقية» first; (2) check `MEDLEVO_BACKUP_ENCRYPTION_KEY` is set and saved; (3) «نسخ احتياطي الآن» → «نجحت» — the only
+«التحديث إلى الإصدار R1-c»; PHASE1_REPORT §12 has the same steps in English. In short: (0) check which branch
+and commit Render deploys — on 2026-10-22 the repository had no `main`, only `claude/sweet-pascal-uafn2f` at the
+work-in-progress snapshot (GATE-1 review); (1) be on R1-b with «اكتملت
+الترقية» first (if `main` already holds R1-c: Render → Manual Deploy → «Deploy a specific commit» → `514f356`, finish the
+upgrade, then «Deploy latest commit»); (2) check `MEDLEVO_BACKUP_ENCRYPTION_KEY` is set and saved; (3) «نسخ احتياطي الآن» → «نجحت» — the only
 way back; (4) merge, wait for Live (no maintenance page); (5) tap «تحديث» on each device; create the tree, subjects and
 a class code or invite link in «إدارة القنوات» (no open sign-up); (6) back up again and «تحقّق من الاستعادة»; (7) to go
 back, restore the step-3 backup — a Render rollback to R1-b fails to start on R1-c data, on purpose.
@@ -275,7 +289,7 @@ back, restore the step-3 backup — a Render rollback to R1-b fails to start on 
 | Docker image rebuild, CI on a GitHub runner | no Docker daemon here; not pushed |
 
 **Carried forward:** X8 (c) (19H.3: unplaced linked items in no review list; inserted note pages not copied); no
-per-space backup artifact and no per-space storage quota; the 48 open buildable Musts of PHASE1_REPORT §5.3; the heavy
+per-space backup artifact and no per-space storage quota; the 50 open buildable Musts of PHASE1_REPORT §5.3; the heavy
 study-copy bar on phones; owner question N4; every «remains» item of the track reviews.
 
 ### 1.4 Coordination with other work
