@@ -10,6 +10,7 @@ import { EmptyState, ErrorState, Skeleton, StatusPill, buttonClass } from '../..
 import { api, errorMessage } from '../../../lib/api';
 import { useCapabilities } from '../../../lib/capabilities';
 import type { SourceDocument } from '../data/useSourceDocument';
+import { AiAllowanceNote } from '../../../lib/aiAllowance';
 
 function statusTone(s: CaseSummaryView['status']): 'success' | 'warning' | 'neutral' {
   return s === 'ready' ? 'success' : s === 'needs_review' ? 'warning' : 'neutral';
@@ -88,6 +89,7 @@ export function CasesTab({ doc, online, examMode }: { doc: SourceDocument; onlin
         </Link>
       </div>
       {!generation.available && <p className="wk-muted">{`توليد حالة بالذكاء الاصطناعي: ${generation.reason ?? 'غير متاح.'}`}</p>}
+      <AiAllowanceNote />
     </div>
   );
 }

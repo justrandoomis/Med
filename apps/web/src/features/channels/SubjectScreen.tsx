@@ -22,6 +22,7 @@ import {
 } from '@medlevo/shared';
 import { Breadcrumbs, EmptyState, ErrorState, LoadingState, StatusPill, Switch, Tab, TabList, TabPanel, Tabs, buttonClass, useToast } from '../../design';
 import { errorMessage, isApiError } from '../../lib/api';
+import { MixedText } from '../../lib/MixedText';
 import { formatDate, formatRelative } from '../../lib/time';
 import { usePageTitle } from '../../lib/usePageTitle';
 import { useOnline } from '../../lib/useOnline';
@@ -138,7 +139,7 @@ export function SubjectScreen() {
       <Breadcrumbs items={[{ label: 'القنوات', to: '/channels' }, ...n.path.map((p) => ({ label: p.title, to: `/channels/${p.id}` })), { label: n.title }]} />
       <header className="ml-page__header ch-subject__header">
         <h1 className="ml-page__title">
-          <bdi>{n.title}</bdi>
+          <MixedText text={n.title} />
         </h1>
         <p className="ch-subject__meta">
           <span>مادة</span>
@@ -310,7 +311,7 @@ function LecturesTab({ subject, spaceId }: { subject: ChannelNodeDetail; spaceId
                 <span className="ml-list-item__text">
                   <span className="ml-list-item__subtitle">{meta}</span>
                   <span className="ml-list-item__title ch-lecture-row__title">
-                    <bdi>{l.title}</bdi>
+                    <MixedText text={l.title} />
                   </span>
                 </span>
                 <span className="ml-list-item__trailing ch-row__badges">

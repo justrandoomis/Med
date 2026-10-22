@@ -538,7 +538,7 @@ Two defects of this module were found by the gate and fixed with tests that fail
   `test/tenancy/template-dir.gate1.test.ts`. The stale directories left by earlier runs were not removed (shared
   `/tmp`; the environment's permission policy refused it).
 
-## Phase 1 completion — track C1: platform, privacy, quotas, data model (2026-10-22, builder — awaiting review)
+## Phase 1 completion — track C1: platform, privacy, quotas, data model (2026-10-22, builder; reviewed below)
 
 Closes the C1 rows of `docs/academic-os/PHASE1_REPORT.md` §5.3 (status per row: `docs/REQUIREMENTS_MATRIX.md`,
 section «Phase 1 completion — track C1»). Every new test below failed before its change unless it is marked
@@ -640,3 +640,172 @@ the study-book call sites of `cacheKeys`, `modules/channels/index.ts` (one route
 * AOS-21.12 «document / fork column» for strokes that live in a SPACE — there are no space strokes before the Phase-2
   group layers; in a vault the document is the anchor's source and the fork its `document_copy`.
 * A real Cloudflare R2 bucket, a real AI provider, a device: Not run (no account / key / device here).
+
+### Phase 1 completion — track C1: adversarial review (2026-10-22, reviewer)
+
+Read every file the C1 builder changed (report `C1-server.json`), with the review scope: quota bypass (concurrent and
+chunked uploads, exports, copies), the per-space backup leaking another space or a vault, the restore check writing
+outside its directory, consent bypass on every AI path, the insecure-cookie refusal on every start path, the ESLint
+boundary rule actually catching a violation, AI cache cross-user hits. Each finding below was reproduced by a test that
+failed before the fix (`*.c1review.test.ts`).
+
+| # | sev | finding | fix | regression test |
+|---|---|---|---|---|
+| R1 | major | **Official copies were charged to the student's quota.** A stub («ابدأ الدراسة», a course follow's fan-out, a linked lecture) holds stored_file rows for the SPACE's blobs and the vault quota summed every row: a moderator's uploads filled a following student's 2 GB until the student's OWN upload was refused (`QUOTA_EXCEEDED`), against PRD §6.2 («≈ 1.5 MB of stubs per student») and §14 (shared content is the space's) | `system/quota.ts` `vaultOwnFilesSql`: a file counts when a non-stub row references it (the foreign keys into stored_file are read from the schema) or no stub does; the checks try the cheap upper bound (every row) first and compute the exact figure only near the limit; a vault without stubs reads the plain sum | `srv:tenancy/quota-copies.c1review` (4: a copy leaves the quota unchanged; a following member's own upload still fits; a file uploaded privately BEFORE it became official keeps counting; the space counts the official file) |
+| R2 | major | **https origin listed second → non-Secure session cookie.** The default came from the FIRST origin only, so `MEDLEVO_ORIGIN=http://lan:8787,https://public` started with a cookie without `Secure` over https — the start the row says must be refused | `config.ts`: any https origin makes the default `Secure` (an explicit `false` with https stays refused) | `srv:deploy/cookie-secure.c1review` (every order and source of origins × every value of the setting: no started config pairs https with a non-Secure cookie) |
+| R3 | major | **The boundary rule missed ordinary syntax.** `const { db } = ctx.system`, `ctx.system['db']`, `const { vault } = ctx.dbs`, `ctx.dbs['space'](…)`, `app.route({ url: '/:spaceId/…' })` and `app.all('/:spaceId/…')` passed `npm run lint` outside the allow-lists | `tools/eslint/module-boundaries.mjs`: computed string keys, object-pattern destructuring, `route({method, url})` (every method declared) and `all/head/options` | `srv:tenancy/module-boundaries.eslint.c1review` (each shape flagged outside, allowed inside the lists; unrelated `db` / `vault` bindings untouched) |
+| R4 | major | **No consent answered as a spent budget.** The Study Book routes (`requireAi`) turned the consent block into `AI_BUDGET_EXCEEDED`, so the explain panel titled it «بلغت الميزانية حدّها» for a user who had spent nothing | `AiOrchestrator.consentBlock()`; `studybook/generate.ts` `requireAi` answers `CONSENT_REQUIRED` (`details.kind = 'ai_processing'`) with the consent reason (one exact-string edit outside C1's files) | `srv:ai/consent-paths.c1review` (explain, explain stream, compare, Study Book, summary, chat, chat stream, question generation: 409 `CONSENT_REQUIRED`, provider never called; positive control after consent) |
+| R5 | minor | **The gate failed open outside any database.** In the root context there is no content owner, so the consent check passed, the budget fell back to the deployment ceiling and the provider WAS called before usage recording threw `NO_TENANT_BOUND` (no production caller today — defense in depth; the module header claimed «nothing is sent») | `ai/consent.ts` `assert`: a provider whose data leaves the deployment is never called from the root context | `srv:ai/consent-paths.c1review` «outside any database» |
+| R6 | minor | **A consent to an earlier consent text still covered sending** (the PUT refuses a stale version, but the gate and «granted» ignored it) | gate and view require the current `AI_CONSENT_TEXT_VERSION` (the user agrees again after the text changes) | `srv:ai/consent-paths.c1review` «a consent covers the text it was given to» |
+| R7 | minor | **`ai_spaces` listed — and opened the database of — every subject for the platform admin** on each `/me` (blanket «moderator» access) | listed only where the viewer holds a moderating ROLE (admin, assistant, subject moderator) | `srv:ai/allowance-view.c1review` |
+
+Checked and found sound (no change): concurrent uploads (the quota check and the row insert are one synchronous step
+after the bytes are streamed); chunked uploads (open sessions counted at start, re-checked at completion; a space target
+refused); export jobs (one per account at a time; room checked before, older archives dropped, an oversize archive
+removed); the space quota on every space write path (uploads, image sets, promote-from-vault, corrections — all through
+`files.put` with the member as viewer); the per-space archive (only `spaces/<id>.sqlite` and the files its rows
+reference; another space's archive in the folder fails the `space` check; platform admin only — 404 to the space's own
+moderator, members and strangers); the restore check (safe extraction in a `mkdtemp` work directory under DATA_DIR/tmp,
+`db_file` constrained by the manifest schema, the sandbox boot confined to that directory, the work directory removed);
+the AI choke point (no module calls a provider but `ctx.ai.generateStructured`); the AI cache (artifacts and diagrams
+live in each user's own vault, so a cross-user hit needs a shared store — none exists; the key's viewer / official
+dimensions are as described); the ACL grants (a grant never admits a non-member; ended copies and deleted accounts
+revoke it); course mappings (own follows, own vault); sync (actor from the session; transient codes never recorded).
+
+Residual (not fixed, recorded):
+
+* `GET /me` still asks the membership provider once per registered subject to find the ones the viewer moderates
+  (≈ 3 system-DB lookups each) — fine at today's scale; a role-first query is the cheaper shape for hundreds of subjects.
+* «نسخة من بياناتي» includes the official files of the student's copies, and the kept archive counts in the quota
+  (AOS-21.43): a student who studies many official lectures can be refused an export although their own data is small.
+* A per-space backup runs inside the request (`POST …/backups`); a very large subject keeps the request open for the
+  whole snapshot (the result is still written if the client gives up).
+* The vault quota's exact figure costs ≈ 60–70 ms for a vault with 32,000 pages of which half are stubs (measured with an
+  in-memory replica of the tables); it is computed only when the cheap upper bound is over the limit, and for `/me`.
+
+## Phase 1 completion — track C3: web, UX and end-to-end completeness (2026-10-22, builder; reviewed 2026-10-22)
+
+Closes the C3 rows of `docs/academic-os/PHASE1_REPORT.md` §5.3 (rows and evidence: `docs/REQUIREMENTS_MATRIX.md`
+«track C3»). Test-first: every new test below failed before its change unless named **evidence**.
+
+### What landed
+
+* **AOS-4.7 / Q26 — sign-out keeps or clears this device's data** (`apps/web/src/lib/signOut.ts`). Default unchanged:
+  the account's data stays on the device in its own namespace. «امسح بيانات هذا الجهاز عند الخروج» (Settings › الأمان,
+  and «أنا › الخصوصية › بياناتك على هذا الجهاز») clears at sign-out: the account's IndexedDB (`medlevo:<id>`, or the
+  legacy `medlevo` for the user #1 holding it) and its own `localStorage` / `sessionStorage` keys
+  (`userStorage.clearAccountStorage`) — never another account's, never the device keys (appearance, e-ink display,
+  last sign-in, legacy claim). A device marked «هذا جهاز مشترك» (`PATCH /api/accounts/me/devices/:deviceId`
+  `{shared_device}`, own active device only, else 404; audited `device_shared`) ALWAYS clears. No data loss: the page
+  first sends what waits; whatever still has not reached the server (outbox ops, unacknowledged conflicts / refusals,
+  crash-recovery drafts) stops the sign-out and asks («ابقَ مسجّلًا وأرسلها أولًا» / «اخرج واحتفظ بها على هذا الجهاز»).
+  «This device» is found by the page's own device id (`thisDevice`): a session opened at the very first sign-in on a
+  device predates the account's local device id, so the server cannot mark it `current`; a browser the server does not
+  know yet (nothing synced) is registered (`POST /api/accounts/me/devices`) when it is marked shared.
+* **AOS-20.19 — «جهاز آخر لك» vs «مستخدم آخر»** (`lib/conflictSource.ts`): vault conflicts are always the person's own
+  devices; a space write by someone else, or a member decision another admin took first («سبقك مستخدم آخر: قرّر «X» هذا
+  الطلب قبلك…»), is «مستخدم آخر».
+* **AOS-1.16 / 20.3 — AC-20 on the new editors**: `lib/typedText.ts` strips bidi and invisible controls as text is typed
+  or pasted (the field shows what will be stored; the server's `plainTextSchema` refusal could not be acted on — the
+  characters are invisible); `lib/MixedText.tsx` draws a person's title / note with the direction of its first letter
+  and every LTR expression isolated (a plain `<bdi>` drew «(» on the wrong side after an Arabic word).
+* **AOS-21.46 — the remaining AI allowance where AI is offered** (`lib/aiAllowance.tsx`, C1's `QuotaView`).
+* **AOS-1.24 — undo is per user**: `features/workspace/ink/store.ts` `decide()` skips (and names) an item that became
+  another writer's; on a followed layer and a layer copy only the viewer's writing is undone. Multi-writer layers and
+  their CRDT undo wait for Phase 4.
+* **AOS-20.1 — colours only from design tokens**: ESLint rule `medlevo-css/token-colors` (`tools/eslint/design-tokens.mjs`).
+* **AOS-20.5 (touch part)**: on a coarse pointer the checkbox's invisible input is ≥ 44 × 44 at every text size (was
+  39 × 39) and the password reveal button ≥ 44 × 44 (was 40 × 40) — `design/components.css`.
+
+### Edits outside C3-owned files (smallest exact-string changes)
+
+`apps/server/src/modules/accounts/index.ts` (one route + import), `apps/server/src/system/repos.ts`
+(`DeviceRepo.setShared`), `packages/shared/src/academic/accounts-api.ts` (`updateDeviceSchema`), `eslint.config.js` (the
+CSS block), `apps/web/src/design/tokens.css` (`--ml-color-scan-paper`), `apps/web/src/design/components.css` (the
+allowance line; the coarse-pointer checkbox / reveal targets), `apps/web/src/features/channels/channels.css` (QR card
+colour → token), `apps/web/test/setup.ts` (node-environment guard), the AC-20 editors and title renderings in
+`features/admin/{TreeSection,MembersSection,viewer}.tsx`, `features/channels/{SubjectScreen,JoinLinkScreen}.tsx`,
+`features/lectures/{LectureScreen,PublicationScreen,PublicationsTab,PublishDialog,ReportDialog}.tsx`,
+`features/lectures/admin/OfficialContentSection.tsx`, the allowance line in eight AI surfaces, and the wording in
+`features/control/model.ts`, `lib/sync.ts`, `SessionPrompts`, `CardEditor`, `InkProvider`, `InkToolbar`, `MineTab`.
+
+### Tests changed
+
+* `apps/web/test/copies/copies.test.tsx`: the version change note is now drawn by `MixedText` («3» in its own isolate),
+  so it is matched as one span's whole text instead of one text node.
+
+### Not done (with reason)
+
+* AOS-20.5 «a real iPhone Safari run is logged once per phase»: **Not run (no device)** — no iPhone / iPad here; the
+  Chromium part at iPhone widths runs in `e2e/aos-c3-iphone-sizes.spec.ts`.
+* AOS-1.24 multi-writer undo (CRDT, concurrent edits within one stroke): Phase 4 — no multi-writer layer exists yet.
+
+### Track C3: adversarial review (2026-10-22)
+
+Every changed file was read and each scope item tried (two accounts in one browser, sign-out clearing, bidi through
+paste and the API, keyboard in admin dialogs, the colour lint rule, the cross-device session, wording). Each defect
+below was reproduced by a test that failed first (`apps/web/test/c3/*.review-c3.test.*`) and is fixed:
+
+* **R1 (blocker, data loss)** — the clearing sign-out (the option, or a shared device) counted only outbox ops,
+  unacknowledged conflicts and note / case-editor drafts, then deleted the account's whole database: a **lecture
+  recording not uploaded yet** (or refused by the server and kept here, or interrupted and still in chunks), a
+  **picture placed on a page and not uploaded**, an **answer typed in a running case** (`medlevo.cases.draft.*`), a
+  **written exam answer** (kv `exams.written.draft.*`) and a **handwritten answer's pad** (kv `written-pad:*`) were
+  deleted without a word. `unsentOnThisDevice` now counts them all (`uploads` + `drafts`), the sign-out stops and asks,
+  and the dialog says what waits. Kinds are the features' own constants (a test guards against drift).
+  `sign-out.review-c3` R1.
+* **R2 (major)** — «a device registered as shared ALWAYS clears» was decided by the settings screen alone: pressing
+  «تسجيل الخروج» before the device list had arrived (a slow network) or when that request failed signed out of a shared
+  device keeping everything. `signOutThisDevice` now asks the server itself (it must reach it to sign out anyway) and
+  falls back to what this device last heard (`medlevo.sharedDevice.v1`, per account; written by every answer and by the
+  «أجهزتي» switch). «اخرج واحتفظ بها على هذا الجهاز» after the unsent-data question is an explicit `keep`.
+  `sign-out.review-c3` R2.
+* **R3 (major)** — the colour lint rule exempted the pre-AOS stylesheets WHOLE, `components.css` among them — where
+  new AOS rules land (C3's own allowance line went there): a hand-written colour in new CSS there passed `npm run lint`.
+  They are frozen now, not exempt: `tools/eslint/design-tokens.frozen.json` holds each one's colours with their counts
+  (a ratchet: one more, or a new one, fails; a colour moved to a token lowers the count). Named colours are also checked
+  in masks, border images, `-webkit-box-shadow` and `backdrop-filter`. Only `tokens.css` is outside the rule.
+  `design-tokens-lint.review-c3`.
+* **R4 (major)** — a lecture deleted on one device came back on the other as «تابع الدراسة» («مصدر على هذا الجهاز»),
+  opening a lecture that no longer exists: the purge's «deleted» change (entity null) was ignored by the session
+  applier, and Home merged this device's own old session in. The applier now forgets a purged session (unless a place
+  waits to be sent), and Home drops a local session whose lecture the library the server just listed does not hold
+  (offline or with a cached library nothing is dropped). `session-deleted-source.review-c3`.
+* **R5 (minor, wording)** — a member decision found already taken by THIS account said «قرّرتَ هذا الطلب من جهاز آخر
+  لك» as a certainty; a retry from this very device after a lost answer lands there too. Now «قرّرتَ هذا الطلب قبل قليل
+  (من هذا الجهاز أو من جهاز آخر لك)». `conflict-source.c3` (updated).
+* **R6 (major, privacy)** — deleting the account left its whole local copy (database and keys) in the browser, for an
+  account nobody can sign in to any more; the deletion policy says the vault is deleted. This device's copy now goes
+  with it (another account's stays), and the dialog says so — and that copies on the account's other devices stay
+  there until cleared in that browser. `account-delete-device.review-c3`.
+* **R7 (major, two accounts)** — the picture and recording uploaders started for A kept A's database and their timers
+  after A signed out; when B signed in on the same page, a tick before the reload (the minute timer or an «online»
+  event) posted A's waiting picture or recording with B's cookie into B's vault. An uploader now acts only while the
+  page belongs to the account it was started for. `uploaders-account.review-c3`.
+* **R8 (minor, honesty)** — «بياناتك على هذا الجهاز» said the local copy is «لا يراها حساب آخر»; it is kept from other
+  accounts by the app, not encrypted on the device. Now «لا يعرضها التطبيق لحساب آخر… هي غير مشفّرة على الجهاز».
+* **R9 (major, shared device)** — another open tab of the same account kept the lecture and notes on screen after a
+  clearing sign-out, and its next local write (the study position autosaves) created the deleted database again. The
+  clearing tab now announces it (`BroadcastChannel` `medlevo-account`); every signed-in page (`OwnerLayout`) leaves by a
+  full load. `sign-out.review-c3` R9.
+* **Keyboard (19L.4)**: `e2e/aos-c3-admin-keyboard.spec.ts` now also reaches the one admin dialog it had not —
+  «نشر الإصدار» of an official lecture (change note typed, published by keyboard).
+
+Checked, no defect: AC-20 through the API (every new free-text field of the AOS contracts goes through
+`plainTextSchema`, which refuses bidi controls; `typed()` cleans typing and paste on every new editor); the AI allowance
+store resets per account and drops an answer that arrives for the previous account; the shared-device PATCH is own
+active device only (404 otherwise), strict body, audited; Cache Storage holds the app shell only; the X9 matrix is
+unaffected (the new route is the viewer's own device, not a space resource).
+
+Not fixed (reported): the first-run `POST /api/auth/setup` accepts a `display_name` with bidi controls (pre-AOS route,
+first platform admin only, no screen sends it); a session that ends by itself (expired, or revoked from another device)
+on a shared device keeps this device's data until the account signs in and out there again — clearing then, unasked,
+could delete what had not been sent; a member decision that failed with 409 for another reason than «already decided»
+may still be worded as decided first.
+
+Edits outside C3-owned files (smallest changes): `features/workspace/ink/images.ts` and
+`features/workspace/audio/recordings.ts` (uploader account guard), `features/workspace/data/local.ts` (purged session),
+`features/home/HomeScreen.tsx` (`mergeContinue` `liveSources`), `app/layouts.tsx` (the clear listener),
+`features/me/PrivacyScreen.tsx` (deletion clears this device; wording), `tools/eslint/design-tokens.frozen.json` (new),
+`eslint.config.js` (the C3 CSS block only).
+

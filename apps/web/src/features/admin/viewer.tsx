@@ -15,6 +15,8 @@ export interface AdminViewer {
   status: 'loading' | 'ready' | 'error';
   error: string | null;
   isPlatformAdmin: boolean;
+  /** (AOS-20.19) the signed-in account — a decision someone took first is said to be by «مستخدم آخر» or by this account */
+  userId: string | null;
   /** every role the viewer holds somewhere (the platform admin counts as an Admin everywhere) */
   roles: ChannelRole[];
   nodes: ChannelNodeView[];
@@ -25,7 +27,7 @@ export interface AdminViewer {
 }
 
 export function useLoadAdminViewer(): AdminViewer {
-  const [s, setS] = useState<Omit<AdminViewer, 'reload'>>({ status: 'loading', error: null, isPlatformAdmin: false, roles: [], nodes: [], cachedAt: null });
+  const [s, setS] = useState<Omit<AdminViewer, 'reload'>>({ status: 'loading', error: null, isPlatformAdmin: false, userId: null, roles: [], nodes: [], cachedAt: null });
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let alive = true;
@@ -33,7 +35,7 @@ export function useLoadAdminViewer(): AdminViewer {
       .then(([me, tree]) => {
         if (!alive) return;
         const isPlatformAdmin = me.data.is_platform_admin;
-        setS({ status: 'ready', error: null, isPlatformAdmin, roles: holdsAnyRole(tree.data.nodes, isPlatformAdmin), nodes: tree.data.nodes, cachedAt: tree.cachedAt });
+        setS({ status: 'ready', error: null, isPlatformAdmin, userId: me.data.id ?? null, roles: holdsAnyRole(tree.data.nodes, isPlatformAdmin), nodes: tree.data.nodes, cachedAt: tree.cachedAt });
       })
       .catch((e) => alive && setS((p) => ({ ...p, status: 'error', error: errorMessage(e) })));
     return () => {

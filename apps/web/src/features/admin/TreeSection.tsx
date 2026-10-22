@@ -19,6 +19,8 @@ import {
 } from '@medlevo/shared';
 import { Button, ConfirmDialog, Dialog, EmptyState, IconButton, Select, StatusPill, TextField, useToast } from '../../design';
 import { errorMessage, fieldErrors } from '../../lib/api';
+import { MixedText } from '../../lib/MixedText';
+import { typed } from '../../lib/typedText';
 import { channelsApi } from '../channels/api';
 import { treeOrder } from '../channels/model';
 import { ReasonedButton } from '../channels/ui';
@@ -79,7 +81,7 @@ export function TreeSection() {
             <li key={node.id} className="ml-list__row ad-tree__row" style={{ paddingInlineStart: `calc(var(--ml-space-4) + ${depth} * var(--ml-space-5))` }}>
               <div className="ad-tree__text">
                 <span className="ad-tree__title">
-                  <bdi>{node.title}</bdi>
+                  <MixedText text={node.title} />
                 </span>
                 <span className="ad-tree__meta">
                   <span>{CHANNEL_KIND_LABELS_AR[node.kind]}</span>
@@ -207,8 +209,8 @@ function NodeDialog({ parent, onClose, onDone }: { parent: ChannelNodeView | nul
     >
       <form id="ad-node-form" className="ml-stack" onSubmit={(e) => void submit(e)}>
         <Select label="النوع" value={kind} onValueChange={(k) => setKind(k)} options={kinds.map((k) => ({ value: k, label: CHANNEL_KIND_LABELS_AR[k] }))} />
-        <TextField label="الاسم" value={title} onChange={(e) => setTitle(e.target.value)} error={errors.title} maxLength={120} />
-        <TextField label="الاسم الإنجليزي (اختياري)" dir="ltr" value={titleEn} onChange={(e) => setTitleEn(e.target.value)} error={errors.title_en} maxLength={120} />
+        <TextField label="الاسم" value={title} onChange={typed(setTitle)} error={errors.title} maxLength={120} />
+        <TextField label="الاسم الإنجليزي (اختياري)" dir="ltr" value={titleEn} onChange={typed(setTitleEn)} error={errors.title_en} maxLength={120} />
         <Select label="طريقة الانضمام" value={policy} onValueChange={(p) => setPolicy(p)} options={JOIN_POLICIES.map((p) => ({ value: p, label: JOIN_POLICY_LABELS_AR[p] }))} />
         {DATED.has(kind) && (
           <div className="ad-two">
@@ -260,8 +262,8 @@ function EditDialog({ node, onClose, onDone }: { node: ChannelNodeView; onClose:
       }
     >
       <form id="ad-edit-form" className="ml-stack" onSubmit={(e) => void submit(e)}>
-        <TextField label="الاسم" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={120} />
-        <TextField label="الاسم الإنجليزي (اختياري)" dir="ltr" value={titleEn} onChange={(e) => setTitleEn(e.target.value)} maxLength={120} />
+        <TextField label="الاسم" value={title} onChange={typed(setTitle)} maxLength={120} />
+        <TextField label="الاسم الإنجليزي (اختياري)" dir="ltr" value={titleEn} onChange={typed(setTitleEn)} maxLength={120} />
         <Select label="طريقة الانضمام" value={policy} onValueChange={(p) => setPolicy(p)} options={JOIN_POLICIES.map((p) => ({ value: p, label: JOIN_POLICY_LABELS_AR[p] }))} />
         {error && <p className="ml-field__error">{error}</p>}
       </form>

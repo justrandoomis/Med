@@ -11,6 +11,7 @@ import { useCapabilities } from '../../../lib/capabilities';
 import type { SourceDocument } from '../../workspace/data/useSourceDocument';
 import { StudyDiagram } from './StudyDiagram';
 import './diagrams.css';
+import { AiAllowanceNote } from '../../../lib/aiAllowance';
 
 export const diagramsApi = {
   create: (body: { kind: StudyDiagramKind; source_id: string; page_ids?: string[]; topic?: string | null; force?: boolean }) =>
@@ -62,6 +63,7 @@ export function DiagramPanel({ doc, page, online }: { doc: SourceDocument; page:
         مخطط تفاعلي من المادة
       </h3>
       <p className="dg-muted">خط زمني أو مخطط انسيابي يعيد تنظيم هذه الصفحة (أو موضوعًا تكتبه) من المحاضرة فقط؛ كل خطوة وعلاقة تحمل دليلها.</p>
+      <AiAllowanceNote />
       <SegmentedControl<StudyDiagramKind>
         label="نوع المخطط"
         options={[

@@ -11,6 +11,7 @@ import { ANNOTATION_IMAGE_MAX_BYTES, ANNOTATION_IMAGE_MAX_SIDE, ANNOTATION_IMAGE
 import { api, isApiError } from '../../../lib/api';
 import { getDb, type BlobRecord, type MedLevoDB } from '../../../lib/localdb';
 import { peekDeviceId } from '../../../lib/deviceId';
+import { storageAccount } from '../../../lib/userStorage';
 import { makeImageItem } from './model';
 import type { InkDocumentStore } from './store';
 
@@ -247,7 +248,13 @@ let started = false;
 export function startImageUploader(db: MedLevoDB = getDb()): void {
   if (started || typeof window === 'undefined') return;
   started = true;
-  const kick = () => void kickImageUploads(db);
+  // (C3 review R7) these are the pictures of the account this page belonged to when it started: once another account
+  // signs in here (the page reloads right after), they are never sent under the new session
+  const owner = storageAccount()?.userId ?? null;
+  const kick = () => {
+    if ((storageAccount()?.userId ?? null) !== owner) return;
+    void kickImageUploads(db);
+  };
   window.addEventListener('online', kick);
   window.setInterval(kick, 60_000);
   kick();

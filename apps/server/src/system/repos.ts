@@ -368,6 +368,12 @@ export class DeviceRepo {
     return r.changes > 0;
   }
 
+  /** (AOS-4.7, Q26) mark one of the viewer's ACTIVE devices as shared (cleared at every sign-out) or not. */
+  setShared(viewer: Viewer, deviceId: string, shared: boolean): boolean {
+    const r = this.db.run('UPDATE device SET shared_device = ? WHERE user_id = ? AND device_id = ? AND revoked_at IS NULL', [shared ? 1 : 0, viewer.userId, deviceId]);
+    return r.changes > 0;
+  }
+
   /** Internal (account deletion): every device row of the user goes (with its key). */
   deleteAllInternal(userId: string): number {
     return this.db.run('DELETE FROM device WHERE user_id = ?', [userId]).changes;

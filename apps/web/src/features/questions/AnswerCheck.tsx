@@ -13,6 +13,7 @@ import { formatDateTime } from '../../lib/time';
 import { ClaimChips } from '../exams/ClaimedText';
 import { questionsApi } from './api';
 import { MixedText } from './labels';
+import { AiAllowanceNote } from '../../lib/aiAllowance';
 
 export const ANSWER_CHECK_OUTCOME_LABELS_AR: Record<AnswerCheckOutcome, string> = {
   agrees: 'الأدلة تؤيد المفتاح',
@@ -66,6 +67,7 @@ export function AnswerCheckSection({ d, onChanged }: { d: QuestionDetailResponse
         يحل نموذج مستقل السؤال من مقتطفات المحاضرة المرتبطة فقط دون أن يرى المفتاح، ثم تُتحقق كل جملة من تعليله بالأدلة. لا يُصحَّح مفتاح المصدر ولا نتائجك السابقة
         تلقائيًا.
       </p>
+      <AiAllowanceNote />
       <span className="qv-gated">
         <Button variant="secondary" icon={<ScanSearch size={18} />} onClick={() => void run()} disabled={!!blocked || busy} aria-describedby={blocked ? reasonId : undefined}>
           {busy ? 'جارٍ التحقق…' : 'تحقق من الإجابة بالأدلة'}

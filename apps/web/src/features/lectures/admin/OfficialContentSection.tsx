@@ -25,6 +25,7 @@ import {
 } from '@medlevo/shared';
 import { Button, ConfirmDialog, Dialog, EmptyState, ErrorState, LoadingState, Select, StatusPill, TextArea, TextField, useToast } from '../../../design';
 import { ApiError, errorMessage, fieldErrors } from '../../../lib/api';
+import { typed } from '../../../lib/typedText';
 import { formatDateTime } from '../../../lib/time';
 import { BidiText } from '../../evidence/BidiText';
 import { type AdminSubject, lecturesApi } from '../api';
@@ -102,7 +103,7 @@ function AddLecture({ subject, onDone }: { subject: AdminSubject; onDone: () => 
         <FilePlus2 size={18} aria-hidden="true" /> أضف محاضرة رسمية
       </h2>
       <div className="lec-admin__add-grid">
-        <TextField label="عنوان المحاضرة" value={title} onChange={(e) => setTitle(e.target.value)} required maxLength={200} error={errors.title} />
+        <TextField label="عنوان المحاضرة" value={title} onChange={typed(setTitle)} required maxLength={200} error={errors.title} />
         <TextField label="رقم المحاضرة" inputMode="numeric" dir="ltr" value={no} onChange={(e) => setNo(e.target.value.replace(/[^0-9]/g, '').slice(0, 3))} error={errors.lecture_no} hint="اختياري" />
         <TextField label="تاريخ المحاضرة" type="date" dir="ltr" value={heldOn} onChange={(e) => setHeldOn(e.target.value)} error={errors.held_on} hint="اختياري" />
         <label className="lec-admin__file">
@@ -409,7 +410,7 @@ function PublishDialog({ subject, lecture, version, onClose, onDone }: { subject
             </p>
           )}
           <p>الطلاب الذين يملكون نسخة من المحاضرة: {preview.holders.label_ar}. ملاحظاتهم لا تُحذف؛ يُعرض عليهم نقلها إلى الإصدار الجديد.</p>
-          <TextArea label="ملاحظة التغيير (يراها الطلاب)" value={note} onChange={(e) => setNote(e.target.value)} maxLength={1000} rows={2} hint="اختياري" />
+          <TextArea label="ملاحظة التغيير (يراها الطلاب)" value={note} onChange={typed(setNote, true)} maxLength={1000} rows={2} hint="اختياري" />
         </div>
       )}
     </Dialog>
@@ -446,7 +447,7 @@ function WithdrawDialog({ subject, lecture, onClose, onDone }: { subject: AdminS
       }}
     >
       <Select label="السبب" value={reason} onValueChange={(v) => setReason(v as LectureWithdrawReason)} options={LECTURE_WITHDRAW_REASONS.map((r) => ({ value: r, label: LECTURE_WITHDRAW_REASON_LABELS_AR[r] }))} />
-      <TextArea label={neverPublished ? 'السبب (يراه من رفعها)' : 'ما يراه الطلاب'} value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} rows={2} required hint="سطر قصير يشرح السبب (حرفان على الأقل)." />
+      <TextArea label={neverPublished ? 'السبب (يراه من رفعها)' : 'ما يراه الطلاب'} value={note} onChange={typed(setNote, true)} maxLength={500} rows={2} required hint="سطر قصير يشرح السبب (حرفان على الأقل)." />
     </ConfirmDialog>
   );
 }

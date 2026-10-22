@@ -2,9 +2,10 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { useNavigate, useRouteLoaderData } from 'react-router-dom';
 import { KeyRound, LogOut, Monitor, Smartphone, Tablet } from 'lucide-react';
 import type { SessionInfo } from '@medlevo/shared';
-import { Button, ConfirmDialog, Dialog, ErrorState, PasswordField, Skeleton, StatusPill, useToast } from '../../design';
+import { Button, Checkbox, ConfirmDialog, Dialog, ErrorState, PasswordField, Skeleton, StatusPill, useToast } from '../../design';
 import { errorMessage, fieldErrors } from '../../lib/api';
-import { changePassword, listSessions, logout, regenerateRecoveryCodes, revokeSession } from '../../lib/auth';
+import { changePassword, listSessions, regenerateRecoveryCodes, revokeSession } from '../../lib/auth';
+import { afterClear, clearOnSignOutPreference, currentDeviceIsShared, setClearOnSignOutPreference, signOutThisDevice, unsentAr, type Unsent } from '../../lib/signOut';
 import { getSyncEngine } from '../../lib/sync';
 import { formatDateTime, formatRelative } from '../../lib/time';
 import type { OwnerGateData } from '../../app/routeTypes';
@@ -290,31 +291,92 @@ export function LogoutGroup() {
   const navigate = useNavigate();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
+  // AOS-4.7 / Q26: «امسح بيانات هذا الجهاز عند الخروج» (this account, this device); a device registered as shared
+  // («جهاز مشترك», «أنا › أجهزتي») always clears
+  const [clear, setClear] = useState(() => clearOnSignOutPreference());
+  const [shared, setShared] = useState<boolean | null>(null);
+  const [unsent, setUnsent] = useState<Unsent | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void currentDeviceIsShared().then((v) => alive && setShared(v));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const clearing = shared === true || clear;
+
+  const signOut = async (opts: { clear: boolean; keep?: boolean }) => {
+    setBusy(true);
+    try {
+      // stop syncing only once the server confirmed the sign-out: if it fails (e.g. offline) the account stays signed
+      // in here and unsynced writes must keep syncing (signOutThisDevice stops the engine after the server's answer)
+      const r = await signOutThisDevice(opts);
+      if (r.kind === 'unsent') {
+        setUnsent(r.unsent);
+        setBusy(false);
+        return;
+      }
+      setUnsent(null);
+      // a clearing sign-out leaves through a full load: nothing of this account stays in the page's memory
+      if (r.cleared) afterClear.go('/login');
+      else navigate('/login', { replace: true });
+    } catch (e) {
+      toast.show({ tone: 'danger', title: 'تعذّر تسجيل الخروج', description: errorMessage(e) });
+      setBusy(false);
+    }
+  };
+
   return (
-    <div className="ml-group ml-group__row ml-settings-row">
-      <div className="ml-settings-row__text">
-        <span>تسجيل الخروج من هذا الجهاز</span>
-        <span className="ml-settings-row__desc">ما كتبته ولم يُزامَن يبقى محفوظًا هنا ويُرسل بعد الدخول مجددًا.</span>
+    <div className="ml-group">
+      <div className="ml-group__row ml-settings-row">
+        <div className="ml-settings-row__text">
+          <span>تسجيل الخروج من هذا الجهاز</span>
+          <span className="ml-settings-row__desc">
+            {clearing ? 'تُمسح بيانات حسابك من هذا الجهاز بعد الخروج، بعد التأكد من وصول كل ما كتبته إلى الخادم.' : 'ما كتبته ولم يُزامَن يبقى محفوظًا هنا ويُرسل بعد الدخول مجددًا.'}
+          </span>
+        </div>
+        <Button icon={<LogOut size={16} />} loading={busy} onClick={() => void signOut({ clear: clearing })}>
+          تسجيل الخروج
+        </Button>
       </div>
-      <Button
-        icon={<LogOut size={16} />}
-        loading={busy}
-        onClick={async () => {
-          setBusy(true);
-          try {
-            // stop syncing only once the server confirmed the sign-out: if it fails (e.g. offline) the
-            // owner stays signed in here and unsynced writes must keep syncing
-            await logout();
-            getSyncEngine().stop();
-            navigate('/login', { replace: true });
-          } catch (e) {
-            toast.show({ tone: 'danger', title: 'تعذّر تسجيل الخروج', description: errorMessage(e) });
-            setBusy(false);
+      <div className="ml-group__row">
+        <Checkbox
+          checked={clearing}
+          disabled={shared === true}
+          onCheckedChange={(on) => {
+            setClear(on);
+            setClearOnSignOutPreference(on);
+          }}
+          label="امسح بيانات هذا الجهاز عند الخروج"
+          description={
+            shared === true
+              ? 'هذا الجهاز مسجّل جهازًا مشتركًا: تُمسح بيانات حسابك منه عند كل خروج. غيّر ذلك من «أنا › أجهزتي».'
+              : 'يحذف من هذا الجهاز ملاحظاتك وكتابتك ونسخك المحفوظة للعمل دون اتصال وتفضيلات حسابك. لا يُحذف شيء من الخادم ولا من أجهزتك الأخرى، ولا يُمسح ما لم يصل إلى الخادم بعد.'
           }
-        }}
+        />
+      </div>
+      <Dialog
+        open={unsent !== null}
+        onClose={() => setUnsent(null)}
+        title="لم تصل كل بياناتك إلى الخادم"
+        description={unsent ? `على هذا الجهاز ${unsentAr(unsent)}. مسح بيانات الجهاز الآن يفقدها، لذلك لم يُمسح شيء ولم يُسجَّل خروجك.` : undefined}
+        size="sm"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setUnsent(null)}>
+              ابقَ مسجّلًا وأرسلها أولًا
+            </Button>
+            <Button variant="primary" loading={busy} onClick={() => void signOut({ clear: false, keep: true })}>
+              اخرج واحتفظ بها على هذا الجهاز
+            </Button>
+          </>
+        }
       >
-        تسجيل الخروج
-      </Button>
+        <p className="ml-settings-row__desc">
+          اتصل بالإنترنت وانتظر حتى تصل (تراجع التعارضات في «مركز التحكم › التعارضات والمزامنة»، وتُرفع التسجيلات والصور تلقائيًا عند الاتصال)، ثم سجّل الخروج مرة أخرى
+          لتُمسح البيانات. إن خرجت الآن تبقى كلها على هذا الجهاز في مساحة حسابك وتُرسل عند دخولك مجددًا.
+        </p>
+      </Dialog>
     </div>
   );
 }

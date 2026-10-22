@@ -1,7 +1,9 @@
 // Pure helpers of the Personal Control Center: sections, number formats (Latin digits, LTR-isolated by the
 // views), readable descriptions of sync problems (what happened, what each action does), and status lines.
 import { parseRichText, richTextToPlain, type ControlOverviewResponse } from '@medlevo/shared';
+import { CONFLICT_SOURCE_AR, syncConflictSource } from '../../lib/conflictSource';
 import type { OutboxRecord } from '../../lib/localdb';
+import { storageAccount } from '../../lib/userStorage';
 
 export type SectionKey =
   | 'review'
@@ -194,16 +196,21 @@ function detailText(detail: unknown): string | null {
   return null;
 }
 
-export function describeSyncIssue(op: OutboxRecord): SyncIssueView {
+/**
+ * `viewerUserId` (AOS-20.19): the signed-in account — a conflict says whether the newer copy came from «جهاز آخر لك» or
+ * from «مستخدم آخر» (lib/conflictSource.ts). Defaults to the page's account.
+ */
+export function describeSyncIssue(op: OutboxRecord, viewerUserId: string | null = storageAccount()?.userId ?? null): SyncIssueView {
   const entityLabel = SYNC_ENTITY_LABELS_AR[op.entity_type] ?? op.entity_type;
   const the = SYNC_ENTITY_DEFINITE_AR[op.entity_type] ?? 'هذا العنصر';
   const kind: SyncIssueView['kind'] = op.status === 'conflict' ? 'conflict' : 'rejected';
   const serverReason = detailText(op.resultDetail) ?? (op.lastError ? op.lastError : null);
+  const from = CONFLICT_SOURCE_AR[syncConflictSource(op, viewerUserId)];
   let happened: string;
   if (kind === 'conflict' && op.result === 'conflict_kept_both') {
-    happened = `عدّلتَ ${the} على هذا الجهاز بينما تغيّرت نسختها على الخادم (من جهاز آخر). لم يكتب أي منهما فوق الآخر: احتفظ الخادم بالنسختين، ونسختك محفوظة كنسخة منفصلة.`;
+    happened = `عدّلتَ ${the} على هذا الجهاز بينما تغيّرت نسختها على الخادم (من ${from}). لم يكتب أي منهما فوق الآخر: احتفظ الخادم بالنسختين، ونسختك محفوظة كنسخة منفصلة.`;
   } else if (kind === 'conflict') {
-    happened = `على الخادم نسخة أحدث من ${the}، فلم يكتب تغييرك فوقها. بقي تغييرك على هذا الجهاز كما هو.`;
+    happened = `على الخادم نسخة أحدث من ${the} (من ${from})، فلم يكتب تغييرك فوقها. بقي تغييرك على هذا الجهاز كما هو.`;
   } else {
     happened = `رفض الخادم هذا التغيير، فلم يُحفظ على الخادم. ما زال موجودًا على هذا الجهاز ولم يُحذف.`;
   }

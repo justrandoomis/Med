@@ -26,6 +26,7 @@ import { examsApi } from '../../exams/api';
 import { regionsUnder, shortQuote } from '../../studybook/model';
 import { fetchRegions } from '../data/api';
 import type { McqRequest } from '../model/mcqRequest';
+import { AiAllowanceNote } from '../../../lib/aiAllowance';
 
 const TERMINAL = new Set(['completed', 'partial', 'needs_review', 'abstained', 'failed']);
 
@@ -120,6 +121,7 @@ export function CreateMcqPanel({ request, pageLabel, onClose }: { request: McqRe
           <p className="wk-muted">{gate.reason ?? 'توليد الأسئلة يتطلب مزود ذكاء اصطناعي مضبوطًا على الخادم.'}</p>
         </div>
       ) : null}
+      <AiAllowanceNote />
       <div className="wk-mcq__fields">
         <Select
           label="الصعوبة (تقديرية)"

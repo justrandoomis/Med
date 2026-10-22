@@ -78,6 +78,32 @@ Found by the C2 E2E run and fixed with a regression test: after «اربط وا�
 because the row's status turned «linked» and the menu hook returned no dialog (`linkStatus.tsx` now keeps the dialog
 while it is open).
 
+### Review of track C2 (adversarial, 2026-10-22)
+
+Each defect below was reproduced by a test that failed first, then fixed at its root:
+
+* **R1 (blocker for X8 (c))** — what a run copied into ONE document counted as «carried» for every other document:
+  `carriedOf` was keyed by the source only. Linking the same private lecture to a second official lecture (the same
+  lecture in another subject) copied nothing, said «نُسخ N عنصرًا» anyway and copied the inserted note page EMPTY
+  («بما عليها»); and the private lecture's own «انقل ملاحظاتي إلى الإصدار الجديد» counted what a link had copied
+  elsewhere as «نُقل سابقًا», so nothing moved to its new version. `carriedOf(ctx, sourceId, toSourceId)` now counts only
+  the runs INTO the target document (every caller passes it: the plan, the preview, the review list's copy, the linked
+  review counts, the note pages) — `srv:forks/link-review.review-c2` «R1».
+* **R2 (major)** — items on ANOTHER version of the private lecture (never moved to the version the link matched) were in
+  no count and no sentence. The link now counts them as kept on the private lecture (`total` and `kept` include them,
+  `unlinkedVersionItems`) and names their version and what to do («انقلها إليه … ثم اربطها مجددًا»); they are not copied
+  (the page map is from the linked version) — `srv:forks/link-review.review-c2` «R2».
+* **R5 (minor, AOS-19I.5)** — «اعرض التغييرات» of a followed explanation did not say that the new version holds
+  machine-generated notes (it was marked only after «طبّق التحديث»); the preview now says «الإصدار n: فيه محتوى مولَّد
+  آليًا: …» before anything is applied — `web:test/copies/update-preview-ai.review-c2`.
+* Tried and found sound (tests kept as evidence): the review queue and the updates feed as a guest (401), a pending
+  member (403), a removed member who still holds a copy (404, and no `official_version` notice), a student and an
+  Assistant (403), another subject's moderator (404); the notice of a version accepted through the queue reaches the
+  member holders only — `srv:lectures/review-feed.review-c2`.
+* Not changed (minor, recorded): the full JSON export (`exportAll`) does not list `private_link` (nor P1-T5's
+  `document_copy` / `pinned_region`) — bookkeeping only; every row is in the vault backup. The library badge shows the
+  newest link of a private lecture only.
+
 ## Step 3 — course-only explanations (publications)
 
 Server: `forks/{publications,pubItems,following,pubFanout,system}.ts`, `authz/rules/publications.ts`; routes in the

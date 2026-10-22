@@ -1980,3 +1980,86 @@ New C1 tests (each failed before its change unless marked evidence): `srv:deploy
 `srv:annotations/ink-wire-compressed.c1` (wire: v2 JSON identity 11.67 MB, gzip 5.01 MB, br 3.72 MB),
 `web:me/ai-consent.c1`, `web:tenancy/sync-transient.c1`; evidence: `srv:tenancy/file-privacy.c1`,
 `srv:forks/versions-shared.c1`, `srv:forks/fork-graph.c1`. Not run: a device, Cloudflare R2, a real AI provider.
+
+## Phase 1 completion — review of track C2: spaces and lectures (reviewer, 2026-10-22, gates ≈ 11:12 → 11:45 UTC)
+
+Adversarial review (BUILD_PLAN §1.2) of the C2 builder's work, in the same tree as the C1 review (shared CPU). Five
+defects reproduced by tests that failed first and fixed (details: `docs/modules/copies-publications.md`, `lectures.md`,
+`data.md` «Review of track C2»; rows: `docs/REQUIREMENTS_MATRIX.md` «track C2», statuses set by the reviewer):
+R1 (blocker, X8 (c)) a link's copies counted as «carried» for every document; R2 (major) items on another version of
+the private lecture uncounted; R3 (major, 4.18) the flattened annotated PDF drew a classmate's strokes as «كتابتك»;
+R4 (major, 2.3 / 18.3) a failed bulk file was to be re-uploaded as a second draft; R5 (minor, 19I.5) the update preview
+did not mark machine-generated notes. New tests: `srv:forks/link-review.review-c2` (3), `srv:forks/export-attribution.review-c2`
+(3), `srv:lectures/review-feed.review-c2` (2, every role — no defect), `web:test/copies/official-admin.review-c2` (1),
+`web:test/copies/update-preview-ai.review-c2` (2).
+
+| gate | result |
+|---|---|
+| `npm run typecheck` | pass |
+| `npm run lint` | pass (`--max-warnings 0`) |
+| `npm test` — shared | 234 / 234 |
+| `npm test` — server | 2,464 passed, 7 skipped, **1 failed**: `test/tenancy/import-boundary.test.ts` «no cache keyed by the bound proxy» flagged `src/system/quota.ts` while the C1 reviewer was editing it; re-run alone after their change: 6 / 6 passed (not C2 code) |
+| `npm test` — web (run on its own) | 1,241 passed, 1 skipped |
+| `npm run build` | pass |
+| `npx playwright test` (phone + desktop) | `aos-c2-official-content`, `aos-p1-note-migration`, `aos-s2-followed-copy`, `aos-s4-official-version`, `h4-exports-sources`, `smoke`: 16 / 16; `aos-p1-vertical-slice`, `aos-no-decorative`: 12 / 12 |
+
+Not run: a device (iPad + Pencil, phones, BOOX, Safari, screen readers) — none in this container; the full E2E suite
+(the specs the changed code touches were run, plus smoke).
+
+## Phase 1 completion — review of track C1: platform, privacy, quotas, data model (reviewer, 2026-10-22, gates ≈ 11:15 → 12:20 UTC)
+
+Adversarial review (BUILD_PLAN §1.2) of the C1 builder's work, in the same tree as the C2 review (shared CPU). Seven
+defects reproduced by tests that failed first and fixed (details: `docs/modules/tenancy.md` «track C1: adversarial
+review»; rows: `docs/REQUIREMENTS_MATRIX.md` «track C1», statuses set by the reviewer): R1 (major, 21.9 / 21.45) official
+copies charged to the student's quota — a moderator's uploads pushed a following student to `QUOTA_EXCEEDED`; R2 (major,
+21.35) an https origin listed second started with a non-Secure session cookie; R3 (major, 21.47) the boundary lint rule
+missed destructuring, computed keys, `app.route({url})` and `app.all`; R4 (major, 21.42) no consent answered as
+`AI_BUDGET_EXCEEDED` («بلغت الميزانية حدّها») on the Study Book routes; R5 (minor) the consent gate failed open in the root
+context; R6 (minor) a consent to an earlier consent text still covered sending; R7 (minor, 21.46) `ai_spaces` opened every
+subject's database for the platform admin. New tests: `srv:deploy/cookie-secure.c1review` (3),
+`srv:tenancy/quota-copies.c1review` (4), `srv:tenancy/module-boundaries.eslint.c1review` (3), `srv:ai/consent-paths.c1review`
+(5), `srv:ai/allowance-view.c1review` (1).
+
+| gate | result |
+|---|---|
+| `npm run typecheck` | pass |
+| `npm run lint` | pass (`--max-warnings 0`, with the strengthened `medlevo/module-boundaries`) |
+| `npm test` — shared | 234 / 234 |
+| `npm test` — server | 2,469 passed, 7 skipped, **2 failed** in the full run: `test/search/federation.test.ts` NFR-P5 p95 54.6 ms > 50 ms (the 250,000-chunk build took 80.8 s under the parallel C2 run; no C1 change touches search) and `test/tenancy/import-boundary.test.ts` (the quota SQL cache was keyed `WeakMap<Db…>` — re-keyed by the raw `DatabaseSync` handle before the run ended); both files re-run alone: 14 / 14 passed |
+| `npm test` — web (run on its own) | 1,241 passed, 1 skipped |
+| `npm run build` | pass |
+| `npx playwright test` (phone + desktop) | `smoke`, `aos-no-decorative` (incl. the data-use policy page), `aos-p1-vertical-slice`, `aos-s2-followed-copy`, `g8-security`: 26 / 26 |
+
+Not run: a device, Cloudflare R2, a real AI provider (no account / key here); the full E2E suite (the specs the changed
+code touches were run, plus smoke).
+
+## Phase 1 completion — track C3: web, UX and end-to-end completeness (builder, 2026-10-22, gates ≈ 12:55 → 14:30 UTC)
+
+Rows closed (statuses: `docs/REQUIREMENTS_MATRIX.md` «track C3»; details: `docs/modules/tenancy.md` «track C3»): 1.16 /
+20.3 (AC-20 on the new editors), 1.38 (two accounts in one browser), 4.7 / Q26 (clear this device at sign-out; shared
+devices always clear), 14.11 (AC-24 per user, two devices), 19J.1 (study session per user across devices), 19L.4 (admin
+dialogs by keyboard), 20.19 («جهاز آخر لك» / «مستخدم آخر»), 20.1 (colour-token lint), 21.46 (remaining AI allowance on
+screen), 1.24 (per-user undo; multi-writer waits for Phase 4), 20.5 (iPhone widths in Chromium; real Safari Not run).
+Defects the new tests found and fixed: a plain `<bdi>` title drew «(» on the wrong side after an Arabic word (publication
+heading; now `MixedText`); «هذا جهاز مشترك» was missing on a first sign-in (the session predates the device id; the
+browser is now found by its own id and registered when marked); the checkbox touch target was 39 × 39 and the password
+reveal 40 × 40 on touch; the QR card's hand-written `#fff`. New tests: `web:c3/ac20-editors.c3` (5),
+`web:c3/conflict-source.c3` (7), `web:c3/ai-allowance.c3` (16), `web:c3/sign-out-clear.c3` (9), `web:c3/undo-per-user.c3`
+(5), `web:c3/design-tokens-lint.c3` (3), `srv:tenancy/shared-device.c3` (3), `e2e/aos-c3-two-accounts`,
+`e2e/aos-c3-per-user-devices` (2), `e2e/aos-c3-admin-keyboard`, `e2e/aos-c3-ac20-new-screens`, `e2e/aos-c3-iphone-sizes`
+(desktop only — it opens its own touch contexts). Test changed: `web:test/copies/copies.test.tsx` (the change note is
+one span's text now).
+
+| gate | result |
+|---|---|
+| `npm run typecheck` | pass |
+| `npm run lint` | pass (`--max-warnings 0`, with the new `medlevo-css/token-colors` on every web stylesheet) |
+| `npm test` — shared | 234 / 234 |
+| `npm test` — server | 2,474 passed, 7 skipped |
+| `npm test` — web | first run 1,285 passed, 1 skipped, **1 failed** (`copies.test.tsx`: `getByText` on the change note now split by `MixedText`; test matcher updated); re-run 1,286 passed, 1 skipped |
+| `npm run build` | pass |
+| `npx playwright test` (full, phone + desktop, `--output` in the scratchpad) | 210 tests in 45.0 min: **190 passed, 18 skipped, 2 failed** — both `aos-c3-admin-keyboard` (phone, desktop): the subject chooser was read before it rendered when another spec had created a second subject; fixed (wait for the scope first) |
+| re-run of the five C3 specs (phone + desktop) | **11 passed**, 1 skipped (`aos-c3-iphone-sizes` runs on the desktop project only) |
+
+Not run: a device — no iPhone / iPad Safari (AOS-20.5 «a real iPhone Safari run per phase»), no Android phone, BOOX or
+screen reader in this container; multi-writer layer undo (Phase 4).

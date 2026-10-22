@@ -12,6 +12,16 @@ import { defineConfig, globalIgnores } from 'eslint/config';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 import medlevo from './tools/eslint/module-boundaries.mjs';
+import medlevoCss from './tools/eslint/design-tokens.mjs';
+import { readFileSync } from 'node:fs';
+
+// (C3 review R3) the colours each pre-AOS stylesheet holds today: frozen, never more (tools/eslint/design-tokens.mjs)
+const frozenColours = JSON.parse(readFileSync(new URL('./tools/eslint/design-tokens.frozen.json', import.meta.url), 'utf8'));
+
+// the JS / TS rules of the configs above apply to every file they do not exclude; a stylesheet has none of their syntax
+const scriptRulesOff = Object.fromEntries(
+  [js.configs.recommended, ...tseslint.configs.recommended].flatMap((c) => Object.keys(c.rules ?? {})).map((rule) => [rule, 'off']),
+);
 
 export default defineConfig(
   globalIgnores([
@@ -77,6 +87,19 @@ export default defineConfig(
     files: ['apps/server/src/**/*.ts'],
     plugins: { medlevo },
     rules: { 'medlevo/module-boundaries': 'error' },
+  },
+  {
+    // AOS-20.1 (track C3): colours in the web app's CSS come from the design tokens — every stylesheet, so a NEW one is
+    // checked from its first line (tools/eslint/design-tokens.mjs). Not checked: the token file itself. The stylesheets
+    // written before the Academic OS (print paper, recovery codes, cover cloth, ink swatches, page paper and scans, the
+    // switch thumb…) keep the colours they hold today and no more — frozen in tools/eslint/design-tokens.frozen.json
+    // (C3 review R3: new AOS rules land in them too, components.css first of all); a colour there moves to a token when
+    // the file is next changed for a screen, and its count in the JSON goes down with it.
+    files: ['apps/web/src/**/*.css'],
+    ignores: ['apps/web/src/design/tokens.css'],
+    plugins: { 'medlevo-css': medlevoCss },
+    language: 'medlevo-css/css',
+    rules: { ...scriptRulesOff, 'medlevo-css/token-colors': ['error', { frozen: frozenColours }] },
   },
   {
     // Playwright fixtures that need no other fixture are declared as `async ({}, use) => …`

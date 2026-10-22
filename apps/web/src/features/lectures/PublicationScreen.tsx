@@ -22,6 +22,8 @@ import {
 } from '@medlevo/shared';
 import { Button, ConfirmDialog, Dialog, ErrorState, LoadingState, StatusPill, TextArea, TextField, buttonClass, useToast } from '../../design';
 import { errorMessage } from '../../lib/api';
+import { MixedText } from '../../lib/MixedText';
+import { typed } from '../../lib/typedText';
 import { useOnline } from '../../lib/useOnline';
 import { usePageTitle } from '../../lib/usePageTitle';
 import { formatDate } from '../../lib/time';
@@ -87,8 +89,8 @@ function EditDetailsDialog({ open, onClose, pub, onSaved }: { open: boolean; onC
       }
     >
       <div className="cp-sheet">
-        <TextField label="عنوان الشرح" required value={title} maxLength={120} onChange={(e) => setTitle(e.target.value)} />
-        <TextArea label="ملخص (اختياري)" value={summary} maxLength={1000} rows={3} onChange={(e) => setSummary(e.target.value)} />
+        <TextField label="عنوان الشرح" required value={title} maxLength={120} onChange={typed(setTitle)} />
+        <TextArea label="ملخص (اختياري)" value={summary} maxLength={1000} rows={3} onChange={typed(setSummary, true)} />
         {error && (
           <p className="cp-sheet__error" role="alert">
             {error}
@@ -190,7 +192,7 @@ export function PublicationScreen() {
       <header>
         <p className="cp-lecture__subject">{pub.subject.title}</p>
         <h1 id="publication-title" className="pb-page__title">
-          <bdi>{pub.title}</bdi>
+          <MixedText text={pub.title} />
         </h1>
       </header>
       <p className="pb-meta">
@@ -298,7 +300,7 @@ export function PublicationScreen() {
               <span>{formatDate(v.created_at)}</span>
               <span>{`مبني على الإصدار ${v.lecture_version_no} من المحاضرة`}</span>
               <span>{itemsCountAr(v.item_count)}</span>
-              {v.change_note && <span>{v.change_note}</span>}
+              {v.change_note && <MixedText text={v.change_note} />}
               {v.no === pub.head_version_no && <StatusPill tone="accent">الحالي</StatusPill>}
             </li>
           ))}

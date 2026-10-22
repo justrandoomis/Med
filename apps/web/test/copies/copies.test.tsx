@@ -139,7 +139,8 @@ describe('the official lecture page', () => {
     expect(screen.getByText('التشريح')).toBeTruthy();
     expect(screen.getByText('الإصدار 2 · 40 صفحة')).toBeTruthy();
     // published versions with the current one marked, in the «الرسمي» tab; «الشروحات» exists since step 3 (publications)
-    expect(screen.getByText('تصحيح الشكل 3')).toBeTruthy();
+    // (C3, AC-20) the change note is drawn by MixedText: «3» sits in its own isolate, so the note is matched whole
+    expect(screen.getByText((_, el) => el?.tagName === 'SPAN' && el.textContent === 'تصحيح الشكل 3')).toBeTruthy();
     expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['الرسمي', 'الشروحات']);
     expect(screen.getByRole('tab', { name: 'الرسمي' }).getAttribute('aria-selected')).toBe('true');
     fireEvent.click(screen.getByRole('button', { name: 'ابدأ الدراسة' }));

@@ -11,7 +11,7 @@ import { ApiError, errorMessage } from '../../lib/api';
 import { useOnline } from '../../lib/useOnline';
 import { publicationsApi } from '../lectures/api';
 import { marksCaptionAr, PagePreviewFrame } from '../lectures/PagePreviewFrame';
-import { changeMarks, pagePreviews, type ChangeMark, type PagePreview } from '../lectures/publicationPreview';
+import { changeMarks, machineContentAr, pagePreviews, type ChangeMark, type PagePreview } from '../lectures/publicationPreview';
 import { copiesApi, pullCopyChanges } from './api';
 import './copies.css';
 import '../lectures/publications.css';
@@ -54,6 +54,8 @@ export function UpdatePreviewDialog({ open, onClose, copy, onApplied }: { open: 
   const pub = copy.publication!;
   const [preview, setPreview] = useState<UpstreamPreview | null>(null);
   const [drawn, setDrawn] = useState<DrawnPage[]>([]);
+  // (review C2 R5, AOS-19I.5) the new version's machine-generated parts, said BEFORE it is applied (null: none / unknown)
+  const [machineAr, setMachineAr] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [busy, setBusy] = useState<'apply' | 'skip' | null>(null);
@@ -70,6 +72,10 @@ export function UpdatePreviewDialog({ open, onClose, copy, onApplied }: { open: 
         drawPages(pub.space_id, p)
           .then((d) => !cancelled && setDrawn(d))
           .catch(() => !cancelled && setDrawn([]));
+        publicationsApi
+          .items(pub.space_id, p.publication_id, p.to_version_no)
+          .then((r) => !cancelled && setMachineAr(machineContentAr(r.notes)))
+          .catch(() => !cancelled && setMachineAr(null));
       })
       .catch((e) => !cancelled && setLoadError(errorMessage(e)));
     return () => {
@@ -138,6 +144,11 @@ export function UpdatePreviewDialog({ open, onClose, copy, onApplied }: { open: 
               <strong>{`${pub.author.display_name}: ${preview.summary_ar}`}</strong>
             </p>
             {preview.change_note && <p className="cp-sheet__line">{`ملاحظة الكاتب: ${preview.change_note}`}</p>}
+            {machineAr && (
+              <p className="pb-notice" role="note">
+                {`الإصدار ${preview.to_version_no}: ${machineAr}`}
+              </p>
+            )}
             {preview.pages.length > 0 && (
               <ul className="pb-versions" aria-label="الصفحات التي تتغير">
                 {preview.pages.map((p) => (

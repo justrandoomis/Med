@@ -7,6 +7,7 @@ import { Send } from 'lucide-react';
 import { completenessAr, type LecturePublicationsResponse, type PublicationCard } from '@medlevo/shared';
 import { Button, EmptyState, ErrorState, LoadingState, StatusPill } from '../../design';
 import { errorMessage } from '../../lib/api';
+import { MixedText } from '../../lib/MixedText';
 import { useOnline } from '../../lib/useOnline';
 import { formatDate } from '../../lib/time';
 import { publicationsApi, publicationUrl } from './api';
@@ -102,7 +103,7 @@ export function PublicationsTab({
               <li key={c.id}>
                 <Link className="pb-card" to={publicationUrl(spaceId, c.id)}>
                   <span className="pb-card__title">
-                    <bdi>{c.title}</bdi>
+                    <MixedText text={c.title} />
                   </span>
                   <span className="pb-card__meta">
                     <StatusPill tone="info">{c.label_ar}</StatusPill>

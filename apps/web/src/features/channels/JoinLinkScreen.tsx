@@ -8,6 +8,7 @@ import { Link, useParams } from 'react-router-dom';
 import { JOIN_POLICY_LABELS_AR, type JoinPreviewResponse, type JoinResponse, type RegisterWithJoinResponse } from '@medlevo/shared';
 import { Button, ErrorState, LoadingState, PasswordField, TextField, buttonClass } from '../../design';
 import { api, errorMessage, fieldErrors, isApiError } from '../../lib/api';
+import { typed } from '../../lib/typedText';
 import { activateAccount, fetchAuthStatus, invalidateAuthStatus } from '../../lib/auth';
 import { describeDevice } from '../../lib/deviceId';
 import { usePageTitle } from '../../lib/usePageTitle';
@@ -199,7 +200,7 @@ function RegisterForm({ token, minPassword, onDone, onCancel }: { token: string;
       <h2 id={`${id}-h`} className="ch-section__title">
         حساب جديد بهذه الدعوة
       </h2>
-      <TextField label="الاسم الظاهر" autoComplete="name" value={form.display_name} onChange={set('display_name')} error={errors.display_name} />
+      <TextField label="الاسم الظاهر" autoComplete="name" value={form.display_name} onChange={typed((v) => setForm((f) => ({ ...f, display_name: v })))} error={errors.display_name} />
       <TextField label="اسم المستخدم" dir="ltr" autoComplete="username" autoCapitalize="none" value={form.username} onChange={set('username')} error={errors.username} />
       <PasswordField label="كلمة المرور" autoComplete="new-password" value={form.password} onChange={set('password')} error={errors.password} hint={`${minPassword} أحرف على الأقل.`} />
       <PasswordField label="تأكيد كلمة المرور" autoComplete="new-password" value={form.confirm} onChange={set('confirm')} error={errors.confirm} />

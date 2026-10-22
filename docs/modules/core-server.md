@@ -86,7 +86,8 @@ Open (minor, not fixed):
   `127.0.0.1`; exposing the server before setup is a deployment risk. A one-time setup token would need a web change.
 * ~~`MEDLEVO_COOKIE_SECURE` defaults to `false` even when `MEDLEVO_ORIGIN` is https~~ — out of date: the default follows
   the origin (https → `Secure`), and since Phase 1 completion C1 (AOS-21.35) `MEDLEVO_COOKIE_SECURE=false` with any https
-  origin stops the start (`test/deploy/cookie-secure.c1.test.ts`).
+  origin stops the start (`test/deploy/cookie-secure.c1.test.ts`); the C1 review made ANY https origin of the list set the
+  default (an https origin listed second used to leave it off — `test/deploy/cookie-secure.c1review.test.ts`).
 * The AI budget pre-check is not atomic across concurrent calls (overshoot ≤ one worst-case call per extra concurrent call).
   `ai.status()` can report a task available while the worst-case estimate of the next call no longer fits.
 * `GET /api/sync/pull` returns `entity: null` both for deleted entities and for entity types without a registered

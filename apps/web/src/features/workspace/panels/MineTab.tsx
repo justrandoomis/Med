@@ -24,6 +24,7 @@ import { clearNoteDraft, writeNoteDraft } from '../data/noteDrafts';
 import type { SourceDocument } from '../data/useSourceDocument';
 import { fullPageLabel } from '../model/pages';
 import { ReanchorSection } from './ReanchorSection';
+import { VAULT_CONFLICT_COPY_AR } from '../../../lib/conflictSource';
 
 export type MineTabValue = 'notes' | 'bookmarks' | 'reanchor' | 'pages';
 
@@ -232,7 +233,7 @@ export function NoteCard({ note, pageLabel, onEdit, onGo }: { note: WorkspaceNot
         ) : (
           <span />
         )}
-        {note.conflictOfId && <StatusPill tone="warning">نسخة محفوظة من تعارض</StatusPill>}
+        {note.conflictOfId && <StatusPill tone="warning">{VAULT_CONFLICT_COPY_AR}</StatusPill>}
         {/* §28: a saved AI answer stays visibly generated in the list, even if its own label paragraph was edited away */}
         {note.origin === 'ai_answer' && <StatusPill tone="info">إجابة مولَّدة محفوظة — ليست مصدرًا</StatusPill>}
         <SaveStatus state={state ?? 'synced'} compact />
@@ -250,7 +251,7 @@ export function NoteCard({ note, pageLabel, onEdit, onGo }: { note: WorkspaceNot
         open={confirm}
         onCancel={() => setConfirm(false)}
         title="حذف الملاحظة؟"
-        impact="تُحذف هذه الملاحظة من هذا الجهاز ثم من أجهزتك الأخرى بعد المزامنة. إذا كانت قد عُدّلت من جهاز آخر في الوقت نفسه فسيُحتفظ بالنص المعدّل."
+        impact="تُحذف هذه الملاحظة من هذا الجهاز ثم من أجهزتك الأخرى بعد المزامنة. إذا كانت قد عُدّلت من جهاز آخر لك في الوقت نفسه فسيُحتفظ بالنص المعدّل."
         confirmLabel="حذف الملاحظة"
         destructive
         onConfirm={async () => {

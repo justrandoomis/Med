@@ -35,6 +35,7 @@ import { aiRequestStore, usePendingAiRequest, type AiRequest } from '../model/ai
 import { fullPageLabel } from '../model/pages';
 import { ChatPanel } from '../studybook/ChatPanel';
 import '../studybook/studybook.css';
+import { AiAllowanceNote, aiAllowanceStore } from '../../../lib/aiAllowance';
 
 export interface ExplainTabProps {
   doc: SourceDocument;
@@ -170,6 +171,9 @@ export function ExplainTab({ doc, page, pageIndex, online }: ExplainTabProps) {
     } catch (e) {
       if (ac.signal.aborted) return;
       setRun({ status: 'error', action, error: { message: errorMessage(e, 'تعذّر إكمال الشرح.'), code: isApiError(e) ? e.code : null } });
+    } finally {
+      // (AOS-21.46) the allowance shown above follows what this request spent
+      if (!ac.signal.aborted) aiAllowanceStore.spent();
     }
   };
 
@@ -186,6 +190,8 @@ export function ExplainTab({ doc, page, pageIndex, online }: ExplainTabProps) {
     } catch (e) {
       if (ac.signal.aborted) return;
       setRun({ status: 'error', action: 'compare', error: { message: errorMessage(e, 'تعذّرت المقارنة.'), code: isApiError(e) ? e.code : null } });
+    } finally {
+      if (!ac.signal.aborted) aiAllowanceStore.spent();
     }
   };
 
@@ -275,6 +281,7 @@ export function ExplainTab({ doc, page, pageIndex, online }: ExplainTabProps) {
         size="sm"
         fullWidth
       />
+      <AiAllowanceNote />
 
       <div className="sb-prefs">
         <Select label="المستوى" options={EXPLANATION_LEVELS.map((l) => ({ value: l, label: EXPLANATION_LEVEL_LABELS_AR[l] }))} value={level} onValueChange={setLevel} />

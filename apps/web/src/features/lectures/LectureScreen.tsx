@@ -12,6 +12,7 @@ import { BookOpenCheck } from 'lucide-react';
 import { LECTURE_WITHDRAW_REASON_LABELS_AR, type DocumentCopyView, type OfficialLectureDetail } from '@medlevo/shared';
 import { Button, ErrorState, LoadingState, StatusPill, Tab, TabList, TabPanel, Tabs, buttonClass } from '../../design';
 import { errorMessage } from '../../lib/api';
+import { MixedText } from '../../lib/MixedText';
 import { useOnline } from '../../lib/useOnline';
 import { usePageTitle } from '../../lib/usePageTitle';
 import { formatDate } from '../../lib/time';
@@ -86,7 +87,7 @@ export function LectureScreen() {
       <header>
         <p className="cp-lecture__subject">{lecture.subject.title}</p>
         <h1 id="cp-lecture-title" className="cp-lecture__title">
-          <bdi>{lecture.title}</bdi>
+          <MixedText text={lecture.title} />
         </h1>
       </header>
       <p className="cp-lecture__meta">
@@ -146,7 +147,7 @@ export function LectureScreen() {
                       {v.uploaded_by && <span>{`رفعه ${v.uploaded_by.display_name}`}</span>}
                       {v.published_by && <span>{`نشره ${v.published_by.display_name}`}</span>}
                       {previous && <span>{`يحلّ محل الإصدار ${previous.version_no}`}</span>}
-                      {v.change_note && <span>{v.change_note}</span>}
+                      {v.change_note && <MixedText text={v.change_note} />}
                       {v.id === head?.id && <StatusPill tone="accent">الحالي</StatusPill>}
                     </li>
                   );

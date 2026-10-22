@@ -21,6 +21,7 @@ import { MixedLine } from './MixedLine';
 import { HandwrittenAnswer } from './HandwrittenAnswer';
 import '../workspace/handwriting/handwriting.css';
 import './exams.css';
+import { AiAllowanceNote } from '../../lib/aiAllowance';
 
 const POINT_LABELS: Record<WrittenAssessmentView['points'][number]['status'], { label: string; tone: 'success' | 'warning' | 'danger' | 'neutral'; icon: ReactNode }> = {
   correct: { label: 'مذكورة بشكل صحيح', tone: 'success', icon: <CircleCheck size={14} /> },
@@ -199,6 +200,7 @@ export function WrittenScreen() {
               التقييم الآلي: {grade.reason}
             </p>
           )}
+          <AiAllowanceNote />
         </section>
       )}
       <Link to="/exams" className={buttonClass({ variant: 'plain' })}>

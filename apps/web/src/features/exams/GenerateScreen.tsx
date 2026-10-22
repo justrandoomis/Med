@@ -26,6 +26,7 @@ import { useLibrary } from '../library/useLibrary';
 import { examsApi } from './api';
 import { MixedLine } from './MixedLine';
 import './exams.css';
+import { AiAllowanceNote } from '../../lib/aiAllowance';
 
 const QUESTION_SOURCE_TYPES = new Set(['question_source', 'previous_exam']);
 const TERMINAL = new Set(['completed', 'partial', 'needs_review', 'abstained', 'failed']);
@@ -145,6 +146,7 @@ export function GenerateScreen() {
           <WifiOff size={16} aria-hidden="true" /> توليد الأسئلة يحتاج اتصالًا بالخادم.
         </p>
       )}
+      <AiAllowanceNote />
 
       <form
         className="ex-builder"

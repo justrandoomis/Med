@@ -407,6 +407,22 @@
   opacity: 0;
   cursor: pointer;
 }
+@media (pointer: coarse) {
+  /* (C3, AOS-20.5) touch: the invisible input — the box's touch target — is at least 44 × 44 around the 22 px box at
+     every text size (it was 39 × 39 at 100 %); the reveal button inside a password field likewise (it was 40 × 40) */
+  .ml-checkbox__box input {
+    inset: auto;
+    top: 50%;
+    left: 50%;
+    width: max(var(--ml-touch-target), calc(100% + 1.2rem));
+    height: max(var(--ml-touch-target), calc(100% + 1.2rem));
+    transform: translate(-50%, -50%);
+  }
+  .ml-input-reveal {
+    min-width: var(--ml-touch-target);
+    min-height: var(--ml-touch-target);
+  }
+}
 .ml-checkbox__mark {
   position: absolute;
   inset: 0;
@@ -1590,4 +1606,22 @@
   padding: 0 4px;
   border-radius: var(--ml-radius-xs);
   background: var(--ml-color-paper-2);
+}
+
+/* ───────────── AI allowance next to an AI action (AOS-21.46, lib/aiAllowance.tsx) ───────────── */
+.ml-ai-allowance {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--ml-text-sm);
+  line-height: var(--ml-leading-sm);
+  color: var(--ml-color-ink-2);
+}
+.ml-ai-allowance svg {
+  flex: none;
+  margin-top: 0.2em;
+}
+.ml-ai-allowance[data-tone='warning'] {
+  color: var(--ml-color-warning);
 }

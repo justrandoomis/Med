@@ -6,6 +6,7 @@ import { Flag } from 'lucide-react';
 import { REPORT_REASON_LABELS_AR, REPORT_REASONS, type ReportReason } from '@medlevo/shared';
 import { Button, Dialog, TextArea, useToast } from '../../design';
 import { errorMessage } from '../../lib/api';
+import { typed } from '../../lib/typedText';
 import { useOnline } from '../../lib/useOnline';
 import { publicationsApi } from './api';
 import './publications.css';
@@ -67,7 +68,7 @@ export function ReportDialog({ open, onClose, publication }: { open: boolean; on
             </label>
           ))}
         </fieldset>
-        <TextArea label="تفاصيل (اختياري)" value={note} maxLength={1000} rows={3} onChange={(e) => setNote(e.target.value)} />
+        <TextArea label="تفاصيل (اختياري)" value={note} maxLength={1000} rows={3} onChange={typed(setNote, true)} />
         {!online && (
           <p className="cp-sheet__line cp-sheet__line--muted" role="status">
             أنت غير متصل: إرسال البلاغ يحتاج الخادم.

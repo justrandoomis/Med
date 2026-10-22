@@ -5,6 +5,7 @@
 //   POST   /api/accounts/me/devices                  {device_id, label?, platform?} → DeviceView (server-issued device_uid;
 //                                                     idempotent per (user, device_id))
 //   DELETE /api/accounts/me/devices/:deviceId        revokes the device and its key
+//   PATCH  /api/accounts/me/devices/:deviceId        {shared_device} → DeviceView (AOS-4.7 / Q26: «جهاز مشترك», C3)
 //   PUT    /api/accounts/me/devices/:deviceId/key    {public_key, alg: 'Ed25519'} → DeviceView
 //   GET    /api/accounts/me/quota                    → QuotaView (P1-T1 step 2: storage + AI allowance of MY account)
 //   GET/PUT /api/accounts/me/ai-consent              → AiConsentView (AOS-21.42: my ai_processing consent; ./consent.ts)
@@ -30,6 +31,7 @@ import {
   type MeResponse,
   type QuotaView,
   registerDeviceSchema,
+  updateDeviceSchema,
 } from '@medlevo/shared';
 import type { ModuleOptions } from '../../context';
 import { AppError } from '../../lib/errors';
@@ -175,6 +177,24 @@ export default async function accountsModule(app: FastifyInstance, { ctx }: Modu
     if (!devices.revoke(v, deviceId)) throw new AppError('NOT_FOUND', ACCOUNTS_LABELS_AR.device_not_found, 404);
     securityAudit.record({ actorUserId: v.userId, actorRole: 'self', action: 'device_revoke', targetType: 'device', targetId: deviceId, summary: 'إلغاء جهاز ومفتاحه', ip: req.ip ?? null });
     return { ok: true };
+  });
+
+  // AOS-4.7 / Q26 (track C3): «جهاز مشترك» — a device registered as shared always clears its local data at sign-out
+  app.patch('/me/devices/:deviceId', async (req): Promise<DeviceView> => {
+    const v = viewerOf(req);
+    const { deviceId } = parseParams(deviceParams, req);
+    const body = parseBody(updateDeviceSchema, req);
+    if (!devices.setShared(v, deviceId, body.shared_device)) throw new AppError('NOT_FOUND', ACCOUNTS_LABELS_AR.device_not_found, 404);
+    securityAudit.record({
+      actorUserId: v.userId,
+      actorRole: 'self',
+      action: 'device_shared',
+      targetType: 'device',
+      targetId: deviceId,
+      summary: body.shared_device ? 'تسجيل جهاز جهازًا مشتركًا (تُمسح بياناته عند كل خروج)' : 'إلغاء تسجيل جهاز جهازًا مشتركًا',
+      ip: req.ip ?? null,
+    });
+    return toDeviceView(devices.get(v, deviceId)!, v.deviceId);
   });
 
   app.put('/me/devices/:deviceId/key', async (req): Promise<DeviceView> => {

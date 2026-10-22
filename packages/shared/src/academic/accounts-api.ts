@@ -110,6 +110,13 @@ export const registerDeviceSchema = z
   .strict();
 export type RegisterDeviceRequest = z.infer<typeof registerDeviceSchema>;
 
+/**
+ * AOS-4.7 / ADR-0003 Q26 (track C3): `PATCH /api/accounts/me/devices/:deviceId` — mark one of MY devices as shared
+ * («جهاز مشترك»): the web client then clears that device's local data at every sign-out.
+ */
+export const updateDeviceSchema = z.object({ shared_device: z.boolean() }).strict();
+export type UpdateDeviceRequest = z.infer<typeof updateDeviceSchema>;
+
 /** Ed25519 public key, base64url without padding (32 bytes → 43 characters). */
 export const deviceKeySchema = z
   .object({

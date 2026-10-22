@@ -359,7 +359,13 @@ const notePageApplier: SyncApplier = async (change, { db, localOps, source }) =>
 
 const sessionApplier: SyncApplier = async (change, { db, localOps, source }) => {
   const dto = change.entity as StudySessionDTO | null;
-  if (!dto || typeof dto !== 'object' || !dto.id) return;
+  if (dto === null) {
+    // (C3 review R4) the server deleted this session (its lecture was purged on another device): this device forgets
+    // its copy too, so «تابع الدراسة» never offers a lecture that is gone — unless a place here still waits to be sent
+    if (localOps.length === 0) await db.studySessions.delete(change.entity_id);
+    return;
+  }
+  if (typeof dto !== 'object' || !dto.id) return;
   const conflicts = localOps.filter((o) => o.status === 'conflict' && !o.acknowledgedAt);
   if (conflicts.length > 0) {
     // the server refused to overwrite a newer position from another device: ask the owner (§46)

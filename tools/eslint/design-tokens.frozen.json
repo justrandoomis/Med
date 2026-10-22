@@ -1,0 +1,98 @@
+{
+  "apps/web/src/design/base.css": {
+    "#000": 1,
+    "#fff": 1
+  },
+  "apps/web/src/design/components.css": {
+    "#fff": 1,
+    "rgba": 2
+  },
+  "apps/web/src/features/auth/auth.css": {
+    "#000": 2,
+    "#fff": 2
+  },
+  "apps/web/src/features/control/control.css": {
+    "#fff": 2
+  },
+  "apps/web/src/features/library/library.css": {
+    "#2b6264": 1,
+    "#2b6286": 1,
+    "#326f71": 2,
+    "#34437e": 1,
+    "#346f94": 2,
+    "#3a5f41": 1,
+    "#3f4e8c": 2,
+    "#446b4b": 2,
+    "#46505e": 1,
+    "#525d6c": 2,
+    "#5d446f": 1,
+    "#6a5080": 2,
+    "#8a5b1e": 1,
+    "#8c4455": 1,
+    "#8f6427": 2,
+    "#94505f": 2,
+    "#f3efe6": 2,
+    "#fffdf8": 1,
+    "rgba": 10
+  },
+  "apps/web/src/features/questions/questions.css": {
+    "#fff": 1
+  },
+  "apps/web/src/features/review/learning.css": {
+    "#7e8ae8": 2
+  },
+  "apps/web/src/features/workspace/handwriting/handwriting.css": {
+    "#fff": 1
+  },
+  "apps/web/src/features/workspace/ink/ink.css": {
+    "#000": 3,
+    "#000000": 2,
+    "#141414": 1,
+    "#1c2230": 1,
+    "#1e7a46": 1,
+    "#1f5675": 1,
+    "#222222": 1,
+    "#2346c8": 1,
+    "#2e2e2e": 1,
+    "#2f6b2a": 1,
+    "#3d3d3d": 1,
+    "#4a4a4a": 1,
+    "#6a3fb5": 1,
+    "#7a2f58": 1,
+    "#7a4a10": 1,
+    "#7a6500": 1,
+    "#7fd6a0": 1,
+    "#8fb0ff": 1,
+    "#8fd3ff": 1,
+    "#9be38d": 1,
+    "#b0b0b0": 1,
+    "#b85300": 1,
+    "#bababa": 1,
+    "#c3a6ff": 1,
+    "#c4c4c4": 1,
+    "#c62828": 1,
+    "#cccccc": 1,
+    "#d6d6d6": 1,
+    "#e5281b": 1,
+    "#eceae4": 1,
+    "#ff5a4d": 1,
+    "#ff8a80": 1,
+    "#ff9ccf": 1,
+    "#ffb36b": 1,
+    "#ffc074": 1,
+    "#ffe14d": 1
+  },
+  "apps/web/src/features/workspace/workspace.css": {
+    "#2b6264": 1,
+    "#2b6286": 1,
+    "#34437e": 1,
+    "#3a47a8": 1,
+    "#3a5f41": 1,
+    "#46505e": 1,
+    "#5d446f": 1,
+    "#8a5b1e": 1,
+    "#8c4455": 1,
+    "#fff": 2,
+    "rgba": 1
+  }
+}

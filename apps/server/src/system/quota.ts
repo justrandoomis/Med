@@ -13,6 +13,7 @@
 import type { QuotaView, SpaceAiAllowanceView } from '@medlevo/shared';
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import type { DatabaseSync } from 'node:sqlite';
 import type { Db } from '../db/db';
 import { AppError } from '../lib/errors';
 import { type Clock, localDate, startOfMonthInTz } from '../lib/time';
@@ -52,39 +53,50 @@ export interface QuotaConfig {
 const EXPORT_ARCHIVE_RE = /^medlevo-export-[0-9TZ-]+-[0-9a-z]{8}\.tar\.gz$/;
 
 /** Tables whose rows belong to ONE source version: a stub's rows there point at the space's files (forks/stubs.ts). */
-const VERSION_ROW_TABLES: Readonly<Record<string, string>> = { source_version: 'id', source_page: 'version_id', version_rendition: 'version_id' };
+const VERSION_ROW_TABLES: Readonly<Record<string, 'self' | 'version_id'>> = { source_version: 'self', source_page: 'version_id', version_rendition: 'version_id' };
+
+const PLAIN_FILES_SQL = 'SELECT COALESCE(SUM(size), 0) AS n FROM stored_file';
+/** the generated statement per open database connection (its schema does not change under it); keyed by the raw handle */
+const ownFilesSqlCache = new WeakMap<DatabaseSync, string>();
 
 /**
  * C1 review (AOS-21.9 / 21.45, PRD §6.2 «≈ 1.5 MB of stubs per student»): the files a vault's quota counts. A stub of
  * an official lecture («ابدأ الدراسة», a course follow's fan-out, a linked private lecture) holds stored_file rows for
  * the SPACE's blobs — the subject's quota pays for them once; charging every student who studies them again let a
  * moderator's uploads fill students' quotas. A file counts when any non-stub row references it (the user's own source,
- * page, picture, recording …, including the same bytes the user uploaded themselves) or when no stub references it at
- * all (unreferenced rows still count until the GC removes them). The foreign keys into stored_file are read from the
- * schema, so a table added later counts as the user's own.
+ * page, picture, recording …, including bytes the user uploaded before they became official) or when no stub
+ * references it at all (unreferenced rows still count until the GC removes them). The foreign keys into stored_file
+ * are read from the schema, so a table added later counts as the user's own. A vault without stubs reads the plain sum.
  */
 export function vaultOwnFilesSql(db: Db): string {
+  if (!db.get<{ x: number }>(`SELECT 1 AS x FROM pragma_table_info('source') WHERE name = 'is_stub'`)) return PLAIN_FILES_SQL;
+  if (!db.get<{ x: number }>('SELECT 1 AS x FROM source WHERE is_stub = 1 LIMIT 1')) return PLAIN_FILES_SQL;
+  const cached = ownFilesSqlCache.get(db.raw);
+  if (cached) return cached;
   const fks = db.all<{ tbl: string; col: string }>(
     `SELECT m.name AS tbl, p."from" AS col FROM sqlite_master m, pragma_foreign_key_list(m.name) p WHERE m.type = 'table' AND p."table" = 'stored_file'`,
   );
-  const hasStubs = db.get<{ x: number }>(`SELECT 1 AS x FROM pragma_table_info('source') WHERE name = 'is_stub'`) !== undefined;
-  if (!hasStubs) return 'SELECT COALESCE(SUM(size), 0) AS n FROM stored_file';
   const q = (s: string) => `"${s.replace(/"/g, '""')}"`;
-  const stubVersions = `SELECT v.id FROM source_version v JOIN source s ON s.id = v.source_id WHERE s.is_stub = 1`;
+  const side = (tbl: string, col: string, how: 'self' | 'version_id', stub: 0 | 1) =>
+    how === 'self'
+      ? `SELECT t.${q(col)} AS id FROM source s JOIN ${q(tbl)} t ON t.source_id = s.id WHERE s.is_stub = ${stub} AND t.${q(col)} IS NOT NULL`
+      : `SELECT t.${q(col)} AS id FROM source s JOIN source_version v ON v.source_id = s.id JOIN ${q(tbl)} t ON t.version_id = v.id WHERE s.is_stub = ${stub} AND t.${q(col)} IS NOT NULL`;
   const own: string[] = [];
   const stub: string[] = [];
   for (const fk of fks) {
-    const key = VERSION_ROW_TABLES[fk.tbl];
-    const sel = `SELECT ${q(fk.col)} AS id FROM ${q(fk.tbl)} WHERE ${q(fk.col)} IS NOT NULL`;
-    if (key) {
-      own.push(`${sel} AND ${q(key)} NOT IN (${stubVersions})`);
-      stub.push(`${sel} AND ${q(key)} IN (${stubVersions})`);
-    } else own.push(sel);
+    const how = VERSION_ROW_TABLES[fk.tbl];
+    if (how) {
+      own.push(side(fk.tbl, fk.col, how, 0));
+      stub.push(side(fk.tbl, fk.col, how, 1));
+    } else own.push(`SELECT ${q(fk.col)} AS id FROM ${q(fk.tbl)} WHERE ${q(fk.col)} IS NOT NULL`);
   }
-  if (stub.length === 0) return 'SELECT COALESCE(SUM(size), 0) AS n FROM stored_file';
-  const ownSet = own.length ? own.join(' UNION ') : 'SELECT NULL AS id WHERE 0';
-  return `WITH own(id) AS (${ownSet}), stub(id) AS (${stub.join(' UNION ')})
+  const sql =
+    stub.length === 0
+      ? PLAIN_FILES_SQL
+      : `WITH own(id) AS (${own.length ? own.join(' UNION ALL ') : 'SELECT NULL WHERE 0'}), stub(id) AS (${stub.join(' UNION ALL ')})
     SELECT COALESCE(SUM(size), 0) AS n FROM stored_file WHERE id IN (SELECT id FROM own) OR id NOT IN (SELECT id FROM stub)`;
+  ownFilesSqlCache.set(db.raw, sql);
+  return sql;
 }
 
 /** Who pays for an AI call made in the current binding. */
@@ -163,20 +175,24 @@ export class QuotaService {
   }
 
   /** db + files + kept export archives (what every storage check compares with the limit). */
-  storageTotal(vaultId: string): number {
-    const u = this.storageUsed(vaultId);
+  storageTotal(vaultId: string, mode: 'exact' | 'upper' = 'exact'): number {
+    const u = this.storageUsed(vaultId, mode);
     return u.bytes_db + u.bytes_files + u.bytes_exports;
   }
 
-  storageUsed(vaultId: string): { bytes_db: number; bytes_files: number; bytes_exports: number } {
+  /**
+   * `upper` (C1 review): every stored_file row counted, stubs of official lectures included — never less than the
+   * exact figure and as cheap as before; the checks below use it first and compute the exact figure only near the limit.
+   */
+  storageUsed(vaultId: string, mode: 'exact' | 'upper' = 'exact'): { bytes_db: number; bytes_files: number; bytes_exports: number } {
     const vault = this.system.vaults.byIdInternal(vaultId);
     if (!vault || vault.status !== 'active') return { bytes_db: vault?.bytes_db ?? 0, bytes_files: vault?.bytes_files ?? 0, bytes_exports: this.exportsBytes(vaultId) };
     const db = this.pool.get('vault', vaultId);
     const pages = db.get<{ page_count: number }>('PRAGMA page_count')!.page_count;
     const pageSize = db.get<{ page_size: number }>('PRAGMA page_size')!.page_size;
     const bytesDb = pages * pageSize;
-    const files = db.get<{ n: number }>(vaultOwnFilesSql(db))!.n;
-    this.system.vaults.setBytesInternal(vaultId, bytesDb, files);
+    const files = db.get<{ n: number }>(mode === 'upper' ? PLAIN_FILES_SQL : vaultOwnFilesSql(db))!.n;
+    if (mode === 'exact') this.system.vaults.setBytesInternal(vaultId, bytesDb, files);
     return { bytes_db: bytesDb, bytes_files: files, bytes_exports: this.exportsBytes(vaultId) };
   }
 
@@ -259,6 +275,8 @@ export class QuotaService {
     if (!target) return;
     const limit = this.storageLimit(target.viewer.userId);
     if (limit === null) return;
+    // the cheap upper bound first (most uploads are far from the limit), the exact figure only when it matters
+    if (this.storageTotal(target.vaultId, 'upper') + addBytes <= limit) return;
     const total = this.storageTotal(target.vaultId);
     if (total + addBytes > limit) throw this.storageError(total, limit, addBytes);
   }
@@ -268,6 +286,7 @@ export class QuotaService {
     const limit = this.storageLimit(viewer.userId);
     if (limit === null) return;
     const open = this.system.uploads.openBytes(viewer);
+    if (this.storageTotal(vaultId, 'upper') + open + addBytes <= limit) return;
     const total = this.storageTotal(vaultId) + open;
     if (total + addBytes > limit) throw this.storageError(total, limit, addBytes);
   }

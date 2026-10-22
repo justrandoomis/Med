@@ -435,6 +435,11 @@ write, and a vector copy of the original needs a PDF writer; nothing native).
   by the forks module (a deleted account reads «طالب سابق»).
 * Evidence: `apps/server/test/forks/export-attribution.c2.test.ts` (md, html, docx, json; the author's own export names
   nobody), `ai-marking.c2.test.ts` (generated answers keep their label in a follower's export).
+* (review of C2, R3 — major, failed first) «الأصل مع كتابتي» (`pdf-export.ts`, the flattened PDF) drew a followed or
+  forked classmate's strokes as «كتابتك» with no line saying whose they are, and its document properties said «كتابة
+  المالك». Now the summary shown before the download names each origin («مرسوم فيه أيضًا ما ليس من كتابتك (n عناصر):
+  مشتق من منشور «X» (الإصدار n) لـ Y.») and the PDF's Subject carries the same lines; the author's own export names
+  nobody — `apps/server/test/forks/export-attribution.review-c2.test.ts`.
 
 ## Per-space backups and their restore check (Phase 1 completion C1, AOS-21.1 / X8 (d); 2026-10-22)
 

@@ -356,7 +356,7 @@ export function InkToolbar() {
           </span>
         )}
       </Toolbar>
-      <p id={historyNoteId} className="ml-visually-hidden">سجل التراجع محفوظ على هذا الجهاز ويبقى بعد إعادة التحميل أو إغلاق التطبيق، ضمن حد للحجم تسقط بعده أقدم الخطوات. خطوة تغيّرت كتابتها بعدها على جهاز آخر لا تُنفّذ قبل سؤالك.</p>
+      <p id={historyNoteId} className="ml-visually-hidden">سجل التراجع محفوظ على هذا الجهاز ويبقى بعد إعادة التحميل أو إغلاق التطبيق، ضمن حد للحجم تسقط بعده أقدم الخطوات. خطوة تغيّرت كتابتها بعدها على جهاز آخر لك لا تُنفّذ قبل سؤالك.</p>
       <CapabilityDialog open={capabilitiesOpen} onClose={() => setCapabilitiesOpen(false)} />
       <InkSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} available={available} />
       <InkDialogs open={dialog} onClose={() => setDialog(null)} />

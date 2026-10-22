@@ -10,7 +10,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Check, Download, Trash2 } from 'lucide-react';
 import type { AccountExportsResponse, AccountExportView, AiConsentView, DeletionPreview, JobStatus } from '@medlevo/shared';
-import { Breadcrumbs, Button, ConfirmDialog, Dialog, ErrorState, LoadingState, PasswordField, StatusPill, useToast } from '../../design';
+import { Breadcrumbs, Button, Checkbox, ConfirmDialog, Dialog, ErrorState, LoadingState, PasswordField, StatusPill, useToast } from '../../design';
+import { afterClear, clearAccountDeviceData, clearOnSignOutPreference, setClearOnSignOutPreference } from '../../lib/signOut';
+import { getSyncEngine } from '../../lib/sync';
+import { storageAccount } from '../../lib/userStorage';
 import { errorMessage } from '../../lib/api';
 import { forgetAuth } from '../../lib/auth';
 import { formatDateTime } from '../../lib/time';
@@ -114,6 +117,8 @@ export function PrivacyScreen() {
       </section>
 
       <AiConsentSection />
+
+      <DeviceDataSection />
 
       <section className="me-section" aria-labelledby="me-delete-h">
         <h2 id="me-delete-h" className="me-section__title">
@@ -296,7 +301,16 @@ function DeleteAccountDialog({ onClose }: { onClose: () => void }) {
     setError(null);
     try {
       await meApi.deleteConfirm(preview.confirm_token, password);
+      const account = storageAccount();
       forgetAuth();
+      if (account) {
+        // (C3 review R6) the account is gone: its copy on THIS device goes with it (nobody could sign in to clear it
+        // later); nothing of another account here is touched. A full load leaves nothing of it in memory either.
+        getSyncEngine().stop();
+        await clearAccountDeviceData(account).catch(() => undefined);
+        afterClear.go('/login');
+        return;
+      }
       navigate('/login', { replace: true });
     } catch (e) {
       setError(errorMessage(e));
@@ -345,6 +359,7 @@ function DeleteAccountDialog({ onClose }: { onClose: () => void }) {
             {preview.policy_ar.map((t) => (
               <li key={t}>{t}</li>
             ))}
+            <li>تُمسح أيضًا نسخة حسابك المحفوظة على هذا الجهاز. ما حُفظ منها على أجهزتك الأخرى يبقى فيها حتى يُمسح من إعدادات المتصفح هناك.</li>
           </ul>
           {preview.blocked_ar ? (
             <p className="me-export__warn">{preview.blocked_ar}</p>
@@ -354,5 +369,37 @@ function DeleteAccountDialog({ onClose }: { onClose: () => void }) {
         </div>
       )}
     </Dialog>
+  );
+}
+
+/**
+ * AOS-4.7 / Q26 (track C3, IA §4.14): «امسح بيانات هذا الجهاز عند الخروج» — the same per-account option as next to
+ * «تسجيل الخروج» (Settings › الأمان), where the sign-out itself happens. A device registered as shared («أجهزتي»)
+ * always clears.
+ */
+function DeviceDataSection() {
+  const [clear, setClear] = useState(() => clearOnSignOutPreference());
+  return (
+    <section className="me-section" aria-labelledby="me-device-data-h">
+      <h2 id="me-device-data-h" className="me-section__title">
+        بياناتك على هذا الجهاز
+      </h2>
+      <p className="me-note">
+        يحفظ هذا الجهاز نسخة من بياناتك لتعمل دون اتصال، في مساحة خاصة بحسابك لا يعرضها التطبيق لحساب آخر يستخدم المتصفح نفسه. هي غير مشفّرة على الجهاز، وتبقى بعد تسجيل
+        الخروج ما لم تطلب مسحها.
+      </p>
+      <Checkbox
+        checked={clear}
+        onCheckedChange={(on) => {
+          setClear(on);
+          setClearOnSignOutPreference(on);
+        }}
+        label="امسح بيانات هذا الجهاز عند الخروج"
+        description="عند تسجيل الخروج تُحذف من هذا الجهاز ملاحظاتك وكتابتك ونسخك المحفوظة للعمل دون اتصال وتفضيلات حسابك، بعد التأكد من وصول كل شيء إلى الخادم. لا يُحذف شيء من الخادم ولا من أجهزتك الأخرى."
+      />
+      <p className="me-note">
+        على جهاز مشترك (مكتبة، قاعة، جهاز صديق) سجّله «جهازًا مشتركًا» من <Link to="/me/devices">أجهزتي</Link>: تُمسح بياناتك منه عند كل خروج.
+      </p>
+    </section>
   );
 }

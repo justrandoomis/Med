@@ -138,6 +138,8 @@
   --ml-color-danger-hover: #9a1f18;
   --ml-color-danger-ink: #ffffff; /* text on danger (6.4:1) */
   --ml-color-inverse: #1c2230; /* tooltips */
+  /* a code a camera reads (QR): white in every theme — a dark or tinted quiet zone breaks scanning (AOS-20.1, C3) */
+  --ml-color-scan-paper: #ffffff;
   --ml-color-inverse-ink: #fffdf8;
   --ml-color-info: #0a6580;
   --ml-color-info-soft: #e1f0f5;

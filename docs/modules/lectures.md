@@ -94,6 +94,13 @@ Edits outside this module (smallest exact edits, reported): `modules/versions/id
 (the row's «رسمي» / publisher). Still open: chunked (resumable) uploads into a space (P1-T1's uploads refuse a space
 target; bulk upload is one multipart request per file); ZIP import (AOS-3.1).
 
+Review of track C2 (2026-10-22): **R4 (major)** — when one file of «ارفع عدة محاضرات» failed after its draft was made,
+the result told the moderator to upload it again from «أضف محاضرة رسمية» «بالعنوان نفسه», which makes a SECOND draft
+(that form reuses only a draft it made itself) and leaves the empty one behind. The failed row now offers «أعد المحاولة:
+<file>», which uploads the same file into the SAME draft (or makes the draft when none was made), and the count «رُفعت n
+من m» follows (`web:test/copies/official-admin.review-c2`). Who reaches the review queue and the feed was tried as every
+kind of person (`srv:lectures/review-feed.review-c2`, no defect).
+
 ## Tests
 
 `apps/server/test/lectures/{lectures,corrections,subject-content,rules,channels-integration,space-routes.contract,review-step1}.test.ts`

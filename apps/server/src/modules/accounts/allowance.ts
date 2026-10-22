@@ -3,12 +3,17 @@
 //   * blocked_reason_ar — null when an AI call may be tried now, else the reason every task is refused before any call
 //     (no provider, no ai_processing consent, allowance 0 or spent, the deployment ceiling) — the orchestrator's own
 //     status for this binding, so the screen and the refusal always say the same thing;
-//   * ai_spaces — the allowance of each subject the viewer MODERATES (gate-2 «moderator» access in that subject; a
-//     member never sees a subject's budget).
+//   * ai_spaces — the allowance of each subject the viewer MODERATES (a moderating role in that subject — admin,
+//     assistant, subject moderator; a member never sees a subject's budget, and the platform admin's blanket access
+//     does not list every subject: its allowances are on the platform quota screen).
 // Runs inside the request's own vault binding.
 import type { QuotaView } from '@medlevo/shared';
 import type { AppContext } from '../../context';
 import type { Viewer } from '../../system/binding';
+import type { SpaceMembership } from '../authz/policy';
+
+/** the roles that moderate a subject (channels/access.ts MODERATING_ROLES) */
+const MODERATOR_ROLES: ReadonlySet<string> = new Set(['admin', 'assistant', 'subject_moderator']);
 
 export function quotaViewFor(ctx: AppContext, v: Viewer): QuotaView {
   const q = ctx.quota.view(v);
@@ -20,8 +25,10 @@ export function quotaViewFor(ctx: AppContext, v: Viewer): QuotaView {
     .filter((s) => s.status === 'active' || s.status === 'read_only')
     .filter((s) => {
       try {
-        const m = ctx.authz.memberships.accessToSpace(v, s.id);
-        return !!m && !m.pending && m.access === 'moderator';
+        // C1 review: a moderating ROLE in the subject — the platform admin's blanket «moderator» access is not one (it
+        // listed, and opened the database of, every subject on each /me; the platform quota screen shows them)
+        const m = ctx.authz.memberships.accessToSpace(v, s.id) as (SpaceMembership & { roles?: readonly string[] }) | null;
+        return !!m && !m.pending && m.access === 'moderator' && (m.roles ?? []).some((r: string) => MODERATOR_ROLES.has(r));
       } catch {
         return false;
       }

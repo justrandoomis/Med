@@ -6,6 +6,7 @@
 import type { RecordingResponse, RecordingView } from '@medlevo/shared';
 import { api, isApiError } from '../../../lib/api';
 import { peekDeviceId } from '../../../lib/deviceId';
+import { storageAccount } from '../../../lib/userStorage';
 import { getDb, type BlobRecord, type MedLevoDB } from '../../../lib/localdb';
 import type { FinishedRecording, RecordingMeta } from './recorder';
 
@@ -319,10 +320,15 @@ let started = false;
 export function startRecordingUploader(db: MedLevoDB = getDb(), activeId: () => string | null = () => null): void {
   if (started || typeof window === 'undefined') return;
   started = true;
-  const kick = () =>
+  // (C3 review R7) the recordings of the account this page belonged to when it started: never sent under another
+  // account's session once that account signs in here (the page reloads right after)
+  const owner = storageAccount()?.userId ?? null;
+  const kick = () => {
+    if ((storageAccount()?.userId ?? null) !== owner) return;
     void recoverInterruptedRecordings(db, activeId())
       .catch(() => 0)
       .then(() => kickRecordingUploads(db));
+  };
   kick();
   window.addEventListener('online', kick);
   window.setInterval(kick, 60_000);

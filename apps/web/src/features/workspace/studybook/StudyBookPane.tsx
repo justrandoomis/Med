@@ -23,6 +23,7 @@ import { BlockNotes } from './BlockNotes';
 import { SummaryPanel } from './SummaryPanel';
 import { STUDY_BOOK_NOT_DOWNLOADED_AR, useStudyBook, type StudyBookState } from './useStudyBook';
 import './studybook.css';
+import { AiAllowanceNote } from '../../../lib/aiAllowance';
 
 const SECTION_TONE: Record<StudyBookSectionView['status'], StatusTone> = { pending: 'neutral', generating: 'info', complete: 'success', abstained: 'warning', failed: 'danger' };
 
@@ -98,6 +99,7 @@ export function StudyBookPane({ doc, pageIndex, jumpKey, onVisiblePage, onOpenPa
           </TabList>
           {toolbar && <div className="sb-sync">{toolbar}</div>}
         </div>
+        <AiAllowanceNote className="sb-pane__allowance" />
         <TabPanel value="book" className="sb-pane__panel">
           {content}
         </TabPanel>

@@ -141,6 +141,16 @@ export class AiOrchestrator {
     return this.provider !== null;
   }
 
+  /**
+   * (AOS-21.42, C1 review) the configured provider and the reason the bound user's content may not be sent to it now
+   * (no ai_processing consent naming it), or null — so a route refuses with CONSENT_REQUIRED, not a budget code.
+   */
+  consentBlock(): { provider: string; reason_ar: string } | null {
+    const p = this.provider;
+    const reason = p ? (this.consent?.blockedReason(p) ?? null) : null;
+    return p && reason ? { provider: p.name, reason_ar: reason } : null;
+  }
+
   /** (AOS-21.42) does what the configured provider is sent leave the deployment? (null: no provider) */
   get providerLeavesDeployment(): boolean | null {
     return this.provider ? this.provider.dataLeavesDeployment === true : null;

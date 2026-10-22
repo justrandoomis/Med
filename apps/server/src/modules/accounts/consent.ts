@@ -42,7 +42,8 @@ export function aiConsentView(ctx: AppContext, v: Viewer): AiConsentView {
   return {
     kind: 'ai_processing',
     provider,
-    granted: !!(active && providerId && active.providers.includes(providerId)),
+    // (C1 review) a consent given to an earlier text does not cover sending now: the user agrees to the current text
+    granted: !!(active && providerId && active.providers.includes(providerId) && active.textVersion === AI_CONSENT_TEXT_VERSION),
     providers: active?.providers ?? [],
     granted_at: active?.grantedAt ?? null,
     text_version: active?.textVersion ?? null,

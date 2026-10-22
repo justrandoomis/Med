@@ -1,4 +1,5 @@
-// §46: a newer position from another device is offered, never applied silently.
+// §46: a newer position from another device is offered, never applied silently. (AOS-20.19) A study session is the
+// account's own: the other device is always «جهاز آخر لك».
 import { MonitorSmartphone, X } from 'lucide-react';
 import type { SourcePageView, SourceVersionView, StudyLocation } from '@medlevo/shared';
 import { Button, Dialog, IconButton } from '../../../design';
@@ -40,8 +41,8 @@ export function SessionConflictDialog({
     <Dialog
       open={open}
       onClose={onMine}
-      title="موضع أحدث من جهاز آخر"
-      description={`على جهاز آخر وصلت إلى ${there} (${formatDateTime(theirs.updatedAt)}). أنت هنا عند ${here}. لم يُكتب أي موضع فوق الآخر.`}
+      title="موضع أحدث من جهاز آخر لك"
+      description={`على جهاز آخر لك وصلت إلى ${there} (${formatDateTime(theirs.updatedAt)}). أنت هنا عند ${here}. لم يُكتب أي موضع فوق الآخر.`}
       size="sm"
       footer={
         <>
@@ -63,7 +64,7 @@ export function RemoteMoveBanner({ label, onGo, onDismiss }: { label: string; on
   return (
     <div className="wk-banner" role="status">
       <MonitorSmartphone size={18} aria-hidden="true" />
-      <span>{`فُتح هذا المصدر على جهاز آخر عند ${label}.`}</span>
+      <span>{`فُتح هذا المصدر على جهاز آخر لك عند ${label}.`}</span>
       <Button size="sm" variant="plain" onClick={onGo}>
         الانتقال إليه
       </Button>

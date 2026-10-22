@@ -94,12 +94,16 @@ function useLocalContinue(titles: Map<string, string>): ContinueItem[] {
  * Server list first (it knows every device); this device's newer sessions are merged in. When this device's session
  * is newer, its place wins: its page label and mode (the server's label names an older place). The server's label
  * stays only when this device's session holds no page at all.
+ * `liveSources` (C3 review R4): the library as the server listed it just now — a session of this device whose lecture
+ * is in neither list was deleted on another device and is not offered. Without it (offline, cached library) nothing
+ * of this device is dropped.
  */
-export function mergeContinue(server: readonly ContinueItem[] | null, local: readonly ContinueItem[]): ContinueItem[] {
+export function mergeContinue(server: readonly ContinueItem[] | null, local: readonly ContinueItem[], opts: { liveSources?: ReadonlySet<string> } = {}): ContinueItem[] {
   const by = new Map<string, ContinueItem>();
   for (const it of server ?? []) by.set(it.source_id, it);
   for (const it of local) {
     const s = by.get(it.source_id);
+    if (!s && opts.liveSources && !opts.liveSources.has(it.source_id)) continue;
     if (!s) by.set(it.source_id, it);
     else if (it.updated_at > s.updated_at)
       by.set(it.source_id, { ...s, updated_at: it.updated_at, page_label_ar: it.page_label_ar ?? s.page_label_ar, mode: it.mode, version_id: it.version_id ?? s.version_id });
@@ -334,7 +338,9 @@ export function HomeScreen() {
   const lib = useLibrary();
   const titles = useMemo(() => new Map((lib.data?.sources ?? []).map((s) => [s.id, s.title])), [lib.data]);
   const local = useLocalContinue(titles);
-  const items = mergeContinue(home.data?.continue ?? null, local);
+  // only a library the server answered just now can say a lecture is gone (a cached one may predate a new lecture)
+  const liveSources = useMemo(() => (lib.data && !lib.fromCache ? new Set(lib.data.sources.map((s) => s.id)) : undefined), [lib.data, lib.fromCache]);
+  const items = mergeContinue(home.data?.continue ?? null, local, { liveSources });
   const h = home.data;
 
   return (

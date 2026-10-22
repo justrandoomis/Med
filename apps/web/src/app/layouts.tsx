@@ -12,6 +12,7 @@ import { settingsStore } from '../lib/settings';
 import { getDb } from '../lib/localdb';
 import { installOfflineTransport } from '../lib/offline';
 import { getSyncEngine } from '../lib/sync';
+import { listenForAccountClear } from '../lib/signOut';
 import { reportError } from '../lib/errorReporter';
 import { recoverNoteDrafts } from '../features/workspace/data/noteDrafts';
 import { usePageTitle } from '../lib/usePageTitle';
@@ -59,7 +60,12 @@ export function OwnerLayout() {
     void recoverNoteDrafts(getDb()).catch(() => undefined);
     void settingsStore.load();
     void capabilitiesStore.refresh();
-    return () => engine.stop();
+    // (C3 review R9) another tab cleared this account's data on this device: leave too
+    const stopListening = listenForAccountClear();
+    return () => {
+      stopListening();
+      engine.stop();
+    };
   }, []);
   return <Outlet />;
 }

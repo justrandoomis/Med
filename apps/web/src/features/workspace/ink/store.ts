@@ -628,6 +628,12 @@ export class InkDocumentStore {
     return this.step('redo');
   }
 
+  /**
+   * (AOS-1.24) how many items the last undo / redo left alone because they now carry another person's writing (the
+   * announcement says so; 0 in every single-writer case).
+   */
+  lastForeign = 0;
+
   getPendingStep = (): PendingStep | null => (this.pending ? { dir: this.pending.dir, label_ar: this.pending.label_ar, revive: this.pending.revive, changed: this.pending.changed } : null);
   private pendingSnapshot: PendingStep | null = null;
   /** stable snapshot for useSyncExternalStore */
@@ -699,11 +705,19 @@ export class InkDocumentStore {
   private decide(dir: 'undo' | 'redo', cmd: Command, changes: ItemChange[], current: (c: ItemChange) => InkItem | null): StepOutcome {
     let revive = 0;
     let changed = 0;
+    let foreign = 0;
     const effective: ItemChange[] = [];
     for (const c of changes) {
       const now = current(c);
       const expected = aliveItem(c.before);
       const target = aliveItem(c.after);
+      // (AOS-1.24) undo / redo revert only this account's OWN operations: an item that now carries another person's
+      // writing (another author than the step left — a multi-writer layer, or a copy re-attributed to someone else) is
+      // never changed by this account's history, not even after «نفّذها». The change leaves the step.
+      if (now && authorOf(now) !== authorOf(expected ?? target)) {
+        foreign++;
+        continue;
+      }
       if (sameState(now, target)) continue; // already as the step wants it (e.g. removing what was erased elsewhere)
       effective.push(c);
       if (sameState(now, expected)) continue;
@@ -712,8 +726,10 @@ export class InkDocumentStore {
     }
     if (revive === 0 && changed === 0) {
       this.apply(dir, effective);
+      this.lastForeign = foreign;
       return 'done';
     }
+    this.lastForeign = foreign;
     this.setPending({ dir, label_ar: cmd.label_ar, revive, changed, cmd, changes: effective });
     return 'confirm';
   }
@@ -965,6 +981,11 @@ export class InkDocumentStore {
     return this.selectedItems().some((it) => !this.isEditable(it));
   }
 
+}
+
+/** Who wrote an item: null = this vault's own user (an item of another author names them). */
+function authorOf(it: InkItem | null | undefined): string | null {
+  return it?.author_user_id ?? null;
 }
 
 /** The change is about an item the engine keeps in memory (not a reader kind it only erases). */

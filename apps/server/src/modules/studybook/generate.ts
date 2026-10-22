@@ -45,6 +45,9 @@ const MODEL_ABSTAIN: ReadonlySet<AbstainReason> = new Set(['not_found_in_scope',
 /** AI availability with the server's own Arabic reason (budget vs not configured vs unsupported). */
 export function requireAi(ctx: AppContext, task: AiTask): void {
   if (ctx.ai.isAvailable(task)) return;
+  // AOS-21.42 (C1 review): no consent is not a spent budget — the honest code, with the consent reason
+  const consent = ctx.ai.consentBlock();
+  if (consent) throw new AppError('CONSENT_REQUIRED', consent.reason_ar, 409, { kind: 'ai_processing', provider: consent.provider, task });
   const st = ctx.ai.status();
   const reason = st.tasks[task]?.reason_ar ?? ABSTAIN_REASON_LABELS_AR.ai_not_configured;
   const budgetBlocked = st.configured && !!st.tasks[task]?.model;

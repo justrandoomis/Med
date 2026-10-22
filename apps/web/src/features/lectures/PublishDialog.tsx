@@ -9,6 +9,7 @@ import { Send } from 'lucide-react';
 import { itemsCountAr, LAYER_KIND_LABELS_AR, newId, PUBLICATION_MAX_LAYERS, type LayerView, type PublicationView } from '@medlevo/shared';
 import { Button, Checkbox, Dialog, LoadingState, TextArea, TextField, useToast } from '../../design';
 import { errorMessage } from '../../lib/api';
+import { typed } from '../../lib/typedText';
 import { useOnline } from '../../lib/useOnline';
 import { publicationsApi, publicationUrl } from './api';
 import './publications.css';
@@ -161,11 +162,11 @@ export function PublishDialog({
           </fieldset>
         )}
         {republish ? (
-          <TextArea label="ما الذي تغيّر؟ (اختياري)" hint="يقرؤها من يتابع شرحك قبل أن يطبّق التحديث." value={changeNote} maxLength={1000} rows={3} onChange={(e) => setChangeNote(e.target.value)} />
+          <TextArea label="ما الذي تغيّر؟ (اختياري)" hint="يقرؤها من يتابع شرحك قبل أن يطبّق التحديث." value={changeNote} maxLength={1000} rows={3} onChange={typed(setChangeNote, true)} />
         ) : (
           <>
-            <TextField label="عنوان الشرح" required value={title} maxLength={120} onChange={(e) => setTitle(e.target.value)} />
-            <TextArea label="ملخص (اختياري)" value={summary} maxLength={1000} rows={3} onChange={(e) => setSummary(e.target.value)} />
+            <TextField label="عنوان الشرح" required value={title} maxLength={120} onChange={typed(setTitle)} />
+            <TextArea label="ملخص (اختياري)" value={summary} maxLength={1000} rows={3} onChange={typed(setSummary, true)} />
           </>
         )}
         <p className="cp-sheet__line cp-sheet__line--muted">

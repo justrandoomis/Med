@@ -96,7 +96,7 @@ export const SPACE_ROUTE_FILES = ['src/modules/lectures/index.ts', 'src/modules/
 /** Module entries (modules/index.ts) that may be mounted with the /api/spaces prefix. */
 export const SPACE_PREFIX_MODULES = ['lectures'];
 
-const ROUTE_METHODS = new Set(['get', 'post', 'put', 'patch', 'delete']);
+const ROUTE_METHODS = new Set(['get', 'post', 'put', 'patch', 'delete', 'head', 'options', 'all']);
 
 /**
  * The MOUNTED declarations of modules/authz/spaceRoutes.ts as `METHOD /api/spaces/:spaceId/…` (each `declare(` call is
@@ -118,7 +118,21 @@ export function serverRelative(filename) {
   return i < 0 ? null : `src/${norm.slice(i + '/apps/server/src/'.length)}`;
 }
 
-const propName = (node) => (node && node.type === 'MemberExpression' && !node.computed && node.property.type === 'Identifier' ? node.property.name : null);
+// C1 review: `x['db']` is the same access as `x.db` (a computed key that is a plain string)
+const propName = (node) => {
+  if (!node || node.type !== 'MemberExpression') return null;
+  if (!node.computed && node.property.type === 'Identifier') return node.property.name;
+  if (node.computed && node.property.type === 'Literal' && typeof node.property.value === 'string') return node.property.value;
+  return null;
+};
+/** the keys an object pattern takes out (`const { db, vault: v } = …` → ['db', 'vault']) */
+const patternKeys = (pattern) =>
+  pattern?.type === 'ObjectPattern'
+    ? pattern.properties
+        .filter((p) => p.type === 'Property')
+        .map((p) => (p.key?.type === 'Identifier' && !p.computed ? p.key.name : p.key?.type === 'Literal' ? String(p.key.value) : null))
+        .filter((k) => k !== null)
+    : [];
 const isNamed = (node, name) => (node?.type === 'Identifier' && node.name === name) || propName(node) === name;
 const stringOf = (node) => {
   if (!node) return null;
@@ -164,15 +178,40 @@ export const moduleBoundariesRule = {
         }
         if (isNamed(callee, 'openDb') && !OPEN_DB_FILES.includes(file)) report(node, 'openDb');
         if (isNamed(callee, 'createBoundDb') && !inSystem && file !== 'src/context.ts') report(node, 'boundDb');
+        // the space routes: app.get/post/…/all('/:spaceId/…') and app.route({ method, url: '/:spaceId/…' }) (C1 review)
+        let routePath = null;
+        let routeMethods = [];
         if (name && ROUTE_METHODS.has(name)) {
-          const path = stringOf(node.arguments[0]);
-          if (path !== null && (path === '/:spaceId' || path.startsWith('/:spaceId/'))) {
-            if (!SPACE_ROUTE_FILES.includes(file)) report(node, 'spaceRouteFile');
-            else {
-              declaredCache ??= declaredSpaceRoutes();
-              const route = `${name.toUpperCase()} /api/spaces${path}`;
+          routePath = stringOf(node.arguments[0]);
+          routeMethods = [name.toUpperCase()];
+        } else if (name === 'route' && node.arguments[0]?.type === 'ObjectExpression') {
+          const props = node.arguments[0].properties.filter((p) => p.type === 'Property' && p.key?.type === 'Identifier');
+          const url = props.find((p) => p.key.name === 'url' || p.key.name === 'path');
+          const method = props.find((p) => p.key.name === 'method');
+          routePath = url ? stringOf(url.value) : null;
+          const m = method?.value;
+          routeMethods =
+            m?.type === 'ArrayExpression' ? m.elements.map((e) => stringOf(e)?.toUpperCase() ?? '?') : [stringOf(m)?.toUpperCase() ?? '?'];
+        }
+        if (routePath !== null && (routePath === '/:spaceId' || routePath.startsWith('/:spaceId/'))) {
+          if (!SPACE_ROUTE_FILES.includes(file)) report(node, 'spaceRouteFile');
+          else {
+            declaredCache ??= declaredSpaceRoutes();
+            for (const method of routeMethods) {
+              const route = `${method} /api/spaces${routePath}`;
               if (!declaredCache.has(route)) context.report({ node, messageId: 'spaceRouteUndeclared', data: { route } });
             }
+          }
+        }
+      },
+      // C1 review: `const { db } = ctx.system` / `const { vault } = ctx.dbs` take the same handles out of the object
+      VariableDeclarator(node) {
+        const keys = patternKeys(node.id);
+        if (keys.length === 0 || !node.init) return;
+        if (keys.includes('db') && isNamed(node.init, 'system') && !inSystem && !SYSTEM_DB_FILES.includes(file)) report(node, 'systemDb');
+        if (isNamed(node.init, 'dbs') && file !== 'src/context.ts') {
+          for (const kind of keys.filter((k) => k === 'vault' || k === 'space')) {
+            if (!SECOND_DB_FILES.includes(file) || !SECOND_DB_MODULES.test(file)) report(node, 'secondDb', { kind });
           }
         }
       },

@@ -570,7 +570,7 @@ function EditCard({ cardId }: { cardId: string }) {
       } else {
         if (maskChanged) throw new Error('تصحيح منطقة الصورة يحتاج اتصالًا.');
         await editCardLocal(getDb(), card, { front: frontChanged ? rich(front!) : parseRichText(card.front), back: backChanged ? rich(backText!) : parseRichText(card.back) });
-        toast.show({ title: 'حُفظ التعديل على هذا الجهاز ويُزامَن لاحقًا. إن عُدّلت البطاقة على جهاز آخر يُحتفظ بالنسختين.', tone: 'success' });
+        toast.show({ title: 'حُفظ التعديل على هذا الجهاز ويُزامَن لاحقًا. إن عُدّلت البطاقة على جهاز آخر لك يُحتفظ بالنسختين.', tone: 'success' });
       }
       setFront(null);
       setBackText(null);
@@ -579,7 +579,7 @@ function EditCard({ cardId }: { cardId: string }) {
       if (isApiError(e) && e.status === 409) {
         const server = (e.details as { card?: FlashcardView } | null)?.card;
         if (server) await putServerCards(getDb(), [server]);
-        setError('عُدّلت هذه البطاقة على جهاز آخر بعد أن فتحتها؛ لم يُكتب تعديلك فوقها. حُدّثت النسخة المعروضة — راجعها ثم أعد تعديلك. (نصك ما زال في الحقول.)');
+        setError('عُدّلت هذه البطاقة على جهاز آخر لك بعد أن فتحتها؛ لم يُكتب تعديلك فوقها. حُدّثت النسخة المعروضة — راجعها ثم أعد تعديلك. (نصك ما زال في الحقول.)');
       } else setError(errorMessage(e, 'تعذّر حفظ التعديل.'));
     } finally {
       setSaving(false);

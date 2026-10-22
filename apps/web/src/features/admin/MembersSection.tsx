@@ -6,7 +6,9 @@ import { useState } from 'react';
 import { Users } from 'lucide-react';
 import { type MemberDecision, type MembershipStatus, type MemberView } from '@medlevo/shared';
 import { Button, Checkbox, Dialog, EmptyState, ErrorState, LoadingState, SegmentedControl, TextArea, useToast } from '../../design';
-import { errorMessage } from '../../lib/api';
+import { errorMessage, isApiError } from '../../lib/api';
+import { typed } from '../../lib/typedText';
+import { decidedElsewhereAr } from '../../lib/conflictSource';
 import { formatRelative } from '../../lib/time';
 import { channelsApi } from '../channels/api';
 import { ReasonedButton } from '../channels/ui';
@@ -53,6 +55,20 @@ export function MembersSection() {
   const offline = v.cachedAt !== null;
 
 
+  /** The sentence for a request already decided by someone (null when the server copy does not say who). */
+  const decidedFirst = async (m: MemberView | undefined): Promise<string | null> => {
+    if (!nodeId || !m) return null;
+    for (const s of ['approved', 'rejected', 'removed'] as const) {
+      try {
+        const now = (await channelsApi.members(nodeId, { status: s })).items.find((x) => x.user.id === m.user.id);
+        if (now?.decided_by) return decidedElsewhereAr(now.decided_by, v.userId);
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  };
+
   const decide = async (members: MemberView[], decision: MemberDecision, reason?: string) => {
     if (!nodeId) return;
     setBusy(true);
@@ -64,7 +80,11 @@ export function MembersSection() {
       }
       toast.show({ title: decision === 'approve' ? `وُوفق على ${done}.` : decision === 'reject' ? 'رُفض الطلب.' : 'أُزيل العضو.', tone: 'success' });
     } catch (e) {
-      toast.show({ title: `${done > 0 ? `نُفّذ ${done} ثم توقف: ` : ''}${errorMessage(e)}`, tone: 'danger' });
+      const prefix = done > 0 ? `نُفّذ ${done} ثم توقف: ` : '';
+      // (AOS-20.19) someone decided this request first: say whether it was another person (named) or this account on
+      // another of its devices — read from the membership as the server holds it now
+      const elsewhere = isApiError(e) && e.status === 409 ? await decidedFirst(members[done]) : null;
+      toast.show({ title: `${prefix}${elsewhere ?? errorMessage(e)}`, tone: elsewhere ? 'warning' : 'danger' });
     } finally {
       setBusy(false);
       setSelected(new Set());
@@ -242,7 +262,7 @@ export function ReasonDialog({
         </>
       }
     >
-      <TextArea label={label} hint={optional ? 'اختياري.' : `حرفان على الأقل، حتى 500 حرف.`} rows={3} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} />
+      <TextArea label={label} hint={optional ? 'اختياري.' : `حرفان على الأقل، حتى 500 حرف.`} rows={3} maxLength={500} value={reason} onChange={typed(setReason, true)} />
       {error && <p className="ml-field__error">{error}</p>}
     </Dialog>
   );

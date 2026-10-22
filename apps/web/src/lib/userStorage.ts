@@ -175,3 +175,36 @@ export function clearAccountKeys(userId: string): number {
   }
   return doomed.length;
 }
+
+/**
+ * Keys of the DEVICE (never of an account): the display preferences, the ink tile cache switch, which account signed
+ * in last here and who claimed the legacy data. «Clear this device» for an account never removes them.
+ */
+export const DEVICE_KEYS: ReadonlySet<string> = new Set(['medlevo.appearance.v1', 'medlevo.display.v1', 'medlevo.ink.tiles', 'medlevo.lastAuth.v1', LEGACY_CLAIM_KEY]);
+
+/**
+ * (AOS-4.7 / Q26, track C3) «امسح بيانات هذا الجهاز عند الخروج» for one account: every localStorage AND sessionStorage
+ * key of its namespace — `<userId>:` keys, or, for user #1 holding the legacy namespace, the un-prefixed keys except the
+ * device's own (DEVICE_KEYS). Nothing of another account. Returns how many keys were removed.
+ */
+export function clearAccountStorage(account: StorageAccount): number {
+  if (!ID_RE.test(account.userId)) return 0;
+  let removed = 0;
+  for (const kind of ['local', 'session'] as const) {
+    const s = store(kind);
+    if (!s) continue;
+    const doomed: string[] = [];
+    try {
+      for (let i = 0; i < s.length; i++) {
+        const k = s.key(i);
+        if (k === null) continue;
+        if (account.legacy ? !PREFIXED.test(k) && !DEVICE_KEYS.has(k) : k.startsWith(`${account.userId}:`)) doomed.push(k);
+      }
+      for (const k of doomed) s.removeItem(k);
+      removed += doomed.length;
+    } catch {
+      // storage blocked: nothing more can be removed (and nothing more can be read by anyone either)
+    }
+  }
+  return removed;
+}

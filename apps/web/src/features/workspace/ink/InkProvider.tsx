@@ -422,8 +422,8 @@ export function InkProvider({ documentKey, children, textEditor }: InkProviderPr
       setPenOnly: (v: boolean) => updatePrefs((p) => ({ ...p, penOnly: v })),
       setShapeRecognition: (v: boolean) => updatePrefs((p) => ({ ...p, shapeRecognition: v })),
       // (H3 item 1) a step whose writing changed since it was recorded waits for the owner (dialog below)
-      undo: () => announce(stepAnnouncement(store.undoStep(), 'تراجع')),
-      redo: () => announce(stepAnnouncement(store.redoStep(), 'إعادة')),
+      undo: () => announce(stepAnnouncement(store.undoStep(), 'تراجع', store.lastForeign)),
+      redo: () => announce(stepAnnouncement(store.redoStep(), 'إعادة', store.lastForeign)),
       canUndo: store.history.canUndo,
       canRedo: store.history.canRedo,
       isWritingTool: isWritingToolId(toolState.tool),
@@ -581,8 +581,9 @@ export function InkProvider({ documentKey, children, textEditor }: InkProviderPr
   );
 }
 
-function stepAnnouncement(o: StepOutcome, done: string): string {
-  if (o === 'done') return done;
+function stepAnnouncement(o: StepOutcome, done: string, foreign = 0): string {
+  // (AOS-1.24) undo / redo never change another person's writing: say what was left as it is
+  if (o === 'done') return foreign > 0 ? `${done}. بقي ${itemsAr(foreign)} كما هو لأنه صار من كتابة مستخدم آخر.` : done;
   if (o === 'empty') return done === 'تراجع' ? 'لا يوجد ما يُتراجع عنه.' : 'لا يوجد ما يُعاد.';
   if (o === 'checking') return 'يُتحقق من الكتابة على هذا الجهاز قبل تنفيذ الخطوة…';
   return 'هذه الخطوة تحتاج تأكيدك قبل تنفيذها.';
@@ -602,8 +603,8 @@ function itemsAr(n: number): string {
 function PendingStepDialog({ pending, onApply, onSkip }: { pending: PendingStep | null; onApply: () => void; onSkip: () => void }) {
   const what = pending?.dir === 'redo' ? 'إعادة' : 'التراجع عن';
   const parts: string[] = [];
-  if (pending?.revive) parts.push(`يعيد ${itemsAr(pending.revive)} من كتابتك حُذف بعد هذه الخطوة (على جهاز آخر أو على الخادم).`);
-  if (pending?.changed) parts.push(`${itemsAr(pending.changed)} عُدّل بعد هذه الخطوة على جهاز آخر؛ تنفيذها يعيده إلى ما كان عليه قبل التعديل.`);
+  if (pending?.revive) parts.push(`يعيد ${itemsAr(pending.revive)} من كتابتك حُذف بعد هذه الخطوة (على جهاز آخر لك أو على الخادم).`);
+  if (pending?.changed) parts.push(`${itemsAr(pending.changed)} عُدّل بعد هذه الخطوة على جهاز آخر لك؛ تنفيذها يعيده إلى ما كان عليه قبل التعديل.`);
   return (
     <ConfirmDialog
       open={!!pending}

@@ -1133,7 +1133,8 @@ export function aggregateState(s: Pick<SyncSnapshot, 'pending' | 'conflicts' | '
 
 /** Arabic explanation for the global save indicator. */
 export function describeSyncSnapshot(s: SyncSnapshot): string {
-  if (s.conflicts > 0) return `تعارضات تحتاج مراجعتك: ${s.conflicts}. احتُفظ بالنسختين ولم يُحذف شيء.`;
+  // (AOS-20.19) this engine syncs the account's own vault: the other copy is from «جهاز آخر لك»
+  if (s.conflicts > 0) return `تعارضات مع جهاز آخر لك تحتاج مراجعتك: ${s.conflicts}. احتُفظ بالنسختين ولم يُحذف شيء.`;
   if (s.errors > 0) return `${s.lastError?.message ?? 'تعذّرت مزامنة بعض التغييرات.'} عدد العمليات المتأثرة: ${s.errors}.`;
   if (s.pullFailed && s.online && s.pending === 0) return `${s.lastError?.message ?? 'تعذّر جلب التغييرات من الخادم.'} تغييراتك المحلية كلها وصلت؛ ستُعاد محاولة الجلب تلقائيًا.`;
   if (s.authRequired && s.pending > 0) return `التغييرات محفوظة على هذا الجهاز (${s.pending}). سجّل الدخول لإكمال المزامنة.`;

@@ -8,7 +8,9 @@ import type {
   AiConsentView,
   DeletionPreview,
   DevicesResponse,
+  DeviceView,
   QuotaView,
+  RegisterDeviceRequest,
 } from '@medlevo/shared';
 import { api } from '../../lib/api';
 
@@ -17,6 +19,10 @@ const T = { timeoutMs: 20_000 };
 export const meApi = {
   devices: () => api.get<DevicesResponse>('/accounts/me/devices', T),
   revokeDevice: (deviceId: string) => api.del<{ ok: true }>(`/accounts/me/devices/${encodeURIComponent(deviceId)}`, T),
+  // AOS-4.7 / Q26 (C3): «جهاز مشترك» — cleared at every sign-out
+  // a browser the server does not know yet (first sign-in, nothing synced): register it before marking it
+  registerDevice: (body: RegisterDeviceRequest) => api.post<DeviceView>('/accounts/me/devices', body, T),
+  setDeviceShared: (deviceId: string, shared: boolean) => api.patch<DeviceView>(`/accounts/me/devices/${encodeURIComponent(deviceId)}`, { shared_device: shared }, T),
   quota: () => api.get<QuotaView>('/accounts/me/quota', T),
   exports: () => api.get<AccountExportsResponse>('/accounts/me/exports', T),
   startExport: () => api.post<{ job_id: string; export: AccountExportView }>('/accounts/me/export', {}, T),
