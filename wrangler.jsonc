@@ -2,6 +2,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "medlevo",
+  "account_id": "37ff0d6a9c0fa8f1820f297cafa03923",
   "main": "deploy/cloudflare/worker.ts",
   "compatibility_date": "2026-11-01",
   "observability": { "enabled": true },
@@ -18,6 +19,7 @@
   "durable_objects": { "bindings": [{ "name": "MEDLEVO", "class_name": "MedLevoContainer" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MedLevoContainer"] }],
   "vars": {
+    "MEDLEVO_ORIGIN": "https://medlevo.aliamer59409.workers.dev",
     "MEDLEVO_R2_BUCKET": "medlevo-backups",
     "MEDLEVO_BACKUP_INTERVAL_MINUTES": "10"
   }
