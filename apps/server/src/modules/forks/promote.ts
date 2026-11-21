@@ -48,9 +48,14 @@ export async function promoteFromVault(ctx: AppContext, scope: SpaceScope, body:
     if (!(await ctx.blobs.ensureLocal(file.sha256, file.size))) throw new AppError('CONFLICT', 'ملف هذا المصدر غير متاح على الخادم الآن؛ أعد المحاولة لاحقًا.', 409);
     path = blobPathFor(ctx.config.filesDir, file.sha256);
   }
-  const lecture = lectures.create(scope, { title: body.title, lecture_no: body.lecture_no ?? null });
-  // the content-addressed blob is read in place (never moved or deleted here); the space gets its own file row
-  const up = await lectures.upload(scope, lecture.id, { tmpPath: path, fileName: version.file_name ?? `${body.title}.pdf`, size: statSync(path).size, truncated: false });
-  ctx.audit.record({ entityType: 'official_lecture', entityId: lecture.id, action: 'promote_from_vault', summary: `نشر «${body.title}» من مكتبة المشرف كمحاضرة رسمية (مسودة)`, after: { version_id: up.version_id } });
-  return { lecture: new ViewBuilder(ctx, scope).lecture(getLecture(ctx, lecture.id)!), version_id: up.version_id, job_id: up.job_id };
+  // the content-addressed blob is read in place (never moved or deleted here); the space gets its own file row. The
+  // draft is created in the SAME transaction as its version: a file the space refuses (quota, format, processing
+  // unavailable) leaves no empty draft behind (Phase 1 completion, 19H.4)
+  const up = await lectures.createWithFile(
+    scope,
+    { title: body.title, lecture_no: body.lecture_no ?? null },
+    { tmpPath: path, fileName: version.file_name ?? `${body.title}.pdf`, size: statSync(path).size, truncated: false },
+  );
+  ctx.audit.record({ entityType: 'official_lecture', entityId: up.lecture_id, action: 'promote_from_vault', summary: `نشر «${body.title}» من مكتبة المشرف كمحاضرة رسمية (مسودة)`, after: { version_id: up.version_id } });
+  return { lecture: new ViewBuilder(ctx, scope).lecture(getLecture(ctx, up.lecture_id)!), version_id: up.version_id, job_id: up.job_id };
 }

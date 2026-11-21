@@ -8,7 +8,9 @@
 //   * AOS-18.5: an Assistant invites a named person from «الرموز والدعوات» (exact username; a name prefix does not reach
 //     people outside the channels he manages), sees the invitation accepted, and revokes another one;
 //   * AOS-19H.3: the student's private copy of the lecture is offered the link in her library, linked from the row menu,
-//     and what could not be placed waits in the official copy's review list («من محاضرتك الخاصة»).
+//     and what could not be placed waits in the official copy's review list («من محاضرتك الخاصة»);
+//   * AOS-19H.4: the Subject Moderator publishes her own private lecture from her library row menu («انشرها كمحاضرة
+//     رسمية…») as an official draft students do not see; a student's row menu has no such control.
 // axe: no serious violation on the new screens in light, dark and e-ink.
 import type { BrowserContext, Page } from '@playwright/test';
 import type { InvitationsResponse, LibraryNodeView, OfficialLecturesResponse, UploadResponse } from '@medlevo/shared';
@@ -204,6 +206,9 @@ test('official content: contributor upload → approve → publish, bulk upload,
       const row = zainabPage.locator('li').filter({ hasText: 'my lecture 5' }).first();
       await expect(row.getByText(new RegExp(`موجودة رسميًا في ${w.subject.title}`))).toBeVisible({ timeout: 60_000 });
       await row.getByRole('button', { name: /^خيارات «/ }).click();
+      // 19H.4: a student moderates no subject — no «انشرها كمحاضرة رسمية…» (no decorative control)
+      await expect(zainabPage.getByRole('menuitem', { name: 'اربط بالمحاضرة الرسمية…' })).toBeVisible();
+      await expect(zainabPage.getByRole('menuitem', { name: 'انشرها كمحاضرة رسمية…' })).toHaveCount(0);
       await zainabPage.getByRole('menuitem', { name: 'اربط بالمحاضرة الرسمية…' }).click();
       const dialog = zainabPage.getByRole('dialog', { name: 'اربط بالمحاضرة الرسمية' });
       await expect(dialog.getByText(/Lecture 5 — The abdominal wall/)).toBeVisible({ timeout: 30_000 });
@@ -216,6 +221,44 @@ test('official content: contributor upload → approve → publish, bulk upload,
       await expect(zainabPage.getByText(/ربطت محاضرتك الخاصة/).first()).toBeVisible({ timeout: 60_000 });
       await expect(zainabPage.getByRole('button', { name: /اتركها في محاضرتك الخاصة/ }).first()).toBeVisible();
       await screenshot(zainabPage, testInfo, 'c2-linked-review');
+    });
+
+    await test.step('19H.4: the Subject Moderator publishes her own private lecture as an official draft from her library', async () => {
+      const L9 = 'Lecture 9 — Histology lab (TEST FIXTURE)';
+      const { node: shelf } = await sara!.api.post<{ node: LibraryNodeView }>('/api/library/nodes', { parent_id: null, kind: 'notebook', title: `محاضراتي ${w.stamp}`, cover: { style: 'linen', color: 'rose', symbol: 'book' } });
+      const { node: course } = await sara!.api.post<{ node: LibraryNodeView }>('/api/library/nodes', { parent_id: shelf.id, kind: 'course', title: `الأنسجة الخاص ${w.stamp}` });
+      const res = await sara!.api.request.post('/api/sources/upload', {
+        headers: { ...CLIENT_HEADERS },
+        multipart: { node_id: course.id, source_type: 'lecture', files: { name: 'histology lab mine.pdf', mimeType: 'application/pdf', buffer: pdf('Histology', 3, SEED + 400) } },
+        timeout: 120_000,
+      });
+      expect(res.status(), await res.text()).toBe(200);
+      const up = ((await res.json()) as UploadResponse).results[0]!;
+      await eventually(() => sara!.api.get<{ job: { status: string } | null }>(`/api/sources/versions/${up.version_id}/processing`), (s) => s.job?.status === 'completed' || s.job?.status === 'partial', 'her file processed', 180_000);
+      await page.goto(`/library/${course.id}`);
+      const row = page.locator('li').filter({ hasText: 'histology lab mine' }).first();
+      await expect(row).toBeVisible({ timeout: 60_000 });
+      await row.getByRole('button', { name: /^خيارات «/ }).click();
+      await page.getByRole('menuitem', { name: 'انشرها كمحاضرة رسمية…' }).click();
+      const dialog = page.getByRole('dialog', { name: 'انشرها كمحاضرة رسمية' });
+      await expect(dialog).toContainText(`المادة: ${w.subject.title}`);
+      await dialog.getByLabel(/عنوان المحاضرة الرسمية/).fill(L9);
+      await dialog.getByLabel(/رقم المحاضرة/).fill('9');
+      await dialog.getByRole('button', { name: 'أنشئ المسودة الرسمية' }).click();
+      const done = page.getByRole('dialog', { name: 'أُنشئت مسودة المحاضرة الرسمية' });
+      await expect(done).toBeVisible({ timeout: 120_000 });
+      await expect(done).toContainText('لا يراها الطلاب بعد');
+      const l = (await lectures()).items.find((x) => x.title === L9)!;
+      expect(l, 'the draft exists').toBeTruthy();
+      expect(l.status).toBe('draft');
+      expect(l.uploaded_by.id).toBe(sara!.userId);
+      const forStudent = await zainab!.api.get<OfficialLecturesResponse>(w.S('/lectures?limit=100'));
+      expect(forStudent.items.some((x) => x.title === L9), 'a draft is never listed to a student').toBe(false);
+      await screenshot(page, testInfo, 'c2-publish-from-vault');
+      expect(await axeInLooks(page, 'publish from vault')).toEqual([]);
+      await done.getByRole('button', { name: 'افتح «المحتوى الرسمي»' }).click();
+      await expect(page.getByRole('heading', { level: 1, name: 'المحتوى الرسمي' })).toBeVisible();
+      await expect(page.locator('li.lec-admin__row[data-status]').filter({ hasText: 'Histology lab' })).toBeVisible({ timeout: 30_000 });
     });
   } finally {
     await w.dispose();

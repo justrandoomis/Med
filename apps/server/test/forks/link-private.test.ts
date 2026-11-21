@@ -160,6 +160,35 @@ describe('«انشر كمحاضرة رسمية» (19H.4)', () => {
     expect(again.statusCode).toBe(409);
   });
 
+  it('a promotion the space refuses (over its storage quota) leaves NO draft behind: no lecture, no source, no version, no file row', async () => {
+    const priv = await privateUpload('mod', 'pathology refused.pdf', lecturePdf(pagesFor('Pathology refused', 3)));
+    const rows = () =>
+      inSpaceDb(w, SPACE_A, (db) => ({
+        lectures: db.get<{ n: number }>('SELECT COUNT(*) AS n FROM official_lecture')!.n,
+        sources: db.get<{ n: number }>('SELECT COUNT(*) AS n FROM source')!.n,
+        versions: db.get<{ n: number }>('SELECT COUNT(*) AS n FROM source_version')!.n,
+        files: db.get<{ n: number }>('SELECT COUNT(*) AS n FROM stored_file')!.n,
+        titled: db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM official_lecture WHERE title = 'Pathology refused'`)!.n,
+      }));
+    const used = w.t.ctx.quota.spaceStorageUsed(SPACE_A);
+    w.t.ctx.system.quotas.setSpaceInternal(SPACE_A, { storage_bytes_limit: used.bytes_db + used.bytes_files + 64 }, w.id.owner);
+    try {
+      const before = rows();
+      const res = await w.req('mod', 'POST', sp(SPACE_A, '/lectures/from-vault'), { source_id: priv.sourceId, title: 'Pathology refused', lecture_no: 9 });
+      expect(res.statusCode, res.body).toBe(409);
+      expect(res.json().error.code).toBe('QUOTA_EXCEEDED');
+      expect(rows()).toEqual(before);
+      expect(rows().titled).toBe(0);
+    } finally {
+      w.t.ctx.system.quotas.setSpaceInternal(SPACE_A, { storage_bytes_limit: null }, w.id.owner);
+    }
+    // with room again the same promotion goes through, once
+    const ok = await w.ok<LectureFromVaultResponse>('mod', 'POST', sp(SPACE_A, '/lectures/from-vault'), { source_id: priv.sourceId, title: 'Pathology refused', lecture_no: 9 });
+    expect(ok.lecture).toMatchObject({ title: 'Pathology refused', status: 'draft' });
+    expect(rows().titled).toBe(1);
+    await drain(w);
+  });
+
   it('members without the role are refused (403), another subject’s moderator gets «not found»; an Assistant has no official power', async () => {
     const priv = await privateUpload('student', 'student file.pdf', lecturePdf(pagesFor('Student file', 2)));
     // gate 2: the route needs moderator access in THIS subject — a member who can see the subject gets 403, a stranger 404

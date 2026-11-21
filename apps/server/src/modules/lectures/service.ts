@@ -96,6 +96,15 @@ function compareKeys(a: unknown[], b: unknown[]): number {
 
 const bodyHash = (b: unknown) => createHash('sha256').update(JSON.stringify(b)).digest('hex');
 
+function uploadResponse(versionId: string, jobId: string, dup: UploadOfficialVersionResponse['duplicate_of']): UploadOfficialVersionResponse {
+  return {
+    version_id: versionId,
+    job_id: jobId,
+    duplicate_of: dup,
+    duplicate_note_ar: dup ? `هذا الملف مطابق للإصدار ${dup.version_no} من «${dup.title}» في هذه المادة؛ رُفع كما طلبت، وتجده المادة في «الملفات المكررة».` : null,
+  };
+}
+
 export class LecturesService {
   constructor(private readonly ctx: AppContext) {}
 
@@ -145,18 +154,43 @@ export class LecturesService {
         return this.views(scope).lecture(visibleLecture(ctx, scope, existing.id));
       }
     }
-    const now = ctx.clock.now();
-    const id = body.id ?? newId(now);
-    ctx.db.tx(() => {
-      const sourceId = createSpaceSource(ctx, { title: body.title, sourceType: 'lecture', lectureNo: body.lecture_no ?? null, heldOn: body.held_on ?? null });
-      ctx.db.run(
-        `INSERT INTO official_lecture (id, subject_node_id, source_id, title, lecture_no, lecture_no_origin, held_on, status, uploaded_by, client_body_hash, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?)`,
-        [id, scope.subjectNodeId, sourceId, body.title, body.lecture_no ?? null, body.lecture_no ? 'moderator' : null, body.held_on ?? null, scope.viewer.userId, hash, now, now],
-      );
-      ctx.audit.record({ entityType: 'official_lecture', entityId: id, action: 'create', summary: `مسودة محاضرة رسمية «${body.title}»`, after: { lecture_no: body.lecture_no ?? null, held_on: body.held_on ?? null } });
-    });
+    const id = body.id ?? newId(ctx.clock.now());
+    ctx.db.tx(() => this.insertDraft(scope, id, newId(ctx.clock.now()), body, hash));
     return this.views(scope).lecture(getLecture(ctx, id)!);
+  }
+
+  /** The draft's rows (its space source and the lecture). Call inside a transaction. */
+  private insertDraft(scope: SpaceScope, id: string, sourceId: string, body: CreateOfficialLectureRequest, hash: string): void {
+    const { ctx } = this;
+    const now = ctx.clock.now();
+    createSpaceSource(ctx, { id: sourceId, title: body.title, sourceType: 'lecture', lectureNo: body.lecture_no ?? null, heldOn: body.held_on ?? null });
+    ctx.db.run(
+      `INSERT INTO official_lecture (id, subject_node_id, source_id, title, lecture_no, lecture_no_origin, held_on, status, uploaded_by, client_body_hash, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?)`,
+      [id, scope.subjectNodeId, sourceId, body.title, body.lecture_no ?? null, body.lecture_no ? 'moderator' : null, body.held_on ?? null, scope.viewer.userId, hash, now, now],
+    );
+    ctx.audit.record({ entityType: 'official_lecture', entityId: id, action: 'create', summary: `مسودة محاضرة رسمية «${body.title}»`, after: { lecture_no: body.lecture_no ?? null, held_on: body.held_on ?? null } });
+  }
+
+  /**
+   * (19H.4) A NEW draft together with its first file, in ONE transaction: the draft, its source and the version exist
+   * only when the file is accepted — a refused file (format, space quota, processing unavailable) leaves no empty draft.
+   */
+  async createWithFile(scope: SpaceScope, body: CreateOfficialLectureRequest, file: IncomingFile): Promise<UploadOfficialVersionResponse & { lecture_id: string }> {
+    const { ctx } = this;
+    const fresh: OfficialLectureResource = { type: 'official_lecture', spaceId: scope.spaceId, id: '', status: 'draft', subjectNodeId: scope.subjectNodeId, uploadedBy: scope.viewer.userId };
+    ctx.authz.assert(scope.viewer, 'create', fresh);
+    const id = newId(ctx.clock.now());
+    const sourceId = newId(ctx.clock.now());
+    const hash = bodyHash({ title: body.title, lecture_no: body.lecture_no ?? null, held_on: body.held_on ?? null, by: scope.viewer.userId });
+    const res = await ingestVersion(ctx, file, {
+      sourceId,
+      prepare: () => this.insertDraft(scope, id, sourceId, body, hash),
+      stillWritable: () => ctx.authz.assert(scope.viewer, 'create', lectureResource(scope, getLecture(ctx, id)!)),
+      register: (versionId, versionNo) => this.registerUpload(scope, id, sourceId, file.fileName, versionId, versionNo),
+    });
+    const dup = this.visibleDuplicate(scope, getLecture(ctx, id)!, res.contentHash, res.versionId);
+    return { lecture_id: id, ...uploadResponse(res.versionId, res.jobId, dup) };
   }
 
   patch(scope: SpaceScope, id: string, body: PatchOfficialLectureRequest): OfficialLectureView {
@@ -194,7 +228,6 @@ export class LecturesService {
   async upload(scope: SpaceScope, id: string, file: IncomingFile): Promise<UploadOfficialVersionResponse> {
     const { ctx } = this;
     const row = this.forAction(scope, id, 'create');
-    const byModerator = scope.powers.officialModerator;
     const res = await ingestVersion(ctx, file, {
       sourceId: row.source_id,
       stillWritable: () => {
@@ -202,25 +235,24 @@ export class LecturesService {
         if (!now) throw notFound();
         ctx.authz.assert(scope.viewer, 'create', lectureResource(scope, now));
       },
-      register: (versionId, versionNo) => {
-        const now = ctx.clock.now();
-        ctx.db.run('INSERT INTO official_version_upload (version_id, lecture_id, uploaded_by, kind, created_at) VALUES (?, ?, ?, ?, ?)', [versionId, id, scope.viewer.userId, 'upload', now]);
-        if (versionNo === 1) ctx.db.run('UPDATE source SET current_version_id = ? WHERE id = ?', [versionId, row.source_id]);
-        const current = getLecture(ctx, id)!;
-        if (!byModerator && (current.status === 'draft' || current.status === 'in_review')) {
-          // a contributor's file waits for a Subject Moderator (Q5); an earlier approval was for other content
-          ctx.db.run(`UPDATE official_lecture SET status = 'in_review', approved_by = NULL, approved_at = NULL, updated_at = ? WHERE id = ?`, [now, id]);
-        } else ctx.db.run('UPDATE official_lecture SET updated_at = ? WHERE id = ?', [now, id]);
-        ctx.audit.record({ entityType: 'official_lecture', entityId: id, action: 'upload', summary: `رفع الإصدار ${versionNo} من «${current.title}»`, after: { version_id: versionId, file_name: file.fileName } });
-      },
+      register: (versionId, versionNo) => this.registerUpload(scope, id, row.source_id, file.fileName, versionId, versionNo),
     });
     const dup = this.visibleDuplicate(scope, row, res.contentHash, res.versionId);
-    return {
-      version_id: res.versionId,
-      job_id: res.jobId,
-      duplicate_of: dup,
-      duplicate_note_ar: dup ? `هذا الملف مطابق للإصدار ${dup.version_no} من «${dup.title}» في هذه المادة؛ رُفع كما طلبت، وتجده المادة في «الملفات المكررة».` : null,
-    };
+    return uploadResponse(res.versionId, res.jobId, dup);
+  }
+
+  /** The upload's own rows, written in the version's registration transaction. */
+  private registerUpload(scope: SpaceScope, id: string, sourceId: string, fileName: string, versionId: string, versionNo: number): void {
+    const { ctx } = this;
+    const now = ctx.clock.now();
+    ctx.db.run('INSERT INTO official_version_upload (version_id, lecture_id, uploaded_by, kind, created_at) VALUES (?, ?, ?, ?, ?)', [versionId, id, scope.viewer.userId, 'upload', now]);
+    if (versionNo === 1) ctx.db.run('UPDATE source SET current_version_id = ? WHERE id = ?', [versionId, sourceId]);
+    const current = getLecture(ctx, id)!;
+    if (!scope.powers.officialModerator && (current.status === 'draft' || current.status === 'in_review')) {
+      // a contributor's file waits for a Subject Moderator (Q5); an earlier approval was for other content
+      ctx.db.run(`UPDATE official_lecture SET status = 'in_review', approved_by = NULL, approved_at = NULL, updated_at = ? WHERE id = ?`, [now, id]);
+    } else ctx.db.run('UPDATE official_lecture SET updated_at = ? WHERE id = ?', [now, id]);
+    ctx.audit.record({ entityType: 'official_lecture', entityId: id, action: 'upload', summary: `رفع الإصدار ${versionNo} من «${current.title}»`, after: { version_id: versionId, file_name: fileName } });
   }
 
   /**

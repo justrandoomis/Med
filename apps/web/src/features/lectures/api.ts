@@ -8,6 +8,8 @@ import type {
   DecideSubjectReviewResponse,
   LecturePublicationsResponse,
   LayersResponse,
+  LectureFromVaultRequest,
+  LectureFromVaultResponse,
   MeResponse,
   OfficialCorrectionsResponse,
   OfficialCorrectionStatus,
@@ -46,6 +48,11 @@ export const lecturesApi = {
     fd.append('file', file, file.name);
     return api.post<UploadOfficialVersionResponse>(S(spaceId, `/lectures/${encodeURIComponent(id)}/upload`), fd, { timeoutMs: 10 * 60_000 });
   },
+  /**
+   * (19H.4) «انشرها كمحاضرة رسمية»: a Subject Moderator's OWN private lecture becomes a draft official lecture of this
+   * subject (the file registered by sha256, no copy); a file the subject refuses leaves no draft (one server transaction)
+   */
+  fromVault: (spaceId: string, body: LectureFromVaultRequest) => api.post<LectureFromVaultResponse>(S(spaceId, '/lectures/from-vault'), body, { timeoutMs: 120_000 }),
   approve: (spaceId: string, id: string) => api.post<OfficialLectureView>(S(spaceId, `/lectures/${encodeURIComponent(id)}/approve`), {}, T),
   previewPublish: (spaceId: string, id: string, versionId: string) =>
     api.post<PublishOfficialVersionPreview>(S(spaceId, `/lectures/${encodeURIComponent(id)}/versions/${encodeURIComponent(versionId)}/publish`), { preview: true }, T),

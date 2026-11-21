@@ -80,6 +80,11 @@ const ids = (p: StoredParts) => [...new Set([p.fileId, p.originalFileId, ...p.pa
 export interface IngestTarget {
   /** the space's source that receives the new version */
   sourceId: string;
+  /**
+   * (19H.4) rows the target needs that must exist ONLY when the version is registered — written first in the SAME
+   * transaction (a promotion's draft lecture and its source), so a refused file leaves none of them behind
+   */
+  prepare?(): void;
   /** checked inside the registration transaction (the target may change while the file is inspected and stored) */
   stillWritable(): void;
   /** extra rows written in the SAME transaction as the version (official_version_upload, statuses, events) */
@@ -133,6 +138,7 @@ export async function ingestVersion(ctx: AppContext, file: IncomingFile, target:
     let versionNo = 0;
     try {
       ctx.db.tx(() => {
+        target.prepare?.();
         target.stillWritable();
         const prev = ctx.db.get<{ id: string; version_no: number } | undefined>('SELECT id, version_no FROM source_version WHERE source_id = ? ORDER BY version_no DESC LIMIT 1', [target.sourceId]);
         versionNo = (prev?.version_no ?? 0) + 1;
@@ -171,9 +177,9 @@ export async function ingestVersion(ctx: AppContext, file: IncomingFile, target:
 }
 
 /** A new, empty source of the space (an official lecture's identity or an attachment) — no version until a file arrives. */
-export function createSpaceSource(ctx: AppContext, s: { title: string; sourceType: SourceType; lectureNo?: number | null; heldOn?: string | null }): string {
+export function createSpaceSource(ctx: AppContext, s: { id?: string; title: string; sourceType: SourceType; lectureNo?: number | null; heldOn?: string | null }): string {
   const now = ctx.clock.now();
-  const id = newId(now);
+  const id = s.id ?? newId(now);
   ctx.db.run(
     `INSERT INTO source (id, title, source_type, source_type_origin, node_id, metadata_status, processing_status, lecture_no, lecture_no_origin, held_on, held_on_origin, created_at, updated_at)
      VALUES (?, ?, ?, 'owner', NULL, 'unknown', 'pending', ?, ?, ?, ?, ?, ?)`,
