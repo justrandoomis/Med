@@ -12,6 +12,7 @@ import { NodeDialog } from './NodeDialog';
 import { TagsDialog } from './TagsDialog';
 import { useOfflineDownloadAction } from '../../offline/OnDevice';
 import { useLinkToOfficialAction } from '../../copies/linkStatus';
+import { usePublishToOfficialAction } from '../../copies/publishToOfficial';
 
 export function ImpactList({ report }: { report: ImpactReport | null }) {
   if (!report) return <p>جارٍ حساب الأثر…</p>;
@@ -148,6 +149,8 @@ export function SourceMenu({ source, index }: { source: SourceSummary; index: Li
   const offline = useOfflineDownloadAction(source.id, source.title);
   // (C2, AOS-19H.3) «the library offers the link»: a private lecture with an official twin in one of my subjects
   const linkAction = useLinkToOfficialAction(source.id);
+  // (19H.4) «انشرها كمحاضرة رسمية…»: only for a viewer who moderates a subject, on their own private lecture
+  const publishAction = usePublishToOfficialAction(source);
   const run = async (fn: () => Promise<unknown>, done?: string) => {
     try {
       await mutate(fn);
@@ -173,6 +176,7 @@ export function SourceMenu({ source, index }: { source: SourceSummary; index: Li
         </MenuItem>
         {offline.item}
         {linkAction.item}
+        {publishAction.item}
         <MenuSeparator />
         <MenuItem
           icon={source.archived_at ? <ArchiveRestore size={16} /> : <Archive size={16} />}
@@ -200,6 +204,7 @@ export function SourceMenu({ source, index }: { source: SourceSummary; index: Li
       <TagsDialog open={dialog === 'tags'} entity={{ type: 'source', id: source.id, title: source.title, tags: source.tags }} onClose={() => setDialog(null)} />
       {offline.dialog}
       {linkAction.dialog}
+      {publishAction.dialog}
       {trash.dialog}
     </>
   );

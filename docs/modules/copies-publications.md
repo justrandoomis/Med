@@ -221,8 +221,8 @@ for an error is still retrieved / cited by the AI for holders (owner decision: r
 takedown leaves verbatim quotes in the vault's `evidence.quote` and in «directly stated» claims of the user's AI answers
 (the file and the pinned region text are removed); a stub renamed by its owner gets the official title back on the next
 version; `lecture_copy.personal_items` and the purge recount see items on source pages only (an inserted note page is
-not counted — a space purge never touches vaults, so nothing is lost); promote-from-vault leaves an empty draft when the
-upload is refused; bm25 statistics still include WITHDRAWN (once published) versions (no draft content).
+not counted — a space purge never touches vaults, so nothing is lost); ~~promote-from-vault leaves an empty draft when the
+upload is refused~~ (fixed 2026-11-21: one transaction, `LecturesService.createWithFile`; `srv:forks/link-private`); bm25 statistics still include WITHDRAWN (once published) versions (no draft content).
 
 ## Review (P1-T5 step 3, adversarial review 2026-10-22)
 
