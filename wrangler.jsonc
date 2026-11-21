@@ -21,6 +21,9 @@
   "vars": {
     "MEDLEVO_ORIGIN": "https://medlevo.aliamer59409.workers.dev",
     "MEDLEVO_R2_BUCKET": "medlevo-backups",
-    "MEDLEVO_BACKUP_INTERVAL_MINUTES": "10"
+    "MEDLEVO_BACKUP_INTERVAL_MINUTES": "10",
+    // the owner asked for no AI limit: every account and subject shares the (maximum) deployment budget
+    "MEDLEVO_AI_MONTHLY_BUDGET_USD": "100000",
+    "MEDLEVO_AI_OPEN_ALLOWANCE": "true"
   }
 }

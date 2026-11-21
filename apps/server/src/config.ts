@@ -73,6 +73,8 @@ export interface AppConfig {
     anthropicKeyPresent: boolean;
     models: { generation: string | null; verification: string | null; vision: string | null };
     monthlyBudgetUsd: number;
+    /** MEDLEVO_AI_OPEN_ALLOWANCE */
+    openAllowance: boolean;
   };
   allowExternalFetch: boolean;
   /** built SPA to serve in production (null → API only) */
@@ -146,6 +148,8 @@ const envSchema = z.object({
   MEDLEVO_MODEL_VERIFICATION: z.preprocess(emptyToUndefined, z.string().optional()),
   MEDLEVO_MODEL_VISION: z.preprocess(emptyToUndefined, z.string().optional()),
   MEDLEVO_AI_MONTHLY_BUDGET_USD: z.preprocess(emptyToUndefined, z.coerce.number().min(0).max(100_000).default(20)),
+  // every account and subject without an explicit cap shares the deployment budget (a private deployment)
+  MEDLEVO_AI_OPEN_ALLOWANCE: z.preprocess((v) => (v === undefined || v === '' ? undefined : String(v).toLowerCase() === 'true' || v === '1'), z.boolean().default(false)),
   MEDLEVO_ALLOW_EXTERNAL_FETCH: z.preprocess(emptyToUndefined, boolish.default(false)),
   MEDLEVO_WEB_DIST: z.preprocess(emptyToUndefined, z.string().optional()),
   // PL-0 off-site backups (lib/objectstore/offsite-config.ts). Missing R2 values never stop the server.
@@ -344,6 +348,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
         vision: e.MEDLEVO_MODEL_VISION ?? null,
       },
       monthlyBudgetUsd: e.MEDLEVO_AI_MONTHLY_BUDGET_USD,
+      openAllowance: e.MEDLEVO_AI_OPEN_ALLOWANCE,
     },
     allowExternalFetch: e.MEDLEVO_ALLOW_EXTERNAL_FETCH,
     webDistDir,

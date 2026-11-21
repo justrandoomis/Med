@@ -98,6 +98,15 @@ describe('per-user allowance', () => {
     expect(me.ai).toMatchObject({ limit_usd: 0, used_usd_est: 0 });
   });
 
+  it('MEDLEVO_AI_OPEN_ALLOWANCE (a private deployment): another account shares the deployment budget and its call is made', async () => {
+    const p = new GatedProvider();
+    t = await createTestApp({ ai: p, env: { MEDLEVO_AI_MONTHLY_BUDGET_USD: '5', MEDLEVO_AI_OPEN_ALLOWANCE: 'true' } });
+    const b = await addUser(t, 'student-b');
+    const st = asVault(t, b.vault.id, b.user.id, () => t!.ctx.ai.status());
+    expect(st.budget).toMatchObject({ monthly_usd: 5 });
+    expect(st.tasks.summarize?.reason_ar ?? null).not.toBe(QUOTA_AR.aiNotEnabled);
+  });
+
   it('the platform admin sets a cap; calls are reserved, then settled with their estimated cost', async () => {
     const p = new GatedProvider();
     t = await createTestApp({ ai: p, env: { MEDLEVO_AI_MONTHLY_BUDGET_USD: '5' } });
