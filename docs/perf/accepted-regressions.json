@@ -1,0 +1,8 @@
+{
+  "_comment": [
+    "Regressions beyond the baseline threshold that the owner has accepted (PRD AOS-23.2: a regression > 10 % blocks the phase exit until it is fixed or the owner accepts it in the report).",
+    "Each entry: metric = an id of docs/perf/baseline.json; reason = why it is accepted (required); plus accepted_by, date and the report that records it. Remove the entry once the baseline is re-recorded past it.",
+    "Example: {\"metric\": \"crash-resume.restart_boot_ms\", \"reason\": \"six more modules register at boot; the crashed job resumes as fast as before\", \"accepted_by\": \"owner\", \"date\": \"2026-11-21\", \"report\": \"PHASE2_REPORT §7\"}"
+  ],
+  "accepted": []
+}

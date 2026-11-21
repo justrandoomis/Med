@@ -3,6 +3,8 @@
 # servers and processes real uploads (tens of minutes), so it runs only when asked for (manual run with e2e = true).
 # PL-0: the container image Render builds from the Dockerfile can be built and smoke-tested here too (manual run with
 # docker = true): build, start with a fresh volume, health, setup token enforced, restart, data still there.
+# AOS-23.2: the performance gate (perf job) runs the MEDLEVO_PERF suites and compares their medians with
+# docs/perf/baseline.json (on every push to cloudflare, or a manual run with perf = true).
 # No AI key is used anywhere: AI-gated features are tested with the test-only scripted providers, and the real
 # server reports them as requiring configuration.
 name: CI
@@ -25,6 +27,14 @@ on:
         description: 'Also build the Docker image (the one Render deploys) and smoke-test it'
         type: boolean
         default: false
+      perf:
+        description: 'Also run the performance gate (AOS-23.2: server + browser perf suites vs docs/perf/baseline.json)'
+        type: boolean
+        default: false
+      perf_runs:
+        description: 'Server perf suite runs for the medians (perf job)'
+        type: number
+        default: 3
 
 permissions:
   contents: read
@@ -187,3 +197,92 @@ jobs:
           curl -fsS http://127.0.0.1:10000/api/auth/status | grep -q '"setup_required":false'
           docker exec medlevo-ci sh -c 'ls -ld /var/data/medlevo && stat -c %U /var/data/medlevo/medlevo.sqlite'
           docker stop -t 30 medlevo-ci
+
+  # PRD AOS-23.2 performance gate: the MEDLEVO_PERF suites (server: apps/server/test/perf, PERF_RUNS runs → medians;
+  # browser: e2e/perf.spec.ts, desktop project, one run), compared with docs/perf/baseline.json by tools/perf/compare.mjs
+  # (fails on a median > 10 % worse than the baseline unless docs/perf/accepted-regressions.json lists it with a reason;
+  # while the baseline is provisional — seeded from the GATE-1 VM numbers, not GitHub hardware — it only reports).
+  # The raw results, the medians and a baseline re-recorded from this run (baseline.candidate.json) are uploaded as the
+  # perf-results artifact: copy that candidate to docs/perf/baseline.json after reviewing it to arm the gate.
+  perf:
+    name: performance gate (AOS-23.2)
+    if: (github.event_name == 'workflow_dispatch' && inputs.perf) || (github.event_name == 'push' && github.ref == 'refs/heads/cloudflare')
+    needs: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      # the flag every perf file needs (apps/server/test/perf/fixtures.ts, e2e/perf.spec.ts); without it they skip
+      MEDLEVO_PERF: '1'
+      # pushes have no inputs: 3 runs
+      PERF_RUNS: ${{ inputs.perf_runs || 3 }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # poppler renders PDF pages; the Noto fonts let Chromium shape the Arabic text of the generated fixtures
+      - name: System tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends poppler-utils fonts-noto-core
+
+      - run: npm ci
+
+      - name: Comparator self-test
+        run: node --test tools/perf/compare.test.mjs
+
+      # the same browser setup as the e2e job: the fixtures are printed by Chromium (PW_CHROMIUM_PATH), and the browser
+      # suite drives it
+      - name: Chromium for Playwright
+        run: |
+          npx playwright install --with-deps chromium
+          echo "PW_CHROMIUM_PATH=$(node -e "console.log(require('@playwright/test').chromium.executablePath())")" >> "$GITHUB_ENV"
+          # the generated fixtures (300-page lecture, question bank, scans …) are built once and shared by every run
+          echo "MEDLEVO_PERF_CACHE=$RUNNER_TEMP/medlevo-perf-fixtures" >> "$GITHUB_ENV"
+
+      # one scenario per file, files one after another (each file its own process: memory high-water marks per scenario)
+      - name: Server perf suites (${{ env.PERF_RUNS }} runs)
+        working-directory: apps/server
+        run: |
+          set -eu
+          for i in $(seq 1 "$PERF_RUNS"); do
+            echo "::group::server perf run $i of $PERF_RUNS"
+            MEDLEVO_PERF_OUT="$GITHUB_WORKSPACE/perf-results/server-$i" npx vitest run test/perf --no-file-parallelism
+            echo "::endgroup::"
+          done
+
+      - name: Browser perf suite (desktop Chromium)
+        if: ${{ !cancelled() }}
+        env:
+          CI: '1'
+          E2E_BUILD: '1'
+        run: |
+          npx playwright test e2e/perf.spec.ts --project=desktop
+          mkdir -p perf-results/browser
+          cp e2e/.artifacts/perf/desktop.json perf-results/browser/
+
+      # exit 1 = a median > threshold worse than the baseline (not accepted) or a tracked metric missing; 0 while provisional
+      - name: Compare with the baseline
+        if: ${{ !cancelled() }}
+        run: |
+          node tools/perf/compare.mjs --runs-root perf-results --out perf-results/medians.json --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Candidate baseline from this run (to record after review)
+        if: ${{ !cancelled() }}
+        run: |
+          cp docs/perf/baseline.json perf-results/baseline.candidate.json
+          node tools/perf/compare.mjs --runs-root perf-results --baseline perf-results/baseline.candidate.json --record
+
+      - name: Keep the perf results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-results
+          path: |
+            perf-results/
+            e2e/.artifacts/perf/
+          if-no-files-found: ignore
+          retention-days: 30

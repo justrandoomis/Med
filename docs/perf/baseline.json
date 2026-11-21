@@ -1,0 +1,413 @@
+{
+  "_comment": [
+    "Performance gate baseline (PRD AOS-23.2): the metrics tools/perf/compare.mjs tracks and their reference values.",
+    "Each metric: file = basename of the results file the MEDLEVO_PERF suites write (apps/server/test/perf -> <scenario>.json, e2e/perf.spec.ts -> desktop.json); path = JSON path inside its \"results\" ([field=value] selects array elements, several matches are summed); better = lower | higher; floor = absolute change (same unit) below which a difference is noise and never fails.",
+    "SEEDED, PROVISIONAL: the values are the R1-c numbers of docs/academic-os/PHASE1_REPORT.md §7 / docs/PERFORMANCE.md «GATE-1» (server: medians of 3 runs; browser: one run), measured on a 4-vCPU Linux VM, not on GitHub hardware. They are not comparable with a GitHub runner (nor with a laptop), so while provisional is true the gate reports and never fails.",
+    "TO RE-RECORD from a CI run on GitHub hardware: download the perf-results artifact of the CI perf job and either copy its baseline.candidate.json over this file or run `node tools/perf/compare.mjs --runs-root <artifact dir> --record`; review the diff and commit it. Recording sets provisional to false: from then on a regression > threshold_pct fails the job unless docs/perf/accepted-regressions.json lists it with a reason.",
+    "value null = nothing recorded yet (no R1-c number maps to it unambiguously): reported, never fails, filled by --record."
+  ],
+  "provisional": true,
+  "threshold_pct": 10,
+  "recorded_at": "2026-10-22",
+  "source": "R1-c, GATE-1 (docs/PERFORMANCE.md): Linux VM, 4 vCPU Intel Xeon @ 2.80GHz, 16 GB, Node 22.22, headless Chromium 141",
+  "environment": null,
+  "metrics": {
+    "lecture-300.processing_job_ms": {
+      "file": "lecture-300",
+      "path": "processing_job_ms",
+      "unit": "ms",
+      "better": "lower",
+      "value": 23337
+    },
+    "lecture-300.per_page_p50_ms": {
+      "file": "lecture-300",
+      "path": "per_page_ms_all.p50",
+      "unit": "ms",
+      "better": "lower",
+      "floor": 2,
+      "value": 32.9
+    },
+    "lecture-300.per_page_p95_ms": {
+      "file": "lecture-300",
+      "path": "per_page_ms_all.p95",
+      "unit": "ms",
+      "better": "lower",
+      "floor": 5,
+      "value": 124.8
+    },
+    "lecture-300.max_rss_mb": {
+      "file": "lecture-300",
+      "path": "memory.maxRssAfterMb",
+      "unit": "MB",
+      "better": "lower",
+      "value": 827
+    },
+    "lecture-300.fts_scoped_mmol_p50_ms": {
+      "file": "lecture-300",
+      "path": "fts_scoped_ms.mmol.p50",
+      "unit": "ms",
+      "better": "lower",
+      "floor": 0.5,
+      "value": 1.2
+    },
+    "lecture-300.fts_scoped_arabic_phrase_p50_ms": {
+      "file": "lecture-300",
+      "path": "fts_scoped_ms.القيمة التجريبية.p50",
+      "unit": "ms",
+      "better": "lower",
+      "floor": 0.5,
+      "value": 1
+    },
+    "lecture-300.universal_search_p50_ms": {
+      "file": "lecture-300",
+      "path": "universal_search_api_ms.p50",
+      "unit": "ms",
+      "better": "lower",
+      "floor": 2,
+      "value": 33.9
+    },
+    "lecture-300.universal_search_p95_ms": {
+      "file": "lecture-300",
+      "path": "universal_search_api_ms.p95",
+      "unit": "ms",
+      "better": "lower",
+      "floor": 3,
+      "value": 52
+    },
+    "lecture-300.pages_api_p50_ms": {
+      "file": "lecture-300",
+      "path": "pages_api_ms.p50",
+      "unit": "ms",
+      "better": "lower",
+      "floor": 1,
+      "value": 6.4
+    },
+    "dense-ocr.dense_per_page_p50_ms": {
+      "file": "dense-ocr",
+      "path": "dense.per_page_ms.p50",
+      "unit": "ms",
+      "better": "lower",
+      "floor": 3,
+      "value": 87.3
+    },
+    "dense-ocr.dense_per_page_p95_ms": {
+      "file": "dense-ocr",
+      "path": "dense.per_page_ms.p95",
+      "unit": "ms",
+      "better": "lower",
+      "floor": 5,
+      "value": 132
+    },
+    "dense-ocr.scanned_per_page_p50_ms": {
+      "file": "dense-ocr",
+      "path": "scanned.per_page_ms.p50",
+      "unit": "ms",
+      "better": "lower",
+      "value": 7310
+    },
+    "image-48mp.processing_job_ms": {
+      "file": "image-48mp",
+      "path": "processing_job_ms",
+      "unit": "ms",
+      "better": "lower",
+      "floor": 20,
+      "value": 17
+    },
+    "questions-2000.processing_job_ms": {
+      "file": "questions-2000",
+      "path": "jobs[kind=process_source_version].ms",
+      "unit": "ms",
+      "better": "lower",
+      "value": 10616
+    },
+    "questions-2000.extraction_job_ms": {
+      "file": "questions-2000",
+      "path": "jobs[kind=extract_questions].ms",
+      "unit": "ms",
+      "better": "lower",
+      "value": 23145
+    },
+    "questions-2000.list_first_page_p50_ms": {
+      "file": "questions-2000",
+      "path": "api_ms.list_first_page.p50",
+      "unit": "ms",
+      "better": "lower",
+      "floor": 3,
+      "value": 56.8
+    },
+    "questions-2000.list_by_source_p50_ms": {
+      "file": "questions-2000",
+      "path": "api_ms.list_by_source.p50",
+      "unit": "ms",
+      "better": "lower",
+      "floor": 3,
+      "value": 58.9
+    },
+    "learning-ink.push_cards_ops_per_s": {
+      "file": "learning-ink",
+      "path": "push.cards.ops_per_s",
+      "unit": "ops/s",
+      "better": "higher",
+      "value": 606
+    },
+    "learning-ink.push_review_events_ops_per_s": {
+      "file": "learning-ink",
+      "path": "push.review_events.ops_per_s",
+      "unit": "ops/s",
+      "better": "higher",
+      "value": 1730
+    },
+    "learning-ink.push_ink_strokes_ops_per_s": {
+      "file": "learning-ink",
+      "path": "push.ink_strokes.ops_per_s",
+      "unit": "ops/s",
+      "better": "higher",
+      "value": 1497
+    },
+    "learning-ink.review_queue_p50_ms": {
+      "file": "learning-ink",
+      "path": "read_ms.review_queue.p50",
+      "unit": "ms",
+      "better": "lower",
+      "floor": 5,
+      "value": 125.2
+    },
+    "learning-ink.learning_home_p50_ms": {
+      "file": "learning-ink",
+      "path": "read_ms.home.p50",
+      "unit": "ms",
+      "better": "lower",
+      "floor": 5,
+      "value": 130.8
+    },
+    "learning-ink.forecast_p50_ms": {
+      "file": "learning-ink",
+      "path": "read_ms.forecast.p50",
+      "unit": "ms",
+      "better": "lower",
+      "floor": 10,
+      "value": 446.1
+    },
+    "learning-ink.page_5000_strokes_p50_ms": {
+      "file": "learning-ink",
+      "path": "read_ms.by_targets_one_page.p50",
+      "unit": "ms",
+      "better": "lower",
+      "floor": 10,
+      "value": 286
+    },
+    "learning-ink.page_5000_strokes_payload_mb": {
+      "file": "learning-ink",
+      "path": "by_targets_payload_mb",
+      "unit": "MB",
+      "better": "lower",
+      "value": 7.6
+    },
+    "learning-ink.initial_pull_ms": {
+      "file": "learning-ink",
+      "path": "initial_pull.ms",
+      "unit": "ms",
+      "better": "lower",
+      "value": 1206
+    },
+    "crash-resume.first_boot_ms": {
+      "file": "crash-resume",
+      "path": "first_boot_ms",
+      "unit": "ms",
+      "better": "lower",
+      "value": 2121
+    },
+    "crash-resume.restart_boot_ms": {
+      "file": "crash-resume",
+      "path": "restart_boot_ms",
+      "unit": "ms",
+      "better": "lower",
+      "value": 2157
+    },
+    "crash-resume.restart_to_resumed_ms": {
+      "file": "crash-resume",
+      "path": "restart_to_resumed_ms",
+      "unit": "ms",
+      "better": "lower",
+      "value": 2284
+    },
+    "crash-resume.restart_to_completed_ms": {
+      "file": "crash-resume",
+      "path": "restart_to_completed_ms",
+      "unit": "ms",
+      "better": "lower",
+      "value": 16100
+    },
+    "brain-course.recompute_cold_ms": {
+      "file": "brain-course",
+      "path": "recompute_cold_ms",
+      "unit": "ms",
+      "better": "lower",
+      "value": 1480
+    },
+    "brain-course.recompute_warm_ms": {
+      "file": "brain-course",
+      "path": "recompute_warm_ms",
+      "unit": "ms",
+      "better": "lower",
+      "value": 876
+    },
+    "brain-course.map_view_ms": {
+      "file": "brain-course",
+      "path": "views_ms.map",
+      "unit": "ms",
+      "better": "lower",
+      "floor": 10,
+      "value": 215
+    },
+    "brain-course.knowledge_view_ms": {
+      "file": "brain-course",
+      "path": "views_ms.knowledge",
+      "unit": "ms",
+      "better": "lower",
+      "floor": 10,
+      "value": 459
+    },
+    "browser.lecture_first_page_canvas_ms": {
+      "file": "desktop",
+      "path": "lecture.open.nav_start_to_first_page_canvas_ms",
+      "unit": "ms",
+      "better": "lower",
+      "floor": 50,
+      "value": 1320
+    },
+    "browser.lecture_scroll_page_painted_p50_ms": {
+      "file": "desktop",
+      "path": "lecture.scroll_page_by_page.per_page_render_ms.p50",
+      "unit": "ms",
+      "better": "lower",
+      "floor": 10,
+      "value": 229
+    },
+    "browser.lecture_scroll_page_painted_p95_ms": {
+      "file": "desktop",
+      "path": "lecture.scroll_page_by_page.per_page_render_ms.p95",
+      "unit": "ms",
+      "better": "lower",
+      "floor": 20,
+      "value": 407
+    },
+    "browser.lecture_scroll_longest_task_ms": {
+      "file": "desktop",
+      "path": "lecture.scroll_page_by_page.long_tasks.max_ms",
+      "unit": "ms",
+      "better": "lower",
+      "floor": 20,
+      "value": 164
+    },
+    "browser.lecture_js_heap_after_all_pages_mb": {
+      "file": "desktop",
+      "path": "lecture.js_heap_after_visiting_all_pages_gc_mb",
+      "unit": "MB",
+      "better": "lower",
+      "floor": 1,
+      "value": 23.2
+    },
+    "browser.ink_open_to_painted_ms": {
+      "file": "desktop",
+      "path": "ink.open_to_strokes_painted_ms",
+      "unit": "ms",
+      "better": "lower",
+      "value": 7860
+    },
+    "browser.ink_open_longest_task_ms": {
+      "file": "desktop",
+      "path": "ink.long_tasks_during_open.max_ms",
+      "unit": "ms",
+      "better": "lower",
+      "floor": 20,
+      "value": 149
+    },
+    "browser.ink_new_stroke_commit_ms": {
+      "file": "desktop",
+      "path": "ink.new_stroke.pointerup_to_committed_ms",
+      "unit": "ms",
+      "better": "lower",
+      "floor": 10,
+      "value": 71
+    },
+    "browser.ink_tiles_show_layer_warm_ms": {
+      "file": "desktop",
+      "path": "ink_tiles.after_tiles.show_layer_again.ms",
+      "unit": "ms",
+      "better": "lower",
+      "floor": 5,
+      "value": 0.1
+    },
+    "browser.ink_tiles_zoom_back_ms": {
+      "file": "desktop",
+      "path": "ink_tiles.after_tiles.zoom_out.ms",
+      "unit": "ms",
+      "better": "lower",
+      "floor": 50,
+      "value": null
+    },
+    "browser.ink_tiles_zoom_back_longest_task_ms": {
+      "file": "desktop",
+      "path": "ink_tiles.after_tiles.zoom_out.long_tasks.max_ms",
+      "unit": "ms",
+      "better": "lower",
+      "floor": 20,
+      "value": null
+    },
+    "browser.ink_tiles_writing_longest_task_ms": {
+      "file": "desktop",
+      "path": "ink_tiles.after_tiles.long_tasks_while_writing_during_rerasters.max_ms",
+      "unit": "ms",
+      "better": "lower",
+      "floor": 20,
+      "value": 87
+    },
+    "browser.ink_no_tiles_zoom_repaint_ms": {
+      "file": "desktop",
+      "path": "ink_tiles.before_strokes.zoom_in_new_scale.ms",
+      "unit": "ms",
+      "better": "lower",
+      "floor": 50,
+      "value": 1658
+    },
+    "browser.review_first_visit_ms": {
+      "file": "desktop",
+      "path": "review.first_visit_sync_and_fold_ms",
+      "unit": "ms",
+      "better": "lower",
+      "value": 134000
+    },
+    "browser.review_first_visit_longest_task_ms": {
+      "file": "desktop",
+      "path": "review.first_visit_long_tasks.max_ms",
+      "unit": "ms",
+      "better": "lower",
+      "floor": 50,
+      "value": 495
+    },
+    "browser.review_reopen_fold_ms": {
+      "file": "desktop",
+      "path": "review.reopen_fold_from_indexeddb_ms",
+      "unit": "ms",
+      "better": "lower",
+      "floor": 50,
+      "value": 785
+    },
+    "browser.reload_note_recovered_ms": {
+      "file": "desktop",
+      "path": "reload.note_in_indexeddb_within_ms_of_reload_ready",
+      "unit": "ms",
+      "better": "lower",
+      "floor": 100,
+      "value": 69
+    },
+    "browser.offline_to_server_converged_ms": {
+      "file": "desktop",
+      "path": "offline.online_to_server_has_everything_ms",
+      "unit": "ms",
+      "better": "lower",
+      "value": 46000
+    }
+  }
+}

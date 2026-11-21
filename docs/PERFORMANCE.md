@@ -50,6 +50,25 @@ cd apps/web && MEDLEVO_PERF=1 npx vitest run test/learning/queue.perf.test.ts
 Without `MEDLEVO_PERF=1` every perf file is **skipped** (the normal `npm test` / `npm run e2e` stay fast). The
 regression tests for the fixes below are NOT gated — they run in the normal suites.
 
+### In CI — the performance gate (AOS-23.2)
+
+The `perf` job of `.github/workflows/ci.yml` (every push to `cloudflare`; a manual run with `perf = true`, `perf_runs`
+= server runs, default 3) runs the server suite `perf_runs` times and the browser suite once (desktop), then
+`tools/perf/compare.mjs` takes the median of each metric tracked in `docs/perf/baseline.json` and fails when one is
+more than 10 % worse than the baseline (and beyond the metric's absolute noise floor), or missing, unless
+`docs/perf/accepted-regressions.json` lists it with a reason. The raw JSON, `medians.json` and
+`baseline.candidate.json` (the baseline re-recorded from that run) are uploaded as the `perf-results` artifact.
+
+```bash
+node tools/perf/compare.mjs --runs-root perf-results                 # compare (each sub-directory = one run)
+node tools/perf/compare.mjs --runs-root perf-results --record        # rewrite docs/perf/baseline.json from the runs
+node --test tools/perf/compare.test.mjs                              # the comparator's self-test
+```
+
+The committed baseline is **provisional**: seeded from the R1-c GATE-1 numbers below (a 4-vCPU VM, not GitHub
+hardware), it is compared and reported but cannot fail the job. Record it from the first CI run's artifact (review
+`baseline.candidate.json`, copy it to `docs/perf/baseline.json`, commit) to arm the gate.
+
 ## Results — server
 
 Final run with the final code: `npx vitest run test/perf --no-file-parallelism`, 2026-10-10 06:42–06:45 UTC, load
