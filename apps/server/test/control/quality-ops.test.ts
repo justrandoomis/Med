@@ -86,7 +86,7 @@ describe('client error sink', () => {
       for (let i = 0; i < CLIENT_ERROR_MAX_ROWS + 20; i++) {
         t.ctx.db.run(
           `INSERT INTO client_error (id, fingerprint, kind, message, stack, route, app_version, user_agent, count, first_seen_at, last_seen_at) VALUES (?, ?, 'error', ?, NULL, NULL, NULL, NULL, 1, ?, ?)`,
-          [newId(), `fp-${i}`, `bulk ${i}`, now - i * 1000, now - i * 1000],
+          [newId(), `fp-${i}`, `bulk ${i}`, now - (i + 1) * 1000, now - (i + 1) * 1000],
         );
       }
     });

@@ -24,6 +24,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { UploadResponse } from '@medlevo/shared';
 import { REPO_ROOT } from '../../src/config';
 import { PUBLIC_ROUTES } from '../../src/modules/auth/guard';
+import { detectTools } from '../../src/modules/processing/tools';
 import { CSRF, OWNER, sessionCookie } from '../helpers/app';
 import { api, createNode } from '../questions/helpers';
 import { acc, concreteUrl, g8App, gold, startTrap, uploadRaw, type G8App, type Trap } from './g8-helpers';
@@ -398,7 +399,8 @@ describe('G8 security — SSRF: nothing in an uploaded file makes the server cal
     return b;
   }
 
-  it('a PPTX whose picture is only a link: the fixed slide rendering (LibreOffice) is made WITHOUT fetching it', async () => {
+  // both need LibreOffice; without it (a CI runner) the upload is refused with a reason, which other tests cover
+  it.skipIf(!detectTools().soffice)('a PPTX whose picture is only a link: the fixed slide rendering (LibreOffice) is made WITHOUT fetching it', async () => {
     trap.hits.length = 0;
     const r = (await uploadRaw(t, course, 'linked.pptx', await pptxPointingAt(trap.port), 'lecture')).body.results[0]!;
     expect(r.status).toBe('accepted');
@@ -408,7 +410,7 @@ describe('G8 security — SSRF: nothing in an uploaded file makes the server cal
     expect(trap.hits).toEqual([]);
   }, 240_000);
 
-  it('a legacy .doc whose picture is only a link: the conversion (LibreOffice) never fetches it', async () => {
+  it.skipIf(!detectTools().soffice)('a legacy .doc whose picture is only a link: the conversion (LibreOffice) never fetches it', async () => {
     trap.hits.length = 0;
     const r = (await uploadRaw(t, course, 'linked.doc', docPointingAt(trap.port), 'lecture')).body.results[0]!;
     expect(r.status, JSON.stringify(r)).toBe('accepted');
