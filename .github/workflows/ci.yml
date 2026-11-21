@@ -121,7 +121,8 @@ jobs:
       - name: System tools
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends poppler-utils fonts-noto-core
+          # LibreOffice as in the production image (Dockerfile): the PPTX / legacy-DOC specs need the fixed rendering
+          sudo apt-get install -y -q --no-install-recommends poppler-utils fonts-noto-core libreoffice-writer-nogui libreoffice-impress-nogui
 
       - run: npm ci
 

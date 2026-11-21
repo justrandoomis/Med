@@ -161,8 +161,15 @@ test('«إدارة القنوات» by keyboard only: every dialog opens, traps 
     await test.step('«الأدوار»: grant a role with the arrow keys, revoke it in its confirm dialog — by keyboard', async () => {
       await page.goto(`/admin/roles?node=${w.subject.id}`);
       await expect(page.getByRole('heading', { level: 1, name: 'الأدوار' })).toBeVisible();
-      const who = await arrowSelect(page, page.getByLabel('الشخص'));
+      // arrow down to a person who is NOT the subject's moderator: granting and then revoking the moderator's own role
+      // would strip it, and the «المحتوى الرسمي» steps below upload as that moderator (CI found the 403)
+      let who = await arrowSelect(page, page.getByLabel('الشخص'));
+      for (let i = 0; i < 8 && (who === '' || who.includes('المشرف')); i++) {
+        await page.keyboard.press('ArrowDown');
+        who = await page.getByLabel('الشخص').evaluate((s: HTMLSelectElement) => s.options[s.selectedIndex]?.text ?? '');
+      }
       expect(who).not.toBe('');
+      expect(who).not.toContain('المشرف');
       await arrowSelect(page, page.getByLabel('الدور'));
       const role = await page.getByLabel('الدور').evaluate((s: HTMLSelectElement) => s.options[s.selectedIndex]?.text ?? '');
       await press(page, page.getByRole('button', { name: 'امنح الدور' }));
