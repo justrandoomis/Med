@@ -1,0 +1,24 @@
+// MedLevo on Cloudflare (Workers + Containers + R2). See deploy/cloudflare/README.md.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "medlevo",
+  "main": "deploy/cloudflare/worker.ts",
+  "compatibility_date": "2026-11-01",
+  "observability": { "enabled": true },
+  "containers": [
+    {
+      "class_name": "MedLevoContainer",
+      "image": "./Dockerfile",
+      "max_instances": 1,
+      // 1 vCPU / 4 GB RAM / 20 GB disk: OCR, LibreOffice and the restore check of every backup run in this memory;
+      // the disk holds the data, one local archive and a restore during boot
+      "instance_type": { "vcpu": 1, "memory_mib": 4096, "disk_mb": 20000 }
+    }
+  ],
+  "durable_objects": { "bindings": [{ "name": "MEDLEVO", "class_name": "MedLevoContainer" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MedLevoContainer"] }],
+  "vars": {
+    "MEDLEVO_R2_BUCKET": "medlevo-backups",
+    "MEDLEVO_BACKUP_INTERVAL_MINUTES": "10"
+  }
+}

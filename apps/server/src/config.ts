@@ -160,6 +160,7 @@ const envSchema = z.object({
   MEDLEVO_BACKUP_KEEP_DAILY: z.preprocess(emptyToUndefined, z.coerce.number().int().optional()),
   MEDLEVO_BACKUP_KEEP_WEEKLY: z.preprocess(emptyToUndefined, z.coerce.number().int().optional()),
   MEDLEVO_BACKUP_KEEP_LOCAL: z.preprocess(emptyToUndefined, z.coerce.number().int().optional()),
+  MEDLEVO_BACKUP_INTERVAL_MINUTES: z.preprocess(emptyToUndefined, z.coerce.number().int().optional()),
   // P1-T1 step 2: quotas, blob store, blob GC, chunked uploads
   MEDLEVO_USER_STORAGE_QUOTA_MB: z.preprocess(emptyToUndefined, z.coerce.number().positive().max(10_000_000).default(2048)),
   MEDLEVO_SPACE_STORAGE_QUOTA_MB: z.preprocess(emptyToUndefined, z.coerce.number().positive().max(100_000_000).default(20_480)),

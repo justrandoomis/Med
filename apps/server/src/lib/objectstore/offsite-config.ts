@@ -26,6 +26,9 @@ export interface OffsiteConfig {
   prefix: string;
   /** daily time in MEDLEVO_TIMEZONE; null = no schedule (manual «نسخ احتياطي الآن» only) */
   schedule: OffsiteSchedule | null;
+  /** extra backups every N minutes while the server runs (hosts without a permanent disk, e.g. Cloudflare
+   *  Containers); null = only the daily slot */
+  intervalMinutes: number | null;
   keepDaily: number;
   keepWeekly: number;
   /** local archives made by off-site runs that stay on the server disk after a successful upload */
@@ -62,6 +65,7 @@ export interface OffsiteEnv {
   MEDLEVO_BACKUP_KEEP_DAILY?: number;
   MEDLEVO_BACKUP_KEEP_WEEKLY?: number;
   MEDLEVO_BACKUP_KEEP_LOCAL?: number;
+  MEDLEVO_BACKUP_INTERVAL_MINUTES?: number;
 }
 
 export class OffsiteConfigError extends Error {}
@@ -167,6 +171,9 @@ export function parseOffsiteConfig(env: OffsiteEnv, opts: { partSizeBytes?: numb
     accessKeyId,
     prefix,
     schedule,
+    intervalMinutes: env.MEDLEVO_BACKUP_INTERVAL_MINUTES === undefined || env.MEDLEVO_BACKUP_INTERVAL_MINUTES === 0
+      ? null
+      : int(env.MEDLEVO_BACKUP_INTERVAL_MINUTES, 0, 5, 1440, 'MEDLEVO_BACKUP_INTERVAL_MINUTES'),
     keepDaily: int(env.MEDLEVO_BACKUP_KEEP_DAILY, 7, 1, 90, 'MEDLEVO_BACKUP_KEEP_DAILY'),
     keepWeekly: int(env.MEDLEVO_BACKUP_KEEP_WEEKLY, 4, 0, 104, 'MEDLEVO_BACKUP_KEEP_WEEKLY'),
     keepLocal: int(env.MEDLEVO_BACKUP_KEEP_LOCAL, 1, 0, 30, 'MEDLEVO_BACKUP_KEEP_LOCAL'),

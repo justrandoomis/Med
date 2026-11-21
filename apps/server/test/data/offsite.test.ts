@@ -273,6 +273,25 @@ describe('the daily schedule', () => {
     expect((await runNow(t, h)).statusCode).toBe(200);
   });
 
+  it('MEDLEVO_BACKUP_INTERVAL_MINUTES (hosts without a permanent disk): one more run whenever the last is older than the interval', async () => {
+    const { t } = await app(r2Env({ MEDLEVO_BACKUP_SCHEDULE: 'off', MEDLEVO_BACKUP_INTERVAL_MINUTES: '10' }));
+    const svc = offsiteService(t.ctx);
+    const t0 = Date.UTC(2026, 10, 21, 10, 0, 0);
+    t.clock.set(t0);
+    expect(svc.tick()?.trigger).toBe('schedule');
+    await t.ctx.jobs.drain();
+    t.clock.set(t0 + 9 * 60_000);
+    expect(svc.tick()).toBeNull(); // within the interval
+    t.clock.set(t0 + 11 * 60_000);
+    expect(svc.tick()?.trigger).toBe('schedule');
+    await t.ctx.jobs.drain();
+    expect(svc.status().recent.filter((r) => r.trigger === 'schedule' && r.status === 'uploaded')).toHaveLength(2);
+  });
+
+  it('a malformed interval stops the server', () => {
+    expect(() => loadConfig({ NODE_ENV: 'test', MEDLEVO_DATA_DIR: '/tmp/x', ...r2Env({ MEDLEVO_BACKUP_INTERVAL_MINUTES: '2' }) })).toThrow(/MEDLEVO_BACKUP_INTERVAL_MINUTES/);
+  });
+
   it('a malformed schedule stops the server with a precise message (a typo must not silently disable backups)', () => {
     expect(() => loadConfig({ NODE_ENV: 'test', MEDLEVO_DATA_DIR: '/tmp/x', ...r2Env({ MEDLEVO_BACKUP_SCHEDULE: '3am' }) })).toThrow(/MEDLEVO_BACKUP_SCHEDULE/);
   });

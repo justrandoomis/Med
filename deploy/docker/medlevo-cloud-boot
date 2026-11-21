@@ -1,0 +1,30 @@
+#!/bin/sh
+# Boot step for hosts WITHOUT a permanent disk (Cloudflare Containers, deploy/cloudflare). Runs as the «node» user,
+# before the server. Enabled by MEDLEVO_RESTORE_ON_BOOT=1.
+#   * data directory already has data (the container only restarted its process) → start as is.
+#   * empty data directory and R2 holds backups → restore the newest one (every restore:verify check runs) into
+#     <disk>/restored-<time> and start the server on it.
+#   * empty data directory and R2 holds no backup yet → first start: begin with empty data.
+#   * the restore FAILS (R2 unreachable, wrong key, a check fails) → exit 1 and do NOT start on empty data: starting
+#     empty would back up an empty server over the real data. The platform restarts the container and it tries again.
+set -eu
+DATA="${MEDLEVO_DATA_DIR:-/var/data/medlevo}"
+if [ "${MEDLEVO_RESTORE_ON_BOOT:-0}" != "1" ]; then exec "$@"; fi
+if [ -d "$DATA" ] && [ -n "$(ls -A "$DATA" 2>/dev/null)" ]; then exec "$@"; fi
+cd /app/apps/server
+RESTORE="node --disable-warning=ExperimentalWarning --import tsx src/cli/restore-offsite.ts"
+LIST="$($RESTORE --list)" || { echo "medlevo-cloud-boot: cannot list the R2 backups — not starting on empty data" >&2; sleep 20; exit 1; }
+if printf '%s' "$LIST" | grep -q 'No off-site backups yet'; then
+  echo "medlevo-cloud-boot: no backup in R2 yet — first start with empty data"
+  cd /app/apps/server; exec "$@"
+fi
+TARGET="$(dirname "$DATA")/restored-$(date -u +%Y%m%d%H%M%S)"
+echo "medlevo-cloud-boot: restoring the newest R2 backup into $TARGET"
+if ! $RESTORE --latest --target "$TARGET" --no-boot; then
+  echo "medlevo-cloud-boot: restore FAILED — not starting on empty data" >&2
+  sleep 20
+  exit 1
+fi
+export MEDLEVO_DATA_DIR="$TARGET"
+cd /app/apps/server
+exec "$@"

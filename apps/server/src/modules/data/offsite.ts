@@ -532,13 +532,16 @@ export class OffsiteService {
     }
   }
 
-  /** One scheduler step: start the run of the latest daily slot when nothing ran since it. */
+  /** One scheduler step: start the run of the latest daily slot when nothing ran since it — or, with
+   *  MEDLEVO_BACKUP_INTERVAL_MINUTES, when the last run is older than that interval. */
   tick(): OffsiteRunView | null {
     const cfg = this.cfg;
-    if (!cfg.configured || !cfg.schedule) return null;
+    if (!cfg.configured || (!cfg.schedule && !cfg.intervalMinutes)) return null;
     this.markInterrupted();
     const now = this.ctx.clock.now();
-    const slot = lastSlotAt(now, cfg.schedule, this.ctx.config.timezone);
+    const dailySlot = cfg.schedule ? lastSlotAt(now, cfg.schedule, this.ctx.config.timezone) : -Infinity;
+    const intervalSlot = cfg.intervalMinutes ? now - cfg.intervalMinutes * 60_000 : -Infinity;
+    const slot = Math.max(dailySlot, intervalSlot);
     if (this.ctx.db.get('SELECT 1 AS x FROM data_offsite_backup WHERE created_at >= ? OR status = ? LIMIT 1', [slot, 'running'])) return null;
     try {
       // nothing to protect before the owner account exists (a fresh deploy)

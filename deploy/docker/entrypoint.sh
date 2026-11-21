@@ -12,6 +12,6 @@ if [ "$(id -u)" = "0" ]; then
   if [ -n "$(find "$DATA" -xdev ! -user node -print -quit 2>/dev/null)" ]; then
     chown -R node:node "$DATA"
   fi
-  exec setpriv --reuid=node --regid=node --init-groups --inh-caps=-all -- "$@"
+  exec setpriv --reuid=node --regid=node --init-groups --inh-caps=-all -- /usr/local/bin/medlevo-cloud-boot "$@"
 fi
-exec "$@"
+exec /usr/local/bin/medlevo-cloud-boot "$@"
