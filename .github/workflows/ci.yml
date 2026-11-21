@@ -31,7 +31,8 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # the cloudflare branch runs the full suite (E2E + image) on every push: never cancel one half-way
+  cancel-in-progress: ${{ github.ref != 'refs/heads/cloudflare' }}
 
 env:
   # node:sqlite is still flagged experimental in Node 22; the warning is noise in test logs
@@ -95,7 +96,7 @@ jobs:
 
   e2e:
     name: end-to-end (Playwright, phone + desktop)
-    if: github.event_name == 'workflow_dispatch' && inputs.e2e
+    if: (github.event_name == 'workflow_dispatch' && inputs.e2e) || (github.event_name == 'push' && github.ref == 'refs/heads/cloudflare')
     needs: checks
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -142,7 +143,7 @@ jobs:
 
   docker:
     name: docker image (build + smoke test)
-    if: github.event_name == 'workflow_dispatch' && inputs.docker
+    if: (github.event_name == 'workflow_dispatch' && inputs.docker) || (github.event_name == 'push' && github.ref == 'refs/heads/cloudflare')
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
