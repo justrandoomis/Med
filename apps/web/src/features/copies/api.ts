@@ -2,6 +2,8 @@
 // every call answers the viewer's copies only; whether the viewer may study a lecture is the server's decision (a
 // lecture the viewer may not see answers «not found», exactly like a missing one).
 import type {
+  ApplyDeckUpdateRequest,
+  ApplyDeckUpdateResponse,
   ApplyUpstreamRequest,
   ApplyUpstreamResponse,
   DocumentCopiesResponse,
@@ -10,8 +12,11 @@ import type {
   LinkToOfficialResponse,
   OfficialLinkCandidatesResponse,
   PatchDocumentCopyRequest,
+  PublicationDeckView,
   StartStudyingRequest,
   StartStudyingResponse,
+  StudyDeckRequest,
+  StudyDeckResponse,
   UpstreamPreview,
 } from '@medlevo/shared';
 import { api } from '../../lib/api';
@@ -34,6 +39,12 @@ export const copiesApi = {
   upstream: (id: string) => api.get<UpstreamPreview>(`/copies/${enc(id)}/upstream`, T),
   /** «طبّق التحديث» (or `skip: true`: «تخطَّ هذا الإصدار»); a replay changes nothing */
   applyUpstream: (id: string, body: ApplyUpstreamRequest) => api.post<ApplyUpstreamResponse>(`/copies/${enc(id)}/upstream/apply`, body, { timeoutMs: 120_000 }),
+  /** (AOS-21.27) a publication's deck and the viewer's copy of it (its update preview included) */
+  deck: (spaceId: string, publicationId: string) => api.get<PublicationDeckView>(`/copies/decks/${enc(publicationId)}`, { ...T, query: { space_id: spaceId }, skipAuthRedirect: true }),
+  /** «ادرس هذه البطاقات»: the cards are copied into the viewer's own vault (a second tap reopens the copy) */
+  studyDeck: (body: StudyDeckRequest) => api.post<StudyDeckResponse>('/copies/decks', body, { timeoutMs: 60_000 }),
+  /** the deck's «طبّق التحديث» (or `skip: true`); the viewer's review history is never touched */
+  applyDeckUpdate: (publicationId: string, body: ApplyDeckUpdateRequest) => api.post<ApplyDeckUpdateResponse>(`/copies/decks/${enc(publicationId)}/update`, body, { timeoutMs: 60_000 }),
 };
 
 /**

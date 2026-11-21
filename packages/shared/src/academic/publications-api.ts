@@ -75,6 +75,11 @@ export const publishRequestSchema = z
     summary: publicationSummary.nullable().optional(),
     kind: z.enum(PUBLISH_KINDS_PHASE1),
     visibility: z.enum(PUBLISH_VISIBILITIES_PHASE1),
+    /**
+     * AOS-21.27 (additive): also publish the author's OWN flashcards on this lecture (text cards on their copy of it) as
+     * the explanation's deck — members copy it into their vault on «ادرس هذه البطاقات» (copies-api `studyDeckSchema`)
+     */
+    include_cards: z.boolean().optional(),
   })
   .strict();
 export type PublishRequest = z.infer<typeof publishRequestSchema>;
@@ -85,6 +90,8 @@ export const republishSchema = z
     layer_ids: layerIds,
     note_page_ids: notePageIds.optional(),
     change_note: changeNote.nullable(),
+    /** AOS-21.27 (additive): publish the deck again from the author's cards now; omitted = as the head did */
+    include_cards: z.boolean().optional(),
   })
   .strict();
 export type RepublishRequest = z.infer<typeof republishSchema>;

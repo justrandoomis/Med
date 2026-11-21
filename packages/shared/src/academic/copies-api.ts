@@ -21,6 +21,7 @@ import type { LectureWithdrawReason } from './lectures-api';
 import { entityIdSchema } from './channels-api';
 import type { PublicationStatus } from './publications-api';
 import type { UserRef } from './visibility';
+import type { RichText } from '../richtext';
 
 export const COPY_MODES = ['personal', 'independent_fork', 'followed', 'collaborative'] as const;
 export type CopyMode = (typeof COPY_MODES)[number];
@@ -299,4 +300,101 @@ export interface LinkToOfficialResponse {
      */
     note_pages?: { total: number; copied: number; items: number };
   } | null;
+}
+
+// ───────────────────────────── «ادرس هذه البطاقات» — a publication's deck (AOS-21.27) ─────────────────────────────
+//
+// An explanation may carry its author's flashcards on the lecture (PublishRequest `include_cards`). A member who taps
+// «ادرس هذه البطاقات» gets the cards COPIED into their own vault (copy on use): ordinary cards of theirs, with their own
+// FSRS state and review log (review_event is per vault), never shared with the author or any other student. A later
+// version of the deck is offered as a preview (`update`); applying it rewrites the text of the cards the student did
+// not edit, adds new ones, and tombstones removed ones — the review history of every copied card is never touched.
+
+/** At most this many cards ride in one published deck. */
+export const PUBLICATION_DECK_MAX_CARDS = 500;
+
+/** One card of a published deck, as the author published it (text only; no evidence or file of the author's vault). */
+export interface DeckCardView {
+  /** stable across the publication's versions */
+  item_id: string;
+  kind: 'basic' | 'cloze';
+  front: RichText;
+  back: RichText;
+  cloze_index: number | null;
+}
+
+/** What applying the newest deck version would do to the student's copied cards (nothing changes before the tap). */
+export interface DeckUpdatePreview {
+  publication_id: string;
+  from_version_no: number;
+  to_version_no: number;
+  change_note: string | null;
+  counts: { added: number; removed: number; changed: number };
+  /** changed or removed cards the student edited themselves: their text stays as they wrote it */
+  kept_yours: number;
+  summary_ar: string;
+}
+
+/** The viewer's copy of a publication's deck (one per publication per vault). */
+export interface DeckCopyView {
+  publication_id: string;
+  space_id: string;
+  title: string;
+  author: UserRef;
+  applied_version_no: number;
+  head_version_no: number;
+  /** live cards of this deck in the viewer's vault */
+  cards: number;
+  /** why updates stopped (hidden / withdrawn / not a member any more), null while it updates */
+  status_note_ar: string | null;
+  /** a newer deck version waits for «طبّق التحديث» (null: none, or the student skipped it) */
+  update: DeckUpdatePreview | null;
+  created_at: number;
+}
+
+/** GET /api/copies/decks/:publicationId?space_id= — the deck of a publication the viewer may see. */
+export const publicationDeckQuerySchema = z.object({ space_id: entityIdSchema });
+export interface PublicationDeckView {
+  publication_id: string;
+  space_id: string;
+  /** the newest version this viewer may read */
+  version_no: number;
+  card_count: number;
+  cards: DeckCardView[];
+  viewer: {
+    is_author: boolean;
+    /** «ادرس هذه البطاقات» works: a member who is not the author, the publication is active, it has cards, no copy yet */
+    can_study: boolean;
+    copy: DeckCopyView | null;
+  };
+}
+
+/** POST /api/copies/decks — «ادرس هذه البطاقات»: copy the deck into the viewer's vault (a second tap reopens it). */
+export const studyDeckSchema = z.object({ space_id: entityIdSchema, publication_id: entityIdSchema }).strict();
+export type StudyDeckRequest = z.infer<typeof studyDeckSchema>;
+export interface StudyDeckResponse {
+  deck: DeckCopyView;
+  created: boolean;
+  /** cards written into the vault by this call */
+  copied: number;
+}
+
+/** POST /api/copies/decks/:publicationId/update — «طبّق التحديث» / «تخطَّ هذا الإصدار» (a stale version → 409). */
+export const applyDeckUpdateSchema = z.object({ version_no: z.number().int().min(1), skip: z.boolean().optional() }).strict();
+export type ApplyDeckUpdateRequest = z.infer<typeof applyDeckUpdateSchema>;
+export interface ApplyDeckUpdateResponse {
+  deck: DeckCopyView;
+  skipped: boolean;
+  applied: { added: number; updated: number; removed: number; kept_yours: number } | null;
+}
+
+/** «أضاف 3 بطاقات، حذف 1، عدّل 2» — and what of the student's own edits stays. */
+export function deckUpdateSummaryAr(counts: { added: number; removed: number; changed: number }, keptYours: number): string {
+  const cards = (n: number) => (n === 1 ? 'بطاقة واحدة' : n === 2 ? 'بطاقتين' : n >= 3 && n <= 10 ? `${n} بطاقات` : `${n} بطاقة`);
+  const parts: string[] = [];
+  if (counts.added > 0) parts.push(`أضاف ${cards(counts.added)}`);
+  if (counts.removed > 0) parts.push(`حذف ${cards(counts.removed)}`);
+  if (counts.changed > 0) parts.push(`عدّل ${cards(counts.changed)}`);
+  const head = parts.length ? parts.join('، ') : 'لا تغييرات';
+  return keptYours > 0 ? `${head}. ${cards(keptYours)} عدّلتَها بنفسك تبقى كما كتبتها.` : head;
 }

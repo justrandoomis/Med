@@ -51,6 +51,7 @@ import { publicDirectory } from '../../system/directory';
 import { registerPublicationRules, type PublicationResource } from '../authz/rules/publications';
 import { ANNOTATION_DOC_SQL, NOTE_DOC_SQL } from '../annotations/layers';
 import { derivedId, notFound, scopeOf, visibleLecture, type LectureRow, type SpaceScope } from '../lectures/store';
+import { cardsAt, readAuthorDeck, writeDeckVersion, type DeckSnapshotCard } from './decks';
 import { enqueuePublicationFanout } from './pubFanout';
 import {
   hashItem,
@@ -106,6 +107,8 @@ interface Snapshot {
   items: SnapshotItem[];
   skipped: Array<{ reason_ar: string; items: number }>;
   layerIds: string[];
+  /** AOS-21.27: the author's cards published with this version (empty without `include_cards`) */
+  cards: DeckSnapshotCard[];
 }
 
 interface AnnRow {
@@ -221,7 +224,7 @@ export class PublicationsService {
 
   // ───────────────────────── the author's snapshot (their own vault) ─────────────────────────
 
-  private snapshot(scope: SpaceScope, lecture: LectureRow, publicationId: string, layerIds: readonly string[]): Snapshot {
+  private snapshot(scope: SpaceScope, lecture: LectureRow, publicationId: string, layerIds: readonly string[], includeCards = false): Snapshot {
     const { ctx } = this;
     const vaultId = forksSystem(ctx).vaultOfViewer(scope.viewer);
     if (!vaultId) throw notFound();
@@ -246,10 +249,12 @@ export class PublicationsService {
         anns.push(...vdb.all<AnnRow>(`SELECT ${ANN_COLS} FROM annotation a ${ANN_ATTR} WHERE a.layer_id = ? AND a.deleted_at IS NULL`, [layerId]));
         notes.push(...vdb.all<NoteRowLite>(`SELECT ${NOTE_COLS} FROM note n ${NOTE_ATTR} WHERE n.layer_id = ? AND n.deleted_at IS NULL`, [layerId]));
       }
-      return { anns, notes };
+      // AOS-21.27: the author's own cards on their copy of the lecture, when they publish the deck with it
+      const deck = includeCards ? readAuthorDeck(ctx, lecture.source_id, publicationId) : { cards: [], skipped: new Map<string, number>() };
+      return { anns, notes, deck };
     });
 
-    const skipped = new Map<string, number>();
+    const skipped = new Map<string, number>(read.deck.skipped);
     const skip = (reason: string) => skipped.set(reason, (skipped.get(reason) ?? 0) + 1);
     type Candidate = { authorItemId: string; entity: 'annotation' | 'note'; item: CanonicalItem; versionId: string };
     const candidates: Candidate[] = [];
@@ -317,7 +322,7 @@ export class PublicationsService {
       }
       items.push({ stableId: stableItemId(publicationId, c.authorItemId), entity: c.entity, item: c.item, hash: hashItem(c.item) });
     }
-    return { lectureVersionId: used, items, skipped: [...skipped].map(([reason_ar, n]) => ({ reason_ar, items: n })), layerIds: [...layerIds] };
+    return { lectureVersionId: used, items, skipped: [...skipped].map(([reason_ar, n]) => ({ reason_ar, items: n })), layerIds: [...layerIds], cards: read.deck.cards };
   }
 
   private pagesTotal(lectureVersionId: string): number {
@@ -359,12 +364,13 @@ export class PublicationsService {
           snap.items.length,
           pages.size,
           this.pagesTotal(snap.lectureVersionId),
-          hashVersion(snap.items.map((i) => ({ item_id: i.stableId, content_hash: i.hash }))),
+          snapshotHash(snap),
           now,
           toJson(snap.layerIds),
           toJson(snap.skipped),
         ],
       );
+      writeDeckVersion(ctx.db, publicationId, versionNo, snap.cards);
     });
   }
 
@@ -386,7 +392,7 @@ export class PublicationsService {
     }
     // a retried request with the same key gets the same id (its space rows may already exist)
     const id = key ? derivedId('pub', scope.viewer.userId, key) : newId(ctx.clock.now());
-    const snap = this.snapshot(scope, lecture, id, body.layer_ids);
+    const snap = this.snapshot(scope, lecture, id, body.layer_ids, body.include_cards === true);
     if (!versionRow(ctx.db, id, 1)) this.writeVersion(id, 1, lecture, snap, scope.viewer.userId, null);
     const now = ctx.clock.now();
     this.index.insert({
@@ -414,9 +420,11 @@ export class PublicationsService {
     ctx.authz.assert(scope.viewer, 'edit', this.resource(scope, row));
     const lecture = visibleLecture(ctx, scope, row.lecture_id);
     if (lecture.status !== 'published') throw new AppError('CONFLICT', AR.lectureNotPublished, 409);
-    const snap = this.snapshot(scope, lecture, id, body.layer_ids);
+    // AOS-21.27: the deck is published again when asked, or — the flag omitted — when the head has one
+    const includeCards = body.include_cards ?? cardsAt(ctx.db, id, row.head_version_no).size > 0;
+    const snap = this.snapshot(scope, lecture, id, body.layer_ids, includeCards);
     const head = versionRow(ctx.db, id, row.head_version_no);
-    const hash = hashVersion(snap.items.map((i) => ({ item_id: i.stableId, content_hash: i.hash })));
+    const hash = snapshotHash(snap);
     // the same content as the head (a retry after a lost answer, or nothing changed): the head, unchanged
     if (head && head.content_hash === hash && head.lecture_version_id === snap.lectureVersionId) return this.view(scope, id);
     const n = Math.max(row.head_version_no, ...versionRows(ctx.db, id).map((v) => v.version_no)) + 1;
@@ -551,6 +559,11 @@ export class PublicationsService {
     const last = page[page.length - 1];
     return { items, next_cursor: rows.length > q.limit && last ? Buffer.from(JSON.stringify([last.updated_at, last.id])).toString('base64url') : null };
   }
+}
+
+/** sha256 over the version's items and (AOS-21.27) its cards: without cards, exactly the items-only hash of before. */
+function snapshotHash(snap: Snapshot): string {
+  return hashVersion([...snap.items.map((i) => ({ item_id: i.stableId, content_hash: i.hash })), ...snap.cards.map((c) => ({ item_id: c.stableId, content_hash: c.hash }))]);
 }
 
 function diffCounts(space: Db, publicationId: string, headNo: number, snap: Snapshot): { added: number; removed: number; changed: number } {
