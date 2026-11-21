@@ -48,6 +48,7 @@ import type { Viewer } from '../../system/binding';
 import { normalizeUsername } from '../../system/repos';
 import type { Action, Resource } from '../authz/policy';
 import { CHANNEL_ROOT_ID, registerChannelRules } from '../authz/rules/channels';
+import { findTemplate } from '../library/templates';
 import { ChannelAccess, type EffectiveAccess } from './access';
 import { generateClassCode, generateLinkToken, hashJoinSecret, hintOf, isWellFormedClassCode, type JoinSecretKind } from './codes';
 import { notificationsOf } from '../notifications/service';
@@ -260,6 +261,12 @@ export class ChannelService {
     if ((body.starts_on || body.ends_on) && !DATED_KINDS.has(body.kind)) throw validation('starts_on', 'التواريخ للسنة الدراسية والفصل أو المقرر فقط.');
     if (body.kind === 'subject' && body.create_space === false) throw validation('create_space', 'لكل مادة مساحتها المشتركة الخاصة؛ لا تُنشأ مادة بلا مساحة.');
     if (body.kind !== 'subject' && body.create_space === true) throw validation('create_space', 'المساحة المشتركة للمواد فقط في هذه المرحلة.');
+    // (AOS-2.3 / 18.3) a subject from a study template — the personal library's templates (library/templates.ts); its
+    // lecture skeleton is created in the new space afterwards (POST /api/spaces/:s/lectures/from-template)
+    const template = body.template_key ? findTemplate(body.template_key) : undefined;
+    if (body.template_key && body.kind !== 'subject') throw validation('template_key', 'قوالب الدراسة للمواد فقط.');
+    if (body.template_key && !template) throw validation('template_key', 'قالب الدراسة غير معروف.');
+    const titleEn = body.title_en ?? template?.title_en ?? null;
 
     const id = newId(this.now());
     let spaceId: string | null = null;
@@ -277,7 +284,7 @@ export class ChannelService {
           parent_id: body.parent_id,
           kind: body.kind,
           title: body.title,
-          title_en: body.title_en ?? null,
+          title_en: titleEn,
           ordinal: body.ordinal ?? null,
           starts_on: body.starts_on ?? null,
           ends_on: body.ends_on ?? null,
@@ -285,7 +292,7 @@ export class ChannelService {
           join_policy: body.join_policy ?? 'approval',
           created_by: viewer.userId,
         });
-        this.audit(viewer, { action: 'channel_node_create', nodeId: id, targetType: 'channel_node', targetId: id, summary: `إنشاء ${body.kind === 'subject' ? 'مادة' : 'عقدة'}: ${body.title}`, details: { kind: body.kind, parent_id: body.parent_id, space_id: spaceId }, ip });
+        this.audit(viewer, { action: 'channel_node_create', nodeId: id, targetType: 'channel_node', targetId: id, summary: `إنشاء ${body.kind === 'subject' ? 'مادة' : 'عقدة'}: ${body.title}`, details: { kind: body.kind, parent_id: body.parent_id, space_id: spaceId, ...(template ? { template: template.key } : {}) }, ip });
       });
     } catch (e) {
       if (dbFile) for (const suffix of ['', '-wal', '-shm']) rmSync(`${this.ctx.pool.pathOfFile('space', dbFile)}${suffix}`, { force: true });

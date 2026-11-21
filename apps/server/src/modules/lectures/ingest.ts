@@ -3,9 +3,9 @@
 // the content-addressed store (one blob per sha256 across every database — no byte copy when a vault already holds the
 // same file) and the processing pipeline (job in the space's own queue) all act on the space database.
 //
-// One file per request, as multipart/form-data (the web client sends one file per request for real progress). The
-// JSON `{upload_id}` form of the contract needs a resumable upload made INTO this space, which P1-T1's chunked uploads
-// do not create yet (target: space is refused there); such an id is «not found» here.
+// One file per request, as multipart/form-data (the web client sends one file per request for real progress), or — for
+// large files on weak connections (AOS-2.3 / 18.3) — the JSON `{upload_id}` of the uploader's own chunked upload made
+// INTO this space (`/api/spaces/:s/uploads…`, completed): its stored file is inspected and registered the same way.
 import { createReadStream, createWriteStream, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { Transform } from 'node:stream';

@@ -206,6 +206,12 @@ export const createChannelNodeSchema = z
     /** subjects get their own space (AOS-21.6) */
     create_space: z.boolean().optional(),
     join_policy: joinPolicySchema.optional(),
+    /**
+     * (AOS-2.3 / 18.3, additive) a subject made from a study template (`GET /api/library/templates`, the same templates
+     * as the personal library): its English name defaults to the template's; the lecture skeleton is then created in
+     * the new space by `POST /api/spaces/:s/lectures/from-template`. Subjects only.
+     */
+    template_key: z.string().trim().min(1).max(32).regex(/^[a-z][a-z0-9_-]*$/).optional(),
   })
   .strict()
   .refine(datesInOrder, { message: 'تاريخ النهاية قبل تاريخ البداية.', path: ['ends_on'] });

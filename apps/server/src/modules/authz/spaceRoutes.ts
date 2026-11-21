@@ -74,6 +74,21 @@ export const SPACE_ROUTE_DECLARATIONS: readonly SpaceRouteDeclaration[] = [
   declare('GET', '/lectures/:lectureId/offline-package', 'member', 'lectures', 1, ['view', 'official_lecture'], 'ARCHITECTURE_DELTA §5.5', MOUNTED),
   // «انشر كمحاضرة رسمية» (AOS-19H.4): with the private-lecture link of step 2
   declare('POST', '/lectures/from-vault', 'moderator', 'lectures', 2, ['create', 'official_lecture'], 'ARCHITECTURE_DELTA §7.4, §6.9', MOUNTED),
+  // AOS-2.3 / 18.3 templates: the lecture skeleton of a study template (empty drafts) — official moderators of THIS
+  // subject (the handler narrows «moderator» access: an Assistant passes gate 2 but gets 403, Q5)
+  declare('POST', '/lectures/from-template', 'moderator', 'lectures', 1, ['create', 'official_lecture'], 'ARCHITECTURE_DELTA §7.4; AOS-2.3 / 18.3 templates', MOUNTED),
+
+  // ───── chunked, resumable uploads INTO the subject (AOS-2.3 / 18.3; §7.12 sessions bound to the space) ─────
+  // P1-T1's upload service in the space binding: the session's target is the space, its file is stored in the space
+  // database, the subject's quota is checked. Starting (and every later step) asks the same rule as a one-shot
+  // official upload — a NEW lecture's `create` (contributors and official moderators; a plain member gets 403); the
+  // uploader's own sessions into this space only (anything else 404). The completed file becomes a version through
+  // `POST /lectures/:lectureId/upload {upload_id}` (that lecture's own `create` check).
+  declare('POST', '/uploads', 'member', 'lectures', 1, ['create', 'official_lecture'], 'ARCHITECTURE_DELTA §7.12, §7.4; AOS-2.3', MOUNTED),
+  declare('GET', '/uploads/:uploadId', 'member', 'lectures', 1, ['create', 'official_lecture'], 'ARCHITECTURE_DELTA §7.12, §7.4; AOS-2.3', MOUNTED),
+  declare('PUT', '/uploads/:uploadId/chunks/:n', 'member', 'lectures', 1, ['create', 'official_lecture'], 'ARCHITECTURE_DELTA §7.12, §7.4; AOS-2.3', MOUNTED),
+  declare('POST', '/uploads/:uploadId/complete', 'member', 'lectures', 1, ['create', 'official_lecture'], 'ARCHITECTURE_DELTA §7.12, §7.4; AOS-2.3', MOUNTED),
+  declare('DELETE', '/uploads/:uploadId', 'member', 'lectures', 1, ['create', 'official_lecture'], 'ARCHITECTURE_DELTA §7.12, §7.4; AOS-2.3', MOUNTED),
 
   // ───── subject content: attachments, exam dates, updates feed (§7.4, 3010; step 1) ─────
   declare('GET', '/subject/attachments', 'member', 'lectures', 1, ['list', 'space'], 'ARCHITECTURE_DELTA §7.4', MOUNTED),

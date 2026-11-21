@@ -144,6 +144,24 @@ export interface StudyTemplate {
 export interface TemplatesResponse {
   templates: StudyTemplate[];
 }
+
+/**
+ * (AOS-2.3 / 18.3) The lecture skeleton of a study template for a SUBJECT SPACE: the template's topics and sections in
+ * order (a section with topics under it gives its topics), without the library's container folders («المحاضرات»,
+ * «المراجع» …) that have no meaning among a subject's official lectures. One list for the server (the drafts it creates)
+ * and the web (what the dialog shows before creating).
+ */
+export function templateLectureTitles(t: Pick<StudyTemplate, 'skeleton'>): string[] {
+  const out: string[] = [];
+  const walk = (items: readonly StudyTemplateFolder[]) => {
+    for (const f of items) {
+      if (f.children?.length) walk(f.children);
+      else if (f.kind === 'topic_folder' || f.kind === 'section') out.push(f.title);
+    }
+  };
+  walk(t.skeleton);
+  return out;
+}
 export interface FromTemplateRequest {
   template_key: string;
   parent_id: string | null;

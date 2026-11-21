@@ -4,9 +4,12 @@
 // access (gate 2) — everyone else got «not found». Each handler then asserts its own authz decision (gate 3,
 // rules/lectures.ts) and resolves the ids it is given inside this space only.
 //
-//   lectures   GET · POST /lectures · POST /lectures/from-vault (step 2) · GET · PATCH /lectures/:id · POST …/upload (multipart, one file) · …/approve ·
+//   lectures   GET · POST /lectures · POST /lectures/from-vault (step 2) · POST /lectures/from-template (AOS-2.3) ·
+//              GET · PATCH /lectures/:id · POST …/upload (multipart, one file — or {upload_id} of a chunked upload) · …/approve ·
 //              …/versions/:v/publish {preview?} · GET …/versions/:a/compare/:b · POST …/page-map/decisions ·
 //              …/withdraw · …/corrections · …/corrections/:c/decide · GET …/offline-package
+//   uploads    (AOS-2.3 / 18.3) POST /uploads · GET /uploads/:id · PUT …/chunks/:n · POST …/complete · DELETE — P1-T1's
+//              chunked, resumable uploads bound to THIS space (files/uploads.ts), for contributors and moderators
 //   subject    GET · POST /subject/attachments · PATCH …/:id · GET /subject/exam-dates · PUT · DELETE …/:id ·
 //              GET /subject/events · GET /subject/corrections · GET /subject/duplicates ·
 //              (C2) GET /subject/review · POST /subject/review/:itemId/decide (AOS-3.18, 3.11)
@@ -21,6 +24,8 @@ import { z } from 'zod';
 import {
   approveOfficialLectureSchema,
   createOfficialLectureSchema,
+  createUploadSchema,
+  lecturesFromTemplateSchema,
   decideSubjectReviewSchema,
   createSubjectAttachmentFieldsSchema,
   createSubjectAttachmentSchema,
@@ -38,6 +43,8 @@ import {
   uploadOfficialVersionSchema,
   withdrawOfficialLectureSchema,
   type StoredFileView,
+  type UploadCompleteResponse,
+  type UploadSessionView,
 } from '@medlevo/shared';
 import type { ModuleOptions } from '../../context';
 import { AppError } from '../../lib/errors';
@@ -49,6 +56,9 @@ import { registerPublicationRoutes } from '../forks/publications';
 import { promoteFromVault } from '../forks/promote';
 import { sendStoredFile } from '../files';
 import { toFileView } from '../files/store';
+import { chunkBodyLimit, chunkOf, UPLOAD_LIMITS, UploadService } from '../files/uploads';
+import { cleanFileName } from '../sources/sniff';
+import type { IncomingFile } from '../sources/upload';
 import { detectTools, renderPdfPage } from '../processing/tools';
 import { createLimiter } from '../versions/limit';
 import { getPageMap } from '../versions/pagemap';
@@ -63,6 +73,8 @@ import { mirrorDetectedIdentity, SubjectReviewService } from './review';
 import { onIdentityAnalyzed } from '../versions/identity';
 
 const id = z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/);
+const uploadParams = z.object({ spaceId: id, uploadId: id });
+const uploadChunkParams = uploadParams.extend({ n: z.coerce.number().int().min(0).max(1_000_000) });
 const lectureParams = z.object({ spaceId: id, lectureId: id });
 const versionParams = lectureParams.extend({ versionId: id });
 const compareParams = versionParams.extend({ toVersionId: id });
@@ -87,7 +99,6 @@ const FORWARD_HEADER = 'x-medlevo-forward';
 /** A space file is revalidated on every use (ETag → 304), so a takedown or a removed membership takes effect at once (R7). */
 const SPACE_FILE_CACHE = 'private, no-cache';
 
-const NO_SPACE_UPLOAD_AR = 'جلسة الرفع غير موجودة في هذه المادة. أرسل الملف مع الطلب نفسه (multipart).';
 
 export default async function lecturesModule(app: FastifyInstance, { ctx }: ModuleOptions): Promise<void> {
   registerLectureRules(ctx.authz);
@@ -104,6 +115,14 @@ export default async function lecturesModule(app: FastifyInstance, { ctx }: Modu
   const subject = new SubjectService(ctx);
   const reads = new SpaceReads(ctx);
   const review = new SubjectReviewService(ctx);
+  // (AOS-2.3 / 18.3) P1-T1's upload service; bound to the space here, its sessions target the space (files/uploads.ts)
+  const uploads = new UploadService(ctx);
+  app.addContentTypeParser('application/octet-stream', { parseAs: 'buffer', bodyLimit: chunkBodyLimit(ctx) }, (_req, body, done) => done(null, body));
+  /** the file of the viewer's completed chunked upload into THIS space, as the one-shot upload's incoming file */
+  const uploadedFile = async (scope: ReturnType<typeof scopeOf>, uploadId: string): Promise<IncomingFile> => {
+    const f = uploads.completedFile(scope.viewer, uploadId);
+    return { tmpPath: await ctx.files.localPath(f.fileId), fileName: cleanFileName(f.name) || 'file', size: f.size, truncated: false };
+  };
   // (C2, AOS-3.18) a CERTAIN detected number / date fills an official lecture that has none; uncertain ones wait
   const offIdentity = onIdentityAnalyzed(mirrorDetectedIdentity);
   app.addHook('onClose', async () => offIdentity());
@@ -153,6 +172,9 @@ export default async function lecturesModule(app: FastifyInstance, { ctx }: Modu
   // «انشر كمحاضرة رسمية» (P1-T5 step 2, AOS-19H.4): a moderator promotes a private source of their OWN vault
   app.post('/:spaceId/lectures/from-vault', { config: { rateLimit: UPLOAD_RATE } }, async (req) => promoteFromVault(ctx, scopeOf(ctx), parseBody(lectureFromVaultSchema, req), lectures));
 
+  // (AOS-2.3 / 18.3) the lecture skeleton of a study template — official moderators of the subject
+  app.post('/:spaceId/lectures/from-template', async (req) => lectures.fromTemplate(scopeOf(ctx), parseBody(lecturesFromTemplateSchema, req).template_key));
+
   app.get('/:spaceId/lectures/:lectureId', async (req) => lectures.detail(scopeOf(ctx), parseParams(lectureParams, req).lectureId));
 
   app.patch('/:spaceId/lectures/:lectureId', async (req) => lectures.patch(scopeOf(ctx), parseParams(lectureParams, req).lectureId, parseBody(patchOfficialLectureSchema, req)));
@@ -161,10 +183,10 @@ export default async function lecturesModule(app: FastifyInstance, { ctx }: Modu
     const scope = scopeOf(ctx);
     const { lectureId } = parseParams(lectureParams, req);
     if (!isMultipart(req)) {
-      parseBody(uploadOfficialVersionSchema, req);
-      // the lecture's rules first: a stranger learns nothing; then the upload id, which no resumable upload targets yet
-      lectures.detail(scope, lectureId);
-      throw new AppError('NOT_FOUND', NO_SPACE_UPLOAD_AR, 404);
+      const { upload_id } = parseBody(uploadOfficialVersionSchema, req);
+      // the lecture's rules first (a stranger learns nothing); then the viewer's own completed upload into THIS space
+      lectures.assertCanUpload(scope, lectureId);
+      return lectures.upload(scope, lectureId, await uploadedFile(scope, upload_id));
     }
     // ask BEFORE reading the body: a member who may not upload here never makes the server store a byte (review R10)
     lectures.assertCanUpload(scope, lectureId);
@@ -215,6 +237,43 @@ export default async function lecturesModule(app: FastifyInstance, { ctx }: Modu
     });
   });
 
+  // ───────── (AOS-2.3 / 18.3) chunked, resumable uploads into THIS subject ─────────
+  // Each step asks whether the viewer may upload official files here (contributors and official moderators) before
+  // anything else; a member who may not gets 403, a stranger never got past gate 2 (404).
+
+  app.post('/:spaceId/uploads', { config: { rateLimit: UPLOAD_LIMITS.create } }, async (req): Promise<UploadSessionView> => {
+    const scope = scopeOf(ctx);
+    lectures.assertMayUploadHere(scope);
+    return uploads.start(scope.viewer, parseBody(createUploadSchema, req));
+  });
+
+  app.get('/:spaceId/uploads/:uploadId', { config: { rateLimit: UPLOAD_LIMITS.read } }, async (req): Promise<UploadSessionView> => {
+    const scope = scopeOf(ctx);
+    lectures.assertMayUploadHere(scope);
+    return uploads.get(scope.viewer, parseParams(uploadParams, req).uploadId);
+  });
+
+  app.put('/:spaceId/uploads/:uploadId/chunks/:n', { bodyLimit: chunkBodyLimit(ctx), config: { rateLimit: UPLOAD_LIMITS.chunk } }, async (req): Promise<UploadSessionView> => {
+    const scope = scopeOf(ctx);
+    lectures.assertMayUploadHere(scope);
+    const p = parseParams(uploadChunkParams, req);
+    const { body, claimed } = chunkOf(req);
+    return uploads.putChunk(scope.viewer, p.uploadId, p.n, body, claimed);
+  });
+
+  app.post('/:spaceId/uploads/:uploadId/complete', { config: { rateLimit: UPLOAD_LIMITS.complete } }, async (req): Promise<UploadCompleteResponse> => {
+    const scope = scopeOf(ctx);
+    lectures.assertMayUploadHere(scope);
+    return uploads.complete(scope.viewer, parseParams(uploadParams, req).uploadId);
+  });
+
+  app.delete('/:spaceId/uploads/:uploadId', { config: { rateLimit: UPLOAD_LIMITS.read } }, async (req) => {
+    const scope = scopeOf(ctx);
+    lectures.assertMayUploadHere(scope);
+    uploads.abandon(scope.viewer, parseParams(uploadParams, req).uploadId);
+    return { ok: true };
+  });
+
   // ───────── the subject's content ─────────
 
   app.get('/:spaceId/subject/attachments', async () => ({ attachments: subject.listAttachments(scopeOf(ctx)) }));
@@ -222,9 +281,9 @@ export default async function lecturesModule(app: FastifyInstance, { ctx }: Modu
   app.post('/:spaceId/subject/attachments', { config: { rateLimit: UPLOAD_RATE } }, async (req) => {
     const scope = scopeOf(ctx);
     if (!isMultipart(req)) {
-      parseBody(createSubjectAttachmentSchema, req);
+      const { upload_id, ...fields } = parseBody(createSubjectAttachmentSchema, req);
       ctx.authz.assert(scope.viewer, 'publish', { type: 'space', id: scope.spaceId });
-      throw new AppError('NOT_FOUND', NO_SPACE_UPLOAD_AR, 404);
+      return subject.createAttachment(scope, fields, await uploadedFile(scope, upload_id));
     }
     ctx.authz.assert(scope.viewer, 'publish', { type: 'space', id: scope.spaceId }); // before the body is read (R10)
     const mp = await readOneFile(ctx, req);

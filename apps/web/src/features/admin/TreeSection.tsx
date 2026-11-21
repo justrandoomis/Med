@@ -2,33 +2,82 @@
 // university tree under the viewer's scope — kinds strictly descend (levels may be skipped), a subject gets its own
 // space, and archiving shows its impact first (nodes below, memberships that stop granting access, spaces that become
 // read-only, open codes revoked). The platform admin adds universities. Every change is audited by the server.
-import { useMemo, useState, type FormEvent } from 'react';
-import { Archive, FolderTree, MoveRight, Pencil, Plus } from 'lucide-react';
+// (AOS-2.3 / 18.3) A subject can start from a study template — the SAME templates as the personal library's
+// «قوالب الدراسة» (GET /api/library/templates): its English name comes from the template and its lecture skeleton (one
+// empty draft per topic, unseen by students) is created in the new subject's space; an existing subject gets the
+// skeleton from its row («مسودات محاضرات من قالب»). The server decides who may (official moderators of the subject).
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { Archive, FolderTree, LayoutTemplate, MoveRight, Pencil, Plus } from 'lucide-react';
 import {
   CHANNEL_KIND_LABELS_AR,
   CHANNEL_KINDS,
   isDescendingKind,
   JOIN_POLICIES,
   JOIN_POLICY_LABELS_AR,
+  templateLectureTitles,
   type ChannelArchivePreview,
   type ChannelKind,
   type ChannelNodeView,
   type CreateChannelNodeRequest,
   type JoinPolicy,
   type PatchChannelNodeRequest,
+  type StudyTemplate,
+  type TemplatesResponse,
 } from '@medlevo/shared';
 import { Button, ConfirmDialog, Dialog, EmptyState, IconButton, Select, StatusPill, TextField, useToast } from '../../design';
-import { errorMessage, fieldErrors } from '../../lib/api';
+import { api, errorMessage, fieldErrors } from '../../lib/api';
 import { MixedText } from '../../lib/MixedText';
 import { typed } from '../../lib/typedText';
 import { channelsApi } from '../channels/api';
 import { treeOrder } from '../channels/model';
 import { ReasonedButton } from '../channels/ui';
+import { IsolatedList } from '../library/labels';
+import { lecturesApi } from '../lectures/api';
 import { ScopeBar, useAdminScope, useAdminViewer } from './viewer';
 
 const DATED: ReadonlySet<ChannelKind> = new Set(['academic_year', 'course']);
 
-type Editing = { mode: 'create'; parent: ChannelNodeView | null } | { mode: 'edit'; node: ChannelNodeView } | { mode: 'move'; node: ChannelNodeView } | null;
+type Editing =
+  | { mode: 'create'; parent: ChannelNodeView | null }
+  | { mode: 'edit'; node: ChannelNodeView }
+  | { mode: 'move'; node: ChannelNodeView }
+  | { mode: 'skeleton'; node: ChannelNodeView }
+  | null;
+
+/** The study templates (the personal library's), loaded when `enabled` first becomes true. */
+function useStudyTemplates(enabled: boolean): { templates: StudyTemplate[] | null; error: string | null } {
+  const [templates, setTemplates] = useState<StudyTemplate[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!enabled || templates) return;
+    let live = true;
+    api
+      .get<TemplatesResponse>('/library/templates', { timeoutMs: 20_000 })
+      .then((r) => {
+        if (live) setTemplates(r.templates);
+      })
+      .catch((e: unknown) => {
+        if (live) setError(errorMessage(e));
+      });
+    return () => {
+      live = false;
+    };
+  }, [enabled, templates]);
+  return { templates, error };
+}
+
+/** The drafts a template creates, each title isolated (AC-20). */
+function SkeletonPreview({ template }: { template: StudyTemplate }) {
+  const titles = templateLectureTitles(template);
+  return (
+    <p className="ml-group-footer">
+      {template.description_ar} مسودات المحاضرات التي تُنشأ ({titles.length}): <IsolatedList parts={titles.map((t) => <MixedText key={t} text={t} />)} />. لا يراها الطلاب حتى يُرفع ملفها ويُنشر.
+    </p>
+  );
+}
+
+const lecturesMadeAr = (n: number) =>
+  n === 0 ? 'لا مسودات جديدة: كل عناوين القالب موجودة في المادة.' : n === 1 ? 'أُضيفت مسودة محاضرة واحدة.' : n === 2 ? 'أُضيفت مسودتا محاضرتين.' : n <= 10 ? `أُضيفت ${n} مسودات محاضرات.` : `أُضيفت ${n} مسودة محاضرة.`;
 
 export function TreeSection() {
   const v = useAdminViewer();
@@ -92,6 +141,9 @@ export function TreeSection() {
               {node.status === 'active' && !offline && (
                 <div className="ad-tree__actions">
                   {node.kind !== 'subject' && <IconButton label={`أضف تحت ${node.title}`} icon={<Plus size={18} />} onClick={() => setEditing({ mode: 'create', parent: node })} />}
+                  {node.kind === 'subject' && node.space_id && (
+                    <IconButton label={`مسودات محاضرات من قالب لـ ${node.title}`} icon={<LayoutTemplate size={18} />} onClick={() => setEditing({ mode: 'skeleton', node })} />
+                  )}
                   <IconButton label={`عدّل ${node.title}`} icon={<Pencil size={18} />} onClick={() => setEditing({ mode: 'edit', node })} />
                   {node.parent_id !== null && <IconButton label={`انقل ${node.title}`} icon={<MoveRight size={18} />} onClick={() => setEditing({ mode: 'move', node })} />}
                   <IconButton label={`أرشف ${node.title}`} icon={<Archive size={18} />} onClick={() => void openArchive(node)} />
@@ -107,9 +159,9 @@ export function TreeSection() {
         <NodeDialog
           parent={editing.parent}
           onClose={() => setEditing(null)}
-          onDone={(created) => {
+          onDone={(created, note) => {
             setEditing(null);
-            toast.show({ title: `أُنشئت «${created.title}».`, tone: 'success' });
+            toast.show({ title: `أُنشئت «${created.title}».${note ? ` ${note}` : ''}`, tone: 'success' });
             // a new university is a new scope of its own: show it (it would otherwise sit in another scope, unseen)
             if (created.parent_id === null) scope.choose(created.id);
             v.reload();
@@ -124,6 +176,16 @@ export function TreeSection() {
             setEditing(null);
             toast.show({ title: 'حُفظت التعديلات.', tone: 'success' });
             v.reload();
+          }}
+        />
+      )}
+      {editing?.mode === 'skeleton' && (
+        <SkeletonDialog
+          node={editing.node}
+          onClose={() => setEditing(null)}
+          onDone={(note) => {
+            setEditing(null);
+            toast.show({ title: note, tone: 'success' });
           }}
         />
       )}
@@ -161,7 +223,7 @@ export function TreeSection() {
   );
 }
 
-function NodeDialog({ parent, onClose, onDone }: { parent: ChannelNodeView | null; onClose: () => void; onDone: (created: ChannelNodeView) => void }) {
+function NodeDialog({ parent, onClose, onDone }: { parent: ChannelNodeView | null; onClose: () => void; onDone: (created: ChannelNodeView, note?: string) => void }) {
   const kinds = CHANNEL_KINDS.filter((k) => (parent ? isDescendingKind(parent.kind, k) : k === 'university'));
   const [kind, setKind] = useState<ChannelKind>(kinds[0]!);
   const [title, setTitle] = useState('');
@@ -172,6 +234,17 @@ function NodeDialog({ parent, onClose, onDone }: { parent: ChannelNodeView | nul
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [templateKey, setTemplateKey] = useState('');
+  const study = useStudyTemplates(kind === 'subject');
+  const template = kind === 'subject' ? (study.templates?.find((t) => t.key === templateKey) ?? null) : null;
+  // choosing a template fills the names the person has not typed themselves (what the previous template filled is replaced)
+  const chooseTemplate = (key: string) => {
+    const prev = study.templates?.find((t) => t.key === templateKey) ?? null;
+    const next = study.templates?.find((t) => t.key === key) ?? null;
+    setTemplateKey(key);
+    if (next && (!title.trim() || title === prev?.title_ar)) setTitle(next.title_ar);
+    if (next && (!titleEn.trim() || titleEn === prev?.title_en)) setTitleEn(next.title_en);
+  };
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!title.trim()) {
@@ -185,8 +258,17 @@ function NodeDialog({ parent, onClose, onDone }: { parent: ChannelNodeView | nul
     if (DATED.has(kind) && startsOn) body.starts_on = startsOn;
     if (DATED.has(kind) && endsOn) body.ends_on = endsOn;
     if (kind === 'subject') body.create_space = true;
+    if (template) body.template_key = template.key;
     try {
-      onDone(await channelsApi.createNode(body));
+      const created = await channelsApi.createNode(body);
+      if (!template || !created.space_id) return onDone(created);
+      // the subject exists now; its lecture skeleton goes into its space (a failure keeps the subject and says why)
+      try {
+        const made = await lecturesApi.fromTemplate(created.space_id, template.key);
+        onDone(created, lecturesMadeAr(made.created.length));
+      } catch (err) {
+        onDone(created, `لم تُنشأ مسودات المحاضرات: ${errorMessage(err)} أنشئها من زر «مسودات محاضرات من قالب» في صف المادة.`);
+      }
     } catch (err) {
       setErrors(fieldErrors(err));
       setError(errorMessage(err));
@@ -218,9 +300,70 @@ function NodeDialog({ parent, onClose, onDone }: { parent: ChannelNodeView | nul
             <TextField label="ينتهي في" type="date" value={endsOn} onChange={(e) => setEndsOn(e.target.value)} error={errors.ends_on} />
           </div>
         )}
+        {kind === 'subject' && study.templates && (
+          <Select
+            label="قالب الدراسة (اختياري)"
+            value={templateKey}
+            onValueChange={chooseTemplate}
+            options={[{ value: '', label: 'بلا قالب' }, ...study.templates.map((t) => ({ value: t.key, label: t.title_ar }))]}
+          />
+        )}
+        {kind === 'subject' && study.error && <p className="ml-field__error">تعذّر تحميل قوالب الدراسة: {study.error}</p>}
+        {template && <SkeletonPreview template={template} />}
         {kind === 'subject' && <p className="ml-group-footer">تُنشأ للمادة مساحتها المشتركة الخاصة (المحاضرات الرسمية وملفاتها).</p>}
         {error && <p className="ml-field__error">{error}</p>}
       </form>
+    </Dialog>
+  );
+}
+
+/** (AOS-2.3 / 18.3) an existing subject's lecture skeleton from a template (titles it already has are kept as they are). */
+function SkeletonDialog({ node, onClose, onDone }: { node: ChannelNodeView; onClose: () => void; onDone: (note: string) => void }) {
+  const study = useStudyTemplates(true);
+  const [templateKey, setTemplateKey] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const template = study.templates?.find((t) => t.key === templateKey) ?? null;
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={`مسودات محاضرات من قالب — ${node.title}`}
+      description="مسودة فارغة لكل موضوع في القالب، بترتيبه. العناوين الموجودة في المادة لا تتكرر. ينشئها مشرف المادة أو مدير فوقها."
+      footer={
+        <>
+          <Button onClick={onClose}>إلغاء</Button>
+          <ReasonedButton
+            variant="primary"
+            loading={busy}
+            reason={!template ? 'اختر قالبًا أولًا.' : null}
+            onClick={async () => {
+              if (!template || !node.space_id) return;
+              setBusy(true);
+              setError(null);
+              try {
+                const made = await lecturesApi.fromTemplate(node.space_id, template.key);
+                onDone(lecturesMadeAr(made.created.length));
+              } catch (err) {
+                setError(errorMessage(err));
+                setBusy(false);
+              }
+            }}
+          >
+            أنشئ المسودات
+          </ReasonedButton>
+        </>
+      }
+    >
+      {study.templates ? (
+        <Select label="قالب الدراسة" value={templateKey} onValueChange={setTemplateKey} options={[{ value: '', label: 'اختر قالبًا' }, ...study.templates.map((t) => ({ value: t.key, label: t.title_ar }))]} />
+      ) : study.error ? (
+        <p className="ml-field__error">تعذّر تحميل قوالب الدراسة: {study.error}</p>
+      ) : (
+        <p>جارٍ تحميل القوالب…</p>
+      )}
+      {template && <SkeletonPreview template={template} />}
+      {error && <p className="ml-field__error">{error}</p>}
     </Dialog>
   );
 }

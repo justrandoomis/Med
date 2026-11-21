@@ -14,7 +14,10 @@ export const createUploadSchema = z
     sha256: sha256Hex,
     mime: z.string().trim().max(255).optional(),
     name: z.string().trim().max(512).optional(),
-    /** the user's own vault; a subject space arrives with R1-c */
+    /**
+     * the user's own vault (`/api/files/uploads`), or — on the subject's own route `/api/spaces/:s/uploads…` (AOS-2.3 /
+     * 18.3) — that subject space: `{space_id}` must name the space of the URL (the vault route refuses a space target)
+     */
     target: z.union([z.literal('vault'), z.object({ space_id: z.string().min(1).max(64) }).strict()]).default('vault'),
   })
   .strict();
@@ -58,7 +61,11 @@ export const UPLOAD_LABELS_AR = {
   missing_chunks: (n: number) => `لم تصل كل أجزاء الملف بعد (${n} جزءًا ناقصًا). أرسل الأجزاء الناقصة ثم أكمل.`,
   whole_hash: 'الملف المجمّع لا يطابق البصمة المعلنة عند بدء الرفع؛ لم يُحفظ شيء. ابدأ الرفع من جديد.',
   too_large: 'حجم الملف أكبر من الحد المسموح للرفع.',
-  space_target: 'الرفع إلى مادة مشتركة يصل مع قنوات المواد (الإصدار R1-c).',
+  space_target: 'هذا المسار يرفع إلى مكتبتك فقط. الرفع إلى مادة يمرّ بمسار المادة نفسها (/api/spaces/<المادة>/uploads).',
+  /** a space route whose body does not name ITS space (the vault, or another subject) */
+  space_target_mismatch: 'حدّد هذه المادة هدفًا للرفع؛ لا يرفع مسار المادة إلى مكتبتك ولا إلى مادة أخرى.',
+  /** `{upload_id}` given to an official upload before its session completed */
+  not_completed: 'لم يكتمل رفع هذا الملف بعد. أرسل الأجزاء الناقصة ثم أكمل الرفع وأعد المحاولة.',
 } as const;
 
 // ───────── blob registry and GC (platform admin) ─────────
