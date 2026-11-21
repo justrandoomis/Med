@@ -21,6 +21,7 @@ import { usePageTitle } from '../../lib/usePageTitle';
 import { useOnline } from '../../lib/useOnline';
 import { ReasonedButton } from '../channels/ui';
 import { countAr, formatSize, meApi } from './api';
+import { AiConsentText } from './AiConsentPrompt';
 import './me.css';
 
 const STATUS_AR: Record<JobStatus, string> = {
@@ -204,12 +205,7 @@ function AiConsentSection() {
           ) : (
             <p className="me-consent__state">لم توافق بعد؛ ميزات الذكاء الاصطناعي متوقفة لحسابك، وباقي الميزات تعمل.</p>
           )}
-          <p className="me-note">نص الموافقة (الإصدار <bdi dir="ltr">{view.current_text_version}</bdi>):</p>
-          <ul className="me-bullets">
-            {view.text_ar.map((t) => (
-              <li key={t}>{t}</li>
-            ))}
-          </ul>
+          <AiConsentText view={view} />
           {view.granted ? (
             <ReasonedButton variant="secondary" reason={online ? null : 'سحب الموافقة يحتاج اتصالًا بالخادم.'} onClick={() => setWithdrawing(true)}>
               اسحب موافقتي

@@ -23,6 +23,7 @@ import { computeQueue } from '../review/local/queue';
 import { cardsAr, dayLabelAr, daysCountAr, minutesAr } from '../review/local/time';
 import { planUrl, questionUrl, sessionUrl, studyUrl, weaknessUrl } from '../review/links';
 import { TASK_KIND_AR } from '../planner/model';
+import { AiConsentNudge } from '../me/AiConsentPrompt';
 import '../review/learning.css';
 import '../planner/planner.css';
 import './home.css';
@@ -346,6 +347,7 @@ export function HomeScreen() {
   return (
     <div className="ml-page lw-page lw-home">
       <h1 className="ml-visually-hidden">الرئيسية</h1>
+      <AiConsentNudge />
       <ContinueStudying items={items} loading={home.loading && !h && local.length === 0} />
       {home.fromCache && <p className="lw-muted lw-home__cache">{`ما يلي من آخر نسخة محفوظة على هذا الجهاز${home.cachedAt ? ` (${formatRelative(home.cachedAt)})` : ''}؛ تتحدث عند عودة الاتصال.`}</p>}
       {home.error && !h && !home.fromCache && <ErrorState inline message={home.error.message} onRetry={() => void home.refresh()} />}

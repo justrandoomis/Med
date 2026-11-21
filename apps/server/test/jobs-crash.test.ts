@@ -63,7 +63,7 @@ describe('crash resume: the claiming process is recorded and checked', () => {
     expect(t.ctx.jobs.requeueStale()).toBe(1);
     expect(t.ctx.jobs.get(id)).toMatchObject({ status: 'queued', error: { code: 'JOB_INTERRUPTED', retryable: true } });
     await t.ctx.jobs.drain();
-    expect(t.ctx.jobs.get(id)).toMatchObject({ status: 'completed', output: { a: 7 }, attempts: 2 });
+    expect(t.ctx.jobs.get(id)).toMatchObject({ status: 'completed', output: { a: 7 }, attempts: 1 }); // the interrupted run gave its attempt back (counted in interruptions)
     expect(s1).toBe(0); // the checkpointed step was not redone
   });
 

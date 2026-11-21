@@ -12,7 +12,11 @@ import { DataDirRefusedError } from './system/layout';
 import { planBoot, startMaintenance } from './system/maintenance';
 import { clearServerLock, recordFirstBoot, writeServerLock } from './system/ownerMigration';
 import { rowCounts } from './modules/data/backup';
+import { offsiteService } from './modules/data/offsite';
 import { mkdirSync } from 'node:fs';
+
+/** the final off-site backup on SIGTERM in cloud mode waits at most this long (then the server exits anyway) */
+const FINAL_BACKUP_TIMEOUT_MS = 4 * 60_000;
 
 async function main(): Promise<void> {
   loadDotEnv();
@@ -74,6 +78,18 @@ async function main(): Promise<void> {
     closing = true;
     app.log.info({ signal }, 'shutting down');
     try {
+      // a host without a permanent disk (MEDLEVO_BACKUP_INTERVAL_MINUTES, Cloudflare Containers) boots from the newest
+      // off-site copy: before stopping, take one more so the next boot does not go back up to an interval in time.
+      // Jobs first stop being claimed and running ones go back to the queue (as app.close does), so the copy holds them
+      // resumable. Bounded (Cloudflare sends SIGTERM before stopping the container); a failure is logged, never fatal.
+      if (signal === 'SIGTERM' && config.offsite.configured && config.offsite.intervalMinutes) {
+        await app.ctx.jobs.stop();
+        const started = Date.now();
+        const out = await offsiteService(app.ctx).backupNowAndWait({ timeoutMs: FINAL_BACKUP_TIMEOUT_MS });
+        const line = { status: out.status, reason: out.reason ?? null, runId: out.run?.id ?? null, ms: Date.now() - started };
+        if (out.status === 'uploaded') app.log.info(line, 'final off-site backup before shutdown uploaded');
+        else app.log.warn(line, 'final off-site backup before shutdown did not complete; the newest earlier copy stays the restore point');
+      }
       await app.close(); // stops jobs (re-queues running ones) and closes the database
       process.exit(0);
     } catch (e) {

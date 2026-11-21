@@ -4,6 +4,7 @@
 //  - JSON in / JSON out
 //  - server errors (ApiErrorBody) → ApiError with the server's Arabic message
 //  - network failures → ApiError with `offline: true` (never confused with a server answer)
+//  - 409 CONSENT_REQUIRED (ai_processing) → the app's AI-consent dialog; agreed → the request is retried once
 import { CLIENT_VERSION_HEADER_NAME, isApiErrorBody, MIN_CLIENT_VERSION, USER_HEADER_NAME, type ErrorCode } from '@medlevo/shared';
 import { storageAccount } from './userStorage';
 
@@ -88,6 +89,8 @@ export interface RequestOptions {
   timeoutMs?: number;
   /** Don't trigger the global "session expired" handler on 401 (auth screens). */
   skipAuthRedirect?: boolean;
+  /** Don't offer the AI-consent dialog on CONSENT_REQUIRED (the consent call itself, and the one retry after it). */
+  skipConsentPrompt?: boolean;
 }
 
 type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
@@ -95,6 +98,31 @@ type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 let fetchImpl: FetchLike | null = null;
 let unauthenticatedHandler: (() => void) | null = null;
 const MUTATION = new Set<HttpMethod>(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+/** AOS-21.42: the server refused an AI action because this account has no ai_processing consent (409). */
+export function isAiConsentRequired(e: unknown): e is ApiError {
+  return e instanceof ApiError && e.code === 'CONSENT_REQUIRED' && !!e.details && typeof e.details === 'object' && (e.details as { kind?: unknown }).kind === 'ai_processing';
+}
+
+type AiConsentHandler = (e: ApiError) => Promise<boolean>;
+let aiConsentHandler: AiConsentHandler | null = null;
+/**
+ * The app's ONE answer to CONSENT_REQUIRED (AiConsentPrompt, features/me): it asks the student, records the consent
+ * when they agree and resolves true — the request is then sent once more; false («ليس الآن») → the original error.
+ */
+export function setAiConsentHandler(fn: AiConsentHandler | null): void {
+  aiConsentHandler = fn;
+}
+
+/** True when the student just granted the consent this error asks for (the caller retries its request once). */
+export async function offerAiConsent(e: unknown): Promise<boolean> {
+  if (!aiConsentHandler || !isAiConsentRequired(e)) return false;
+  try {
+    return await aiConsentHandler(e);
+  } catch {
+    return false;
+  }
+}
 
 /** Test hook / alternative transport. Pass null to restore the global fetch. */
 export function setFetchImpl(fn: FetchLike | null): void {
@@ -189,6 +217,8 @@ export async function request<T = unknown>(method: HttpMethod, path: string, bod
     if (isApiErrorBody(data)) {
       const err = new ApiError({ code: data.error.code, message: data.error.message || STATUS_MESSAGES_AR[res.status] || 'تعذّر إكمال الطلب.', status: res.status, details: data.error.details });
       if (res.status === 401 && !opts.skipAuthRedirect) unauthenticatedHandler?.();
+      // AOS-21.42: an AI action without consent → the consent dialog; agreed → the same request once more
+      if (!opts.skipConsentPrompt && !opts.signal?.aborted && (await offerAiConsent(err))) return request<T>(method, path, body, { ...opts, skipConsentPrompt: true });
       throw err;
     }
     if (res.status === 401 && !opts.skipAuthRedirect) unauthenticatedHandler?.();

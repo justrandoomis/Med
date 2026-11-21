@@ -110,6 +110,14 @@ export interface OffsiteStatusResponse {
   notes_ar: string[];
 }
 
+/** What the final backup at shutdown did (OffsiteService.backupNowAndWait). */
+export interface FinalBackupOutcome {
+  status: 'uploaded' | 'failed' | 'timeout' | 'skipped';
+  run?: OffsiteRunView;
+  /** skipped: not_configured | no_account | busy; failed: the Arabic reason */
+  reason?: string | null;
+}
+
 export interface RemoteBackupView {
   key: string;
   file_name: string;
@@ -264,7 +272,7 @@ export class OffsiteService {
   }
 
   /** «نسخ احتياطي الآن» or a scheduled slot. 409 with the reason when not configured or one is already running. */
-  start(trigger: OffsiteTrigger): OffsiteRunView {
+  start(trigger: OffsiteTrigger, summaryAr?: string): OffsiteRunView {
     if (!this.cfg.configured) {
       throw new AppError('FEATURE_DISABLED', `النسخ الاحتياطي خارج الخادم غير مُعدّ. ${this.cfg.problems_ar.join(' ')}`.trim(), 409, { problems_ar: this.cfg.problems_ar });
     }
@@ -280,7 +288,7 @@ export class OffsiteService {
       entityType: 'backup_offsite',
       entityId: id,
       action: 'create',
-      summary: trigger === 'manual' ? 'بدء نسخ احتياطي خارج الخادم بطلب المالك' : 'بدء النسخ الاحتياطي اليومي خارج الخادم',
+      summary: summaryAr ?? (trigger === 'manual' ? 'بدء نسخ احتياطي خارج الخادم بطلب المالك' : 'بدء النسخ الاحتياطي اليومي خارج الخادم'),
       actor: trigger === 'manual' ? 'owner' : 'system',
     });
     return this.view(this.row(id)!);
@@ -550,6 +558,50 @@ export class OffsiteService {
       // no owner table in this schema: back up anyway
     }
     return this.start('schedule');
+  }
+
+  /**
+   * Back up off-site NOW and wait for the outcome, bounded by `timeoutMs` — the final backup of a server that is being
+   * stopped on a host without a permanent disk (MEDLEVO_BACKUP_INTERVAL_MINUTES: the next boot restores the newest R2
+   * copy, so everything since the last interval would otherwise be lost). Call it AFTER jobs.stop(): nothing else is
+   * claimed meanwhile and running jobs are already back in the queue, so the copy holds them as «queued». Binds the
+   * platform vault itself (like the scheduler). Never throws: the outcome says what happened.
+   *  * a run left «running» by the stop (its job back in the queue) is closed and replaced: its archive is older
+   *  * one attempt only; on timeout the run is aborted like a shutdown and stays resumable
+   */
+  async backupNowAndWait(opts: { timeoutMs: number }): Promise<FinalBackupOutcome> {
+    try {
+      const b = this.ctx.tenancy.platformVaultBinding();
+      if (!b) return { status: 'skipped', reason: 'no_account' };
+      return await this.ctx.binding.run(b, () => this.backupNowAndWaitBound(opts.timeoutMs));
+    } catch (e) {
+      this.ctx.log.error({ err: e }, 'final off-site backup could not run');
+      return { status: 'failed', reason: describeOffsiteError(e).reasonAr };
+    }
+  }
+
+  private async backupNowAndWaitBound(timeoutMs: number): Promise<FinalBackupOutcome> {
+    if (!this.cfg.configured) return { status: 'skipped', reason: 'not_configured' };
+    try {
+      if (this.ctx.system.users.countInternal() === 0) return { status: 'skipped', reason: 'no_account' };
+    } catch {
+      // no owner table in this schema: back up anyway
+    }
+    this.markInterrupted();
+    for (const r of this.ctx.db.all<OffsiteRow>(`SELECT * FROM data_offsite_backup WHERE status = 'running'`)) {
+      const job = r.job_id ? this.ctx.jobs.get(r.job_id) : null;
+      if (job?.status === 'running') return { status: 'skipped', reason: 'busy' }; // still executing in this process
+      if (job && job.status === 'queued') this.ctx.jobs.cancel(job.id);
+      this.update(r.id, { status: 'failed', error_detail: 'حلّت محلّه نسخة أحدث أُخذت عند إيقاف الخادم.', finished_at: this.ctx.clock.now() });
+    }
+    const started = this.start('schedule', 'بدء نسخ احتياطي خارج الخادم عند إيقاف الخادم (الخادم بلا قرص دائم)');
+    const t0 = Date.now();
+    const job = started.job ? await this.ctx.jobs.runNow(started.job.id, { timeoutMs }) : null;
+    const run = this.view(this.row(started.id)!);
+    if (run.status === 'uploaded') return { status: 'uploaded', run };
+    if (Date.now() - t0 >= timeoutMs) return { status: 'timeout', run };
+    // one attempt only: a retryable failure leaves the job queued for a retry this process will not make
+    return { status: 'failed', run, reason: run.error_ar ?? job?.error?.message ?? null };
   }
 
   startScheduler(): void {

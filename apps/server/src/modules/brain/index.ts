@@ -50,7 +50,7 @@ import { coverage, versionConcepts } from './coverage';
 import { EXTRACTOR_VERSION } from './extract';
 import { knowledgeMap } from './map';
 import { createRelation, deleteRelation, listRelations, patchRelation } from './relations';
-import { runKnowledgeExtraction } from './run';
+import { assertVersionReadyForKnowledge, KNOWLEDGE_MAX_DEFERRALS, runKnowledgeExtraction } from './run';
 import { courseSources, versionIdsOf } from './store';
 import { studentKnowledge } from './student';
 import { suggestTopicLinks, topicDetail, topicList } from './topics';
@@ -101,10 +101,13 @@ export default async function register(app: FastifyInstance, { ctx }: ModuleOpti
   ctx.jobs.register<ExtractKnowledgeJobInput, unknown>(EXTRACT_KNOWLEDGE_JOB_KIND, {
     version: EXTRACTOR_VERSION,
     maxAttempts: 2,
+    // a version still pending / processing is «not ready yet»: the job waits (no attempt spent), see run.ts
+    maxDeferrals: KNOWLEDGE_MAX_DEFERRALS,
     timeoutMs: 5 * 60 * 1000,
     concurrency: 1,
     inputSchema: jobInput as unknown as z.ZodType<ExtractKnowledgeJobInput>,
     handler: async (run) => {
+      assertVersionReadyForKnowledge(ctx, run.input.version_id, run.deferrals);
       run.progress({ stage: 'extract' });
       return runKnowledgeExtraction(ctx, run.input.version_id, run.id);
     },

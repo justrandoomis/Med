@@ -219,9 +219,10 @@ describe('JobQueue', () => {
     expect(t.ctx.jobs.get(j.id)).toMatchObject({ status: 'completed', output: { a: 41 }, error: null });
     expect(s1).toBe(0);
 
-    // exhausted attempts → failed (owner may retry)
+    // interrupted again and again (the job keeps taking its process down) → failed (owner may retry); see
+    // test/jobs/interruptions.test.ts for the separate interruption budget
     const k = t.ctx.jobs.enqueue('resumable', { k: 1 });
-    t.ctx.db.run(`UPDATE processing_job SET status = 'running', attempts = 3, heartbeat_at = NULL WHERE id = ?`, [k.id]);
+    t.ctx.db.run(`UPDATE processing_job SET status = 'running', attempts = 1, interruptions = 5, heartbeat_at = NULL WHERE id = ?`, [k.id]);
     t.ctx.jobs.requeueStale();
     expect(t.ctx.jobs.get(k.id)).toMatchObject({ status: 'failed', error: { code: 'JOB_INTERRUPTED' } });
   });

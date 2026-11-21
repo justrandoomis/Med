@@ -7,7 +7,12 @@
 //  * cancel never deletes checkpoints or outputs
 //  * running jobs whose heartbeat is stale (process died) are re-queued on boot and while running; a job whose
 //    claiming process is provably gone (same host, its pid no longer exists — or our own pid with another boot nonce,
-//    e.g. pid 1 in a restarted container) is re-queued at once instead of waiting for the heartbeat to go stale
+//    e.g. pid 1 in a restarted container) is re-queued at once instead of waiting for the heartbeat to go stale.
+//    Such an interruption gives the attempt back and is counted apart (interruptions, migration 0031) with its own
+//    higher cap (maxInterruptions): restarts (deploys, host moves) never exhaust a job's attempts, while a job that
+//    keeps killing its process still stops after that many interruptions
+//  * «not ready yet» (JobError retryAfterMs): re-queued after that delay without spending an attempt, up to the
+//    kind's maxDeferrals
 //  * idempotency_key → enqueue returns the existing job instead of creating a duplicate
 //
 // Tenancy (P1-T1 step 1, ADR-0003 §3.2): each job's row and checkpoints live in the database of the request that
@@ -57,6 +62,8 @@ export interface JobRun<I> {
   input: I;
   /** 1-based attempt number of this run */
   attempt: number;
+  /** how many times this job already answered «not ready yet» (JobError retryAfterMs) — for the handler's backoff */
+  deferrals: number;
   signal: AbortSignal;
   log: FastifyBaseLogger;
   /** Runs `fn` once per (job, stepKey); on retry/resume returns the stored (JSON) result instead. */
@@ -69,6 +76,8 @@ export interface JobRun<I> {
 export interface JobDefinition<I = unknown, O = unknown> {
   version: string;
   maxAttempts?: number;
+  /** how many «not ready yet» deferrals (JobError retryAfterMs) before the job fails (default 50) */
+  maxDeferrals?: number;
   timeoutMs?: number;
   /** max concurrently running jobs of this kind (default: global concurrency) */
   concurrency?: number;
@@ -102,7 +111,14 @@ export interface JobQueueOptions {
   backoffMaxMs?: number;
   /** how long stop() waits for running handlers to observe the abort */
   shutdownGraceMs?: number;
+  /**
+   * how many times one job may be interrupted (its process gone: restart, deploy, crash) and resumed before it fails
+   * with JOB_INTERRUPTED (default 5). Counted apart from attempts.
+   */
+  maxInterruptions?: number;
 }
+
+const DEFAULT_MAX_DEFERRALS = 50;
 
 interface JobRow {
   id: string;
@@ -127,6 +143,9 @@ interface JobRow {
   cancel_requested_at: number | null;
   /** '<hostname>/<pid>/<boot nonce>' of the process that claimed the job (migration 0030; NULL on older rows) */
   worker_id?: string | null;
+  /** migration 0031: interruptions by a vanished process / «not ready yet» deferrals (NOT counted in attempts) */
+  interruptions?: number;
+  deferrals?: number;
   checkpoints?: number;
 }
 
@@ -192,7 +211,7 @@ export class JobQueue {
     opts: JobQueueOptions,
     private readonly tenancy: JobTenancy,
   ) {
-    this.opts = { backoffBaseMs: 2000, backoffMaxMs: 5 * 60_000, shutdownGraceMs: 10_000, ...opts };
+    this.opts = { backoffBaseMs: 2000, backoffMaxMs: 5 * 60_000, shutdownGraceMs: 10_000, maxInterruptions: 5, ...opts };
   }
 
   // ───────── tenancy helpers ─────────
@@ -469,7 +488,7 @@ export class JobQueue {
     if (!this.defs.has(row.kind)) throw new AppError('CONFLICT', MSG.unknownKind, 409);
     const now = this.clock.now();
     this.db.run(
-      `UPDATE processing_job SET status = 'queued', attempts = 0, run_after = ?, error_code = NULL, error_detail = NULL,
+      `UPDATE processing_job SET status = 'queued', attempts = 0, interruptions = 0, deferrals = 0, run_after = ?, error_code = NULL, error_detail = NULL,
          retryable = NULL, finished_at = NULL, cancel_requested_at = NULL, heartbeat_at = NULL WHERE id = ?`,
       [now, id],
     );
@@ -541,6 +560,49 @@ export class JobQueue {
   }
 
   /**
+   * Run ONE queued job of the bound database now and wait for its outcome — also while the worker is stopped (the
+   * final off-site backup of a shutting-down server runs this way after stop()). One attempt, bounded by `timeoutMs`:
+   * when it runs out the job is aborted like a shutdown (re-queued, attempt given back). Returns the job as it ended
+   * (null when unknown); a job that is not queued, not due or of an unregistered kind is returned unchanged.
+   */
+  async runNow(id: string, opts: { timeoutMs?: number } = {}): Promise<JobView | null> {
+    const ref = this.boundRef();
+    const now = this.clock.now();
+    const row = this.inDb(ref, () => {
+      const cur = this.db.get<{ kind: string }>('SELECT kind FROM processing_job WHERE id = ?', [id]);
+      if (!cur || !this.defs.has(cur.kind) || this.active.has(this.activeKey(ref, id))) return undefined;
+      const claimed = this.claimById(id, [cur.kind], now);
+      if (claimed) this.mirror(ref, id);
+      return claimed;
+    });
+    if (!row) return this.inDb(ref, () => this.get(id));
+    const a = this.launch(ref, row);
+    let timer: NodeJS.Timeout | undefined;
+    const timedOut = await Promise.race([
+      a.promise.then(() => false),
+      new Promise<boolean>((r) => {
+        timer = setTimeout(() => r(true), opts.timeoutMs ?? this.opts.defaultTimeoutMs);
+        timer.unref();
+      }),
+    ]);
+    if (timer) clearTimeout(timer);
+    if (timedOut) {
+      a.shutdown = true;
+      a.controller.abort(new JobError('SHUTDOWN', MSG.shutdown, { retryable: true }));
+      let grace: NodeJS.Timeout | undefined;
+      await Promise.race([
+        a.promise,
+        new Promise<void>((r) => {
+          grace = setTimeout(r, this.opts.shutdownGraceMs);
+          grace.unref();
+        }),
+      ]);
+      if (grace) clearTimeout(grace);
+    }
+    return this.inDb(ref, () => this.get(id));
+  }
+
+  /**
    * Re-queue running jobs whose process died: heartbeat stale, or the claiming process provably gone. Looks in every
    * database the index believes has a running job, plus the caller's own. Returns the count.
    */
@@ -593,14 +655,17 @@ export class JobQueue {
           `UPDATE processing_job SET status = 'cancelled', finished_at = ?, heartbeat_at = NULL, error_code = 'JOB_CANCELLED', error_detail = ?, retryable = 0 WHERE id = ? AND status = 'running'`,
           [now, MSG.cancelled, r.id],
         );
-      } else if (r.attempts >= r.max_attempts) {
+      } else if ((r.interruptions ?? 0) + 1 > this.opts.maxInterruptions) {
+        // interrupted again and again: most likely the job itself takes its process down (out of memory…) — stop
         this.db.run(
-          `UPDATE processing_job SET status = 'failed', finished_at = ?, heartbeat_at = NULL, error_code = 'JOB_INTERRUPTED', error_detail = ?, retryable = 1 WHERE id = ? AND status = 'running'`,
+          `UPDATE processing_job SET status = 'failed', finished_at = ?, heartbeat_at = NULL, interruptions = interruptions + 1, error_code = 'JOB_INTERRUPTED', error_detail = ?, retryable = 1 WHERE id = ? AND status = 'running'`,
           [now, MSG.interruptedFailed, r.id],
         );
       } else {
+        // the process went away (restart, deploy, host move, crash) — not an error of the job: the attempt is given
+        // back and the interruption counted on its own (capped by maxInterruptions above)
         this.db.run(
-          `UPDATE processing_job SET status = 'queued', run_after = ?, heartbeat_at = NULL, error_code = 'JOB_INTERRUPTED', error_detail = ?, retryable = 1 WHERE id = ? AND status = 'running'`,
+          `UPDATE processing_job SET status = 'queued', attempts = MAX(attempts - 1, 0), interruptions = interruptions + 1, run_after = ?, heartbeat_at = NULL, error_code = 'JOB_INTERRUPTED', error_detail = ?, retryable = 1 WHERE id = ? AND status = 'running'`,
           [now, MSG.interruptedRequeued, r.id],
         );
       }
@@ -767,6 +832,7 @@ export class JobQueue {
       kind: row.kind,
       input: fromJson(row.input_json),
       attempt: row.attempts,
+      deferrals: row.deferrals ?? 0,
       signal,
       log,
       checkpoint: async <T>(stepKey: string, fn: () => Promise<T> | T): Promise<T> => {
@@ -847,11 +913,13 @@ export class JobQueue {
     let message: string;
     let retryable: boolean;
     let waitForInput = false;
+    let retryAfterMs: number | null = null;
     if (isJobError(err)) {
       code = err.code;
       message = err.messageAr;
       retryable = err.retryable;
       waitForInput = err.waitForInput;
+      retryAfterMs = err.retryable ? err.retryAfterMs : null;
     } else if (isAppError(err)) {
       code = err.code;
       message = err.messageAr;
@@ -868,6 +936,16 @@ export class JobQueue {
         `UPDATE processing_job SET status = 'waiting_for_input', heartbeat_at = NULL, error_code = ?, error_detail = ?, retryable = 0 WHERE id = ?`,
         [code, message, row.id],
       );
+      return;
+    }
+    // «not ready yet»: wait and look again later — the attempt is given back, the deferral counted (capped)
+    if (retryAfterMs !== null && (row.deferrals ?? 0) < (def.maxDeferrals ?? DEFAULT_MAX_DEFERRALS)) {
+      this.db.run(
+        `UPDATE processing_job SET status = 'queued', attempts = MAX(attempts - 1, 0), deferrals = deferrals + 1, run_after = ?, heartbeat_at = NULL,
+           error_code = ?, error_detail = ?, retryable = 1 WHERE id = ?`,
+        [now + retryAfterMs, code, message, row.id],
+      );
+      log.info({ code, delay: retryAfterMs, deferrals: (row.deferrals ?? 0) + 1 }, 'job not ready yet; deferred');
       return;
     }
     const maxAttempts = row.max_attempts ?? def.maxAttempts ?? 3;

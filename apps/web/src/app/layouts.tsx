@@ -18,6 +18,7 @@ import { recoverNoteDrafts } from '../features/workspace/data/noteDrafts';
 import { usePageTitle } from '../lib/usePageTitle';
 import { PwaUpdatePrompt } from './PwaUpdatePrompt';
 import { UnsavedRecordingNotice } from '../features/workspace/audio/UnsavedRecordingNotice';
+import { AiConsentPrompt } from '../features/me/AiConsentPrompt';
 
 // Track D1: GET requests the server cannot answer are served from the explicitly downloaded copy (Download Manager,
 // lib/offline.ts). Installed before any route renders (child effects run before this layout's effects).
@@ -67,7 +68,13 @@ export function OwnerLayout() {
       engine.stop();
     };
   }, []);
-  return <Outlet />;
+  return (
+    <>
+      <Outlet />
+      {/* AOS-21.42: the one answer to CONSENT_REQUIRED for every AI action behind the session */}
+      <AiConsentPrompt />
+    </>
+  );
 }
 
 export function RouteErrorScreen() {

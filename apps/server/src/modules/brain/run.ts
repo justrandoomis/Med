@@ -5,7 +5,7 @@
 import { RECOMPUTE_RELATIONS_JOB_KIND, type ConceptRole, type DiagramStructure } from '@medlevo/shared';
 import type { AppContext } from '../../context';
 import { fromJson, toJson } from '../../db/db';
-import { AppError } from '../../lib/errors';
+import { AppError, JobError } from '../../lib/errors';
 import { newId } from '../../lib/ids';
 import { joinBilingualSuggestions } from './concepts';
 import { enqueueRelationRecompute, invalidateRelationState, recomputeCourseRelations } from './course';
@@ -43,6 +43,31 @@ export interface ExtractionSummary {
   algorithms?: number;
   /** Round 7 H4: the background job that recomputes the course's suggested relations (null when none was needed) */
   relations_job_id?: string | null;
+}
+
+/** Waiting for the version's processing (job extract_knowledge): first look again after 15 s, doubling up to 5 min. */
+export const KNOWLEDGE_WAIT_FIRST_MS = 15_000;
+export const KNOWLEDGE_WAIT_MAX_MS = 5 * 60_000;
+/** deferrals before the job gives up on a version that never finishes processing (≈ 4½ hours of waiting) */
+export const KNOWLEDGE_MAX_DEFERRALS = 60;
+
+/**
+ * Job guard for extract_knowledge: the job is queued as a follow-up of processing (and on backfill / manual re-extract)
+ * and may be claimed while its version is still pending or processing — e.g. a re-processing after a restart. That is
+ * «not ready yet», never a failure: the job waits (a deferral that spends no attempt) and looks again with a growing
+ * delay. It gives up only when processing ended failed. Unknown version → NOT_FOUND (not retried).
+ */
+export function assertVersionReadyForKnowledge(ctx: AppContext, versionId: string, deferrals: number): void {
+  const v = ctx.db.get<{ processing_status: string }>('SELECT processing_status FROM source_version WHERE id = ?', [versionId]);
+  if (!v) throw new JobError('NOT_FOUND', 'نسخة المصدر غير موجودة.', { retryable: false });
+  if (PROCESSED.includes(v.processing_status)) return;
+  if (v.processing_status === 'failed') {
+    throw new JobError('VERSION_PROCESSING_FAILED', 'تعذّرت معالجة هذه النسخة، فلا يُستخرج هيكل المعرفة منها. أعد معالجة المصدر وسيُستخرج الهيكل تلقائيًا بعدها.', { retryable: false });
+  }
+  throw new JobError('VERSION_NOT_PROCESSED', 'لم تكتمل معالجة هذه النسخة بعد؛ سيُستخرج هيكل المعرفة تلقائيًا بعد اكتمالها.', {
+    retryable: true,
+    retryAfterMs: Math.min(KNOWLEDGE_WAIT_FIRST_MS * 2 ** Math.max(0, deferrals), KNOWLEDGE_WAIT_MAX_MS),
+  });
 }
 
 export function runKnowledgeExtraction(ctx: AppContext, versionId: string, jobId: string | null = null): ExtractionSummary {

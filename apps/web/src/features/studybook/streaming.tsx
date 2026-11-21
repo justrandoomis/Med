@@ -5,13 +5,13 @@
 import type { ReactNode } from 'react';
 import { STREAM_DRAFT_LABEL_AR, type StudyDraftBlock, type StudyStreamEvent, type StudyStreamPhase } from '@medlevo/shared';
 import { StatusPill } from '../../design';
-import { ApiError, apiErrorFromResponse, apiFetch, OFFLINE_MESSAGE_AR, UNREACHABLE_MESSAGE_AR } from '../../lib/api';
+import { ApiError, apiErrorFromResponse, apiFetch, offerAiConsent, OFFLINE_MESSAGE_AR, UNREACHABLE_MESSAGE_AR } from '../../lib/api';
 import { BidiText } from '../evidence';
 
 const CUT_AR = 'انقطع البث قبل وصول النتيجة المتحقَّق منها؛ لم يُعتمد شيء من المسودة. أعد المحاولة.';
 
 /** POST `body` to a streaming endpoint; `onEvent` sees every event; resolves with the `final` result. */
-export async function postStudyStream<T>(path: string, body: unknown, opts: { signal?: AbortSignal; onEvent?: (e: StudyStreamEvent<T>) => void }): Promise<{ result: T; removed: Array<{ text: string; reason_ar: string }>; hadDraft: boolean }> {
+export async function postStudyStream<T>(path: string, body: unknown, opts: { signal?: AbortSignal; onEvent?: (e: StudyStreamEvent<T>) => void; skipConsentPrompt?: boolean }): Promise<{ result: T; removed: Array<{ text: string; reason_ar: string }>; hadDraft: boolean }> {
   let res: Response;
   try {
     res = await apiFetch(path, {
@@ -27,7 +27,12 @@ export async function postStudyStream<T>(path: string, body: unknown, opts: { si
     const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
     throw new ApiError({ code: offline ? 'OFFLINE' : 'NETWORK_ERROR', status: 0, offline: true, message: offline ? OFFLINE_MESSAGE_AR : UNREACHABLE_MESSAGE_AR });
   }
-  if (!res.ok) throw await apiErrorFromResponse(res);
+  if (!res.ok) {
+    const err = await apiErrorFromResponse(res);
+    // AOS-21.42: no AI consent yet â†’ the app's consent dialog (lib/api.ts); agreed â†’ this request once more
+    if (!opts.skipConsentPrompt && !opts.signal?.aborted && (await offerAiConsent(err))) return postStudyStream<T>(path, body, { ...opts, skipConsentPrompt: true });
+    throw err;
+  }
   if (!res.body) throw new ApiError({ code: 'BAD_RESPONSE', status: res.status, message: CUT_AR });
 
   const reader = res.body.getReader();

@@ -409,6 +409,7 @@ function childRun(job: JobRun<{ simulation_id: string }>, runId: string, label: 
     kind: job.kind,
     input: { run_id: runId },
     attempt: job.attempt,
+    deferrals: job.deferrals,
     signal: job.signal,
     log: job.log,
     checkpoint: (key, fn) => job.checkpoint(`run:${runId}:${key}`, fn),

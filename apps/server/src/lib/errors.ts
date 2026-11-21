@@ -58,6 +58,12 @@ export interface JobErrorOptions {
   retryable: boolean;
   /** the job cannot continue until the owner acts (status waiting_for_input) */
   waitForInput?: boolean;
+  /**
+   * «not ready yet»: what the job needs is still being prepared elsewhere (e.g. its source version is processing).
+   * The job is re-queued after this delay WITHOUT spending an attempt (a deferral); only after the kind's maxDeferrals
+   * does it fail. Use with retryable: true.
+   */
+  retryAfterMs?: number;
   details?: unknown;
 }
 
@@ -70,6 +76,8 @@ export class JobError extends Error {
   readonly messageAr: string;
   readonly retryable: boolean;
   readonly waitForInput: boolean;
+  /** «not ready yet, try again after this many ms» (a deferral, see JobErrorOptions.retryAfterMs); null otherwise */
+  readonly retryAfterMs: number | null;
   readonly details: unknown;
 
   constructor(code: string, messageAr: string, opts: JobErrorOptions) {
@@ -79,6 +87,8 @@ export class JobError extends Error {
     this.messageAr = messageAr;
     this.retryable = opts.retryable;
     this.waitForInput = opts.waitForInput ?? false;
+    const after = opts.retryAfterMs;
+    this.retryAfterMs = typeof after === 'number' && Number.isFinite(after) && after >= 0 ? after : null;
     this.details = opts.details;
   }
 }
