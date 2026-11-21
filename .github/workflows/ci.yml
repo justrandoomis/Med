@@ -58,6 +58,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # for tools/smoke/process-in-image.mjs (fetch, FormData, getSetCookie)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -197,6 +202,9 @@ jobs:
           start
           curl -fsS http://127.0.0.1:10000/api/auth/status | grep -q '"setup_required":false'
           docker exec medlevo-ci sh -c 'ls -ld /var/data/medlevo && stat -c %U /var/data/medlevo/system.sqlite'
+          # real lectures processed INSIDE the production image (poppler, OCR models, fonts, permissions): the outcome of
+          # each is a public annotation; a «failed» processing fails this job (and the server log is printed)
+          node tools/smoke/process-in-image.mjs http://127.0.0.1:10000 owner ci-password-12345 || { docker logs medlevo-ci 2>&1 | grep -iE 'fail|error|warn|"level":(40|50)' | tail -60 | sed 's/^/::warning::/'; docker stop -t 30 medlevo-ci; exit 1; }
           docker stop -t 30 medlevo-ci
 
   # PRD AOS-23.2 performance gate: the MEDLEVO_PERF suites (server: apps/server/test/perf, PERF_RUNS runs → medians;
