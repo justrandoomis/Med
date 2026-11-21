@@ -25,3 +25,5 @@ e2e/.artifacts/
 
 # evaluation reports written by `npm run eval` (docs/eval/ holds the committed baseline)
 eval-reports/
+# performance gate results written by the CI perf job / tools/perf/compare.mjs (docs/perf/ holds the committed baseline)
+perf-results/
