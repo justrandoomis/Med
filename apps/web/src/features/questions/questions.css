@@ -578,3 +578,14 @@
   line-height: var(--ml-leading-xs);
   color: var(--ml-color-ink-2);
 }
+/* an image question generated from a lecture figure: the original picture above the stem */
+.qv-figure {
+  margin: 0 0 var(--ml-space-3);
+}
+.qv-figure__img {
+  display: block;
+  max-width: 100%;
+  max-height: 22rem;
+  object-fit: contain;
+  border-radius: var(--ml-radius-sm);
+}

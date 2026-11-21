@@ -422,6 +422,12 @@ export interface GenerateQuestionsRequest {
    * focus of retrieval (the scope itself is unchanged — lecture only by default).
    */
   anchor?: GenerationAnchor | null;
+  /**
+   * an image question about one described lecture figure («ما التشخيص الأرجح لهذه الصورة؟»): the picture is sent with
+   * the evidence; the question is published only when its answer rests on the lecture's own text / caption (or an
+   * owner-confirmed description) AND passes the usual independent checks — otherwise it stays in the review queue.
+   */
+  figure?: { description_id: string } | null;
   /** (track F3) where the request came from: the generate screen, a reader selection, or a generated simulation */
   origin?: GenerationOrigin;
 }
@@ -434,11 +440,12 @@ export interface GenerationAnchor {
   quote?: string | null;
 }
 
-export type GenerationOrigin = 'builder' | 'selection' | 'simulation';
+export type GenerationOrigin = 'builder' | 'selection' | 'simulation' | 'figure';
 export const GENERATION_ORIGIN_LABELS_AR: Record<GenerationOrigin, string> = {
   builder: 'من شاشة توليد الأسئلة',
   selection: 'من نص حددته في المحاضرة',
   simulation: 'جزء من محاكاة مولدة',
+  figure: 'من صورة في المحاضرة',
 };
 
 export type GenerationRunStatus ='queued' | 'running' | 'completed' | 'partial' | 'needs_review' | 'abstained' | 'failed';

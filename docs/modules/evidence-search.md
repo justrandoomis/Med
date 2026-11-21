@@ -441,3 +441,13 @@ Known limits (not fixed, by design or out of reach of a deterministic check):
   removes its text) — owner decision recorded in the step-2 review.
 * The vault page-regions route serves a stub page from the space through a seam in `sources/service.ts`
   (`setStubPageRegions`, P1-T5 additive); offline packages of a stub do not include the space's regions yet.
+
+## Lecture pictures in Universal Search (2026-11-21)
+
+Result type `figures`: `owner_content_fts` entity `figure_description` (the normalized caption / findings / labels /
+diagnosis / image type of a DERIVED figure description; origin `generated`, or `owner` once the owner confirmed /
+corrected it). Only the active version of a live source (or the version asked for); a rejected description is removed
+from the index. The location carries the page and `region_id`, so the hit opens the reader at the figure. Grouped on
+its own («صور المحاضرات (وصف آلي — راجعه)»), labelled «مولَّد — ليس دليلًا» until reviewed, never evidence
+(`is_evidence: false`). Purge removes the rows. Test: `srv:processing/figure-descriptions.test.ts` «search finds a
+figure by a finding».

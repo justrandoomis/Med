@@ -4,6 +4,8 @@
 //   notes       owner_content_fts entity 'note' (annotations track; normalized key only → snippet from the note)
 //   generated   owner_content_fts origin 'generated' (study-book track: artifacts / blocks / messages)
 //   transcripts owner_content_fts entity 'transcript_segment' (no producer yet → notice)
+//   figures     owner_content_fts entity 'figure_description' (derived descriptions of lecture pictures; opens the
+//               page at the figure; «مولَّد» until the owner confirmed / corrected it)
 //   handwriting owner_content_fts entity 'ink_recognition' (track F4: readings of the owner's pen strokes; origin
 //               «مقروء آليًا», or «كتبته بنفسك» once the owner corrected it; strokes all erased → not returned)
 // Rules:
@@ -14,6 +16,7 @@
 //  * generated content is labelled, ranked after source results and never returned as evidence;
 //  * semantic mode is not available (capability search.semantic) — the route refuses it with the reason.
 import {
+  FIGURE_IMAGE_TYPE_LABELS_AR,
   findExactPhrase,
   findHighlights,
   makeSnippet,
@@ -37,6 +40,7 @@ import { pageLabelAr } from '../sources/pagelabel';
 import { buildQuery, type BuiltQuery } from '../evidence/terms';
 import type { Viewer } from '../../system/binding';
 import { federatedLists, fuse } from './federation';
+import { descriptionText, shownContent } from '../processing/figures';
 
 export interface SearchParams {
   q: string;
@@ -540,6 +544,53 @@ function searchHandwriting(ctx: AppContext, p: SearchParams, match: string, fetc
   return out;
 }
 
+/**
+ * Lecture pictures by their DERIVED description (figure descriptions): caption, findings, labels, diagnosis. Only the
+ * active version of a live source (or the version asked for); a rejected description is not indexed. The hit opens the
+ * page at the figure (region_id). Labelled «مولَّد — ليس دليلًا» until the owner confirmed / corrected it.
+ */
+function searchFigures(ctx: AppContext, p: SearchParams, match: string, fetch: number, hl: Highlighter, counters: { exactRejected: number }): Scored[] {
+  const out: Scored[] = [];
+  for (const h of ownerContentHits(ctx, match, ['figure_description'], null, fetch)) {
+    const d = ctx.db.get<{ id: string; source_id: string; version_id: string; page_id: string | null; region_id: string | null; owner_json: string | null; model_json: string | null; owner_status: string | null }>(
+      'SELECT id, source_id, version_id, page_id, region_id, owner_json, model_json, owner_status FROM figure_description WHERE id = ?',
+      [h.entity_id],
+    );
+    if (!d || d.owner_status === 'rejected' || !sourcePasses(ctx, p, d.source_id)) continue;
+    const s = ctx.db.get<{ title: string; source_type: SourceType; active: string | null }>(
+      'SELECT title, source_type, COALESCE(frozen_version_id, current_version_id) AS active FROM source WHERE id = ?',
+      [d.source_id],
+    );
+    if (!s || (p.version_id ? d.version_id !== p.version_id : d.version_id !== s.active)) continue;
+    const c = shownContent(d as Parameters<typeof shownContent>[0]);
+    if (!c) continue;
+    const text = descriptionText(c);
+    const hs = hl(text);
+    if (p.mode === 'exact' && hs.length === 0) {
+      counters.exactRejected++;
+      continue;
+    }
+    const reviewed = d.owner_status === 'confirmed' || d.owner_status === 'edited';
+    const page = d.page_id ? ctx.db.get<PageForLabel & { id: string }>('SELECT id, page_index, printed_label, kind FROM source_page WHERE id = ?', [d.page_id]) : undefined;
+    out.push({
+      group: reviewed ? 1 : 2,
+      rank: h.rank,
+      result: {
+        type: 'figures',
+        id: d.id,
+        title: `صورة: ${clean(c.caption_ar || c.caption_en || FIGURE_IMAGE_TYPE_LABELS_AR[c.image_type])} — «${clean(s.title)}»`,
+        snippet: makeSnippet(text, hs),
+        location: { source_id: d.source_id, version_id: d.version_id, page_id: page?.id ?? null, page_index: page?.page_index ?? null, page_label_ar: page ? pageLabelAr(ctx.db, page) : null, region_id: d.region_id },
+        origin: reviewed ? 'owner_typed' : 'generated',
+        source_type: s.source_type,
+        source_title: clean(s.title),
+        is_evidence: false,
+      },
+    });
+  }
+  return out;
+}
+
 function tableHasRows(ctx: AppContext, sql: string): boolean {
   try {
     return !!ctx.db.get(sql);
@@ -575,8 +626,9 @@ export function universalSearch(ctx: AppContext, p: SearchParams): SearchRespons
     else all.push(...searchTranscripts(ctx, p, match, fetch, hl, counters));
   }
   if (types.includes('handwriting')) all.push(...searchHandwriting(ctx, p, match, fetch, hl, counters));
+  if (types.includes('figures')) all.push(...searchFigures(ctx, p, match, fetch, hl, counters));
   // sources first, then the owner's own notes, then generated content (never ranked as a source)
-  const typeOrder: Record<SearchResultType, number> = { chunks: 0, questions: 1, transcripts: 2, notes: 3, handwriting: 4, generated: 5 };
+  const typeOrder: Record<SearchResultType, number> = { chunks: 0, questions: 1, transcripts: 2, notes: 3, handwriting: 4, figures: 5, generated: 6 };
   all.sort((a, b) => a.group - b.group || a.rank - b.rank || typeOrder[a.result.type] - typeOrder[b.result.type]);
   // P1-T5 step 2: official text of the subjects the viewer belongs to, merged by reciprocal-rank fusion (§11.1)
   const scope = p.scope ?? 'all';

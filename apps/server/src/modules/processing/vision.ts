@@ -209,7 +209,8 @@ function figureOf(ctx: AppContext, regionId: string): { figure: RegionLite; diag
   return { figure, diagram };
 }
 
-function imageOf(ctx: AppContext, figureId: string): { fileId: string; mime: string } | null {
+/** The figure's own cropped picture (PNG / JPEG source asset), or null. Shared with the automatic descriptions (figures.ts). */
+export function imageOf(ctx: AppContext, figureId: string): { fileId: string; mime: string } | null {
   const a = ctx.db.get<{ file_id: string | null }>(`SELECT file_id FROM image_asset WHERE region_id = ? AND origin = 'source' AND file_id IS NOT NULL ORDER BY created_at LIMIT 1`, [figureId]);
   if (!a?.file_id) return null;
   const f = ctx.db.get<{ mime: string }>('SELECT mime FROM stored_file WHERE id = ?', [a.file_id]);
@@ -255,6 +256,23 @@ export function requestAnalysis(ctx: AppContext, regionId: string): FigureReadin
   return readingView(ctx, getReading(ctx, readingId));
 }
 
+/**
+ * The figure's caption (from the source) and the labels OCR read inside it — untrusted DATA for a vision call, never
+ * instructions. Shared with the automatic descriptions (figures.ts).
+ */
+export function figureTextContext(ctx: AppContext, figureId: string, diagramText: string | null = null): { caption: string | null; labels: string[] } {
+  const caption =
+    ctx.db.get<{ text: string | null }>(
+      `SELECT c.text FROM image_asset a JOIN source_region c ON c.id = a.caption_region_id WHERE a.region_id = ? AND a.origin = 'source' LIMIT 1`,
+      [figureId],
+    )?.text ?? null;
+  const labels = ctx.db
+    .all<{ text: string | null }>(`SELECT text FROM source_region WHERE parent_region_id = ? AND text IS NOT NULL AND trim(text) <> '' ORDER BY reading_order`, [figureId])
+    .map((x) => x.text!)
+    .concat(diagramText ? [diagramText] : []);
+  return { caption, labels };
+}
+
 // ───────── job ─────────
 async function execute(ctx: AppContext, job: JobRun<{ reading_id: string }>): Promise<{ status: FigureReadingStatus }> {
   const r = getReading(ctx, job.input.reading_id);
@@ -270,14 +288,7 @@ async function execute(ctx: AppContext, job: JobRun<{ reading_id: string }>): Pr
     setReading(ctx, r.id, { status: 'failed', error_json: toJson({ code: 'NO_IMAGE', message_ar: 'لا توجد صورة مقتطعة لهذا الشكل.' }) });
     return { status: 'failed' };
   }
-  const caption = ctx.db.get<{ text: string | null }>(
-    `SELECT c.text FROM image_asset a JOIN source_region c ON c.id = a.caption_region_id WHERE a.region_id = ? AND a.origin = 'source' LIMIT 1`,
-    [figure.id],
-  )?.text ?? null;
-  const labels = ctx.db
-    .all<{ text: string | null }>(`SELECT text FROM source_region WHERE parent_region_id = ? AND text IS NOT NULL AND trim(text) <> '' ORDER BY reading_order`, [figure.id])
-    .map((x) => x.text!)
-    .concat(diagram?.text ? [diagram.text] : []);
+  const { caption, labels } = figureTextContext(ctx, figure.id, diagram?.text ?? null);
   const ocrText = [caption ?? '', figure.text ?? '', ...labels].join('\n');
   const report = resolveScope(ctx, { mode: 'lecture_only', lecture_source_id: r.source_id, reference_source_ids: [], version_pins: { [r.source_id]: r.version_id }, include_my_notes: false });
   const scope = toResolvedScope(report);

@@ -151,6 +151,14 @@ export class AiOrchestrator {
     return p && reason ? { provider: p.name, reason_ar: reason } : null;
   }
 
+  /**
+   * A standing ai_processing consent of the bound content owner naming the configured provider (false without a
+   * provider, a consent gate, or a consent) — the condition for AI work started automatically, not by a request.
+   */
+  hasStandingConsent(): boolean {
+    return this.consent?.granted(this.provider) ?? false;
+  }
+
   /** (AOS-21.42) does what the configured provider is sent leave the deployment? (null: no provider) */
   get providerLeavesDeployment(): boolean | null {
     return this.provider ? this.provider.dataLeavesDeployment === true : null;

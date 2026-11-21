@@ -307,6 +307,7 @@ export const AI_TASK_LABELS_AR: Record<AiTask, string> = {
   embed: 'البحث الدلالي (embeddings)',
   transcribe: 'تفريغ الصوت',
   ink_recognize: 'قراءة الخط اليدوي',
+  describe_figure: 'الوصف الآلي لصور المحاضرات',
 };
 
 export const MODEL_ROLES = ['generation', 'verification', 'vision'] as const;

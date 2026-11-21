@@ -71,8 +71,10 @@ export interface AppConfig {
   ai: {
     /** true when a provider key is present on the server (value never exposed here) */
     anthropicKeyPresent: boolean;
-    models: { generation: string | null; verification: string | null; vision: string | null };
+    models: { generation: string | null; verification: string | null; vision: string | null; visionRoutine?: string | null };
     monthlyBudgetUsd: number;
+    /** automatic figure descriptions: at most this many pictures per lecture version (MEDLEVO_FIGURE_DESCRIBE_MAX) */
+    figureDescribeMax?: number;
   };
   allowExternalFetch: boolean;
   /** built SPA to serve in production (null → API only) */
@@ -145,6 +147,8 @@ const envSchema = z.object({
   MEDLEVO_MODEL_GENERATION: z.preprocess(emptyToUndefined, z.string().optional()),
   MEDLEVO_MODEL_VERIFICATION: z.preprocess(emptyToUndefined, z.string().optional()),
   MEDLEVO_MODEL_VISION: z.preprocess(emptyToUndefined, z.string().optional()),
+  MEDLEVO_MODEL_VISION_ROUTINE: z.preprocess(emptyToUndefined, z.string().optional()),
+  MEDLEVO_FIGURE_DESCRIBE_MAX: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).max(500).default(60)),
   MEDLEVO_AI_MONTHLY_BUDGET_USD: z.preprocess(emptyToUndefined, z.coerce.number().min(0).max(100_000).default(20)),
   MEDLEVO_ALLOW_EXTERNAL_FETCH: z.preprocess(emptyToUndefined, boolish.default(false)),
   MEDLEVO_WEB_DIST: z.preprocess(emptyToUndefined, z.string().optional()),
@@ -342,8 +346,10 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
         generation: e.MEDLEVO_MODEL_GENERATION ?? null,
         verification: e.MEDLEVO_MODEL_VERIFICATION ?? null,
         vision: e.MEDLEVO_MODEL_VISION ?? null,
+        visionRoutine: e.MEDLEVO_MODEL_VISION_ROUTINE ?? null,
       },
       monthlyBudgetUsd: e.MEDLEVO_AI_MONTHLY_BUDGET_USD,
+      figureDescribeMax: e.MEDLEVO_FIGURE_DESCRIBE_MAX,
     },
     allowExternalFetch: e.MEDLEVO_ALLOW_EXTERNAL_FETCH,
     webDistDir,

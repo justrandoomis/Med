@@ -51,6 +51,8 @@ export interface CreateQuestionInput {
   kind?: Extract<QuestionVersionView['kind'], 'generated' | 'translation' | 'paraphrase' | 'structured'>;
   /** lecture the question was generated from (link origin auto, relation given) */
   lecture?: { sourceId: string; relation: LectureLinkRelation; reason: string } | null;
+  /** an image question about this lecture figure description (the question shows the original picture) */
+  figureDescriptionId?: string | null;
 }
 
 /** Create a generated / owner question with its first version (validated, statuses set, indexed). */
@@ -96,6 +98,8 @@ export function createQuestion(ctx: AppContext, input: CreateQuestionInput): { q
     });
     if (input.difficultyEst) ctx.db.run('UPDATE question_version SET difficulty_est = ? WHERE id = ?', [input.difficultyEst, v.versionId]);
     ctx.db.run('UPDATE question SET current_version_id = ? WHERE id = ?', [v.versionId, questionId]);
+    // before the first validation: the picture counts as the image the stem refers to
+    if (input.figureDescriptionId) ctx.db.run('INSERT INTO figure_question (question_id, description_id, created_at) VALUES (?, ?, ?)', [questionId, input.figureDescriptionId, now]);
     if (input.lecture) {
       ctx.db.run(
         `INSERT INTO question_lecture_link (id, question_id, lecture_source_id, relation, score, reason, reason_json, answerable_from_lecture, origin, status, created_at, updated_at)

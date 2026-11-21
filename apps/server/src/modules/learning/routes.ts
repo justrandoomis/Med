@@ -32,6 +32,7 @@ import {
   PROFILE_SIGNAL_PARTS,
   toFtsQuery,
   type CardCreateResponse,
+  type FlashcardView,
   type CardDetailResponse,
   type CardDuplicatesResponse,
   type CardListResponse,
@@ -81,6 +82,7 @@ import {
   unbury,
   updateCard,
 } from './cards';
+import { createCardFromFigure, createCardsFromFigures, decideDraft, figureDrafts } from './figureCards';
 import { examDna, examRelevance } from './dna';
 import { homeView } from './home';
 import { editMistakeType, mistakeGenome, reasoningReplay } from './mistakes';
@@ -144,6 +146,10 @@ const mistakeBody = z.object({ attempt_id: id, id: id.optional() }).strict();
 const occlusionBody = z
   .object({ note_id: id.optional(), image_asset_id: id, masks: z.array(mask).min(1).max(50), prompt: z.string().max(500).nullable().optional(), concept_id: id.nullable().optional(), topic_id: id.nullable().optional() })
   .strict();
+const fromFigureBody = z.object({ description_id: id, hide_labels: z.boolean().optional() }).strict();
+const fromFiguresBody = z.object({ version_id: id, hide_labels: z.boolean().optional() }).strict();
+const draftBody = z.object({ decision: z.enum(['accept', 'discard']) }).strict();
+const draftsQuery = z.object({ version_id: id });
 const updateBody = z
   .object({ base_rev: z.number().int().min(1), front: richInput.optional(), back: richInput.nullable().optional(), concept_id: id.nullable().optional(), topic_id: id.nullable().optional(), mask: mask.nullable().optional() })
   .strict();
@@ -205,6 +211,11 @@ export function registerRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.post('/cards/from-selection', async (req): Promise<CardCreateResponse> => createFromSelection(ctx, parseBody(selectionBody, req) as never));
   app.post('/cards/from-mistake', async (req): Promise<CardCreateResponse> => createFromMistake(ctx, parseBody(mistakeBody, req)));
   app.post('/cards/occlusion', async (req): Promise<CardCreateResponse> => createOcclusion(ctx, parseBody(occlusionBody, req)));
+  // image flashcards from described lecture figures (one card now, or a draft per picture to review first)
+  app.post('/cards/from-figure', async (req): Promise<CardCreateResponse> => createCardFromFigure(ctx, parseBody(fromFigureBody, req)));
+  app.post('/cards/from-figures', async (req): Promise<CardCreateResponse> => createCardsFromFigures(ctx, parseBody(fromFiguresBody, req)));
+  app.get('/cards/figure-drafts', async (req): Promise<{ items: FlashcardView[] }> => ({ items: figureDrafts(ctx, parseQuery(draftsQuery, req).version_id) }));
+  app.post('/cards/:id/draft', async (req): Promise<CardMutationResponse> => ({ card: decideDraft(ctx, parseParams(idParams, req).id, parseBody(draftBody, req).decision) }));
   app.get('/cards/duplicates', async (): Promise<CardDuplicatesResponse> => ({ items: findDuplicates(ctx) }));
   app.post('/cards/duplicates/decide', async (req) => {
     const body = parseBody(z.object({ card_a_id: id, card_b_id: id, decision: z.enum(['not_duplicate', 'merge']), keep_id: id.nullable().optional() }).strict(), req);

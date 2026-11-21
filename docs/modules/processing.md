@@ -540,3 +540,89 @@ Track P1-T3 (BUILD_PLAN §3.5; ARCHITECTURE_DELTA §4.2 `0161`, §6.2). Details 
   every run, one font (DejaVu Sans subset) embedded, about 3 s per conversion in this container.
 * Capabilities: no new key. The reasons (LibreOffice for DOCX display PDFs, poppler for page images on the compare
   screen) are answered by the routes themselves and listed in `docs/CAPABILITY_MATRIX.md`.
+
+## Automatic figure descriptions for image-heavy lectures (2026-11-21; §13, §14, §15, §32, §37, §43, §46, AC-08)
+
+Pathology / histology / gross specimens / radiology / graphs / clinical photos: after a version is processed, every
+cropped figure (source `image_asset`) and every image-only page / slide (`source_page.render_file_id` whose own text
+outside figures is under 80 characters) is described once by a vision model. Module `processing/figures.ts`, job
+`processing.describe_figures` (version `figure-describe-2026.11-1`, 2 attempts, concurrency 1), migration
+`0230_figure_description` (tables `figure_description`, `figure_description_run`, `figure_question`).
+
+* **When it runs (honest gating).** `pipeline.ts → enqueueFigureDescriptionFollowUp` (after the knowledge / question /
+  version-analysis hooks) queues a run ONLY when (1) a provider is configured and supports the task, (2) the bound
+  owner has a STANDING `ai_processing` consent naming that provider with the current consent text
+  (`AiConsentGate.granted` / `AiOrchestrator.hasStandingConsent` — a real consent record is required even for a
+  provider that keeps data inside the deployment, because the owner did not ask for this call), (3) the routine task is
+  available (budget), and (4) the version has pictures. Otherwise nothing is queued and nothing is sent; the reader's
+  «صور المحاضرة» block shows the reason and a link to «/me/privacy». Idempotent per processing run.
+  «صف كل الصور» (`POST /api/processing/versions/:versionId/figure-descriptions/describe`, `{force?, description_ids?,
+  precise?}`) is the owner's request: it uses the orchestrator's usual consent gate (`CONSENT_REQUIRED` /
+  `AI_NOT_CONFIGURED` / `AI_BUDGET_EXCEEDED` 409 with the Arabic reason).
+* **What is sent.** One call per picture: the crop (PNG / JPEG ≤ 4.5 MB; larger or other formats are «skipped» with the
+  reason), and as delimited untrusted DATA the source caption, the slide's own text (outside the figure) and the OCR
+  labels inside the figure (`vision.ts figureTextContext`, shared with the on-demand Vision step). Source Lock: the
+  lecture-only scope pinned to that version. Task `describe_figure` → the routine vision model (`claude-haiku-5-5`,
+  `MEDLEVO_MODEL_VISION_ROUTINE`, effort low); «أعد وصف هذه الصورة» with `precise: true` uses `vision_figure` (the strong
+  vision model).
+* **What is stored** (`figure_description`, identity `(version_id, file_id)` — the stored file is content-addressed, so a
+  re-processed page that yields the same crop finds the same row and keeps the owner's work; page / region / asset
+  pointers are refreshed): image type (histology / gross / radiology / graph / diagram / clinical_photo / other),
+  stain and magnification when visible, key findings, labels / arrows read, graph axes + trend, an Arabic and an English
+  caption, and a diagnosis / topic. **Grounding (deterministic, `groundDescription`)**: a diagnosis the model says the
+  slide or caption states is kept as `slide_text` / `caption` only when its quote AND its words are really in that text;
+  otherwise it becomes `suggestion` = «اقتراح — غير مؤكد». A picture the model calls illegible is `failed` with the
+  reason, never a guess.
+* **Derived, correctable, never replacing the original.** Shown under the figure in «المصادر» (and under the page for an
+  image-only page) labelled «وصف آلي — راجعه» with the notice that it is a derived reading; the original picture, its
+  region and OCR text never change (tested). `POST /api/processing/figure-descriptions/:id/review` `{decision: confirm |
+  edit | reject | reset, content?}`: the owner's version (`owner_json`, `owner_status`) always wins over the model's and
+  is kept on every re-run (the model's version is refreshed beside it, `machine` in the view); an edited diagnosis is
+  the owner's (`basis: owner`); a rejected description is not searched and makes no card or question.
+* **Budget / cap.** The availability (consent + budget) is re-checked before EVERY picture, and an
+  `AI_BUDGET_EXCEEDED` / `CONSENT_REQUIRED` from the orchestrator's atomic reservation stops the run: the remaining
+  pictures are `skipped` with the reason, the run is `partial` / `skipped` with «… توقف إرسال باقي الصور». At most
+  `MEDLEVO_FIGURE_DESCRIBE_MAX` pictures per version (default 60) in a whole-lecture pass; the rest are `skipped` with
+  the cap reason (a picture the owner names is always allowed). Each picture is a job checkpoint, so a retried job never
+  pays twice.
+* **Search.** `owner_content_fts` entity `figure_description` (normalized caption / findings / labels / diagnosis /
+  type, origin `generated` or `owner`), result type `figures` in `/api/search` (active version only, rejected excluded);
+  the hit opens the reader at the page and region of the figure; labelled «مولَّد — ليس دليلًا» until the owner reviewed
+  it («كتبته بنفسك» after). Purge removes the index rows; full export includes the three tables.
+* **Image flashcards** (`learning/figureCards.ts`): «اصنع بطاقة من الصورة» (`POST /api/learning/cards/from-figure`
+  `{description_id, hide_labels?}`) makes an image card (kind `image_occlusion`, reused): front = the original picture,
+  optionally with the label regions processing found inside the figure covered (non-destructive masks; the back reveals
+  them), back = caption / type / diagnosis with its basis / findings / labels, starting with «(وصف آلي — راجعه)» while
+  the description is not owner-reviewed (origin `generated`; `owner` once reviewed). «بطاقات من كل صور المحاضرة»
+  (`POST /cards/from-figures {version_id}`) makes one DRAFT per described picture without a card — suspended,
+  `origin_ref.draft = true` — listed by `GET /cards/figure-drafts?version_id=` and accepted (unsuspended) or discarded
+  (tombstone) with `POST /cards/:id/draft`. FSRS is untouched (no review events; the usual new-card state). An image-only
+  page's picture is registered once as a source `image_asset` without a region (it survives re-processing).
+* **Image MCQs** (exams generation pipeline, `POST /api/exams/generate {lecture_source_id, figure: {description_id},
+  count, difficulty}`, origin `figure`): the figure's page of the locked version is the retrieval anchor (its caption the
+  query); the generator AND the independent validator receive the picture and the caption / description as data — an
+  unconfirmed description is labelled «MACHINE DESCRIPTION … NOT evidence» and its suggested diagnosis is never sent.
+  Every usual check applies (deterministic, vault validation with the picture counted as attached, independent
+  validator, claim verification of every explanation sentence against the lecture evidence), plus the **image gate**
+  (`figureAnswerIssues`): the correct option's significant words must be in the lecture evidence (text / caption) or in
+  the OWNER-CONFIRMED description; otherwise bounded repair, then the review queue — never published. A published
+  image question links to its picture (`figure_question`): `QuestionView.figure` (shown above the stem) and the exam
+  media (`questionMediaFiles`) show the original picture.
+* **Cost (estimates from the static price table).** Routine (Haiku 5.5, $0.10 / $0.50 per 1M tokens): a picture is
+  ≈ 1,600 input tokens for a ~1.15 MP image (fewer for small crops) + ≈ 600–900 prompt tokens + ≈ 400–700 output
+  tokens (+ some reasoning at effort low) → ≈ $0.0005–0.001 per picture, ≈ $0.03–0.06 for a 60-picture lecture; the per-call worst-case reservation (1,500 visible
+  + 4,000 reasoning headroom output tokens) is ≈ $0.003. «وصف أدق» (Opus 5.5, $4 / $20) ≈ $0.02–0.03 per picture. An
+  image question costs what any generated question costs plus one image per generator / validator call.
+* Tests: `srv:processing/figure-descriptions.test.ts` (scripted provider whose data «leaves the deployment»: nothing
+  without consent or without a key; follow-up idempotent; three pictures described with the image sent; grounding;
+  source unchanged; owner edit kept on a forced re-run; search by an English finding and an Arabic caption word, a
+  rejected one not found; budget exhaustion → one call then `partial` with the reason; image card with a label mask and
+  its review payload; drafts accepted / discarded with no review event; image MCQ published with the picture, an
+  unsupported diagnosis left in the review queue, published once the owner confirmed it), `web:workspace/panels/
+  FigureDescriptionPanel.test.tsx` (derived label + suggestion flag, confirm, correction payload, card with labels
+  hidden, «صف كل الصور» disabled with the consent link, progress and drafts).
+* Not done / limits: no real vision model was run (no key) — description quality on real slides is unmeasured; the
+  picture is sent as stored (no server-side downscale); the answer-support check is lexical (no synonym is assumed, so a
+  correct answer worded differently from the lecture goes to review); image questions in the review queue show the
+  stem, not the picture; the Control Center lists the routine model under the vision role without its own env var row;
+  cards / questions made from a description are not re-flagged when the owner later corrects that description.

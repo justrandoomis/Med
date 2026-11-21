@@ -305,6 +305,8 @@ export const AI_TASKS = [
   'validate_question', 'vision_figure', 'grade_written', 'case_sim', 'classify', 'embed', 'transcribe',
   // (track F4) handwriting recognition of a cropped picture of pen strokes (vision)
   'ink_recognize',
+  // automatic figure descriptions after processing (routine vision model; modules/processing/figures.ts)
+  'describe_figure',
 ] as const;
 export type AiTask = (typeof AI_TASKS)[number];
 

@@ -52,6 +52,8 @@ const GROUP_TITLES: Record<SearchResultType, string> = {
   notes: 'ملاحظاتي',
   // (track F4) readings of my pen strokes («مقروء آليًا», or «كتبته بنفسك» once corrected)
   handwriting: 'خط يدي المقروء',
+  // lecture pictures found by their derived description (opens the page at the figure)
+  figures: 'صور المحاضرات (وصف آلي — راجعه)',
   generated: 'محتوى مولَّد — ليس دليلًا',
 };
 
@@ -137,7 +139,8 @@ export function groupResults(results: SearchResult[]): Array<{ type: SearchResul
   const groups: Array<{ type: SearchResultType; items: SearchResult[] }> = [];
   for (const r of results) {
     // generated items always form their own last group, whatever their type
-    const type: SearchResultType = r.origin === 'generated' ? 'generated' : r.type;
+    // (lecture pictures keep their own group: the description is labelled derived there)
+    const type: SearchResultType = r.origin === 'generated' && r.type !== 'figures' ? 'generated' : r.type;
     let g = groups.find((x) => x.type === type);
     if (!g) {
       g = { type, items: [] };

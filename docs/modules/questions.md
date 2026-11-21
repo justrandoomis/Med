@@ -586,3 +586,12 @@ Reproduced with a failing test first, then fixed minimally (`srv:questions/h2-ex
   exactly what a new extraction computes (the «°C» join and the rich-text round trip disappear in `normPhrase`).
   Not fixed: an earlier occurrence attached to the wrong question by a pre-fix fingerprint is not split automatically
   (re-fingerprinting only stops new false merges).
+
+## Image questions from lecture figures (2026-11-21)
+
+`createQuestion` accepts `figureDescriptionId`: the generated image question is linked to its lecture picture in
+`figure_question` (inserted before the first validation, so `images_attached` counts the picture —
+`lifecycle.ts figureQuestionImages`). `QuestionView.figure` carries the original picture's URL (shown above the stem in
+«تفاصيل السؤال»), and `exams/delivery.ts questionMediaFiles` delivers it as exam media. The generation side (picture
+sent to the generator and the independent validator, the image-answer gate, review queue) is documented in
+`docs/modules/processing.md` «Automatic figure descriptions».

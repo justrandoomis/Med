@@ -750,6 +750,11 @@ const FULL_TABLES: Array<{ table: string; type: string; where?: string; rev?: st
   // each with its status (an uncertain reading stays labelled uncertain)
   { table: 'annotation_image', type: 'annotation_image' },
   { table: 'figure_reading', type: 'figure_reading' },
+  // figure descriptions: the model's derived description AND the owner's correction (owner_json / owner_status), the
+  // describe runs, and which generated image question asks about which picture
+  { table: 'figure_description', type: 'figure_description' },
+  { table: 'figure_description_run', type: 'figure_description_run' },
+  { table: 'figure_question', type: 'figure_question', columns: 'question_id AS id, question_id, description_id, created_at' },
   // Round 7 H4 (§32): the owner's registry of allowed external visual sources
   { table: 'visual_source', type: 'visual_source' },
   // (Academic OS P1-T2) authorship layers, the version history of annotations / notes / layers, and the attribution of

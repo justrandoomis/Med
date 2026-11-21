@@ -18,6 +18,7 @@ import {
   type QuestionType,
   type QuestionValidation,
   type QuestionVersionView,
+  type QuestionFigureView,
   type QuestionView,
   type RichText,
 } from '@medlevo/shared';
@@ -607,7 +608,18 @@ export function questionView(ctx: AppContext, id: string): QuestionView {
     attempts_summary: { total: att?.total ?? 0, correct: att?.correct ?? 0, last_at: att?.last_at ?? null },
     created_at: q.created_at,
     updated_at: q.updated_at,
+    figure: questionFigure(ctx, q.id),
   };
+}
+
+/** The lecture picture of an image question (generated from a figure description), or null. */
+export function questionFigure(ctx: AppContext, questionId: string): QuestionFigureView | null {
+  const f = ctx.db.get<{ id: string; file_id: string; source_id: string; page_id: string | null; region_id: string | null }>(
+    'SELECT d.id, d.file_id, d.source_id, d.page_id, d.region_id FROM figure_question q JOIN figure_description d ON d.id = q.description_id WHERE q.question_id = ?',
+    [questionId],
+  );
+  if (!f) return null;
+  return { description_id: f.id, image_url: `/api/files/${f.file_id}`, source_id: f.source_id, page_id: f.page_id, region_id: f.region_id, alt_ar: 'صورة السؤال من المحاضرة (الصورة الأصلية).' };
 }
 
 /** Whether an exam may SCORE this version, and why not. */
