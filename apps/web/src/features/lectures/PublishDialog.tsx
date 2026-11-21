@@ -6,11 +6,13 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Send } from 'lucide-react';
-import { itemsCountAr, LAYER_KIND_LABELS_AR, newId, PUBLICATION_MAX_LAYERS, type LayerView, type PublicationView } from '@medlevo/shared';
+import { itemsCountAr, LAYER_KIND_LABELS_AR, newId, PUBLICATION_MAX_LAYERS, type FlashcardView, type LayerView, type PublicationView } from '@medlevo/shared';
 import { Button, Checkbox, Dialog, LoadingState, TextArea, TextField, useToast } from '../../design';
 import { errorMessage } from '../../lib/api';
 import { typed } from '../../lib/typedText';
 import { useOnline } from '../../lib/useOnline';
+import { cardsCountAr } from '../copies/DeckSection';
+import { learningApi } from '../review/api';
 import { publicationsApi, publicationUrl } from './api';
 import './publications.css';
 
@@ -28,6 +30,16 @@ export interface RepublishTarget {
   headVersionNo: number;
   /** the layers the head was taken from (preselected) */
   layerIds: string[];
+  /** (AOS-21.27) cards the head published with it (0: none) */
+  deckCards?: number;
+}
+
+/**
+ * (AOS-21.27) The author's cards on this lecture the server publishes with the explanation: their own text cards
+ * (basic / cloze), not generated ones, not cards from mistakes, not cards copied from a classmate's deck.
+ */
+export function publishableCardCount(cards: ReadonlyArray<Pick<FlashcardView, 'kind' | 'origin' | 'origin_ref' | 'deleted_at' | 'merged_into_id'>>): number {
+  return cards.filter((c) => (c.kind === 'basic' || c.kind === 'cloze') && (c.origin === 'owner' || c.origin === 'from_selection') && !c.origin_ref?.publication_deck && c.deleted_at === null && !c.merged_into_id).length;
 }
 
 export function PublishDialog({
@@ -61,6 +73,23 @@ export function PublishDialog({
   const [changeNote, setChangeNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // (AOS-21.27) the deck: offered only when the author has cards to publish (or the head has a deck to keep or drop)
+  const [ownCards, setOwnCards] = useState(0);
+  const [includeCards, setIncludeCards] = useState<boolean | null>(null);
+  const headDeck = republish?.deckCards ?? 0;
+  const cardsChecked = includeCards ?? headDeck > 0;
+
+  useEffect(() => {
+    let cancelled = false;
+    learningApi
+      .cards({ source_id: sourceId, status: 'active', limit: 500 })
+      .then((r) => !cancelled && setOwnCards(publishableCardCount(r.items)))
+      // without the list the deck is simply not offered (the explanation publishes as before)
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [sourceId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -94,7 +123,7 @@ export function PublishDialog({
     setError(null);
     try {
       if (republish) {
-        const v = await publicationsApi.republish(spaceId, republish.id, { layer_ids: chosen, change_note: changeNote.trim() || null });
+        const v = await publicationsApi.republish(spaceId, republish.id, { layer_ids: chosen, change_note: changeNote.trim() || null, ...(includeCards !== null ? { include_cards: includeCards } : {}) });
         toast.show(
           v.head_version_no === republish.headVersionNo
             ? { tone: 'info', title: `لا تغيير منذ الإصدار ${v.head_version_no}؛ لم يُنشر إصدار جديد.` }
@@ -104,7 +133,11 @@ export function PublishDialog({
         onClose();
         return;
       }
-      const v = await publicationsApi.publish(spaceId, { lecture_id: lecture.id, layer_ids: chosen, title: title.trim(), summary: summary.trim() || null, kind: 'explanation', visibility: 'course' }, key);
+      const v = await publicationsApi.publish(
+        spaceId,
+        { lecture_id: lecture.id, layer_ids: chosen, title: title.trim(), summary: summary.trim() || null, kind: 'explanation', visibility: 'course', ...(ownCards > 0 && cardsChecked ? { include_cards: true } : {}) },
+        key,
+      );
       toast.show({ tone: 'success', title: 'نُشر شرحك في المادة.', description: 'يراه أعضاء المادة وحدهم، وتستطيع سحبه متى شئت.' });
       onPublished?.(v);
       onClose();
@@ -160,6 +193,14 @@ export function PublishDialog({
               />
             ))}
           </fieldset>
+        )}
+        {(ownCards > 0 || headDeck > 0) && (
+          <Checkbox
+            checked={cardsChecked}
+            onCheckedChange={(on) => setIncludeCards(on)}
+            label="انشر بطاقاتي على هذه المحاضرة مع الشرح"
+            description={`${cardsCountAr(ownCards)} — ينسخها زملاؤك إلى مراجعتهم بـ«ادرس هذه البطاقات»، ولكلٍّ جدول مراجعته.`}
+          />
         )}
         {republish ? (
           <TextArea label="ما الذي تغيّر؟ (اختياري)" hint="يقرؤها من يتابع شرحك قبل أن يطبّق التحديث." value={changeNote} maxLength={1000} rows={3} onChange={typed(setChangeNote, true)} />

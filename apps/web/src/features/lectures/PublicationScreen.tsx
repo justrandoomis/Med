@@ -17,6 +17,7 @@ import {
   itemsCountAr,
   PUBLICATION_STATUS_LABELS_AR,
   type DocumentCopyView,
+  type PublicationDeckView,
   type PublicationView,
   type UpstreamPreview,
 } from '@medlevo/shared';
@@ -28,6 +29,7 @@ import { useOnline } from '../../lib/useOnline';
 import { usePageTitle } from '../../lib/usePageTitle';
 import { formatDate } from '../../lib/time';
 import { copiesApi, copyStudyUrl, lectureUrl } from '../copies/api';
+import { DeckSection } from '../copies/DeckSection';
 import { StartFromExplanationDialog } from '../copies/StartFromExplanationDialog';
 import { UpdatePreviewDialog } from '../copies/UpdatePreviewDialog';
 import { publicationsApi } from './api';
@@ -112,6 +114,9 @@ export function PublicationScreen() {
   const [machineAr, setMachineAr] = useState<string | null>(null);
   const [lastChange, setLastChange] = useState<UpstreamPreview | null>(null);
   const [dialog, setDialog] = useState<null | 'start' | 'report' | 'republish' | 'edit' | 'withdraw' | 'update'>(null);
+  // (AOS-21.27) whether the head carries a deck: a republish keeps publishing it unless the author unticks it
+  const [deckCards, setDeckCards] = useState(0);
+  const onDeck = useCallback((d: PublicationDeckView | null) => setDeckCards(d?.card_count ?? 0), []);
   usePageTitle(state.data?.pub.title ?? 'شرح منشور');
   const request = `${spaceId}|${publicationId}|${attempt}`;
   const [requested, setRequested] = useState(request);
@@ -289,6 +294,8 @@ export function PublicationScreen() {
         </div>
       )}
 
+      <DeckSection spaceId={pub.space_id} publicationId={pub.id} onLoaded={onDeck} />
+
       <section aria-labelledby="publication-versions">
         <h2 id="publication-versions" className="pb-page__h2">
           الإصدارات
@@ -347,7 +354,7 @@ export function PublicationScreen() {
           spaceId={pub.space_id}
           lecture={pub.lecture}
           sourceId={authorSource}
-          republish={{ id: pub.id, title: pub.title, headVersionNo: pub.head_version_no, layerIds: pub.viewer.source_layer_ids ?? [] }}
+          republish={{ id: pub.id, title: pub.title, headVersionNo: pub.head_version_no, layerIds: pub.viewer.source_layer_ids ?? [], deckCards }}
           onPublished={setPub}
         />
       )}

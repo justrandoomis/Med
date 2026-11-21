@@ -12,13 +12,16 @@
 //   GET    /api/copies/:id · PATCH /api/copies/:id           one copy · its update / note-move policies
 //   GET    /api/copies/:id/upstream          (P1-T5 step 3) what «طبّق التحديث» would change in a followed copy
 //   POST   /api/copies/:id/upstream/apply    «طبّق التحديث» / «تخطَّ هذا الإصدار» (ApplyUpstreamRequest)
+//   GET    /api/copies/decks/:publicationId?space_id=   (AOS-21.27) a publication's deck + the viewer's copy of it
+//   POST   /api/copies/decks                 «ادرس هذه البطاقات»: the deck copied into the viewer's vault (StudyDeckRequest)
+//   POST   /api/copies/decks/:publicationId/update      the deck's «طبّق التحديث» / «تخطَّ هذا الإصدار»
 //
 // Also registered here (own plugin, no core file edited): the fan-out jobs (fanout.ts), the purge step (purge refusal in
 // a space, copy rows in a vault), the «holders of a copy» notification audience, and the reader of a stub page's regions
 // used by P1-T2's note copy.
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { applyUpstreamSchema, documentCopiesQuerySchema, lectureIdentityQuerySchema, linkCandidatesQuerySchema, linkStatusQuerySchema, linkToOfficialSchema, patchDocumentCopySchema, startStudyingSchema } from '@medlevo/shared';
+import { applyDeckUpdateSchema, applyUpstreamSchema, documentCopiesQuerySchema, lectureIdentityQuerySchema, linkCandidatesQuerySchema, linkStatusQuerySchema, linkToOfficialSchema, patchDocumentCopySchema, publicationDeckQuerySchema, startStudyingSchema, studyDeckSchema } from '@medlevo/shared';
 import type { ModuleOptions } from '../../context';
 import { AppError } from '../../lib/errors';
 import { parseBody, parseParams, parseQuery } from '../../lib/http';
@@ -27,6 +30,7 @@ import { setPublicationTitleSource } from '../data/export';
 import { setStubPageRegions } from '../sources/service';
 import type { RegionRow } from '../sources/views';
 import { CopiesService } from './copies';
+import { applyDeckUpdate, deckOf, studyDeck } from './decks';
 import { registerFanoutJobs, registerHoldersAudience } from './fanout';
 import { applyUpstream, upstream } from './following';
 import { lectureIdentity } from './identity';
@@ -37,6 +41,7 @@ import { publicationIndex } from './system';
 import { registerForksPurgeExtension } from './purgeExtension';
 
 const idParams = z.object({ id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/) });
+const deckParams = z.object({ publicationId: z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/) });
 
 export default async function forksModule(app: FastifyInstance, { ctx }: ModuleOptions): Promise<void> {
   const copies = new CopiesService(ctx);
@@ -94,6 +99,14 @@ export default async function forksModule(app: FastifyInstance, { ctx }: ModuleO
     const viewer = viewerOf();
     return linkToOfficial(ctx, viewer, parseBody(linkToOfficialSchema, req), viewer.deviceId);
   });
+
+  // AOS-21.27: a publication's deck — «ادرس هذه البطاقات» copies it into the viewer's own vault (own FSRS state)
+  app.get('/decks/:publicationId', async (req) => deckOf(ctx, viewerOf(), parseQuery(publicationDeckQuerySchema, req).space_id, parseParams(deckParams, req).publicationId));
+  app.post('/decks', async (req) => {
+    const viewer = viewerOf();
+    return studyDeck(ctx, viewer, parseBody(studyDeckSchema, req), viewer.deviceId);
+  });
+  app.post('/decks/:publicationId/update', async (req) => applyDeckUpdate(ctx, viewerOf(), parseParams(deckParams, req).publicationId, parseBody(applyDeckUpdateSchema, req)));
 
   app.get('/:id', async (req) => copies.get(viewerOf(), parseParams(idParams, req).id));
 

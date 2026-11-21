@@ -29,7 +29,7 @@ describe('system migration set', () => {
     expect(names).toEqual(['2000_identity.sql', '2010_devices.sql', '2040_registry.sql', '2050_directory.sql', '2060_lecture_copy.sql', '2100_permissions.sql', '2150_publications.sql', '2200_notifications.sql', '2250_ops.sql', '2300_security.sql', '2310_moderation.sql']);
     // R1-b carries no space commons migration and no new BASE migration (owner-migration rule, BUILD_PLAN §1.3)
     // R1-c: the space commons set starts with P1-T5 step 1 (official lectures, subject content)
-    expect(readMigrations(SPACE_MIGRATIONS_DIR).map((f) => f.name)).toEqual(['3000_official_lectures.sql', '3010_subject_content.sql', '3050_publications.sql', '3300_scoped_fts.sql']);
+    expect(readMigrations(SPACE_MIGRATIONS_DIR).map((f) => f.name)).toEqual(['3000_official_lectures.sql', '3010_subject_content.sql', '3050_publications.sql', '3051_publication_cards.sql', '3300_scoped_fts.sql']);
     for (const f of readMigrations(MIGRATIONS_DIR)) expect(Number(f.name.slice(0, 4))).toBeLessThan(2000);
   });
 
@@ -90,7 +90,7 @@ describe('sets never mix', () => {
     expect(res.applied[0]).toBe('0001_core.sql');
     // R1-c (P1-T5 step 1): the space set now ships 3000/3010 — base files first, then the space band, all recorded
     expect(res.applied.every((n) => Number(n.slice(0, 4)) < 2000 || (Number(n.slice(0, 4)) >= 3000 && Number(n.slice(0, 4)) <= 3999))).toBe(true);
-    expect(res.applied.slice(-4)).toEqual(['3000_official_lectures.sql', '3010_subject_content.sql', '3050_publications.sql', '3300_scoped_fts.sql']);
+    expect(res.applied.slice(-5)).toEqual(['3000_official_lectures.sql', '3010_subject_content.sql', '3050_publications.sql', '3051_publication_cards.sql', '3300_scoped_fts.sql']);
     // and the runner refuses the vault set alone on this space file (unknown migration: an older build never opens it)
     expect(() => migrate(db, { sets: ['base'] })).toThrow(/not present in this build/);
   });
