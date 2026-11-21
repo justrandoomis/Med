@@ -175,6 +175,7 @@ export function createContext(config: AppConfig, log: FastifyBaseLogger, overrid
     userStorageBytes: config.quota.userStorageBytes,
     spaceStorageBytes: config.quota.spaceStorageBytes,
     deploymentAiUsd: config.ai.monthlyBudgetUsd,
+    aiOpenAllowance: config.ai.openAllowance,
     timezone: config.timezone,
     dataDir: config.dataDir,
   });

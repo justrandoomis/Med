@@ -43,6 +43,8 @@ export interface QuotaConfig {
   spaceStorageBytes: number;
   /** MEDLEVO_AI_MONTHLY_BUDGET_USD: user #1's default allowance and the deployment ceiling */
   deploymentAiUsd: number;
+  /** MEDLEVO_AI_OPEN_ALLOWANCE: every account and subject without its own cap may use the whole deployment budget */
+  aiOpenAllowance?: boolean;
   /** the deployment's timezone (the ceiling's month) */
   timezone: string;
   /** DATA_DIR: «نسخة من بياناتي» archives kept in DATA_DIR/exports/<vault id>/ count in the vault's quota (AOS-21.43) */
@@ -316,7 +318,7 @@ export class QuotaService {
   aiAllowance(userId: string): { limitUsd: number; source: AiParty['source'] } {
     const row = this.system.quotas.userInternal(userId);
     if (row && row.ai_monthly_usd_limit !== null) return { limitUsd: row.ai_monthly_usd_limit, source: 'user_explicit' };
-    return this.isFirstUser(userId) ? { limitUsd: this.cfg.deploymentAiUsd, source: 'user_default_first' } : { limitUsd: 0, source: 'user_default_zero' };
+    return this.isFirstUser(userId) || this.cfg.aiOpenAllowance ? { limitUsd: this.cfg.deploymentAiUsd, source: 'user_default_first' } : { limitUsd: 0, source: 'user_default_zero' };
   }
 
   /**
@@ -339,7 +341,7 @@ export class QuotaService {
     const m = this.monthOf(now, this.cfg.timezone);
     const row = this.system.quotas.spaceInternal(b.spaceId);
     const limit = row?.ai_monthly_usd_limit ?? null;
-    return { userId: actor, spaceId: b.spaceId, month: m.month, monthStart: m.start, limitUsd: limit ?? 0, source: limit === null ? 'space_default_zero' : 'space_explicit' };
+    return { userId: actor, spaceId: b.spaceId, month: m.month, monthStart: m.start, limitUsd: limit ?? (this.cfg.aiOpenAllowance ? this.cfg.deploymentAiUsd : 0), source: limit === null ? 'space_default_zero' : 'space_explicit' };
   }
 
   /** The first instant of the month after the one starting at `monthStart` (in `timezone`). */
@@ -388,7 +390,7 @@ export class QuotaService {
   spaceAiView(spaceId: string, title: string): SpaceAiAllowanceView {
     const now = this.clock.now();
     const m = this.monthOf(now, this.cfg.timezone);
-    const limit = this.system.quotas.spaceInternal(spaceId)?.ai_monthly_usd_limit ?? 0;
+    const limit = this.system.quotas.spaceInternal(spaceId)?.ai_monthly_usd_limit ?? (this.cfg.aiOpenAllowance ? this.cfg.deploymentAiUsd : 0);
     const l = this.system.aiLedger.usedInternal({ spaceId }, m.month);
     let outside = 0;
     try {
