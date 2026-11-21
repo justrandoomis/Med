@@ -36,6 +36,7 @@ Secrets (`npx wrangler secret put <NAME>`; never in the repository — it is pub
 | `ANTHROPIC_API_KEY` | AI features (explanations, Study Book, generated questions) |
 | `MEDLEVO_SETUP_TOKEN` | asked once when creating the owner account |
 | `MEDLEVO_BACKUP_ENCRYPTION_KEY` | encrypts the R2 backups — **keep a copy outside Cloudflare**; without it no backup can be read |
+| `MEDLEVO_OPS_TOKEN` | operator only: `POST /__ops/restart` with `Authorization: Bearer <token>` stops the container; the next visit starts a fresh one from the newest backup |
 | `MEDLEVO_R2_ACCOUNT_ID`, `MEDLEVO_R2_ACCESS_KEY_ID`, `MEDLEVO_R2_SECRET_ACCESS_KEY` | an R2 API token limited to `medlevo-backups` (Object Read & Write) |
 
 Changing a secret takes effect at the next container start.

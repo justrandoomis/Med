@@ -21,6 +21,8 @@ interface Env {
   MEDLEVO_R2_ACCESS_KEY_ID: string;
   MEDLEVO_R2_SECRET_ACCESS_KEY: string;
   MEDLEVO_BACKUP_ENCRYPTION_KEY: string;
+  /** operator token for POST /__ops/restart (optional; the route answers 404 without it) */
+  MEDLEVO_OPS_TOKEN?: string;
 }
 
 const PORT = 10000;
@@ -55,9 +57,26 @@ export class MedLevoContainer extends Container<Env> {
 
 const STARTING_PAGE = `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="8"><title>MedLevo</title><style>body{font-family:system-ui,sans-serif;display:grid;place-items:center;min-height:100vh;margin:0;background:#f7f7f5;color:#222}main{text-align:center;padding:2rem}p{color:#666}</style></head><body><main><h1>MedLevo يبدأ التشغيل…</h1><p>تُستعاد بياناتك من النسخة الاحتياطية. تتحدث الصفحة وحدها خلال لحظات.</p><p dir="ltr">Starting up — restoring your data. This page refreshes by itself.</p></main></body></html>`;
 
+async function sameToken(given: string | null, expected: string): Promise<boolean> {
+  if (!given) return false;
+  const enc = new TextEncoder();
+  const [a, b] = await Promise.all([crypto.subtle.digest('SHA-256', enc.encode(given)), crypto.subtle.digest('SHA-256', enc.encode(expected))]);
+  return crypto.subtle.timingSafeEqual(a, b);
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const stub = getContainer(env.MEDLEVO, 'main');
+    const url = new URL(request.url);
+    if (url.pathname === '/__ops/restart') {
+      // stops the container (SIGTERM: running jobs are re-queued); the next request starts a fresh one, which restores
+      // the newest R2 backup — the operator's way to apply new secrets or to test the restore
+      if (!env.MEDLEVO_OPS_TOKEN || request.method !== 'POST' || !(await sameToken(request.headers.get('authorization'), `Bearer ${env.MEDLEVO_OPS_TOKEN}`))) {
+        return new Response('Not found', { status: 404 });
+      }
+      await stub.stop('SIGTERM');
+      return Response.json({ ok: true, stopped: true });
+    }
     try {
       // a cold start restores from R2 first (can take a minute or more for a large library)
       await stub.startAndWaitForPorts({ ports: PORT, cancellationOptions: { portReadyTimeoutMS: 25_000 } });
