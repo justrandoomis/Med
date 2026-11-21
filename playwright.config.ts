@@ -18,7 +18,8 @@ export default defineConfig({
   // a real upload → processing → extraction run takes a while; individual waits carry their own timeouts
   timeout: 240_000,
   expect: { timeout: 15_000 },
-  reporter: [['list'], ['html', { outputFolder: 'playwright-report', open: 'never' }]],
+  // on GitHub Actions the «github» reporter turns every failure into an annotation readable without signing in
+  reporter: process.env.GITHUB_ACTIONS ? [['list'], ['github'], ['html', { outputFolder: 'playwright-report', open: 'never' }]] : [['list'], ['html', { outputFolder: 'playwright-report', open: 'never' }]],
   use: {
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
