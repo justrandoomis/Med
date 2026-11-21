@@ -13,6 +13,8 @@ import { migrate, MIGRATIONS_DIR } from '../../src/db/migrate';
 import { bootOnVaultFile } from '../helpers/tenancy';
 
 const NEW = ['0271_annotation_layers.sql', '0272_annotation_revision.sql', '0861_attribution.sql'];
+/** shipped after P1-T2 and built on its columns (AOS-21.12): not on the owner's database before this release either */
+const LATER = ['0863_stroke_copy_identity.sql'];
 
 let dir: string;
 beforeEach(() => {
@@ -26,7 +28,7 @@ afterEach(() => {
 function previousMigrationsDir(): string {
   const prev = join(dir, 'previous');
   mkdirSync(prev);
-  for (const f of readdirSync(MIGRATIONS_DIR)) if (f.endsWith('.sql') && !NEW.includes(f)) copyFileSync(join(MIGRATIONS_DIR, f), join(prev, f));
+  for (const f of readdirSync(MIGRATIONS_DIR)) if (f.endsWith('.sql') && !NEW.includes(f) && !LATER.includes(f)) copyFileSync(join(MIGRATIONS_DIR, f), join(prev, f));
   return prev;
 }
 
@@ -108,7 +110,7 @@ describe('migration 0271 / 0272 / 0861 on the owner database (zero loss)', () =>
       expect(before.notes).toHaveLength(3);
 
       const res = migrate(db);
-      expect(res.applied).toEqual(NEW);
+      expect(res.applied).toEqual([...NEW, ...LATER]);
       expect(snapshot(db)).toEqual(before);
       // every legacy row is on the default personal layer, written by the vault's user, on the device that wrote it
       expect(db.all(`SELECT DISTINCT layer_id, author_user_id, migrated_from_id, origin FROM annotation`)).toEqual([

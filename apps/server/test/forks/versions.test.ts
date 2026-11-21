@@ -24,7 +24,7 @@ const V1 = pagesFor('Hepatic', 12);
 const V2 = [...V1.slice(0, 3), ['Inserted page one about portal hypertension', 'New material A', 'More text A'], ['Inserted page two about varices', 'New material B', 'More text B'], ...pagesFor('Hepatic', 12, { 8: 'COMPLETELY REWRITTEN PAGE about hepatic encephalopathy grading' }).slice(3)];
 const V2_REWRITTEN = V2.map((p, i) => (i === 10 ? ['COMPLETELY different words now for page nine', 'ammonia lactulose rifaximin', 'west haven criteria'] : p));
 
-const rowsOf = (ids: string[]) => w.t.ctx.db.all(`SELECT * FROM annotation WHERE id IN (${ids.map(() => '?').join(',')}) UNION ALL SELECT id, NULL, NULL, anchor_json, body_json, NULL, NULL, NULL, NULL, previous_anchor_json, NULL, device_id, rev, created_at, updated_at, deleted_at, conflict_of_id, layer_id, author_user_id, migrated_from_id, origin, detached_at FROM note WHERE id IN (${ids.map(() => '?').join(',')})`, [...ids, ...ids]);
+const rowsOf = (ids: string[]) => w.t.ctx.db.all(`SELECT * FROM annotation WHERE id IN (${ids.map(() => '?').join(',')}) UNION ALL SELECT id, NULL, NULL, anchor_json, body_json, NULL, NULL, NULL, NULL, previous_anchor_json, NULL, device_id, rev, created_at, updated_at, deleted_at, conflict_of_id, layer_id, author_user_id, migrated_from_id, origin, detached_at, document_key, document_copy_id FROM note WHERE id IN (${ids.map(() => '?').join(',')})`, [...ids, ...ids]);
 
 beforeAll(async () => {
   w = await createLectureWorld();

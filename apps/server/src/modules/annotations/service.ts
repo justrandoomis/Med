@@ -45,12 +45,25 @@ export class AnnotationsService {
   }
 
   // ───────── annotations ─────────
+  /**
+   * (AOS-21.12) With `copyId` (a study copy of the document: personal copy, fork, followed copy) only the items of THAT
+   * copy and the document's own items (no copy) are answered — another copy's strokes never show. Absent: every item, as
+   * before (older clients filter by layer themselves).
+   */
+  private copyFilter(copyId: string | undefined, sourceId?: string): { sql: string; params: string[] } {
+    if (!copyId) return { sql: '', params: [] };
+    const copy = this.db.get<{ source_id: string; deleted_at: number | null }>('SELECT source_id, deleted_at FROM document_copy WHERE id = ?', [copyId]);
+    if (!copy || copy.deleted_at !== null || (sourceId !== undefined && copy.source_id !== sourceId)) throw Errors.notFound('نسخة الدراسة');
+    return { sql: ' AND (a.document_copy_id IS NULL OR a.document_copy_id = ?)', params: [copyId] };
+  }
+
   /** `inkFormat` 2 = the client sent `accept-ink: 2` (packed points); default v1 */
-  byTargets(keys: string[], includeDeleted = false, inkFormat: 1 | 2 = 1): AnnotationDTO[] {
+  byTargets(keys: string[], includeDeleted = false, inkFormat: 1 | 2 = 1, copyId?: string): AnnotationDTO[] {
     const parsed = keys.map((k) => ({ key: k, t: splitTargetKey(k) }));
     const bad = parsed.filter((p) => !p.t).map((p) => p.key);
     if (bad.length) throw new AppError('VALIDATION_FAILED', 'مفاتيح الصفحات غير صالحة. الصيغة: source_page:<id> أو note_page:<id>.', 400, { invalid: bad.slice(0, 10) });
     if (parsed.length === 0) return [];
+    const byCopy = this.copyFilter(copyId);
     const out: AnnotationDTO[] = [];
     // group by target type (small IN lists; at most MAX_TARGET_KEYS keys)
     const byType = new Map<string, string[]>();
@@ -62,9 +75,9 @@ export class AnnotationsService {
     for (const [type, ids] of byType) {
       const rows = this.db.all<AnnotationRow>(
         `SELECT a.* FROM annotation_target t JOIN annotation a ON a.id = t.annotation_id
-         WHERE t.target_type = ? AND t.target_id IN (${inList(ids.length)}) ${includeDeleted ? '' : 'AND a.deleted_at IS NULL'}
+         WHERE t.target_type = ? AND t.target_id IN (${inList(ids.length)}) ${includeDeleted ? '' : 'AND a.deleted_at IS NULL'}${byCopy.sql}
          ORDER BY a.z, a.created_at, a.id`,
-        [type, ...ids],
+        [type, ...ids, ...byCopy.params],
       );
       out.push(...rows.map((r) => toAnnotationDTO(r, { inkFormat })));
     }
@@ -82,17 +95,18 @@ export class AnnotationsService {
     return this.db.all<{ id: string }>('SELECT id FROM source_version WHERE source_id = ? ORDER BY version_no', [sourceId]).map((r) => r.id);
   }
 
-  forSource(sourceId: string, versionId?: string, inkFormat: 1 | 2 = 1): SourceAnnotationsResponse {
+  forSource(sourceId: string, versionId?: string, inkFormat: 1 | 2 = 1, copyId?: string): SourceAnnotationsResponse {
     const versionIds = this.versionsOf(sourceId, versionId);
+    const byCopy = this.copyFilter(copyId, sourceId);
     const annotations: AnnotationDTO[] = [];
     if (versionIds.length) {
       const rows = this.db.all<AnnotationRow>(
         `SELECT a.* FROM source_page p
            JOIN annotation_target t ON t.target_type = 'source_page' AND t.target_id = p.id
            JOIN annotation a ON a.id = t.annotation_id
-         WHERE p.version_id IN (${inList(versionIds.length)}) AND a.deleted_at IS NULL
+         WHERE p.version_id IN (${inList(versionIds.length)}) AND a.deleted_at IS NULL${byCopy.sql}
          ORDER BY p.page_index, a.z, a.created_at, a.id`,
-        versionIds,
+        [...versionIds, ...byCopy.params],
       );
       annotations.push(...rows.map((r) => toAnnotationDTO(r, { inkFormat })));
     }
@@ -100,13 +114,15 @@ export class AnnotationsService {
     if (notePages.length) {
       const rows = this.db.all<AnnotationRow>(
         `SELECT a.* FROM annotation_target t JOIN annotation a ON a.id = t.annotation_id
-         WHERE t.target_type = 'note_page' AND t.target_id IN (${inList(notePages.length)}) AND a.deleted_at IS NULL
+         WHERE t.target_type = 'note_page' AND t.target_id IN (${inList(notePages.length)}) AND a.deleted_at IS NULL${byCopy.sql}
          ORDER BY a.z, a.created_at, a.id`,
-        notePages.map((n) => n.id),
+        [...notePages.map((n) => n.id), ...byCopy.params],
       );
       annotations.push(...rows.map((r) => toAnnotationDTO(r, { inkFormat })));
     }
-    const notes = this.db.all<NoteRow>('SELECT * FROM note WHERE source_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC', [sourceId]).map(toNoteDTO);
+    const notes = this.db
+      .all<NoteRow>(`SELECT * FROM note a WHERE a.source_id = ? AND a.deleted_at IS NULL${byCopy.sql} ORDER BY a.updated_at DESC`, [sourceId, ...byCopy.params])
+      .map(toNoteDTO);
     return { source_id: sourceId, version_ids: versionIds, annotations, notes, note_pages: notePages.map(toNotePageDTO) };
   }
 

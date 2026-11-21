@@ -44,6 +44,9 @@ export interface AnnotationRow {
   author_user_id?: string | null;
   migrated_from_id?: string | null;
   origin?: AnnotationOrigin;
+  /** migration 0863 (AOS-21.12): the document and the study copy the item is written on (kept by triggers) */
+  document_key?: string | null;
+  document_copy_id?: string | null;
 }
 
 export interface NoteRow {
@@ -70,6 +73,9 @@ export interface NoteRow {
   layer_id?: string | null;
   author_user_id?: string | null;
   migrated_from_id?: string | null;
+  /** migration 0863 (AOS-21.12) */
+  document_key?: string | null;
+  document_copy_id?: string | null;
 }
 
 export interface NotePageRow {
@@ -115,11 +121,13 @@ const j = <T>(text: string | null): T => fromJson<T>(text) as T;
  * Layer fields are sent only when they say something (P1-T2): a legacy row — on «ملاحظاتي», written by the vault's user
  * on a device — keeps exactly today's DTO, so older clients and every existing comparison see no change.
  */
-function layerExtras(r: { layer_id?: string | null; author_user_id?: string | null; migrated_from_id?: string | null }) {
+function layerExtras(r: { layer_id?: string | null; author_user_id?: string | null; migrated_from_id?: string | null; document_copy_id?: string | null }) {
   return {
     ...(r.layer_id ? { layer_id: r.layer_id } : {}),
     ...(r.author_user_id ? { author_user_id: r.author_user_id } : {}),
     ...(r.migrated_from_id ? { migrated_from_id: r.migrated_from_id } : {}),
+    // (AOS-21.12) only on items of a study copy: every other item keeps exactly today's DTO
+    ...(r.document_copy_id ? { document_copy_id: r.document_copy_id } : {}),
   };
 }
 

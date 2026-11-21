@@ -459,6 +459,12 @@ export interface AnnotationDTO {
   migrated_from_id?: string | null;
   /** (P1-T2) how the row came to exist (server-set; a client's value is ignored) */
   origin?: AnnotationOrigin;
+  /**
+   * (AOS-21.12) the study copy whose layer holds the item (`document_copy.id`: a personal copy, fork or followed copy of
+   * an official lecture). Server-derived from the layer (a client's value is ignored); absent = the item belongs to the
+   * document, not to one copy. The document itself is the anchor's (`source:<anchor.source_id>` for a page anchor).
+   */
+  document_copy_id?: string | null;
 }
 
 export interface NoteDTO {
@@ -485,6 +491,8 @@ export interface NoteDTO {
   author_user_id?: string | null;
   /** (P1-T2) the note a layer copy / re-anchor copy was made from */
   migrated_from_id?: string | null;
+  /** (AOS-21.12) the study copy whose layer holds the note (server-derived; absent = the document's, not one copy's) */
+  document_copy_id?: string | null;
 }
 
 export interface NotePageDTO {
