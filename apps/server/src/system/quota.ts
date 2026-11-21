@@ -285,10 +285,21 @@ export class QuotaService {
   checkStorageForUpload(viewer: Viewer, vaultId: string, addBytes: number): void {
     const limit = this.storageLimit(viewer.userId);
     if (limit === null) return;
-    const open = this.system.uploads.openBytes(viewer);
+    const open = this.system.uploads.openBytes(viewer, vaultId);
     if (this.storageTotal(vaultId, 'upper') + open + addBytes <= limit) return;
     const total = this.storageTotal(vaultId) + open;
     if (total + addBytes > limit) throw this.storageError(total, limit, addBytes);
+  }
+
+  /**
+   * (AOS-2.3 / 18.3) Before a chunked upload session into the BOUND subject space starts: refused like a one-shot upload
+   * when the file would take the subject over its limit; the bytes of every member's other open sessions into the
+   * subject (`openBytes`) count too. Not bound to a space with a viewer: nothing to check here.
+   */
+  checkSpaceStorageForUpload(addBytes: number, openBytes: number): void {
+    const b = this.binding.current();
+    if (!b || b.kind !== 'space' || !b.viewer) return;
+    this.checkSpaceStorage(b, openBytes + addBytes);
   }
 
   storageError(used: number, limit: number, wanted: number): AppError {

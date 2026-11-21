@@ -6,6 +6,8 @@
 // (C2) «ارفع عدة محاضرات» adds one draft per file (AOS-2.3 / 18.3); the duplicate answer of the server is shown as given
 // (3.6); a Subject Moderator reviews what the analysis proposed — numbers, dates, «إصدار جديد من …» — marked as
 // machine-made (3.18, 3.11, 19I.5); each version names its uploader and publisher (18.18).
+// (AOS-2.3 / 18.3, wp/space-upload) a file of 8 MB or more goes as a chunked, resumable upload into the subject's space
+// (../chunkedUpload.ts: resumed after a cut, the progress said in words); a smaller one keeps the one-shot upload.
 // Every action is decided by the server; the reasons it gives are shown as they are.
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { CheckCircle2, FilePlus2, Files, ListChecks, Send, Undo2 } from 'lucide-react';
@@ -29,6 +31,7 @@ import { typed } from '../../../lib/typedText';
 import { formatDateTime } from '../../../lib/time';
 import { BidiText } from '../../evidence/BidiText';
 import { type AdminSubject, lecturesApi } from '../api';
+import type { ChunkedProgress } from '../chunkedUpload';
 import { SubjectScope } from './SubjectScope';
 import { useAdminSubjects } from './useAdminSubjects';
 import './lectures-admin.css';
@@ -44,6 +47,14 @@ interface Loaded {
   corrections: OfficialCorrectionView[];
 }
 
+/** (AOS-2.3 / 18.3) the state of a chunked upload, in words (a small file goes in one request and shows nothing here) */
+export function chunkProgressAr(p: ChunkedProgress): string {
+  if (p.stage === 'hashing') return 'ملف كبير: تُحسب بصمته قبل رفعه على أجزاء…';
+  if (p.stage === 'checking') return 'وصلت كل الأجزاء؛ يتحقق الخادم من الملف…';
+  const pct = p.total > 0 ? Math.floor((p.sent / p.total) * 100) : 0;
+  return `يُرفع على أجزاء: ${pct}٪ — إن انقطع الاتصال يُستأنف من حيث توقف.`;
+}
+
 function AddLecture({ subject, onDone }: { subject: AdminSubject; onDone: () => void }) {
   const toast = useToast();
   const [title, setTitle] = useState('');
@@ -56,6 +67,8 @@ function AddLecture({ subject, onDone }: { subject: AdminSubject; onDone: () => 
   // a draft created by this form whose file did not go through: the next send uploads into it instead of creating a
   // second lecture with the same title (review R12); it is forgotten when the details change
   const [created, setCreated] = useState<{ id: string; title: string; no: string; heldOn: string } | null>(null);
+  // (AOS-2.3 / 18.3) a large file goes in resumable chunks: what is happening, in words
+  const [progress, setProgress] = useState<string | null>(null);
   const sameDraft = !!created && created.title === title.trim() && created.no === no && created.heldOn === heldOn;
 
   const submit = async (e: FormEvent) => {
@@ -72,7 +85,7 @@ function AddLecture({ subject, onDone }: { subject: AdminSubject; onDone: () => 
       }
       if (file) {
         try {
-          const up = await lecturesApi.upload(subject.spaceId, lectureId, file);
+          const up = await lecturesApi.uploadFile(subject.spaceId, lectureId, file, { onProgress: (p) => setProgress(chunkProgressAr(p)) });
           // (C2, AOS-3.6) the server names a duplicate only when the uploader may see it; shown as it is said
           if (up.duplicate_note_ar) toast.show({ title: up.duplicate_note_ar, tone: 'info' });
         } catch (err) {
@@ -94,6 +107,7 @@ function AddLecture({ subject, onDone }: { subject: AdminSubject; onDone: () => 
       setFormError(errorMessage(err));
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   };
 
@@ -112,6 +126,11 @@ function AddLecture({ subject, onDone }: { subject: AdminSubject; onDone: () => 
         </label>
       </div>
       {formError && <p className="lec-admin__error" role="alert">{formError}</p>}
+      {progress && (
+        <p className="lec-admin__note" role="status">
+          {progress}
+        </p>
+      )}
       <div className="lec-admin__actions">
         <Button type="submit" variant="primary" loading={busy} disabled={!title.trim() || (sameDraft && !file)}>
           {sameDraft ? 'ارفع الملف إلى المسودة' : file ? 'أضف وارفع الملف' : 'أضف مسودة'}
@@ -148,7 +167,7 @@ async function uploadOne(spaceId: string, f: File, title: string, lectureId: str
   let id = lectureId;
   try {
     id ??= (await lecturesApi.create(spaceId, { title })).id;
-    const up = await lecturesApi.upload(spaceId, id, f);
+    const up = await lecturesApi.uploadFile(spaceId, id, f);
     return { name: f.name, title, ok: true, note: up.duplicate_note_ar ?? null, file: f, lectureId: id };
   } catch (err) {
     return {

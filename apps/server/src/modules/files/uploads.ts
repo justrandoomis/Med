@@ -13,6 +13,14 @@
 // (never in the content-addressed store until the whole file is verified). The storage quota is checked when the
 // session starts (open sessions count) and again when the file is stored; the per-file limit is MEDLEVO_MAX_UPLOAD_MB.
 // While a session is open its announced content is protected from the blob GC (it may complete into an orphaned blob).
+//
+// AOS-2.3 / 18.3 (subject spaces): the SAME service serves the subject's own routes `/api/spaces/:s/uploads…`, mounted by
+// the lectures plugin and declared in authz/spaceRoutes.ts. There the request is bound to the subject's space, so a
+// session's `target_db` is `s:<spaceId>`, the file is stored in the space database, the subject's storage quota is the
+// one checked (open sessions into the subject count), and only the uploader's own sessions INTO THIS SPACE are found —
+// a session of another subject or of the vault answers 404 like a missing id. Who may start one is the route's
+// business (contributors and moderators of the subject; gate 2 already answered «not found» to strangers). The
+// completed file reaches an official lecture through `POST /api/spaces/:s/lectures/:id/upload {upload_id}`.
 import { createHash, randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import { closeSync, createReadStream, createWriteStream, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -30,7 +38,8 @@ import { toFileView } from './store';
 const idParams = z.object({ id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/) });
 const chunkParams = idParams.extend({ n: z.coerce.number().int().min(0).max(1_000_000) });
 
-const LIMITS = {
+/** Per-client limits of the upload routes (the subject's own routes use the same, AOS-2.3). */
+export const UPLOAD_LIMITS = {
   create: { max: 60, timeWindow: 60_000 },
   chunk: { max: 1200, timeWindow: 60_000 },
   complete: { max: 30, timeWindow: 60_000 },
@@ -78,7 +87,7 @@ export class UploadChunkStore {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     const tmp = join(dir, `.${n}.${randomBytes(4).toString('hex')}`);
     writeFileSync(tmp, body, { mode: 0o600 });
-    const fd = openSync(tmp, 'r');
+    const fd = openSync(tmp, 'r+'); // fsync needs a writable handle on Windows (EPERM with 'r'); the same on Linux
     try {
       fsyncSync(fd);
     } finally {
@@ -119,6 +128,12 @@ function viewerOf(req: FastifyRequest): Viewer {
 
 const notFound = () => new AppError('NOT_FOUND', UPLOAD_LABELS_AR.not_found, 404);
 
+/** `upload_session.target_db` of a session into a subject space (a vault's is its vault id). */
+export const spaceUploadTarget = (spaceId: string): string => `s:${spaceId}`;
+
+/** Where the bound request writes: the viewer's own vault, or the subject space a space route bound. */
+type UploadTarget = { kind: 'vault'; db: string } | { kind: 'space'; db: string; spaceId: string };
+
 export class UploadService {
   readonly chunks: UploadChunkStore;
   /** completions in progress (a phone that times out on a big file retries «complete» while the first still runs) */
@@ -128,16 +143,28 @@ export class UploadService {
     this.chunks = new UploadChunkStore(join(ctx.config.tmpDir, 'uploads'));
   }
 
-  private boundVault(): string {
+  private bound(): UploadTarget {
     const b = this.ctx.binding.current();
-    if (!b || b.kind !== 'vault') throw new AppError('UNAUTHENTICATED', 'يلزم تسجيل الدخول للمتابعة.', 401);
-    return b.vaultId;
+    if (b?.kind === 'vault') return { kind: 'vault', db: b.vaultId };
+    if (b?.kind === 'space' && b.viewer) return { kind: 'space', db: spaceUploadTarget(b.spaceId), spaceId: b.spaceId };
+    throw new AppError('UNAUTHENTICATED', 'يلزم تسجيل الدخول للمتابعة.', 401);
   }
 
   private own(viewer: Viewer, id: string): UploadSessionRow {
     const row = this.ctx.system.uploads.get(viewer, id);
-    if (!row || row.target_db !== this.boundVault()) throw notFound();
+    if (!row || row.target_db !== this.bound().db) throw notFound();
     return row;
+  }
+
+  /**
+   * (AOS-2.3) The stored file of the viewer's own COMPLETED session into the bound database — what an official upload
+   * `{upload_id}` turns into a version. Another user's, another subject's or a vault session: 404; still open: 409.
+   */
+  completedFile(viewer: Viewer, id: string): { fileId: string; name: string | null; size: number } {
+    const row = this.own(viewer, id);
+    if (row.status === 'open') throw new AppError('CONFLICT', UPLOAD_LABELS_AR.not_completed, 409, { status: row.status, received: UploadSessionRepo.received(row).length, chunks: chunkCount(row.expected_size, row.chunk_size) });
+    if (row.status !== 'completed' || !row.file_id || !this.ctx.files.stat(row.file_id)) throw notFound();
+    return { fileId: row.file_id, name: row.original_name, size: row.expected_size };
   }
 
   private open(viewer: Viewer, id: string): UploadSessionRow {
@@ -152,16 +179,20 @@ export class UploadService {
   }
 
   start(viewer: Viewer, body: z.infer<typeof createUploadSchema>): UploadSessionView {
-    if (body.target !== 'vault') throw new AppError('FEATURE_DISABLED', UPLOAD_LABELS_AR.space_target, 409);
+    const target = this.bound();
+    if (target.kind === 'vault' && body.target !== 'vault') throw new AppError('BAD_REQUEST', UPLOAD_LABELS_AR.space_target, 400);
+    if (target.kind === 'space' && (body.target === 'vault' || body.target.space_id !== target.spaceId)) throw new AppError('BAD_REQUEST', UPLOAD_LABELS_AR.space_target_mismatch, 400);
     if (body.size > this.ctx.config.limits.maxUploadBytes) throw new AppError('PAYLOAD_TOO_LARGE', UPLOAD_LABELS_AR.too_large, 413);
-    const vaultId = this.boundVault();
-    // bytes this vault already holds: done at once, nothing is sent again
+    // bytes this database already holds: done at once, nothing is sent again
     const have = this.ctx.db.get<{ id: string }>('SELECT id FROM stored_file WHERE sha256 = ? AND size = ?', [body.sha256, body.size]);
-    const resumed = this.ctx.system.uploads.findOpen(viewer, vaultId, body.sha256, body.size);
+    const resumed = this.ctx.system.uploads.findOpen(viewer, target.db, body.sha256, body.size);
     if (resumed && !have) return uploadView(resumed);
-    if (!have) this.ctx.quota.checkStorageForUpload(viewer, vaultId, body.size);
+    if (!have) {
+      if (target.kind === 'vault') this.ctx.quota.checkStorageForUpload(viewer, target.db, body.size);
+      else this.ctx.quota.checkSpaceStorageForUpload(body.size, this.ctx.system.uploads.openBytesToInternal(target.db));
+    }
     const row = this.ctx.system.uploads.create(viewer, {
-      targetDb: vaultId,
+      targetDb: target.db,
       sha256: body.sha256,
       size: body.size,
       chunkSize: this.ctx.config.uploads.chunkBytes,
@@ -266,25 +297,34 @@ export class UploadService {
   }
 }
 
+/** The raw chunk body (application/octet-stream) and its claimed sha256 header of `PUT …/chunks/:n`. */
+export function chunkOf(req: FastifyRequest): { body: Buffer; claimed: string | undefined } {
+  const body = req.body;
+  if (!Buffer.isBuffer(body)) throw new AppError('UNSUPPORTED_FORMAT', 'أرسل الجزء بصيغة application/octet-stream.', 415);
+  const claimed = req.headers[UPLOAD_CHUNK_SHA_HEADER];
+  return { body, claimed: typeof claimed === 'string' ? claimed : undefined };
+}
+
+/** The bytes a chunk request may carry: one chunk plus room for nothing else. */
+export const chunkBodyLimit = (ctx: AppContext): number => ctx.config.uploads.chunkBytes + 64 * 1024;
+
 export function registerUploadRoutes(app: FastifyInstance, ctx: AppContext, service: UploadService): void {
-  const chunkLimit = ctx.config.uploads.chunkBytes + 64 * 1024;
+  const chunkLimit = chunkBodyLimit(ctx);
   app.addContentTypeParser('application/octet-stream', { parseAs: 'buffer', bodyLimit: chunkLimit }, (_req, body, done) => done(null, body));
 
-  app.post('/uploads', { config: { rateLimit: LIMITS.create } }, async (req): Promise<UploadSessionView> => service.start(viewerOf(req), parseBody(createUploadSchema, req)));
+  app.post('/uploads', { config: { rateLimit: UPLOAD_LIMITS.create } }, async (req): Promise<UploadSessionView> => service.start(viewerOf(req), parseBody(createUploadSchema, req)));
 
-  app.get('/uploads/:id', { config: { rateLimit: LIMITS.read } }, async (req): Promise<UploadSessionView> => service.get(viewerOf(req), parseParams(idParams, req).id));
+  app.get('/uploads/:id', { config: { rateLimit: UPLOAD_LIMITS.read } }, async (req): Promise<UploadSessionView> => service.get(viewerOf(req), parseParams(idParams, req).id));
 
-  app.put('/uploads/:id/chunks/:n', { bodyLimit: chunkLimit, config: { rateLimit: LIMITS.chunk } }, async (req): Promise<UploadSessionView> => {
+  app.put('/uploads/:id/chunks/:n', { bodyLimit: chunkLimit, config: { rateLimit: UPLOAD_LIMITS.chunk } }, async (req): Promise<UploadSessionView> => {
     const { id, n } = parseParams(chunkParams, req);
-    const body = req.body;
-    if (!Buffer.isBuffer(body)) throw new AppError('UNSUPPORTED_FORMAT', 'أرسل الجزء بصيغة application/octet-stream.', 415);
-    const claimed = req.headers[UPLOAD_CHUNK_SHA_HEADER];
-    return service.putChunk(viewerOf(req), id, n, body, typeof claimed === 'string' ? claimed : undefined);
+    const { body, claimed } = chunkOf(req);
+    return service.putChunk(viewerOf(req), id, n, body, claimed);
   });
 
-  app.post('/uploads/:id/complete', { config: { rateLimit: LIMITS.complete } }, async (req): Promise<UploadCompleteResponse> => service.complete(viewerOf(req), parseParams(idParams, req).id));
+  app.post('/uploads/:id/complete', { config: { rateLimit: UPLOAD_LIMITS.complete } }, async (req): Promise<UploadCompleteResponse> => service.complete(viewerOf(req), parseParams(idParams, req).id));
 
-  app.delete('/uploads/:id', { config: { rateLimit: LIMITS.read } }, async (req) => {
+  app.delete('/uploads/:id', { config: { rateLimit: UPLOAD_LIMITS.read } }, async (req) => {
     service.abandon(viewerOf(req), parseParams(idParams, req).id);
     return { ok: true };
   });

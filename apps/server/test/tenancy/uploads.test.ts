@@ -153,10 +153,10 @@ describe('chunked uploads', () => {
     expect((await a.app.inject({ method: 'GET', url: `/api/files/uploads/${other.upload_id}`, headers: h })).json().status).toBe('expired');
   });
 
-  it('a subject space as target is refused until spaces exist (R1-c)', async () => {
+  it('a subject space as target is refused on the vault route: uploads into a subject use its own route (AOS-2.3)', async () => {
     const { t: a, h } = await app();
     const res = await start(a, h, randomBytes(10), { target: { space_id: 'x' } });
-    expect(res.statusCode).toBe(409);
-    expect(res.json().error.code).toBe('FEATURE_DISABLED');
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toContain('/api/spaces/');
   });
 });

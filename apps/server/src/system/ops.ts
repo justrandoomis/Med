@@ -530,12 +530,21 @@ export class UploadSessionRepo {
     this.db.run(`UPDATE upload_session SET status = 'failed', updated_at = ? WHERE id = ? AND user_id = ? AND status = 'open'`, [this.clock.now(), id, viewer.userId]);
   }
 
-  /** Bytes the viewer's open sessions may still add (counted against the storage quota while they run). */
-  openBytes(viewer: Viewer): number {
-    return this.db.get<{ n: number }>(`SELECT COALESCE(SUM(expected_size), 0) AS n FROM upload_session WHERE user_id = ? AND status = 'open' AND expires_at > ?`, [
+  /**
+   * Bytes the viewer's open sessions into `targetDb` may still add (counted against that storage quota while they run).
+   * AOS-2.3: a session into a subject space never counts against the uploader's own vault, and the other way round.
+   */
+  openBytes(viewer: Viewer, targetDb: string): number {
+    return this.db.get<{ n: number }>(`SELECT COALESCE(SUM(expected_size), 0) AS n FROM upload_session WHERE user_id = ? AND target_db = ? AND status = 'open' AND expires_at > ?`, [
       viewer.userId,
+      targetDb,
       this.clock.now(),
     ])!.n;
+  }
+
+  /** Internal (space quota, AOS-2.3): bytes every member's open sessions into one database may still add. */
+  openBytesToInternal(targetDb: string): number {
+    return this.db.get<{ n: number }>(`SELECT COALESCE(SUM(expected_size), 0) AS n FROM upload_session WHERE target_db = ? AND status = 'open' AND expires_at > ?`, [targetDb, this.clock.now()])!.n;
   }
 
   /** Internal (GC mark pass): the content of sessions in flight is protected from the sweep. */

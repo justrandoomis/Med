@@ -6,6 +6,7 @@ import type {
   CreateReportRequest,
   CursorPage,
   DecideSubjectReviewResponse,
+  LecturesFromTemplateResponse,
   LecturePublicationsResponse,
   LayersResponse,
   LectureFromVaultRequest,
@@ -34,6 +35,7 @@ import type {
   WithdrawOfficialLectureRequest,
 } from '@medlevo/shared';
 import { api } from '../../lib/api';
+import { type ChunkedOptions, uploadLectureFile } from './chunkedUpload';
 
 const T = { timeoutMs: 20_000 };
 const S = (spaceId: string, rest: string) => `/spaces/${encodeURIComponent(spaceId)}${rest}`;
@@ -53,6 +55,10 @@ export const lecturesApi = {
    * subject (the file registered by sha256, no copy); a file the subject refuses leaves no draft (one server transaction)
    */
   fromVault: (spaceId: string, body: LectureFromVaultRequest) => api.post<LectureFromVaultResponse>(S(spaceId, '/lectures/from-vault'), body, { timeoutMs: 120_000 }),
+  /** (AOS-2.3 / 18.3) the lecture's file: one request when small, a chunked resumable upload into the space when large */
+  uploadFile: (spaceId: string, id: string, file: File, opts: ChunkedOptions & { chunkedFrom?: number } = {}) => uploadLectureFile(spaceId, id, file, { ...opts, oneShot: lecturesApi.upload }),
+  /** (AOS-2.3 / 18.3) one empty draft per topic of a study template (Subject Moderators; a title already there is kept) */
+  fromTemplate: (spaceId: string, templateKey: string) => api.post<LecturesFromTemplateResponse>(S(spaceId, '/lectures/from-template'), { template_key: templateKey }, T),
   approve: (spaceId: string, id: string) => api.post<OfficialLectureView>(S(spaceId, `/lectures/${encodeURIComponent(id)}/approve`), {}, T),
   previewPublish: (spaceId: string, id: string, versionId: string) =>
     api.post<PublishOfficialVersionPreview>(S(spaceId, `/lectures/${encodeURIComponent(id)}/versions/${encodeURIComponent(versionId)}/publish`), { preview: true }, T),

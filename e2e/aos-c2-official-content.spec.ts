@@ -10,10 +10,14 @@
 //   * AOS-19H.3: the student's private copy of the lecture is offered the link in her library, linked from the row menu,
 //     and what could not be placed waits in the official copy's review list («من محاضرتك الخاصة»);
 //   * AOS-19H.4: the Subject Moderator publishes her own private lecture from her library row menu («انشرها كمحاضرة
-//     رسمية…») as an official draft students do not see; a student's row menu has no such control.
+//     رسمية…») as an official draft students do not see; a student's row menu has no such control;
+//   * AOS-2.3 / 18.3 (wp/space-upload): the Contributor's chunked, resumable upload INTO the subject — announced, the
+//     connection «cut», announced again (the same session), sent, completed, taken by a draft with `{upload_id}`; the
+//     Subject Moderator's lecture skeleton from a study template (drafts students never see).
 // axe: no serious violation on the new screens in light, dark and e-ink.
 import type { BrowserContext, Page } from '@playwright/test';
-import type { InvitationsResponse, LibraryNodeView, OfficialLecturesResponse, UploadResponse } from '@medlevo/shared';
+import { createHash } from 'node:crypto';
+import type { InvitationsResponse, LecturesFromTemplateResponse, LibraryNodeView, OfficialLectureView, OfficialLecturesResponse, UploadCompleteResponse, UploadOfficialVersionResponse, UploadResponse, UploadSessionView } from '@medlevo/shared';
 import { pdfFrom } from '../apps/server/test/fixtures/versions/build';
 import { expect, screenshot, test, waitForWorkspace } from './support';
 import { axeInLooks } from './aos-p1-channels-helpers';
@@ -259,6 +263,33 @@ test('official content: contributor upload → approve → publish, bulk upload,
       await done.getByRole('button', { name: 'افتح «المحتوى الرسمي»' }).click();
       await expect(page.getByRole('heading', { level: 1, name: 'المحتوى الرسمي' })).toBeVisible();
       await expect(page.locator('li.lec-admin__row[data-status]').filter({ hasText: 'Histology lab' })).toBeVisible({ timeout: 30_000 });
+    });
+
+    await test.step('2.3 / 18.3: a resumable upload into the subject; a lecture skeleton from a template', async () => {
+      const data = pdf('Resumable', 3, SEED + 401);
+      const sha = (b: Buffer) => createHash('sha256').update(b).digest('hex');
+      const announce = { size: data.length, sha256: sha(data), mime: 'application/pdf', name: 'Lecture 8 resumable.pdf', target: { space_id: w.spaceId } };
+      // a student may not start one; the Contributor may
+      const refused = await zainab!.api.call('POST', w.S('/uploads'), announce);
+      expect(refused.status()).toBe(403);
+      const s = await ali!.api.post<UploadSessionView>(w.S('/uploads'), announce);
+      // «the connection cut» before any chunk: the same bytes announced again answer the SAME session
+      expect((await ali!.api.post<UploadSessionView>(w.S('/uploads'), announce)).upload_id).toBe(s.upload_id);
+      for (let n = 0; n < s.chunks; n++) {
+        const part = data.subarray(n * s.chunk_size, (n + 1) * s.chunk_size);
+        const r = await ali!.api.call('PUT', w.S(`/uploads/${s.upload_id}/chunks/${n}`), part, { 'content-type': 'application/octet-stream', 'x-content-sha256': sha(part) });
+        expect(r.status(), await r.text()).toBe(200);
+      }
+      const done = await ali!.api.post<UploadCompleteResponse>(w.S(`/uploads/${s.upload_id}/complete`), {});
+      expect(done.file.sha256).toBe(sha(data));
+      const draft = await ali!.api.post<OfficialLectureView>(w.S('/lectures'), { title: 'Lecture 8 — resumable (TEST FIXTURE)' });
+      const up = await ali!.api.post<UploadOfficialVersionResponse>(w.S(`/lectures/${draft.id}/upload`), { upload_id: s.upload_id });
+      expect(up.version_id).toBeTruthy();
+      // the Subject Moderator's skeleton from a template: drafts only, students never see them
+      const made = await sara!.api.post<LecturesFromTemplateResponse>(w.S('/lectures/from-template'), { template_key: 'radiology' });
+      expect(made.created.length).toBeGreaterThan(0);
+      const forStudent = await zainab!.api.get<OfficialLecturesResponse>(w.S('/lectures?limit=100'));
+      expect(forStudent.items.some((l) => l.id === draft.id || made.created.some((c) => c.id === l.id))).toBe(false);
     });
   } finally {
     await w.dispose();

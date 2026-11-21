@@ -133,7 +133,11 @@ export const patchOfficialLectureSchema = z
   .refine((p) => Object.keys(p).length > 0, 'لا يوجد ما يُغيَّر.');
 export type PatchOfficialLectureRequest = z.infer<typeof patchOfficialLectureSchema>;
 
-/** POST /api/spaces/:s/lectures/:id/upload — after a chunked upload into the space (`/api/files/uploads`, target space). */
+/**
+ * POST /api/spaces/:s/lectures/:id/upload — after a chunked upload into the space (AOS-2.3 / 18.3:
+ * `/api/spaces/:s/uploads…`, target `{space_id: s}`, completed): the session's file becomes the lecture's new version.
+ * Only the uploader's own completed session into THIS space is found; anything else answers 404.
+ */
 export const uploadOfficialVersionSchema = z.object({ upload_id: entityIdSchema }).strict();
 export interface UploadOfficialVersionResponse {
   version_id: string;
@@ -245,6 +249,20 @@ export interface LectureFromVaultResponse {
   lecture: OfficialLectureView;
   version_id: string;
   job_id: string;
+}
+
+/**
+ * POST /api/spaces/:s/lectures/from-template — (AOS-2.3 / 18.3) a Subject Moderator (or an Admin above the subject)
+ * creates the lecture skeleton of a study template: one empty draft per topic (`templateLectureTitles`), in order. A
+ * title the subject already has (any status) is skipped, so sending it twice creates nothing new. Drafts stay unseen by
+ * students until a file is uploaded and published.
+ */
+export const lecturesFromTemplateSchema = z.object({ template_key: z.string().trim().min(1).max(32).regex(/^[a-z][a-z0-9_-]*$/) }).strict();
+export type LecturesFromTemplateRequest = z.infer<typeof lecturesFromTemplateSchema>;
+export interface LecturesFromTemplateResponse {
+  created: OfficialLectureView[];
+  /** titles already in the subject (not created again) */
+  skipped: string[];
 }
 
 /** GET /api/spaces/:s/lectures/:id/offline-package — today's offline manifest for the official head version. */

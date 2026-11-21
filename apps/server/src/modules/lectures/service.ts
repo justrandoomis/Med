@@ -10,8 +10,10 @@
 import {
   emptyChangeCounts,
   groupCount,
+  templateLectureTitles,
   type CreateOfficialLectureRequest,
   type CursorPage,
+  type LecturesFromTemplateResponse,
   type OfficialLectureDetail,
   type OfficialLectureView,
   type OfficialPageMapDecisionsRequest,
@@ -36,6 +38,7 @@ import { computeAndStorePageMap, decidePage, pageMapIsCurrent, readPageMap } fro
 import { enqueueOfficialFanout } from '../forks/fanout';
 import { retokenizeVersions } from '../search/scopeTokens';
 import { forksSystem } from '../forks/system';
+import { findTemplate } from '../library/templates';
 import { createSpaceSource, ingestVersion } from './ingest';
 import {
   appendSubjectEvent,
@@ -61,6 +64,8 @@ const AR = {
   noFile: 'لا يوجد ملف لهذه المسودة بعد؛ ارفع ملف المحاضرة أولًا.',
   idConflict: 'هذا المعرّف مستخدم لمحاضرة أخرى بمحتوى مختلف.',
   takedownDone: 'نُفّذ سحب الحقوق على هذه المحاضرة من قبل؛ لا يمكن التراجع عنه.',
+  templateModerator: 'إنشاء هيكل المحاضرات من قالب لمشرف المادة فقط.',
+  unknownTemplate: 'قالب الدراسة غير معروف.',
 };
 
 const READY_STATES = new Set(['ready', 'partial', 'needs_review']);
@@ -144,8 +149,7 @@ export class LecturesService {
 
   create(scope: SpaceScope, body: CreateOfficialLectureRequest): OfficialLectureView {
     const { ctx } = this;
-    const fresh: OfficialLectureResource = { type: 'official_lecture', spaceId: scope.spaceId, id: '', status: 'draft', subjectNodeId: scope.subjectNodeId, uploadedBy: scope.viewer.userId };
-    ctx.authz.assert(scope.viewer, 'create', fresh);
+    this.assertMayUploadHere(scope);
     const hash = bodyHash({ title: body.title, lecture_no: body.lecture_no ?? null, held_on: body.held_on ?? null, by: scope.viewer.userId });
     if (body.id) {
       const existing = getLecture(ctx, body.id);
@@ -191,6 +195,29 @@ export class LecturesService {
     });
     const dup = this.visibleDuplicate(scope, getLecture(ctx, id)!, res.contentHash, res.versionId);
     return { lecture_id: id, ...uploadResponse(res.versionId, res.jobId, dup) };
+  }
+
+  /**
+   * (AOS-2.3 / 18.3) The lecture skeleton of a study template — the SAME templates as the personal library
+   * (library/templates.ts, `templateLectureTitles`): one empty draft per topic, in the template's order. A title the
+   * subject already has is skipped (sending it again creates nothing). Official moderators only.
+   */
+  fromTemplate(scope: SpaceScope, templateKey: string): LecturesFromTemplateResponse {
+    if (!scope.powers.officialModerator) throw new AppError('FORBIDDEN', AR.templateModerator, 403);
+    const tpl = findTemplate(templateKey);
+    if (!tpl) throw new AppError('BAD_REQUEST', AR.unknownTemplate, 400, { field: 'template_key' });
+    const have = new Set(this.ctx.db.all<{ title: string }>('SELECT title FROM official_lecture').map((r) => r.title));
+    const created: OfficialLectureView[] = [];
+    const skipped: string[] = [];
+    for (const title of templateLectureTitles(tpl)) {
+      if (have.has(title)) {
+        skipped.push(title);
+        continue;
+      }
+      created.push(this.create(scope, { title }));
+      have.add(title);
+    }
+    return { created, skipped };
   }
 
   patch(scope: SpaceScope, id: string, body: PatchOfficialLectureRequest): OfficialLectureView {
@@ -276,6 +303,16 @@ export class LecturesService {
   }
 
   /** The upload check alone (the route asks it before reading the multipart body; `upload` asks it again). */
+  /**
+   * May the viewer add official files to this subject at all — a NEW lecture's `create` (contributors and official
+   * moderators; a plain member or an Assistant gets 403). Asked before a draft is made and on every step of a chunked
+   * upload into the space (AOS-2.3 / 18.3), so a member who may not upload never makes the server hold a byte.
+   */
+  assertMayUploadHere(scope: SpaceScope): void {
+    const fresh: OfficialLectureResource = { type: 'official_lecture', spaceId: scope.spaceId, id: '', status: 'draft', subjectNodeId: scope.subjectNodeId, uploadedBy: scope.viewer.userId };
+    this.ctx.authz.assert(scope.viewer, 'create', fresh);
+  }
+
   assertCanUpload(scope: SpaceScope, id: string): void {
     this.forAction(scope, id, 'create');
   }
