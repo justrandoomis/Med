@@ -380,3 +380,17 @@ count with Arabic number agreement: `uniqueQuestionsAr(n)` («سؤال واحد 
 «12 سؤالًا فريدًا») and `partOfUniqueQuestionsAr(k, n)` («5 من 7 أسئلة فريدة» — the noun follows the denominator), in
 the sample warnings, the relevance reasons and (through `exams/simulation.ts`) the simulation plan. The numbers and the
 rule are unchanged. Test: `srv:learning/golden.test.ts` «(Round 7 final) …» (failed on the old wording).
+
+## Image flashcards from lecture figures (2026-11-21)
+
+`learning/figureCards.ts` turns a described lecture picture (figure descriptions, `docs/modules/processing.md`
+«Automatic figure descriptions») into an image card — kind `image_occlusion` reused, front = the ORIGINAL picture
+(optionally the label regions inside the figure covered, revealed on the back), back = caption / type / diagnosis with
+its basis («اقتراح — غير مؤكد» stays visible) / findings / labels, marked «(وصف آلي — راجعه)» while the description is
+not owner-reviewed (origin `generated`; `owner` once the owner confirmed / corrected it). Routes: `POST
+/api/learning/cards/from-figure`, `POST /cards/from-figures` (one DRAFT per described picture: suspended,
+`origin_ref.draft = true`), `GET /cards/figure-drafts?version_id=`, `POST /cards/:id/draft {accept | discard}`. A draft
+enters spaced repetition only when accepted (unsuspended); no review event is written or changed (FSRS untouched).
+The web `OcclusionView` now handles a whole-picture card (no asked mask): every mask covered on the front, all revealed
+on the back. Tests: `srv:processing/figure-descriptions.test.ts` «image flashcards …», `web:workspace/panels/
+FigureDescriptionPanel.test.tsx`.

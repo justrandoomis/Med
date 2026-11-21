@@ -190,3 +190,13 @@
 .wk-rail-tablist--dense .ml-tab {
   padding-inline: var(--ml-space-2);
 }
+/* automatic figure descriptions under a figure («وصف آلي — راجعه») */
+.wk-figdesc__caption {
+  margin: 0;
+  font-size: var(--ml-text-sm);
+}
+.wk-figdesc__run {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-1);
+}

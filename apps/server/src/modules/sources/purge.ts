@@ -819,7 +819,8 @@ export function executePurge(
       `DELETE FROM owner_content_fts WHERE (entity_type = 'note' AND entity_id IN ${IN('note')})
          OR (entity_type = 'flashcard' AND entity_id IN ${IN('flashcard')})
          OR (entity_type = 'transcript_segment' AND entity_id IN ${IN('segment')})
-         OR (entity_type = 'annotation' AND entity_id IN ${IN('annotation')})`,
+         OR (entity_type = 'annotation' AND entity_id IN ${IN('annotation')})
+         OR (entity_type = 'figure_description' AND entity_id IN (SELECT id FROM figure_description WHERE version_id IN ${IN('version')}))`,
     );
     db.run(
       `DELETE FROM review_queue_item WHERE source_id IN ${IN('source')}

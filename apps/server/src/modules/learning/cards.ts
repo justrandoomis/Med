@@ -229,7 +229,7 @@ export function recordCardDependencies(ctx: AppContext, row: FlashcardRow, regio
   if (versions.size || regions.length) recordDependencies(ctx, 'flashcard', row.id, [...versions], regions);
 }
 
-function touchFn(ctx: AppContext) {
+export function touchFn(ctx: AppContext) {
   return (t: string, id: string) => void ctx.sync.touch(t, id);
 }
 

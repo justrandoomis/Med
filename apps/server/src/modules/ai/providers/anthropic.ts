@@ -21,6 +21,8 @@ import type { AiTask } from '@medlevo/shared';
 import { ProviderError, type AiProvider, type ProviderErrorKind, type ProviderRequest, type ProviderResponse, type ProviderUsage } from '../types';
 
 export const ANTHROPIC_DEFAULT_MODEL = 'claude-opus-5-5';
+/** routine image descriptions after processing (many pictures per lecture): the cheaper vision-capable model */
+export const ANTHROPIC_ROUTINE_VISION_MODEL = 'claude-haiku-5-5';
 
 /** Model role per task. Verification is a SEPARATE call (own system prompt, no generator context). */
 export type ModelRole = 'generation' | 'verification' | 'vision';
@@ -40,6 +42,8 @@ export const TASK_ROLE: Record<AiTask, ModelRole | null> = {
   vision_figure: 'vision',
   // (track F4) reading a cropped black-on-white picture of the owner's pen strokes
   ink_recognize: 'vision',
+  // automatic figure descriptions: the vision role, served by the routine vision model (modelFor)
+  describe_figure: 'vision',
   // the Messages API offers neither embeddings nor audio transcription → honestly unsupported
   embed: null,
   transcribe: null,
@@ -62,6 +66,8 @@ export const TASK_EFFORT: Record<AiTask, Effort> = {
   vision_figure: 'high',
   // transcription of handwriting (no medical generation); medium keeps cost low while reading mixed Arabic/English
   ink_recognize: 'medium',
+  // a structured description of one picture (no medical generation beyond what the slide states): low keeps it cheap
+  describe_figure: 'low',
   classify: 'low',
   embed: 'low',
   transcribe: 'low',
@@ -178,7 +184,7 @@ export function toStructuredOutputSchema(schema: Record<string, unknown>): Recor
 
 export interface AnthropicProviderOptions {
   apiKey: string;
-  models?: { generation?: string | null; verification?: string | null; vision?: string | null };
+  models?: { generation?: string | null; verification?: string | null; vision?: string | null; visionRoutine?: string | null };
   /** SDK retries for 408/409/429/5xx/connection errors (bounded; default 2) */
   maxRetries?: number;
   /** per-request ceiling in ms (the orchestrator's signal usually aborts earlier) */
@@ -197,6 +203,7 @@ export class AnthropicProvider implements AiProvider {
   readonly streamsText = true;
   readonly #client: Anthropic;
   readonly #models: Record<ModelRole, string>;
+  readonly #routineVision: string;
   readonly #maxRetries: number;
   readonly #timeoutMs: number;
 
@@ -218,11 +225,12 @@ export class AnthropicProvider implements AiProvider {
       verification: opts.models?.verification?.trim() || ANTHROPIC_DEFAULT_MODEL,
       vision: opts.models?.vision?.trim() || ANTHROPIC_DEFAULT_MODEL,
     };
+    this.#routineVision = opts.models?.visionRoutine?.trim() || ANTHROPIC_ROUTINE_VISION_MODEL;
   }
 
   /** never serialize the client (it holds the key) */
   toJSON(): Record<string, unknown> {
-    return { name: this.name, models: this.#models };
+    return { name: this.name, models: { ...this.#models, vision_routine: this.#routineVision } };
   }
 
   supports(task: AiTask): boolean {
@@ -230,6 +238,7 @@ export class AnthropicProvider implements AiProvider {
   }
 
   modelFor(task: AiTask): string {
+    if (task === 'describe_figure') return this.#routineVision;
     const role = TASK_ROLE[task] ?? 'generation';
     return this.#models[role];
   }

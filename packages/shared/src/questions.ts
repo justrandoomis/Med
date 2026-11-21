@@ -136,6 +136,18 @@ export interface QuestionView {
   attempts_summary: { total: number; correct: number; last_at: number | null };
   created_at: number;
   updated_at: number;
+  /** an image question generated from a lecture figure: the ORIGINAL picture shown with the stem */
+  figure?: QuestionFigureView | null;
+}
+
+/** The lecture picture an image question asks about (the original image; its description stays derived). */
+export interface QuestionFigureView {
+  description_id: string;
+  image_url: string;
+  source_id: string;
+  page_id: string | null;
+  region_id: string | null;
+  alt_ar: string;
 }
 
 export interface LectureLinkView {

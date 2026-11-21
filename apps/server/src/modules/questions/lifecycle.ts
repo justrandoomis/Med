@@ -78,7 +78,7 @@ export function computeValidation(
     qtype: v.qtype,
     rawText: occ?.raw_text ?? null,
     structural,
-    figuresAttached: parse?.figure_region_ids.length ?? 0,
+    figuresAttached: (parse?.figure_region_ids.length ?? 0) + figureQuestionImages(ctx, v.question_id),
     uncertainRegions: ownerMade || ownerReviewed ? [] : (parse?.uncertain ?? []),
     answerStatus: resolution.status,
     conflictAr: resolution.conflictAr,
@@ -86,6 +86,11 @@ export function computeValidation(
     createdBy: v.created_by,
     ownerReviewedFields: fromJson<string[]>(v.owner_reviewed_fields_json, []) ?? [],
   });
+}
+
+/** (figure descriptions) an image question generated from a lecture picture: that picture is attached (0 / 1). */
+function figureQuestionImages(ctx: AppContext, questionId: string): number {
+  return ctx.db.get<{ x: number }>('SELECT 1 AS x FROM figure_question WHERE question_id = ?', [questionId]) ? 1 : 0;
 }
 
 export interface RefreshResult {

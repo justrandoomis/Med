@@ -13,6 +13,7 @@ import { useSourceNavigation } from '../nav/SourceNavigation';
 import { PAGE_PROCESSING_AR, REGION_KIND_AR, regionStatus, TEXT_STATUS_AR, versionLabel } from '../model/labels';
 import { fullPageLabel } from '../model/pages';
 import { FigureReadingPanel } from './FigureReadingPanel';
+import { FigureDescribeBar, FigureDescriptionCard, figuresApi, useFigureDescriptions } from './FigureDescriptionPanel';
 
 const FIGURE_KINDS = new Set(['figure', 'diagram']);
 
@@ -46,6 +47,15 @@ export function SourcesTab({ doc, page, onOpenSplit, splitReason }: { doc: Sourc
   }, [pageId, attempt]);
 
   const { detail, version } = doc;
+  // automatic figure descriptions of this version (derived «وصف آلي — راجعه»; the pictures never change)
+  const figs = useFigureDescriptions(version.id, online);
+  const descriptionFor = (regionId: string) => figs.data?.items.find((d) => d.region_id === regionId) ?? null;
+  const pageDescription = page ? (figs.data?.items.find((d) => d.target === 'page' && d.page_id === page.id) ?? null) : null;
+  const redescribe = async (id: string) => {
+    await figuresApi.describe(version.id, { description_ids: [id], force: true });
+    await figs.reload();
+  };
+  const canDescribe = figs.data?.can_describe.available ?? false;
   const text = page ? TEXT_STATUS_AR[page.text_status] : null;
   const proc = page ? (PAGE_PROCESSING_AR[page.processing_status] ?? PAGE_PROCESSING_AR.pending!) : null;
 
@@ -101,6 +111,10 @@ export function SourcesTab({ doc, page, onOpenSplit, splitReason }: { doc: Sourc
         </Link>
       </div>
 
+      <h3 className="wk-rail-h">صور المحاضرة</h3>
+      <FigureDescribeBar versionId={version.id} data={figs.data} error={figs.error} reload={figs.reload} online={online} />
+      {pageDescription && <FigureDescriptionCard description={pageDescription} sourceId={detail.id} canDescribe={canDescribe} onChanged={figs.replace} onRedescribe={redescribe} />}
+
       <h3 className="wk-rail-h">مناطق هذه الصفحة</h3>
       {!page ? null : error ? (
         <ErrorState inline message={error} onRetry={() => setAttempt((n) => n + 1)} />
@@ -133,6 +147,9 @@ export function SourcesTab({ doc, page, onOpenSplit, splitReason }: { doc: Sourc
                 >
                   إظهار في الصفحة
                 </Button>
+                {r.kind === 'figure' && descriptionFor(r.id) && (
+                  <FigureDescriptionCard description={descriptionFor(r.id)!} sourceId={detail.id} canDescribe={canDescribe} onChanged={figs.replace} onRedescribe={redescribe} />
+                )}
                 {FIGURE_KINDS.has(r.kind) && (
                   <>
                     <Button size="sm" variant="plain" icon={<ScanSearch size={16} />} aria-expanded={reading === r.id} onClick={() => setReading((x) => (x === r.id ? null : r.id))}>

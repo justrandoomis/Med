@@ -24,6 +24,7 @@
 | generation | explain, study_book, chat, summarize, compare, generate_questions, grade_written, case_sim, classify | `claude-opus-5-5` | `MEDLEVO_MODEL_GENERATION` |
 | verification | verify_support, validate_question | `claude-opus-5-5` | `MEDLEVO_MODEL_VERIFICATION` |
 | vision | vision_figure | `claude-opus-5-5` | `MEDLEVO_MODEL_VISION` |
+| vision (routine) | describe_figure (automatic figure descriptions after processing, many pictures per lecture; effort low) | `claude-haiku-5-5` | `MEDLEVO_MODEL_VISION_ROUTINE` |
 | — | embed, transcribe | unsupported (the Messages API has neither) → `supports()` false, capability says so | — |
 
 Reasons: Claude Opus 5.5 is the current default model in the claude-api skill (1M context, 128K output, vision,

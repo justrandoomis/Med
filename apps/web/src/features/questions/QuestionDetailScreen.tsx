@@ -97,6 +97,12 @@ export function QuestionDetailScreen() {
       </header>
 
       <article className="ml-paper qv-sheet" aria-label="نص السؤال">
+        {q.figure && (
+          <figure className="qv-figure">
+            <img src={q.figure.image_url} alt={q.figure.alt_ar} className="qv-figure__img" />
+            <figcaption className="qv-muted">صورة السؤال من المحاضرة (الأصلية). وصفها الآلي مشتق ولا يُعرض هنا.</figcaption>
+          </figure>
+        )}
         <Stem value={v.stem} className="qv-sheet__stem" />
         {v.options.length > 0 && (
           <ol className="qv-options" aria-label="الخيارات كما طُبعت">

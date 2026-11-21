@@ -121,6 +121,9 @@ export function questionMediaFiles(ctx: AppContext, questionId: string): { fileI
     const ids = [...new Set(files.map((f) => f.file_id))];
     return { fileIds: ids, figuresWithoutFile: ids.length === 0 ? regions.length : 0 };
   }
+  // an image question generated from a lecture picture (figure descriptions): that original picture
+  const fig = ctx.db.get<{ file_id: string }>('SELECT d.file_id FROM figure_question q JOIN figure_description d ON d.id = q.description_id WHERE q.question_id = ?', [questionId]);
+  if (fig) return { fileIds: [fig.file_id], figuresWithoutFile: 0 };
   return { fileIds: [], figuresWithoutFile: 0 };
 }
 

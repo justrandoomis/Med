@@ -39,6 +39,20 @@ export class AiConsentGate {
     return AI_CONSENT_AR.required(aiProviderLabelAr(provider.name));
   }
 
+  /**
+   * Whether the content owner bound right now has an ACTIVE ai_processing consent naming `provider` (current consent
+   * text). Unlike blockedReason, this asks for a real consent record even for a provider that keeps data inside the
+   * deployment: background work the owner did not ask for (automatic figure descriptions) runs only on a standing
+   * consent (modules/processing/figures.ts).
+   */
+  granted(provider: AiProvider | null): boolean {
+    if (!provider) return false;
+    const userId = this.contentOwner();
+    if (!userId) return false;
+    const consent = this.system.consents.aiProcessingOfUserInternal(userId);
+    return !!consent && consent.providers.includes(provider.name) && consent.textVersion === AI_CONSENT_TEXT_VERSION;
+  }
+
   /** Throws CONSENT_REQUIRED (409, details.kind = 'ai_processing') when the call may not be made. */
   assert(provider: AiProvider): void {
     // C1 review: outside every user's and every subject's database (the root context of background work, or no context

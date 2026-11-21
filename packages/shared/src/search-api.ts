@@ -16,7 +16,7 @@ export const SEARCH_MODE_LABELS_AR: Record<SearchMode, string> = {
   semantic: 'دلالي',
 };
 
-export const SEARCH_RESULT_TYPES = ['chunks', 'questions', 'notes', 'generated', 'transcripts', 'handwriting'] as const;
+export const SEARCH_RESULT_TYPES = ['chunks', 'questions', 'notes', 'generated', 'transcripts', 'handwriting', 'figures'] as const;
 export type SearchResultType = (typeof SEARCH_RESULT_TYPES)[number];
 
 export const SEARCH_RESULT_TYPE_LABELS_AR: Record<SearchResultType, string> = {
@@ -26,6 +26,7 @@ export const SEARCH_RESULT_TYPE_LABELS_AR: Record<SearchResultType, string> = {
   generated: 'محتوى مولَّد',
   transcripts: 'التفريغ الصوتي',
   handwriting: 'خط يدي المقروء',
+  figures: 'صور المحاضرات (وصف آلي)',
 };
 
 /**

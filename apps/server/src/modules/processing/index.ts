@@ -10,6 +10,7 @@ import { OCR_ENGINE_LABEL, OcrEngine, ocrModelsAvailable } from './ocr';
 import { createProcessHandler, MAX_ATTEMPTS, PIPELINE_VERSION, type ProcessingHooks } from './pipeline';
 import { detectTools, type ToolPaths } from './tools';
 import { registerVisionJob, registerVisionRoutes } from './vision';
+import { registerFigureDescriptionJob, registerFigureDescriptionRoutes } from './figures';
 
 export { PIPELINE_VERSION } from './pipeline';
 export { INDEX_VERSION } from './chunks';
@@ -95,6 +96,9 @@ export function createProcessingModule(opts: ProcessingModuleOptions = {}): Modu
     // (track F3) figure structure readings — derived, uncertain until the owner reviews them (AC-08)
     registerVisionJob(ctx);
     registerVisionRoutes(app, ctx);
+    // automatic figure descriptions (derived «وصف آلي — راجعه»; only with a standing ai_processing consent)
+    registerFigureDescriptionJob(ctx);
+    registerFigureDescriptionRoutes(app, ctx);
 
     app.addHook('onClose', async () => {
       await ocr?.close();

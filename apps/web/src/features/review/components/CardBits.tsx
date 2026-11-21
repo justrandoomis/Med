@@ -170,7 +170,8 @@ export function OcclusionView({ url, masks, activeId, side }: OcclusionViewProps
         <img className="lw-occl__img" src={url} alt="صورة البطاقة؛ المنطقة المطلوب تسميتها محددة بإطار مميز." draggable={false} />
         {masks.map((m) => {
           const active = m.id === activeId;
-          const revealed = active && side === 'back';
+          // a whole-picture card (from a lecture figure) asks no single mask: the back reveals every covered label
+          const revealed = side === 'back' && (active || index < 0);
           return (
             <span
               key={m.id}
@@ -188,7 +189,11 @@ export function OcclusionView({ url, masks, activeId, side }: OcclusionViewProps
           ? side === 'front'
             ? `المطلوب: المنطقة ${index + 1} من ${masks.length} (المحاطة بإطار وعلامة «؟»).`
             : `كُشفت المنطقة ${index + 1} من ${masks.length}؛ الجواب أدناه.`
-          : 'لم تُحدَّد المنطقة المطلوبة في هذه البطاقة.'}
+          : masks.length === 0
+            ? 'صورة من المحاضرة كما هي (الصورة الأصلية).'
+            : side === 'front'
+              ? `المطلوب: سمِّ الأجزاء المخفية (${masks.length}).`
+              : 'كُشفت كل الأجزاء المخفية؛ الجواب أدناه.'}
       </figcaption>
     </figure>
   );
