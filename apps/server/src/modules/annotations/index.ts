@@ -86,9 +86,11 @@ const ID = z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/);
 const byTargetsQuery = z.object({
   keys: z.string().min(1).max(MAX_TARGET_KEYS * 80),
   include_deleted: z.enum(['0', '1', 'true', 'false']).optional(),
+  /** (AOS-21.12) only this study copy's items (+ the document's own); absent = every item, as before */
+  copy_id: ID.optional(),
 });
 const sourceParams = z.object({ sourceId: ID });
-const versionQuery = z.object({ version_id: ID.optional() });
+const versionQuery = z.object({ version_id: ID.optional(), copy_id: ID.optional() });
 const notesQuery = z.object({
   source_id: ID.optional(),
   node_id: ID.optional(),
@@ -155,13 +157,13 @@ export default async function register(app: FastifyInstance, { ctx }: ModuleOpti
     if (keys.length > MAX_TARGET_KEYS) {
       throw new AppError('VALIDATION_FAILED', `عدد الصفحات المطلوبة في طلب واحد أكبر من الحد (${MAX_TARGET_KEYS}).`, 400);
     }
-    return { annotations: svc.byTargets(keys, q.include_deleted === '1' || q.include_deleted === 'true', parseAcceptInk(req.headers[ACCEPT_INK_HEADER])) };
+    return { annotations: svc.byTargets(keys, q.include_deleted === '1' || q.include_deleted === 'true', parseAcceptInk(req.headers[ACCEPT_INK_HEADER]), q.copy_id) };
   });
 
   app.get('/source/:sourceId', async (req): Promise<SourceAnnotationsResponse> => {
     const { sourceId } = parseParams(sourceParams, req);
     const q = parseQuery(versionQuery, req);
-    return svc.forSource(sourceId, q.version_id, parseAcceptInk(req.headers[ACCEPT_INK_HEADER]));
+    return svc.forSource(sourceId, q.version_id, parseAcceptInk(req.headers[ACCEPT_INK_HEADER]), q.copy_id);
   });
 
   // ── (P1-T2) authorship layers (ARCHITECTURE_DELTA §7.5) ──

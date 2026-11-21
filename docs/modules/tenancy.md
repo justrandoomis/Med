@@ -638,7 +638,9 @@ the study-book call sites of `cacheKeys`, `modules/channels/index.ts` (one route
 * AOS-21.27 «a deck shared from a publication is copied on use» — decks are not publishable in Phase 1 (PRD row says
   Phase 2); the Phase-1 part (cards per user in her own vault) stands as before.
 * AOS-21.12 «document / fork column» for strokes that live in a SPACE — there are no space strokes before the Phase-2
-  group layers; in a vault the document is the anchor's source and the fork its `document_copy`.
+  group layers; in a vault the document is the anchor's source and the fork its `document_copy`. **Since stored**
+  (2026-11-21, `0863_stroke_copy_identity`): `annotation` / `note` `.document_key` + `.document_copy_id`, kept by
+  triggers, filtered by `copy_id` on the annotation reads; test `test/annotations/space-stroke-identity.wp.test.ts`.
 * A real Cloudflare R2 bucket, a real AI provider, a device: Not run (no account / key / device here).
 
 ### Phase 1 completion — track C1: adversarial review (2026-10-22, reviewer)
