@@ -268,6 +268,12 @@ const FIXTURES: Record<string, { valid: unknown[]; invalid: unknown[] }> = {
   lecturePublicationsQuerySchema: { valid: [{}, { limit: 10 }], invalid: [{ sort: 'top_rated' }] },
   publicationItemsQuerySchema: { valid: [{}, { page_id: ID }], invalid: [{ page_id: 'a b' }] },
   publicationDiffQuerySchema: { valid: [{ from: 1, to: 2 }, { from: '1', to: '3' }], invalid: [{ from: 2, to: 2 }, { from: 0, to: 1 }] },
+  // AOS-2.3 / 18.3 — a lecture skeleton from a study template
+  lecturesFromTemplateSchema: { valid: [{ template_key: 'radiology' }, { template_key: 'clinical_2' }], invalid: [{}, { template_key: '' }, { template_key: 'Radiology' }, { template_key: 'x', extra: 1 }] },
+  // AOS-21.27 — «ادرس هذه البطاقات»
+  publicationDeckQuerySchema: { valid: [{ space_id: ID }], invalid: [{}, { space_id: 'not an id' }] },
+  studyDeckSchema: { valid: [{ space_id: ID, publication_id: ID2 }], invalid: [{ space_id: ID }, { space_id: ID, publication_id: ID2, extra: 1 }] },
+  applyDeckUpdateSchema: { valid: [{ version_no: 2 }, { version_no: 3, skip: true }], invalid: [{}, { version_no: 0 }, { version_no: 2, skip: 'yes' }] },
 };
 
 function schemasOf(mod: Record<string, unknown>): Array<[string, z.ZodType]> {
