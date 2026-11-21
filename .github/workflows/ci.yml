@@ -185,5 +185,5 @@ jobs:
           docker stop -t 30 medlevo-ci && docker rm medlevo-ci
           start
           curl -fsS http://127.0.0.1:10000/api/auth/status | grep -q '"setup_required":false'
-          docker exec medlevo-ci sh -c 'ls -ld /var/data/medlevo && stat -c %U /var/data/medlevo/medlevo.sqlite'
+          docker exec medlevo-ci sh -c 'ls -ld /var/data/medlevo && stat -c %U /var/data/medlevo/system.sqlite'
           docker stop -t 30 medlevo-ci
