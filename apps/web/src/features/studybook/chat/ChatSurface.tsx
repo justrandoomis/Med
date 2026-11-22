@@ -10,22 +10,24 @@
 //   chat → reader  an answer about other pages moves the reader to them; scrolling the thread to a page's section,
 //                  a «صفحة N» divider or a «ص N» chip moves the reader there
 //   no loop        each side marks the move it makes (PageSyncGuard) and the echo of that move is not followed back
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { History, MessageSquarePlus, Paperclip } from 'lucide-react';
 import {
   newId,
+  type ChatAttachment,
   type ChatEffort,
   type ChatKind,
   type ChatMessageContext,
   type ChatMessageView,
   type ChatModelId,
   type ChatPrefsResponse,
+  type ChatSkillId,
   type ChatThreadResponse,
   type ChatThreadView,
   type SelectionAnchor,
   type SourceScope,
 } from '@medlevo/shared';
-import { Button, ErrorState, IconButton, Switch, useToast } from '../../../design';
+import { Button, ErrorState, IconButton, LoadingState, Switch, cx, useToast } from '../../../design';
 import { errorMessage } from '../../../lib/api';
 import { aiAllowanceStore } from '../../../lib/aiAllowance';
 import type { FeatureGateState } from '../../../lib/capabilities';
@@ -40,6 +42,9 @@ import { ChatHistory } from './ChatHistory';
 import { ChatTurns, type PendingTurn } from './ChatTurns';
 import { Composer, type ComposerHandle, type ContextChip } from './Composer';
 import { ModelEffortMenu, type ModelEffortValue } from './ModelEffortMenu';
+import { ChatCard, type CardContext } from './cards';
+import { SKILL_ICONS, SkillBar, type SkillItem, type SkillRunInput } from './SkillBar';
+import { matchSkills, requestText, skillDef, slashQuery } from './skills';
 import {
   AUTO_EXPLAIN_DELAY_MS,
   AUTO_EXPLAIN_PROMPT,
@@ -60,6 +65,39 @@ export interface ChatPage {
   id: string;
   version_id: string;
 }
+
+/** (smart chat) what a card skill returns: the owner's request wording and the card to append to the conversation */
+export interface SkillCardResult {
+  text: string;
+  attachment: ChatAttachment;
+  artifact_id?: string | null;
+  context?: ChatMessageContext | null;
+}
+
+/**
+ * (smart chat, wp/smart-rail) the skills of this place: chips above the composer and the «/» menu. Chat skills
+ * («اشرح الصفحة», «لخّص») are questions to this chat; the others run their module's capability (`run`) and come back
+ * as a card stored in the conversation (chatApi.appendCard).
+ */
+export interface ChatSkillsConfig {
+  items: SkillItem[];
+  run: (id: ChatSkillId, input: SkillRunInput, o: { signal: AbortSignal; onStage: (stage: string) => void }) => Promise<SkillCardResult>;
+  card: CardContext;
+  /** the compare form's first term (e.g. the selection) */
+  compareSeed?: string;
+}
+
+const SKILL_STAGE_AR: Partial<Record<ChatSkillId, string>> = {
+  mcq: 'تُكتب الأسئلة ثم يُتحقق من مفتاح كل سؤال ومن تفسير كل خيار…',
+  figure_question: 'يُكتب سؤال الصورة ثم يُتحقق منه…',
+  case: 'تُطلب الحالة من صفحات المحاضرة…',
+  compare: 'يُبحث عن كل طرف في النطاق ثم يُتحقق من كل خلية…',
+  explain_figure: 'يُقرأ الشكل وتعليقه ويُتحقق مما يذكره المصدر…',
+  cards: 'تُصنع البطاقات من أوصاف صور المحاضرة…',
+  lecture_questions: 'تُجمع أسئلة خزنتك المرتبطة…',
+  sources: 'تُجمع مصادر المحادثة…',
+};
+const AI_SKILLS = new Set<ChatSkillId>(['mcq', 'figure_question', 'case', 'compare', 'explain_figure']);
 
 export interface ChatSurfaceProps {
   /** the lecture the conversation is about (null on /chat without a lecture) */
@@ -96,6 +134,10 @@ export interface ChatSurfaceProps {
   headerActions?: ReactNode;
   /** tests: a fixed clock for the history groups and the guard */
   now?: () => number;
+  /** (smart chat) skill chips + «/» menu + result cards */
+  skills?: ChatSkillsConfig;
+  /** cards without skills (e.g. /chat): how a card reaches pages and tools */
+  cardContext?: CardContext;
 }
 
 interface Outcome {
@@ -155,7 +197,11 @@ export function ChatSurface(p: ChatSurfaceProps) {
     const i = turns.findIndex((t) => t.id === pending.replaceFrom);
     return i >= 0 ? turns.slice(0, i) : turns;
   }, [turns, pending]);
-  const busy = pending !== null;
+  // (smart chat) a card skill running: its request, the stage it is in
+  const [skillPending, setSkillPending] = useState<{ id: ChatSkillId; text: string; stage: string } | null>(null);
+  const [skillForm, setSkillForm] = useState<ChatSkillId | null>(null);
+  const skillAbort = useRef<AbortController | null>(null);
+  const busy = pending !== null || skillPending !== null;
   const labelOf = p.pageLabel;
 
   // ── loading: preferences, history, the conversation to show ──
@@ -286,6 +332,7 @@ export function ChatSurface(p: ChatSurfaceProps) {
   ) => {
     const q = raw.trim();
     if (!q || busy || !p.gate.available) return;
+    setSkillForm(null);
     setError(null);
     abortRef.current?.abort();
     const ac = new AbortController();
@@ -348,8 +395,126 @@ export function ChatSurface(p: ChatSurfaceProps) {
       if (!ac.signal.aborted) aiAllowanceStore.spent();
     }
   };
-  useEffect(() => () => abortRef.current?.abort(), []);
+  useEffect(
+    () => () => {
+      abortRef.current?.abort();
+      skillAbort.current?.abort();
+    },
+    [],
+  );
   const stop = () => abortRef.current?.abort();
+
+  // ── (smart chat) skills ──
+  const runSkill = async (id: ChatSkillId, input: SkillRunInput) => {
+    const cfg = p.skills;
+    const item = cfg?.items.find((x) => x.def.id === id);
+    if (!cfg || !item?.available || busy) return;
+    const def = skillDef(id);
+    setSkillForm(null);
+    setError(null);
+    if (def.mode === 'chat') {
+      void send(requestText(id, { selection: !!selection }), { kind: id === 'explain_page' ? 'explain' : 'chat', withPage: true });
+      return;
+    }
+    skillAbort.current?.abort();
+    const ac = new AbortController();
+    skillAbort.current = ac;
+    setSkillPending({ id, text: def.label, stage: SKILL_STAGE_AR[id] ?? 'يُنفَّذ الطلب…' });
+    setAnnounce(`بدأت «${def.label}».`);
+    setTimeout(scrollToEnd, 0);
+    try {
+      const r = await cfg.run(id, input, { signal: ac.signal, onStage: (stage) => setSkillPending((v) => (v && v.id === id ? { ...v, stage } : v)) });
+      if (ac.signal.aborted) return;
+      setSkillPending((v) => (v ? { ...v, text: r.text } : v));
+      let thread = active?.thread ?? null;
+      const lock = p.scope;
+      if (!thread || (lock && !threadMatchesScope(thread, lock))) {
+        if (!lock) throw new Error('لا يمكن بدء محادثة هنا: افتح محاضرة أولًا.');
+        thread = (await chatApi.create({ anchor: null, scope: lock, kind: 'chat' })).thread;
+      }
+      await chatApi.appendCard(thread.id, { text: r.text, skill: id, attachment: r.attachment, artifact_id: r.artifact_id ?? null, context: r.context ?? null });
+      const fresh = await chatApi.thread(thread.id);
+      if (ac.signal.aborted) return;
+      setActive(fresh);
+      setAnnounce(`اكتملت «${def.label}»؛ النتيجة في المحادثة.`);
+      void loadThreads();
+      setTimeout(scrollToEnd, 0);
+    } catch (e) {
+      if (!ac.signal.aborted) {
+        setError({ message: errorMessage(e, `تعذّر إكمال «${def.label}».`), retry: () => void runSkill(id, input) });
+        setAnnounce(`تعذّر إكمال «${def.label}».`);
+      }
+    } finally {
+      if (skillAbort.current === ac) setSkillPending(null);
+      if (AI_SKILLS.has(id) && !ac.signal.aborted) aiAllowanceStore.spent();
+    }
+  };
+  const stopSkill = () => {
+    skillAbort.current?.abort();
+    setSkillPending(null);
+    setAnnounce('أوقفتَ الطلب.');
+  };
+
+  // the «/» menu: the composer's text starting with «/» lists the matching skills (arrows, Enter / Tab, Escape)
+  const menuId = useId();
+  const [slashActive, setSlashActive] = useState(0);
+  const [slashDismissed, setSlashDismissed] = useState<string | null>(null);
+  const slash = p.skills && !busy ? slashQuery(text) : null;
+  const slashItems = slash !== null && p.skills ? matchSkills(slash, p.skills.items) : [];
+  const slashOpen = slash !== null && slashItems.length > 0 && slashDismissed !== text;
+  const activeIdx = slashOpen ? Math.min(slashActive, slashItems.length - 1) : 0;
+  const pickSlash = (it: SkillItem) => {
+    if (!it.available) return;
+    setText('');
+    setSlashActive(0);
+    if (it.def.form) setSkillForm(it.def.id);
+    else void runSkill(it.def.id, {});
+  };
+  const onMenuKey = (e: KeyboardEvent<HTMLTextAreaElement>): boolean => {
+    if (!slashOpen) return false;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const n = slashItems.length;
+      setSlashActive((activeIdx + (e.key === 'ArrowDown' ? 1 : n - 1)) % n);
+      return true;
+    }
+    if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') {
+      e.preventDefault();
+      pickSlash(slashItems[activeIdx]!);
+      return true;
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      setSlashDismissed(text);
+      return true;
+    }
+    return false;
+  };
+  const slashMenu = slashOpen ? (
+    <ul id={menuId} className="ch-slash" role="listbox" aria-label="المهارات">
+      {slashItems.map((it, i) => (
+        <li
+          key={it.def.id}
+          id={`${menuId}-${it.def.id}`}
+          role="option"
+          aria-selected={i === activeIdx}
+          aria-disabled={!it.available || undefined}
+          className={cx('ch-slash__item', i === activeIdx && 'ch-slash__item--active')}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => pickSlash(it)}
+        >
+          <span className="ch-slash__icon" aria-hidden="true">
+            {SKILL_ICONS[it.def.id]}
+          </span>
+          <span className="ch-slash__label">{it.def.label}</span>
+          <bdi className="ch-slash__cmd" dir="auto">{`/${it.def.command}`}</bdi>
+          <span className="ch-slash__hint">{it.available ? it.def.hint : (it.reason ?? 'غير متاح الآن.')}</span>
+        </li>
+      ))}
+    </ul>
+  ) : null;
+  const cardCtx = p.skills?.card ?? p.cardContext;
 
   // ── reader → chat ──
   useEffect(() => {
@@ -492,11 +657,11 @@ export function ChatSurface(p: ChatSurfaceProps) {
         {historyOpen && <aside className="ch-body__history">{history}</aside>}
         <div className="ch-main">
           <div ref={listRef} className="ch-thread" onScroll={onThreadScroll} tabIndex={0} aria-label="الرسائل">
-            {!active && !pending ? (
+            {!active && !pending && !skillPending ? (
               <div className="ch-empty">
                 <p className="ch-empty__title">بماذا أساعدك في هذه المحاضرة؟</p>
                 <p className="ch-muted">كل إجابة تُبنى من مصادرك ويُتحقق من كل جملة طبية فيها قبل اعتمادها؛ تُحذف الجمل غير المدعومة.</p>
-                <div className="ch-suggest" role="group" aria-label="اقتراحات">
+                {!p.skills && <div className="ch-suggest" role="group" aria-label="اقتراحات">
                   {SUGGESTIONS.filter((s) => !s.page || !!page).map((s) => (
                     <Button
                       key={s.label}
@@ -515,7 +680,8 @@ export function ChatSurface(p: ChatSurfaceProps) {
                       {s.label}
                     </Button>
                   ))}
-                </div>
+                </div>}
+                {p.skills && <p className="ch-muted">اختر مهارة تحت، أو اكتب / في مربع الرسالة: شرح، تلخيص، أسئلة MCQ، حالة، مقارنة، بطاقات…</p>}
               </div>
             ) : (
               <ChatTurns
@@ -536,7 +702,28 @@ export function ChatSurface(p: ChatSurfaceProps) {
                 }}
                 onStop={stop}
                 busy={busy}
+                renderCard={
+                  cardCtx
+                    ? (t) =>
+                        t.answer?.attachment ? (
+                          <ChatCard messageId={t.answer.id} attachment={t.answer.attachment} thread={active?.thread ?? null} ctx={cardCtx} onSkill={p.skills ? (id, input) => void runSkill(id, input) : undefined} />
+                        ) : null
+                    : undefined
+                }
               />
+            )}
+            {skillPending && (
+              <article className="ch-turn ch-turn--pending" data-pending="true" aria-label="طلبك قيد التنفيذ">
+                <div className="ch-msg ch-msg--owner">
+                  <div className="ch-bubble">{skillPending.text}</div>
+                </div>
+                <div className="ch-msg ch-msg--assistant ch-skill-pending">
+                  <LoadingState inline stage={skillPending.stage} />
+                  <Button size="sm" variant="plain" onClick={stopSkill}>
+                    أوقف
+                  </Button>
+                </div>
+              </article>
             )}
             {scopeMismatch && <p className="ch-muted" role="note">هذه المحادثة مقفلة على نطاق مصادر آخر؛ رسالتك التالية تبدأ محادثة جديدة بالنطاق المختار.</p>}
             {error && <ErrorState inline message={error.message} onRetry={error.retry ?? undefined} />}
@@ -549,13 +736,19 @@ export function ChatSurface(p: ChatSurfaceProps) {
               </Button>
             </p>
           )}
+          {p.skills && (
+            <SkillBar items={p.skills.items} busy={busy} formFor={skillForm} onForm={setSkillForm} onRun={(id, input) => void runSkill(id, input)} compareSeed={p.skills.compareSeed} />
+          )}
           <Composer
             ref={composer}
             value={text}
             onChange={setText}
+            menu={slashMenu}
+            onMenuKey={p.skills ? onMenuKey : undefined}
+            menuProps={p.skills ? { 'aria-controls': slashOpen ? menuId : undefined, 'aria-activedescendant': slashOpen ? `${menuId}-${slashItems[activeIdx]!.def.id}` : undefined, 'aria-expanded': slashOpen } : undefined}
             onSend={() => void send(text, editing ? { replaceFrom: editing, context: turns.find((t) => t.id === editing)?.question.context ?? null, pageIndex: turns.find((t) => t.id === editing)?.question.page_indexes?.[0] ?? null } : {})}
             onStop={stop}
-            streaming={busy}
+            streaming={pending !== null}
             disabled={!!disabledReason}
             disabledReason={disabledReason}
             chips={chips}

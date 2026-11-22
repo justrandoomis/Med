@@ -10,7 +10,7 @@
 import { join } from 'node:path';
 import type { CapabilitiesResponse, LibraryTreeResponse, ScopeResolveResponse, SearchResponse, SourceDetail } from '@medlevo/shared';
 import { ACCEPTANCE_DIR, uploadFile } from './g1-helpers';
-import { expect, openWorkspace, screenshot, setupOwner, test } from './support';
+import { expect, openWorkspace, screenshot, setupOwner, test, openRailSection, skillChip } from './support';
 
 const EXFIL_HOST = 'exfil.attacker.example';
 
@@ -64,11 +64,11 @@ test('AC-29: an injected file is data — shown and searched as text, no request
   });
 
   await test.step('rail: the AI is still «requires configuration» — the file cannot switch it on or widen the lock', async () => {
-    const railTab = (name: string) => page.getByRole('tab', { name: new RegExp(name) });
-    if (!(await railTab('الشرح والسؤال').isVisible())) await page.getByRole('button', { name: 'لوحة الدراسة' }).first().click();
-    await railTab('الشرح والسؤال').click();
+    await openRailSection(page, 'المحادثة الذكية');
     await expect(page.getByText('الشرح غير متاح الآن')).toBeVisible();
-    await expect(page.getByRole('tabpanel', { name: 'الشرح والسؤال' }).locator('.sb-scope .ev-scope-badge')).toContainText('المحاضرة فقط');
+    await expect(page.getByRole('tabpanel', { name: 'المحادثة الذكية' }).locator('.sb-scope .ev-scope-badge')).toContainText('المحاضرة فقط');
+    // no skill pretends to run: every AI chip stays disabled with the reason
+    await expect(skillChip(page, 'اسألني MCQ')).toBeDisabled();
   });
 
   await test.step('Arabic file: the injection is RTL document text; linked pictures are never fetched or read', async () => {

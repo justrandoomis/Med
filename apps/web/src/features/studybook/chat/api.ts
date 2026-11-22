@@ -2,6 +2,7 @@
 // the server (each user's own vault): they survive a reload and appear on the owner's other devices; answering needs
 // the server (AI + evidence check), so nothing here is queued offline.
 import type {
+  ChatCardCreateBody,
   ChatMessageCreateBody,
   ChatPostResponse,
   ChatPrefs,
@@ -29,4 +30,6 @@ export const chatApi = {
   remove: (id: string) => api.del<{ deleted: true }>(`/studybook/threads/${enc(id)}`, { timeoutMs: T }),
   send: (threadId: string, body: ChatMessageCreateBody, opts: { signal?: AbortSignal; onEvent?: (e: ChatStreamEvent) => void }) =>
     postStudyStream<ChatPostResponse>(`/studybook/threads/${enc(threadId)}/messages/stream`, body, opts),
+  /** (smart chat) a skill result as a card in the conversation (the skill already ran in its own module) */
+  appendCard: (threadId: string, body: ChatCardCreateBody) => api.post<ChatPostResponse>(`/studybook/threads/${enc(threadId)}/cards`, body, { timeoutMs: T }),
 };

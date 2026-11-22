@@ -6,9 +6,9 @@
 // (optional synchronized scrolling). Explanation actions from the selection toolbar open the «الشرح والسؤال» tab.
 import { useCallback, useEffect, useInsertionEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowRight, FilePlus2, Focus, Link2, X } from 'lucide-react';
+import { ArrowRight, BookOpen, FilePlus2, Focus, Languages, Link2, ListChecks, ScanSearch, Stethoscope, X } from 'lucide-react';
 import { EXAM_MODE_HIDDEN_AR, STUDY_MODE_LABELS_AR, normalizeRotation, type StudyMode, type AnnotationAnchor, type LinkTarget, type SourceDetail, type TextQuote } from '@medlevo/shared';
-import { Button, ErrorState, IconButton, LoadingState, MenuItem, Sheet, buttonClass, cx, useResizablePanel, useToast } from '../../design';
+import { Button, ErrorState, IconButton, LoadingState, MenuItem, MenuSeparator, Sheet, buttonClass, cx, useResizablePanel, useToast } from '../../design';
 import { useCapabilities } from '../../lib/capabilities';
 import { getDb } from '../../lib/localdb';
 import { useSettings } from '../../lib/settings';
@@ -25,7 +25,7 @@ import { TopBar, type WorkspaceView } from './chrome/TopBar';
 import { canSplit, decidePanels, decidePanelsWithChat, defaultLeftOpen, effectiveLayout, canShowSpread, RAIL_MAX, RAIL_MIN } from './model/layout';
 import { usePendingAiRequest } from './model/aiActions';
 import { useMcqRequest } from './model/mcqRequest';
-import { arrangementFor } from './modes/arrangement';
+import { arrangementFor, RAIL_TOOL_LABELS_AR, railSectionOf, type RailTool } from './modes/arrangement';
 import { StudyModeSwitch } from './modes/StudyModeSwitch';
 import { loadBackStack, popBack, pushBack, saveBackStack, type BackEntry, type ReaderPosition } from './model/backStack';
 import { fullPageLabel } from './model/pages';
@@ -63,6 +63,13 @@ import './workspace.css';
 import { userStorage } from '../../lib/userStorage';
 
 // per-device view preferences (UI conveniences, never owner data): the Study Book view per source, sync scrolling
+/** the reading bar's «⋯» entries of the rail tools (smart chat) */
+const TOOL_ICONS: Record<RailTool, React.ReactNode> = {
+  questions: <ListChecks size={16} />,
+  cases: <Stethoscope size={16} />,
+  sources: <ScanSearch size={16} />,
+  explain: <Languages size={16} />,
+};
 const VIEW_PREF_KEY = (sourceId: string) => `medlevo.workspace.view.${sourceId}`;
 const BOOK_SYNC_KEY = 'medlevo.workspace.studybook-sync';
 function readPref(key: string): string | null {
@@ -254,7 +261,10 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
   // phones open on the book (§23): sheets are never restored open over it
   const startsOnPhone = width < 768;
   const [railOpen, setRailOpen] = useState(url.review ? true : startsOnPhone ? false : (loc0.rail?.open ?? settings.rail_open));
-  const [railTab, setRailTab] = useState<RailTab>(url.review ? 'mine' : ((['explain', 'questions', 'cases', 'sources', 'mine'] as const).find((t) => t === loc0.rail?.tab) ?? 'sources'));
+  // (smart chat) two sections: the smart chat and my notes; a session saved with an old tab opens the section holding it
+  const [railTab, setRailTab] = useState<RailTab>(url.review ? 'mine' : (railSectionOf(loc0.rail?.tab) ?? 'chat'));
+  /** a full tool shown in the rail in place of the chat (figures, linked questions, cases, quick explain) */
+  const [railTool, setRailTool] = useState<RailTool | null>(null);
   const [mineTab, setMineTab] = useState<MineTabValue>(url.review ? 'reanchor' : 'notes');
   const [leftOpen, setLeftOpen] = useState(startsOnPhone ? false : (loc0.left_panel?.open ?? defaultLeftOpen(width)));
   const [leftTab, setLeftTab] = useState<LeftTab>(loc0.left_panel?.tab ?? 'thumbnails');
@@ -695,6 +705,13 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
     chatCloseFn();
   }
   const toggleChat = useCallback(() => (chatIsOpen ? closeChat() : openChat()), [chatIsOpen, closeChat, openChat]);
+  /** (smart chat) the rail at a section / tool: it takes the chat's place beside the book (the chat closes) */
+  const openRailAt = useCallback((t: RailTab, tool: RailTool | null) => {
+    setRailTab(t);
+    setRailTool(tool);
+    setRailOpen(true);
+    setLastPanel('rail');
+  }, []);
   const toggleRail = useCallback(() => {
     if (chatIsOpen) {
       // the rail takes the chat's place
@@ -816,6 +833,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
       session.setMode(m, { location: buildLocation(), versionId, view: stateRef.current.split || stateRef.current.splitBook || stateRef.current.splitSide ? 'split' : 'original' });
       const a = arrangementFor(m);
       setRailTab(a.defaultTab);
+      setRailTool(null);
       if (!panels.phone) {
         setRailOpen(a.panels.rail);
         setLeftOpen(a.panels.left);
@@ -832,7 +850,8 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
   if ((pendingMcq?.id ?? null) !== mcqSeen) {
     setMcqSeen(pendingMcq?.id ?? null);
     if (pendingMcq) {
-      setRailTab('questions');
+      setRailTab('chat');
+      setRailTool('questions');
       setRailOpen(true);
       setLastPanel('rail');
     }
@@ -849,7 +868,9 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
       setRailOpen(false);
       chat.openChat();
     } else if (pendingAi) {
-      setRailTab('explain');
+      // explain / simplify / translate / compare / explain the figure of a selection: the quick tools (one-shot results)
+      setRailTab('chat');
+      setRailTool('explain');
       setRailOpen(true);
       setLastPanel('rail');
     }
@@ -1100,7 +1121,12 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
       page={page}
       pageIndex={pageIndex}
       tab={railTab}
-      onTab={setRailTab}
+      onTab={(t) => {
+        setRailTab(t);
+        if (t === railTab && t === 'chat') setRailTool(null);
+      }}
+      tool={railTool}
+      onTool={setRailTool}
       mode={studyMode}
       mineTab={mineTab}
       onMineTab={setMineTab}
@@ -1230,6 +1256,18 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
               noteLabel={notePageId && notes.index.ofNote(notePageId) >= 0 ? 'صفحة ملاحظات بعدها' : null}
               extraMenuItems={
                 <>
+                  {(['questions', 'cases', 'sources', 'explain'] as const).map((t) => {
+                    const hidden = arrangementFor(studyMode).hiddenTools.includes(t);
+                    return (
+                      <MenuItem key={t} icon={TOOL_ICONS[t]} disabled={hidden} disabledReason={EXAM_MODE_HIDDEN_AR} onSelect={() => openRailAt('chat', t)}>
+                        {RAIL_TOOL_LABELS_AR[t]}
+                      </MenuItem>
+                    );
+                  })}
+                  <MenuItem icon={<BookOpen size={16} />} onSelect={() => navigate(`/sources/${encodeURIComponent(sourceId)}?tab=pages`)}>
+                    حالة معالجة الصفحات…
+                  </MenuItem>
+                  <MenuSeparator />
                   <MenuItem icon={<FilePlus2 size={16} />} disabled={bookOnly} disabledReason="صفحات الملاحظات تُضاف في المحاضرة الأصلية." onSelect={() => notes.openNew(seqCurrent)}>
                     صفحة ملاحظات بعد هذه الصفحة…
                   </MenuItem>
@@ -1434,6 +1472,8 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
                 openKey={chat.openKey}
                 onClose={closeChat}
                 onJumpToPage={(i) => goToPage(i)}
+                onOpenNotes={() => openRailAt('mine', null)}
+                onOpenTool={(t) => openRailAt('chat', t)}
               />
             )}
             {panels.left === 'docked' && (

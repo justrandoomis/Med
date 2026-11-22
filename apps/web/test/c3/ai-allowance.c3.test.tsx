@@ -102,6 +102,8 @@ describe('where AI actions are offered', () => {
     'features/exams/WrittenScreen.tsx',
     'features/questions/AnswerCheck.tsx',
     'features/studybook/diagrams/DiagramPanel.tsx',
+    // (smart chat) the rail's chat and the side chat, where the MCQ / case / compare skills run
+    'features/workspace/chat/SmartChat.tsx',
   ];
   it.each(surfaces)('%s shows <AiAllowanceNote />', (file) => {
     expect(readFileSync(join(__dirname, '../../src', file), 'utf8')).toContain('<AiAllowanceNote');

@@ -7,7 +7,7 @@
 // After going back online, what was done offline (a rating, an exam answer) reaches the server exactly once.
 import type { ExamCreateResponse, LibraryNodeView, SourcePagesResponse, SyncOp } from '@medlevo/shared';
 import type { Page } from '@playwright/test';
-import { expect, screenshot, setupOwner, test, waitForWorkspace } from './support';
+import { expect, screenshot, setupOwner, test, waitForWorkspace, openRailSection, skillChip } from './support';
 
 // offline, the browser reports the failing background requests (sync, capabilities) as console errors — expected here
 test.use({ serviceWorkers: 'allow', allowedConsoleErrors: [/ERR_INTERNET_DISCONNECTED|Failed to load resource|Failed to fetch|NetworkError|net::ERR/i] });
@@ -91,18 +91,19 @@ test('AC-23: lecture, cards and an opened exam work offline; AI and server searc
     await expect(page.locator('.wk-canvas-slot canvas').first()).toBeVisible();
     await expect(page.locator('.wk-textlayer span').first()).toBeAttached({ timeout: 30_000 });
     await expect(page.locator('.wk-folio__primary').first()).toHaveText(/ص 11/);
-    const railTab = (name: string) => page.getByRole('tab', { name: new RegExp(name) });
-    if (!(await railTab('ملاحظاتي').isVisible())) await page.getByRole('button', { name: 'لوحة الدراسة' }).first().click();
-    await railTab('ملاحظاتي').click();
+    await openRailSection(page, 'ملاحظاتي');
     await expect(page.getByText(noteText).first()).toBeVisible({ timeout: 20_000 });
     await screenshot(page, testInfo, 'g7-ac23-offline-lecture');
 
     // a NEW AI request: says it needs a connection; no spinner, no progress bar, the action cannot be started
-    await railTab('الشرح والسؤال').click();
+    await openRailSection(page, 'المحادثة الذكية');
     const card = page.locator('.wk-disabled-card').filter({ hasText: 'الشرح غير متاح الآن' });
     await expect(card).toBeVisible();
     await expect(card).toContainText('اتصال');
-    await expect(page.getByRole('button', { name: 'اشرح', exact: true })).toBeDisabled();
+    // (smart chat) every skill that needs the server is disabled, with the reason under the chips
+    await expect(skillChip(page, 'اشرح الصفحة')).toBeDisabled();
+    await expect(skillChip(page, 'اسألني MCQ')).toBeDisabled();
+    await expect(page.getByRole('list', { name: 'مهارات غير متاحة الآن' }).first()).toContainText('اتصال');
     await expect(page.locator('[role="progressbar"], .sb-running, [aria-busy="true"]')).toHaveCount(0);
     await screenshot(page, testInfo, 'g7-ac23-offline-ai');
   });

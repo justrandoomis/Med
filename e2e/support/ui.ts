@@ -108,3 +108,36 @@ export async function screenshot(page: Page, testInfo: TestInfo, name: string, o
   await testInfo.attach(name, { path, contentType: 'image/png' });
   return path;
 }
+
+/** (smart chat, wp/smart-rail) The study rail's two sections. */
+export type RailSectionName = 'المحادثة الذكية' | 'ملاحظاتي' | 'أسئلة وحالات';
+
+/** Open the study rail (when closed) on one of its two sections: «المحادثة الذكية» («أسئلة وحالات» in Exam) / «ملاحظاتي». */
+export async function openRailSection(page: Page, name: RailSectionName): Promise<void> {
+  const tab = page.getByRole('tablist', { name: 'أقسام لوحة الدراسة' }).getByRole('tab', { name, exact: true });
+  if (!(await tab.isVisible())) await page.getByRole('button', { name: 'لوحة الدراسة', exact: true }).first().click();
+  await tab.click();
+  await expect(tab).toHaveAttribute('aria-selected', 'true');
+}
+
+/** The full panels behind the chat's skills (the former rail tabs), opened from the reading bar's «⋯». */
+export type RailToolName = 'أسئلة المحاضرة' | 'حالات المحاضرة' | 'المصادر والأشكال' | 'شرح سريع وترجمة';
+
+export async function openRailTool(page: Page, name: RailToolName): Promise<void> {
+  const tool = page.getByRole('region', { name, exact: true });
+  if (await tool.isVisible()) return;
+  // phone: the rail is a modal sheet over the reader — the reading bar's «⋯» is reached once it is closed
+  const sheet = page.getByRole('dialog', { name: 'لوحة الدراسة' });
+  if (await sheet.isVisible()) {
+    await page.keyboard.press('Escape');
+    await expect(sheet).toBeHidden();
+  }
+  await page.getByRole('button', { name: /^(خيارات العرض|خيارات القراءة)$/ }).first().click();
+  await page.getByRole('menuitem', { name, exact: true }).click();
+  await expect(tool).toBeVisible();
+}
+
+/** A smart-chat skill chip of the rail's (or the side chat's) composer. */
+export function skillChip(page: Page, name: string) {
+  return page.getByRole('group', { name: 'مهارات المحادثة' }).first().getByRole('button', { name, exact: true });
+}

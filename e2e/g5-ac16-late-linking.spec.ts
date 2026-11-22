@@ -6,7 +6,7 @@
 // Fixtures: Golden Set + fixtures/acceptance/g5_*.pdf (synthetic TEST FIXTURE documents, never medical content).
 import { join } from 'node:path';
 import type { LectureQuestionsResponse, QuestionListResponse } from '@medlevo/shared';
-import { expect, openWorkspace, screenshot, setupOwner, test, waitForWorkspace, type E2eApi } from './support';
+import { expect, openRailTool, openWorkspace, screenshot, setupOwner, test, waitForWorkspace, type E2eApi } from './support';
 import { ACCEPTANCE_DIR, reEscape, uploadFile } from './g1-helpers';
 import type { Page } from '@playwright/test';
 
@@ -28,12 +28,11 @@ const allCovered = async (api: E2eApi, lectureId: string) => {
   return COVERED.every((c) => stems.some((s) => s.includes(c)));
 };
 
+/** (smart chat) the lecture's linked questions: the rail tool «أسئلة المحاضرة» behind the reading bar's «⋯» */
 async function openQuestionsTab(page: Page): Promise<void> {
-  const tab = page.getByRole('tab', { name: /الأسئلة/ });
   // on a phone the rail is a sheet that may still be closing (after a page jump): retry until it is open and stable
   await expect(async () => {
-    if (!(await tab.isVisible())) await page.getByRole('button', { name: 'لوحة الدراسة' }).first().click({ timeout: 3000 });
-    await tab.click({ timeout: 3000 });
+    await openRailTool(page, 'أسئلة المحاضرة');
     await expect(page.getByRole('link', { name: 'كل أسئلة المحاضرة في الخزنة' })).toBeVisible({ timeout: 3000 });
   }).toPass({ timeout: 30_000 });
 }

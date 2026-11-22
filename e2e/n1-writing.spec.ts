@@ -156,7 +156,8 @@ async function inkSettings(page: Page, tab?: string): Promise<Locator> {
 }
 
 async function undo(page: Page) {
-  const b = bar(page).getByRole('button', { name: 'تراجع', exact: true });
+  // (GoodNotes bar) on a wide reader undo sits at the reading bar's trailing side; the phone strip / a docked bar keep their own
+  const b = page.locator('.wk-topbar, .wk-inkstrip, .ml-ink-toolbar--docked').getByRole('button', { name: 'تراجع', exact: true }).first();
   if ((await b.count()) && (await b.isVisible())) {
     await b.click();
     return;

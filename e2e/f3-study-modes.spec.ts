@@ -1,10 +1,11 @@
 // Track F3 — study modes & AI-gated tools against the REAL server (built web app, real processing, question extraction
 // and matching; NO AI provider exists here). Golden Set TEST FIXTURE documents only.
-//  1. The study-mode switch in the reading bar arranges the SAME rail: Learn shows five sections (explanations first);
-//     «امتحن نفسك» hides «الشرح والسؤال» and «المصادر» with the reason in words, hides why a question was linked and its
-//     original page, starts an assessed exam from a question, and disables «اشرح» on a selection. The mode is saved with
-//     the study session (IndexedDB → outbox → server) and comes back after a reload. The «حالات» section lists the
-//     lecture's case. Create MCQ, the interactive diagram and the figure reading say «requires configuration» with the
+//  1. The study-mode switch in the reading bar arranges the SAME rail (wp/smart-rail: two sections, «المحادثة الذكية» and
+//     «ملاحظاتي»; the former tabs are the chat's skills + rail tools from «⋯»): Learn opens on the chat; «امتحن نفسك»
+//     hides the chat, explanations and sources with the reason in words (the first section holds the lecture's questions
+//     and cases), hides why a question was linked and its original page, starts an assessed exam from a question, and
+//     disables «اشرح» on a selection. The mode is saved with the study session (IndexedDB → outbox → server) and comes
+//     back after a reload. The lecture's cases list its case. Create MCQ, the interactive diagram and the figure reading say «requires configuration» with the
 //     server's reason — never a fake result — and the API refuses them with AI_NOT_CONFIGURED.
 //  2. Derived question versions, the generated simulation (its DNA plan is computed WITHOUT AI and labelled «ليست نسخة
 //     متوقعة من الامتحان القادم») and the vision reading of a figure are honest about the missing provider.
@@ -13,7 +14,7 @@
 import type { Page } from '@playwright/test';
 import type { CapabilitiesResponse, LatestSessionResponse, LectureQuestionsResponse, PageRegionsResponse, QuestionListResponse, SimulationPlanView } from '@medlevo/shared';
 import { versionPages } from './g1-helpers';
-import { expect, expectHealthyScreen, openWorkspace, screenshot, setupOwner, test, waitForWorkspace, type E2eApi } from './support';
+import { expect, expectHealthyScreen, openRailTool, openWorkspace, screenshot, setupOwner, skillChip, test, waitForWorkspace, type E2eApi } from './support';
 
 const railTabs = (page: Page) => page.getByRole('tablist', { name: 'أقسام لوحة الدراسة' }).getByRole('tab');
 
@@ -82,11 +83,14 @@ test('F3: the study mode arranges the rail and persists; Exam hides explanations
 
   await openWorkspace(page, lecture.source_id, { pageIndex: 0 });
 
-  await test.step('Learn by default: the switch names the mode; five sections, explanations first; the diagram tool says why it is off', async () => {
+  await test.step('Learn by default: the switch names the mode; two sections, the smart chat first; the diagram tool says why it is off', async () => {
     await expect(page.getByRole('button', { name: 'وضع الدراسة: تعلّم' }).first()).toBeVisible();
-    await railTab(page, 'الشرح والسؤال');
-    await expect(railTabs(page)).toHaveText(['الشرح والسؤال', 'المصادر', 'الأسئلة', 'حالات', 'ملاحظاتي']);
+    await railTab(page, 'المحادثة الذكية');
+    await expect(railTabs(page)).toHaveText(['المحادثة الذكية', 'ملاحظاتي']);
     await expect(page.getByText('وضع الدراسة: تعلّم', { exact: true })).toBeVisible();
+    // the compare skill (ai.summaries) is off with the server's reason, like the diagram tool
+    await expect(skillChip(page, 'قارن')).toBeDisabled();
+    await openRailTool(page, 'شرح سريع وترجمة');
     const draw = page.getByRole('button', { name: 'ارسم المخطط' });
     await draw.scrollIntoViewIfNeeded();
     await expect(draw).toBeDisabled();
@@ -97,11 +101,12 @@ test('F3: the study mode arranges the rail and persists; Exam hides explanations
     expect((await res.json()).error.code).toBe('AI_NOT_CONFIGURED');
   });
 
-  await test.step('«امتحن نفسك»: explanations and sources hidden with the reason; no link reasons or original pages; an assessed exam', async () => {
+  await test.step('«امتحن نفسك»: the chat, explanations and sources hidden with the reason; no link reasons or original pages; an assessed exam', async () => {
     await switchMode(page, 'امتحن نفسك');
-    await railTab(page, 'الأسئلة');
-    await expect(railTabs(page)).toHaveText(['الأسئلة', 'حالات', 'ملاحظاتي']);
-    await expect(page.getByText(/مخفي الآن: «الشرح والسؤال» و«المصادر»/)).toBeVisible();
+    await railTab(page, 'أسئلة وحالات');
+    await expect(railTabs(page)).toHaveText(['أسئلة وحالات', 'ملاحظاتي']);
+    await expect(page.getByText(/مخفي الآن: «المحادثة الذكية» و«الشرح» و«المصادر»/)).toBeVisible();
+    await expect(page.getByRole('textbox', { name: 'رسالتك' })).toHaveCount(0);
     await expect(page.locator('.qv-rail__item').first()).toBeVisible({ timeout: 30_000 });
     await expect(page.getByText('لماذا رُبط بهذه المحاضرة؟')).toHaveCount(0);
     await expect(page.getByRole('button', { name: /افتح الأصل/ })).toHaveCount(0);
@@ -110,18 +115,18 @@ test('F3: the study mode arranges the rail and persists; Exam hides explanations
     await expectHealthyScreen(page);
     await screenshot(page, testInfo, 'f3-exam-rail');
     // (F3 review) the Study Book (generated explanations) is off too, with the mode as the reason — not only the rail
-    if (testInfo.project.name === 'desktop') {
-      await closeRailSheet(page);
-      await page.getByRole('button', { name: 'المحاضرة الأصلية' }).first().click();
-      const book = page.getByRole('menuitem', { name: /^كتاب الدراسة/ });
-      await expect(book).toHaveAttribute('aria-disabled', 'true');
-      await expect(book).toContainText('امتحن نفسك');
-      await page.keyboard.press('Escape');
-    }
+    // (smart chat) the views and the study tools live in the reading bar's «⋯»: the explaining tools are off there too
+    await closeRailSheet(page);
+    await page.getByRole('button', { name: /^(خيارات العرض|خيارات القراءة)$/ }).first().click();
+    const book = page.getByRole('menuitem', { name: /^كتاب الدراسة/ });
+    await expect(book).toHaveAttribute('aria-disabled', 'true');
+    await expect(book).toContainText('امتحن نفسك');
+    for (const tool of ['المصادر والأشكال', 'شرح سريع وترجمة']) await expect(page.getByRole('menuitem', { name: new RegExp(`^${tool}`) })).toHaveAttribute('aria-disabled', 'true');
+    await page.keyboard.press('Escape');
   });
 
-  await test.step('«حالات»: the lecture’s OSCE station with its origin; in Exam mode it is started, never shown', async () => {
-    await railTab(page, 'حالات');
+  await test.step('the lecture’s cases: the OSCE station with its origin; in Exam mode it is started, never shown', async () => {
+    await railTab(page, 'أسئلة وحالات');
     const item = page.locator('.wk-case').filter({ hasText: `OSCE F3 RIF pain (TEST) ${stamp}` });
     await expect(item).toBeVisible();
     await expect(item.getByText('كتبتها بنفسك')).toBeVisible();
@@ -170,14 +175,14 @@ test('F3: the study mode arranges the rail and persists; Exam hides explanations
     await page.reload();
     await waitForWorkspace(page);
     await expect(page.getByRole('button', { name: 'وضع الدراسة: امتحن نفسك' }).first()).toBeVisible();
-    await railTab(page, 'الأسئلة');
-    await expect(railTabs(page)).toHaveText(['الأسئلة', 'حالات', 'ملاحظاتي']);
+    await railTab(page, 'أسئلة وحالات');
+    await expect(railTabs(page)).toHaveText(['أسئلة وحالات', 'ملاحظاتي']);
   });
 
-  await test.step('back to «راجع»: notes first, every section back', async () => {
+  await test.step('back to «راجع»: opens on my notes, the smart chat is back', async () => {
     await switchMode(page, 'راجع');
     await railTab(page, 'ملاحظاتي');
-    await expect(railTabs(page)).toHaveText(['ملاحظاتي', 'الأسئلة', 'حالات', 'الشرح والسؤال', 'المصادر']);
+    await expect(railTabs(page)).toHaveText(['المحادثة الذكية', 'ملاحظاتي']);
     await expectHealthyScreen(page);
     await screenshot(page, testInfo, 'f3-review-rail');
   });
@@ -227,11 +232,11 @@ test('F3: derived versions, the generated simulation plan and the figure reading
     await expect(page.getByRole('link', { name: 'اعرض خطة المحاكاة' })).toBeVisible();
   });
 
-  await test.step('reader → «المصادر» → the flowchart of printed page 14: the vision reading is labelled, off with the reason', async () => {
+  await test.step('reader → «المصادر والأشكال» → the flowchart of printed page 14: the vision reading is labelled, off with the reason', async () => {
     const p14 = (await versionPages(api, lecture.source_id, lecture.version_id)).find((p) => p.printed_label === '14')!;
     await page.goto(`/study/${lecture.source_id}?page_id=${p14.id}`);
     await waitForWorkspace(page);
-    await railTab(page, 'المصادر');
+    await openRailTool(page, 'المصادر والأشكال');
     const row = page.locator('.wk-region-row').filter({ has: page.locator('.wk-region-row__kind', { hasText: /^مخطط$/ }) });
     await expect(row).toHaveCount(1, { timeout: 30_000 });
     await row.getByRole('button', { name: 'بنية الشكل (قراءة بصرية)' }).click();

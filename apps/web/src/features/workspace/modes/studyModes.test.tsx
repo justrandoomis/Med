@@ -127,7 +127,8 @@ function rail(over: Partial<StudyRailProps>) {
     doc,
     page: pages[2]!,
     pageIndex: 2,
-    tab: 'questions',
+    tab: 'chat',
+    tool: 'questions',
     onTab: () => undefined,
     mineTab: 'notes' as StudyRailProps['mineTab'],
     onMineTab: () => undefined,
@@ -174,11 +175,13 @@ describe('study-mode switch', () => {
 });
 
 describe('the rail arranged by the study mode', () => {
-  it('Learn: five sections in Learn order; questions show the link reason and the original page', async () => {
+  it('Learn: two sections (the smart chat, my notes); the questions tool shows the link reason and the original page', async () => {
     server();
-    rail({ mode: 'learn', tab: 'questions' });
+    rail({ mode: 'learn', tab: 'chat', tool: 'questions' });
     const tabs = screen.getAllByRole('tab').map((t) => t.textContent);
-    expect(tabs).toEqual(['الشرح والسؤال', 'المصادر', 'الأسئلة', 'حالات', 'ملاحظاتي']);
+    expect(tabs).toEqual(['المحادثة الذكية', 'ملاحظاتي']);
+    expect(screen.getByRole('region', { name: 'أسئلة المحاضرة' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'عُد إلى المحادثة' })).toBeTruthy();
     expect(screen.getByText('وضع الدراسة: تعلّم')).toBeTruthy();
     await screen.findByText('في هذه الصفحة (1)');
     expect(screen.getAllByText('لماذا رُبط بهذه المحاضرة؟').length).toBeGreaterThan(0);
@@ -189,13 +192,16 @@ describe('the rail arranged by the study mode', () => {
     expect(practice.getAttribute('href')).toBe('/practice?source_id=L1&question_id=Q1');
   });
 
-  it('Exam: explanations and sources are hidden with the reason; no link reason, no original page; an assessed exam starts', async () => {
+  it('Exam: the chat, explanations and sources are hidden with the reason; no link reason, no original page; an assessed exam starts', async () => {
     server();
-    rail({ mode: 'exam', tab: 'explain' }); // a hidden section requested → the mode's default
+    rail({ mode: 'exam', tab: 'chat', tool: 'explain' }); // a hidden tool requested → said so, the questions + cases shown
     const tabs = screen.getAllByRole('tab').map((t) => t.textContent);
-    expect(tabs).toEqual(['الأسئلة', 'حالات', 'ملاحظاتي']);
-    expect(screen.getByRole('note').textContent).toContain('مخفي الآن: «الشرح والسؤال» و«المصادر»');
-    expect(screen.getByRole('tab', { name: 'الأسئلة' }).getAttribute('aria-selected')).toBe('true');
+    expect(tabs).toEqual(['أسئلة وحالات', 'ملاحظاتي']);
+    expect(screen.getAllByRole('note').map((n) => n.textContent).join(' ')).toContain('مخفي الآن: «المحادثة الذكية» و«الشرح» و«المصادر»');
+    expect(screen.getAllByRole('note').map((n) => n.textContent).join(' ')).toContain('«شرح سريع وترجمة» مخفي في هذا الوضع');
+    expect(screen.getByRole('tab', { name: 'أسئلة وحالات' }).getAttribute('aria-selected')).toBe('true');
+    // no chat in «امتحن نفسك»
+    expect(screen.queryByRole('textbox', { name: 'رسالتك' })).toBeNull();
     await screen.findByText(/Stem of Q1/);
     expect(screen.queryByText('لماذا رُبط بهذه المحاضرة؟')).toBeNull();
     expect(screen.queryByRole('button', { name: /افتح الأصل/ })).toBeNull();
@@ -208,7 +214,7 @@ describe('the rail arranged by the study mode', () => {
 
   it('«حالات» lists the lecture’s cases with origin and status; Exam mode never shows the reasons (solution)', async () => {
     const calls = server();
-    const { unmount } = rail({ mode: 'learn', tab: 'cases' });
+    const { unmount } = rail({ mode: 'learn', tab: 'chat', tool: 'cases' });
     await screen.findByText('RIF pain in a 19-year-old');
     expect(calls.find((c) => c.url.startsWith('/api/cases'))!.url).toContain('source_id=L1');
     expect(screen.getByText('كتبتها بنفسك')).toBeTruthy();
@@ -217,7 +223,7 @@ describe('the rail arranged by the study mode', () => {
     expect(screen.getByRole('link', { name: 'افتح الحالة' }).getAttribute('href')).toBe('/cases/C1');
     unmount();
     server();
-    rail({ mode: 'exam', tab: 'cases' });
+    rail({ mode: 'exam', tab: 'chat', tool: 'cases' });
     await screen.findByText('RIF pain in a 19-year-old');
     expect(screen.queryByText('خطوة التشخيص بلا دليل مرتبط.')).toBeNull();
     expect(screen.getByRole('link', { name: 'ابدأ الحالة' })).toBeTruthy();
@@ -225,7 +231,7 @@ describe('the rail arranged by the study mode', () => {
 
   it('«حالات» with no case of this lecture says so (and how to add one)', async () => {
     server((url) => (url.startsWith('/api/cases?') ? json({ cases: [], capabilities: {} }) : null));
-    rail({ mode: 'practice', tab: 'cases' });
+    rail({ mode: 'practice', tab: 'chat', tool: 'cases' });
     expect(await screen.findByText('لا توجد حالات لهذه المحاضرة بعد')).toBeTruthy();
     expect(screen.getByRole('link', { name: /حالة جديدة/ })).toBeTruthy();
   });

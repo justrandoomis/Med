@@ -1,13 +1,18 @@
-// Reading & writing bar (§23): back to the library, title + page identity, view (Original | Study Book |
-// Split), search, zoom, view options, the ink tools, focus mode, panels and the honest save status.
-// Phones get a condensed bar; the rest lives in one «المزيد» menu.
+// Reading & writing bar (§23), laid out like GoodNotes (wp/smart-rail):
+//   leading   back to the library · the pages panel · the document title (truncating) + page chip · the save state
+//   centre    the writing tools themselves as clean icons (pen, highlighter, eraser, lasso, shapes, text, image…); a
+//             second tap on the active tool opens its colour / width options
+//   trailing  undo / redo · the study mode · «المحادثة» · search · the study rail · «⋯» (views, zoom, page layout,
+//             rotation, focus mode, the study tools, the pages' processing, offline, recording…)
+// One compact row on a tablet / desktop. On a phone the row keeps back · title · mode · search · chat · rail · «⋯» and
+// the writing tools move to a slim floating strip at the bottom of the screen (GoodNotes phone). Nothing is decorative
+// and every control keeps its keyboard shortcut; the pen is never laid under the bar's other controls (the writing
+// bar measures its room and folds the rest into «المزيد»; workspace.css keeps the slots' minimum widths).
 import { type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowRight,
   Check,
-  ChevronDown,
-  Columns2,
   Ellipsis,
   Focus,
   LayoutPanelLeft,
@@ -22,8 +27,8 @@ import {
   Undo2,
 } from 'lucide-react';
 import { detectDir, type SourcePageView, type SyncState } from '@medlevo/shared';
-import { Button, IconButton, Menu, MenuItem, MenuSeparator, SaveStatus, Tooltip, buttonClass, cx } from '../../../design';
-import { InkToolbar } from '../ink';
+import { Button, IconButton, Menu, MenuItem, MenuSeparator, SaveStatus, Tooltip, buttonClass } from '../../../design';
+import { InkHistory, InkToolbar } from '../ink';
 import type { LayoutMode } from '../reader/BookCanvas';
 import { GoToPage } from './GoToPage';
 
@@ -107,15 +112,9 @@ function check(on: boolean): ReactNode {
 
 export function TopBar(p: TopBarProps) {
   const splitBookReason = p.splitReason ?? p.studyBookReason;
-  const viewMenu = (
-    <Menu
-      label="طريقة العرض"
-      trigger={
-        <Button size="sm" variant="plain" iconEnd={<ChevronDown size={16} />} className="wk-viewswitch">
-          {VIEW_LABELS_AR[p.view]}
-        </Button>
-      }
-    >
+  // the views, in the «⋯» menu (GoodNotes keeps them out of the bar)
+  const viewItems = (
+    <>
       <MenuItem icon={check(p.view === 'original')} onSelect={() => p.onView('original')}>
         {VIEW_LABELS_AR.original}
       </MenuItem>
@@ -139,7 +138,27 @@ export function TopBar(p: TopBarProps) {
       <MenuItem icon={check(p.view === 'split')} onSelect={() => p.onView('split')} disabled={!!p.splitReason && p.view !== 'split'} disabledReason={p.splitReason ?? undefined}>
         جنبًا إلى جنب مع مصدر آخر
       </MenuItem>
-    </Menu>
+    </>
+  );
+
+  const zoomItems = (
+    <>
+      <MenuItem icon={<Plus size={16} />} hint="+" onSelect={p.onZoomIn}>
+        تكبير
+      </MenuItem>
+      <MenuItem icon={<Minus size={16} />} hint={`− · ${p.zoomLabel}`} onSelect={p.onZoomOut}>
+        تصغير
+      </MenuItem>
+      <MenuItem icon={check(p.fit)} onSelect={() => p.onZoomTo('fit')}>
+        ملاءمة العرض
+      </MenuItem>
+      {!p.phone &&
+        ZOOM_PRESETS.map((z) => (
+          <MenuItem key={z} icon={<span className="wk-menu-blank" />} onSelect={() => p.onZoomTo(z)}>
+            <bdi dir="ltr">{`${Math.round(z * 100)}%`}</bdi>
+          </MenuItem>
+        ))}
+    </>
   );
 
   const layoutItems = (
@@ -166,6 +185,28 @@ export function TopBar(p: TopBarProps) {
     </>
   );
 
+  /** the «⋯» menu: everything that is not a writing tool, history, chat, search or the rail */
+  const moreMenu = (label: string, size: 'sm' | 'md') => (
+    <Menu label={label} align="end" trigger={<IconButton label={label} icon={<Ellipsis size={size === 'sm' ? 18 : 20} />} size={size === 'sm' ? 'sm' : undefined} />}>
+      {viewItems}
+      <MenuSeparator />
+      {zoomItems}
+      <MenuSeparator />
+      {layoutItems}
+      <MenuSeparator />
+      {p.phone && (
+        <MenuItem icon={<LayoutPanelLeft size={16} />} onSelect={p.onToggleLeft}>
+          الصفحات والفهرس والعلامات
+        </MenuItem>
+      )}
+      <MenuItem icon={<Focus size={16} />} hint="F" onSelect={p.onFocusMode}>
+        {p.focusMode ? 'إنهاء وضع التركيز' : 'وضع التركيز'}
+      </MenuItem>
+      {p.extraMenuItems && <MenuSeparator />}
+      {p.extraMenuItems}
+    </Menu>
+  );
+
   const backButton = p.back && (
     <Button size="sm" variant="secondary" icon={<Undo2 size={16} />} onClick={p.onBack} title={p.back.title} className="wk-backjump">
       {p.back.label}
@@ -174,78 +215,47 @@ export function TopBar(p: TopBarProps) {
 
   if (p.phone) {
     return (
-      <header className="wk-topbar wk-topbar--phone">
-        <div className="wk-topbar__row">
-          <Link to={p.backTo} className={buttonClass({ variant: 'plain', size: 'sm', className: 'wk-back' })} aria-label="العودة إلى المكتبة">
-            <ArrowRight size={20} aria-hidden="true" />
-          </Link>
-          {/* (Round 7 final) the save state sits on the title line: as its own item in this row it left the title
-              column ~60 px at 390 px, and the page indicator ran under the save icon and the mode switch */}
-          <div className="wk-topbar__title">
-            <div className="wk-topbar__titleline">
-              <h1 className="wk-title" dir={detectDir(p.title)}>
-                {p.title}
-              </h1>
-              <SaveStatus state={p.saveState} detail={p.saveDetail} compact />
+      <>
+        <header className="wk-topbar wk-topbar--phone">
+          <div className="wk-topbar__row">
+            <Link to={p.backTo} className={buttonClass({ variant: 'plain', size: 'sm', className: 'wk-back' })} aria-label="العودة إلى المكتبة">
+              <ArrowRight size={20} aria-hidden="true" />
+            </Link>
+            {/* (Round 7 final) the save state sits on the title line: as its own item in this row it left the title
+                column ~60 px at 390 px, and the page indicator ran under the save icon and the mode switch */}
+            <div className="wk-topbar__title">
+              <div className="wk-topbar__titleline">
+                <h1 className="wk-title" dir={detectDir(p.title)}>
+                  {p.title}
+                </h1>
+                <SaveStatus state={p.saveState} detail={p.saveDetail} compact />
+              </div>
+              <GoToPage pages={p.pages} pageIndex={p.pageIndex} onGo={p.onGoToPage} compact />
+              {p.noteLabel && <span className="wk-note-chip">{p.noteLabel}</span>}
             </div>
-            <GoToPage pages={p.pages} pageIndex={p.pageIndex} onGo={p.onGoToPage} compact />
-            {p.noteLabel && <span className="wk-note-chip">{p.noteLabel}</span>}
-          </div>
-          {p.modeSwitch}
-          <Hint label="البحث في المصدر">
-            <IconButton label="البحث في المصدر" icon={<Search size={20} />} pressed={p.searchOpen} onClick={p.onToggleSearch} />
-          </Hint>
-          {p.onToggleChat && (
-            <Hint label={p.chatHiddenReason ?? 'المحادثة'}>
-              <IconButton label="المحادثة" icon={<MessageSquare size={20} />} pressed={!!p.chatOpen} disabled={!!p.chatHiddenReason} onClick={p.onToggleChat} />
+            {p.modeSwitch}
+            <Hint label="البحث في المصدر">
+              <IconButton label="البحث في المصدر" icon={<Search size={20} />} pressed={p.searchOpen} onClick={p.onToggleSearch} />
             </Hint>
-          )}
-          <Hint label="لوحة الدراسة">
-            <IconButton label="لوحة الدراسة" icon={<PanelRight size={20} />} pressed={p.railOpen} onClick={p.onToggleRail} />
-          </Hint>
-          <Menu
-            label="خيارات القراءة"
-            align="end"
-            trigger={<IconButton label="خيارات القراءة" icon={<Ellipsis size={20} />} />}
-          >
-            <MenuItem icon={<LayoutPanelLeft size={16} />} onSelect={p.onToggleLeft}>
-              الصفحات والفهرس والعلامات
-            </MenuItem>
-            <MenuItem icon={<Plus size={16} />} onSelect={p.onZoomIn}>
-              تكبير
-            </MenuItem>
-            <MenuItem icon={<Minus size={16} />} onSelect={p.onZoomOut} hint={p.zoomLabel}>
-              تصغير
-            </MenuItem>
-            <MenuItem icon={check(p.fit)} onSelect={() => p.onZoomTo('fit')}>
-              ملاءمة العرض
-            </MenuItem>
-            <MenuSeparator />
-            {layoutItems}
-            <MenuSeparator />
-            <MenuItem icon={check(p.view === 'original')} onSelect={() => p.onView('original')}>
-              {VIEW_LABELS_AR.original}
-            </MenuItem>
-            <MenuItem icon={check(p.view === 'study_book')} onSelect={() => p.onView('study_book')} disabled={!!p.studyBookReason && p.view !== 'study_book'} disabledReason={p.studyBookReason ?? undefined}>
-              {VIEW_LABELS_AR.study_book}
-            </MenuItem>
-            <MenuItem icon={<Columns2 size={16} />} onSelect={() => undefined} disabled disabledReason={p.splitReason ?? 'العرض جنبًا إلى جنب يحتاج شاشة أعرض.'}>
-              جنبًا إلى جنب
-            </MenuItem>
-            <MenuItem icon={<Focus size={16} />} onSelect={p.onFocusMode}>
-              {p.focusMode ? 'إنهاء وضع التركيز' : 'وضع التركيز'}
-            </MenuItem>
-            {p.extraMenuItems && <MenuSeparator />}
-            {p.extraMenuItems}
-          </Menu>
-        </div>
-        {backButton && <div className="wk-topbar__row wk-topbar__row--sub">{backButton}</div>}
+            {p.onToggleChat && (
+              <Hint label={p.chatHiddenReason ?? 'المحادثة'}>
+                <IconButton label="المحادثة" icon={<MessageSquare size={20} />} pressed={!!p.chatOpen} disabled={!!p.chatHiddenReason} onClick={p.onToggleChat} />
+              </Hint>
+            )}
+            <Hint label="لوحة الدراسة">
+              <IconButton label="لوحة الدراسة" icon={<PanelRight size={20} />} pressed={p.railOpen} onClick={p.onToggleRail} />
+            </Hint>
+            {moreMenu('خيارات القراءة', 'md')}
+          </div>
+          {backButton && <div className="wk-topbar__row wk-topbar__row--sub">{backButton}</div>}
+        </header>
+        {/* (GoodNotes phone) the writing tools float in a slim strip at the bottom, within thumb reach */}
         {p.inkAvailable && (
-          <div className="wk-topbar__ink" role="group" aria-label="أدوات الكتابة">
+          <div className="wk-inkstrip" role="group" aria-label="أدوات الكتابة">
             <InkToolbar />
           </div>
         )}
-      </header>
+      </>
     );
   }
 
@@ -258,70 +268,34 @@ export function TopBar(p: TopBarProps) {
               <ArrowRight size={20} aria-hidden="true" />
             </Link>
           </Hint>
+          <Hint label="الصفحات والفهرس والعلامات ([)">
+            <IconButton label="الصفحات والفهرس والعلامات" icon={<PanelLeft size={18} />} size="sm" pressed={p.leftOpen} onClick={p.onToggleLeft} />
+          </Hint>
           <div className="wk-topbar__title">
-            <h1 className="wk-title" dir={detectDir(p.title)}>
+            <h1 className="wk-title" dir={detectDir(p.title)} title={p.title}>
               {p.title}
             </h1>
             <GoToPage pages={p.pages} pageIndex={p.pageIndex} onGo={p.onGoToPage} />
             {p.noteLabel && <span className="wk-note-chip">{p.noteLabel}</span>}
           </div>
+          <SaveStatus state={p.saveState} detail={p.saveDetail} compact live />
           {backButton}
         </div>
 
         <div className="wk-topbar__center">
-          {p.modeSwitch}
-          {viewMenu}
           {p.inkAvailable && (
             <div className="wk-topbar__ink" role="group" aria-label="أدوات الكتابة">
-              <InkToolbar />
+              <InkToolbar history="external" />
             </div>
           )}
         </div>
 
         <div className="wk-topbar__end">
-          <Hint label="البحث في المصدر (Ctrl F)">
-            <IconButton label="البحث في المصدر" icon={<Search size={18} />} size="sm" pressed={p.searchOpen} onClick={p.onToggleSearch} />
-          </Hint>
-          <div className="wk-zoom" role="group" aria-label="التكبير">
-            <Hint label="تصغير (-)">
-              <IconButton label="تصغير" icon={<Minus size={18} />} size="sm" onClick={p.onZoomOut} />
-            </Hint>
-            <Menu
-              label="مستوى التكبير"
-              trigger={
-                <button type="button" className={cx('wk-zoom__value', p.fit && 'wk-zoom__value--fit')} aria-label={`التكبير ${p.zoomLabel}${p.fit ? '، ملاءمة العرض' : ''}`}>
-                  <bdi dir="ltr">{p.zoomLabel}</bdi>
-                </button>
-              }
-            >
-              <MenuItem icon={check(p.fit)} onSelect={() => p.onZoomTo('fit')}>
-                ملاءمة العرض
-              </MenuItem>
-              {ZOOM_PRESETS.map((z) => (
-                <MenuItem key={z} icon={<span className="wk-menu-blank" />} onSelect={() => p.onZoomTo(z)}>
-                  <bdi dir="ltr">{`${Math.round(z * 100)}%`}</bdi>
-                </MenuItem>
-              ))}
-            </Menu>
-            <Hint label="تكبير (+)">
-              <IconButton label="تكبير" icon={<Plus size={18} />} size="sm" onClick={p.onZoomIn} />
-            </Hint>
-          </div>
-          <Menu label="خيارات العرض" align="end" trigger={<IconButton label="خيارات العرض" icon={<Ellipsis size={18} />} size="sm" />}>
-            {layoutItems}
-            {p.extraMenuItems && <MenuSeparator />}
-            {p.extraMenuItems}
-          </Menu>
-          <Hint label={p.focusMode ? 'إنهاء وضع التركيز (F)' : 'وضع التركيز (F)'}>
-            <IconButton label={p.focusMode ? 'إنهاء وضع التركيز' : 'وضع التركيز'} icon={<Focus size={18} />} size="sm" pressed={p.focusMode} onClick={p.onFocusMode} />
-          </Hint>
-          <Hint label="الصفحات والفهرس والعلامات ([)">
-            <IconButton label="الصفحات والفهرس والعلامات" icon={<PanelLeft size={18} />} size="sm" pressed={p.leftOpen} onClick={p.onToggleLeft} />
-          </Hint>
+          {p.inkAvailable && <InkHistory />}
+          {p.modeSwitch}
           {p.onToggleChat && (
-            <Hint label={p.chatHiddenReason ?? 'المحادثة بجانب الصفحة'}>
-              {/* the word folds away below 1440 px (icon + the same accessible name): the reading bar's middle slot keeps
-                  room for the writing bar, which is never pushed under these controls (e2e r1b-final-critic) */}
+            <Hint label={p.chatHiddenReason ?? 'المحادثة الذكية بجانب الصفحة'}>
+              {/* the word folds away below 1440 px (icon + the same accessible name) */}
               <Button
                 size="sm"
                 variant={p.chatOpen ? 'primary' : 'secondary'}
@@ -336,10 +310,13 @@ export function TopBar(p: TopBarProps) {
               </Button>
             </Hint>
           )}
+          <Hint label="البحث في المصدر (Ctrl F)">
+            <IconButton label="البحث في المصدر" icon={<Search size={18} />} size="sm" pressed={p.searchOpen} onClick={p.onToggleSearch} />
+          </Hint>
           <Hint label="لوحة الدراسة (])">
             <IconButton label="لوحة الدراسة" icon={<PanelRight size={18} />} size="sm" pressed={p.railOpen} onClick={p.onToggleRail} />
           </Hint>
-          <SaveStatus state={p.saveState} detail={p.saveDetail} live />
+          {moreMenu('خيارات العرض', 'sm')}
         </div>
       </div>
     </header>

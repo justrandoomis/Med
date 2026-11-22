@@ -1,6 +1,6 @@
 export { InkProvider, useInk } from './InkProvider';
 export { InkLayer } from './InkLayer';
-export { InkToolbar } from './InkToolbar';
+export { InkHistory, InkToolbar } from './InkToolbar';
 export type * from './types';
 // Additional exports (additive; the contract above is unchanged):
 // the single applier for pulled/pushed `annotation` entities (all kinds), for screens that need

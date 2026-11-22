@@ -6,6 +6,8 @@
 // other tracks appear after the built-in ones; the options of the current tool carry the colour slots and their meanings
 // (G03), the eraser's type filter (G15) and the lasso's chips and rectangle mode (G17); «المزيد» opens the page actions
 // (clear the page, delete by type, the bulk-removal list, the clean review view, the colour legend).
+// (GoodNotes bar, wp/smart-rail) tapping the tool that is already active opens its colour / width options (a second tap
+// closes them); in the reading bar undo / redo sit at the bar's trailing side (`history="external"` + InkHistory).
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import {
@@ -138,7 +140,15 @@ export function visibleSlots(width: number, btn: number, gap = 4, without?: stri
   return fitSlots(without ? LEGACY_PRIORITY.filter((p) => p !== without) : LEGACY_PRIORITY, width, btn, gap);
 }
 
-export function InkToolbar() {
+export interface InkToolbarProps {
+  /**
+   * 'external': undo / redo are not part of this bar — the reading bar shows them at its trailing side (InkHistory);
+   * a bar docked on a side keeps its own (it floats over the page, far from the reading bar)
+   */
+  history?: 'inline' | 'external';
+}
+
+export function InkToolbar({ history = 'inline' }: InkToolbarProps = {}) {
   const ink = useInk();
   const host = useInkHost();
   const internal = useInkInternal();
@@ -155,6 +165,10 @@ export function InkToolbar() {
   const tb = inkSettings.toolbar;
   const mode = useStudyMode(Object.keys(tb.modes).length > 0, host?.studyMode);
   const vertical = tb.dock !== 'top';
+  const ownHistory = history === 'inline' || vertical;
+  // (GoodNotes) the options popover of the current tool: opened by a second tap on the active tool
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const optionsWasOpen = useRef(false);
 
   useEffect(() => {
     const el = rootRef.current;
@@ -215,7 +229,10 @@ export function InkToolbar() {
   // a measured width of 0 is a squeezed bar, not «not measured»: it keeps the pen + «المزيد» only (before, a 0 px
   // measure meant «show every tool», and a squeezed bar spilled all of them over the reading bar's end slot)
   const room = size === null ? 0 : Math.max(1, size);
-  const shown = defaultLayout ? visibleSlots(room, buttonSize(), 4, host?.links ? undefined : 'link') : fitSlots(layoutPriority(layout.visible, recent ? ['recent'] : []), room, buttonSize());
+  const ranked = defaultLayout
+    ? LEGACY_PRIORITY.filter((x) => (host?.links || x !== 'link') && (ownHistory || (x !== 'undo' && x !== 'redo')))
+    : layoutPriority(layout.visible, recent ? ['recent'] : []).filter((x) => ownHistory || (x !== 'undo' && x !== 'redo'));
+  const shown = fitSlots(ranked, room, buttonSize());
   const inBar = layout.visible.filter((id) => shown.has(id));
   const overflow = layout.visible.filter((id) => !shown.has(id));
   const clip = getClipboard();
@@ -235,7 +252,27 @@ export function InkToolbar() {
           const name = id === fam && id !== 'hand' && id !== 'select_text' && !inkTool(id) ? `${info.label}: ${toolLabel(tool)}` : info.label;
           return (
             <Tooltip key={id} describe={false} content={tip(name, info.shortcut)}>
-              <IconButton label={name} icon={info.icon} pressed={id === 'ruler' ? !!ruler : fam === id} aria-keyshortcuts={info.shortcut} onClick={() => pickFamily(id)} />
+              <IconButton
+                label={name}
+                icon={info.icon}
+                pressed={id === 'ruler' ? !!ruler : fam === id}
+                aria-keyshortcuts={info.shortcut}
+                onPointerDown={() => {
+                  optionsWasOpen.current = optionsOpen;
+                }}
+                onClick={() => {
+                  // (GoodNotes) a second tap on the active tool opens its options; tapping it again closes them
+                  if (id === fam && hasOptions && id !== 'ruler') {
+                    const next = !optionsWasOpen.current && !optionsOpen;
+                    optionsWasOpen.current = false;
+                    if (shown.has('options')) setOptionsOpen(next);
+                    else if (next) setOptionsDialog(true);
+                    return;
+                  }
+                  setOptionsOpen(false);
+                  pickFamily(id);
+                }}
+              />
             </Tooltip>
           );
         })}
@@ -244,9 +281,9 @@ export function InkToolbar() {
             <IconButton label={`الأداة السابقة: ${toolLabel(recent)}`} icon={<span className="ml-ink-recent">{entryInfo(familyOf(recent)).icon}</span>} onClick={() => ink.setTool(recent)} />
           </Tooltip>
         )}
-        {hasOptions && shown.has('options') && <ToolOptions onOpenSettings={() => setSettingsOpen(true)} />}
-        <span className="ml-ink-toolbar__sep" aria-hidden="true" />
-        {shown.has('undo') && (
+        {hasOptions && shown.has('options') && <ToolOptions onOpenSettings={() => setSettingsOpen(true)} open={optionsOpen} onOpenChange={setOptionsOpen} />}
+        {ownHistory && <span className="ml-ink-toolbar__sep" aria-hidden="true" />}
+        {ownHistory && shown.has('undo') && (
           <Tooltip
             describe={false}
             content={
@@ -261,18 +298,18 @@ export function InkToolbar() {
             <IconButton label="تراجع" icon={<Undo2 size={18} />} disabled={!ink.canUndo} aria-keyshortcuts="Control+Z Meta+Z" aria-describedby={historyNoteId} onClick={ink.undo} />
           </Tooltip>
         )}
-        {shown.has('redo') && (
+        {ownHistory && shown.has('redo') && (
           <Tooltip describe={false} content={<span className="ml-ink-tip">إعادة <Kbd>{`${MOD} ⇧ Z`}</Kbd></span>}>
             <IconButton label="إعادة" icon={<Redo2 size={18} />} disabled={!ink.canRedo} aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z" onClick={ink.redo} />
           </Tooltip>
         )}
         <Menu label="المزيد من أدوات الكتابة" align="end" trigger={<IconButton label="المزيد من أدوات الكتابة" icon={<Ellipsis size={18} />} />}>
-          {!shown.has('undo') && (
+          {ownHistory && !shown.has('undo') && (
             <MenuItem icon={<Undo2 size={16} />} hint={`${MOD} Z`} disabled={!ink.canUndo} disabledReason="لا يوجد ما يُتراجع عنه." onSelect={ink.undo}>
               تراجع
             </MenuItem>
           )}
-          {!shown.has('redo') && (
+          {ownHistory && !shown.has('redo') && (
             <MenuItem icon={<Redo2 size={16} />} hint={`${MOD} ⇧ Z`} disabled={!ink.canRedo} disabledReason="لا يوجد ما يُعاد." onSelect={ink.redo}>
               إعادة
             </MenuItem>
@@ -295,7 +332,7 @@ export function InkToolbar() {
               {`الأداة السابقة: ${toolLabel(recent)}`}
             </MenuItem>
           )}
-          {(overflow.length > 0 || !shown.has('undo') || !shown.has('redo')) && <MenuSeparator />}
+          {(overflow.length > 0 || (ownHistory && (!shown.has('undo') || !shown.has('redo')))) && <MenuSeparator />}
           <MenuItem
             icon={<ClipboardPaste size={16} />}
             hint={`${MOD} V`}
@@ -360,7 +397,7 @@ export function InkToolbar() {
           </span>
         )}
       </Toolbar>
-      <p id={historyNoteId} className="ml-visually-hidden">سجل التراجع محفوظ على هذا الجهاز ويبقى بعد إعادة التحميل أو إغلاق التطبيق، ضمن حد للحجم تسقط بعده أقدم الخطوات. خطوة تغيّرت كتابتها بعدها على جهاز آخر لك لا تُنفّذ قبل سؤالك.</p>
+      {ownHistory && <p id={historyNoteId} className="ml-visually-hidden">سجل التراجع محفوظ على هذا الجهاز ويبقى بعد إعادة التحميل أو إغلاق التطبيق، ضمن حد للحجم تسقط بعده أقدم الخطوات. خطوة تغيّرت كتابتها بعدها على جهاز آخر لك لا تُنفّذ قبل سؤالك.</p>}
       <CapabilityDialog open={capabilitiesOpen} onClose={() => setCapabilitiesOpen(false)} />
       <InkSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} available={available} />
       <InkDialogs open={dialog} onClose={() => setDialog(null)} />
@@ -372,6 +409,39 @@ export function InkToolbar() {
   // (G66) docked on a side, the bar floats over the page: rendered at the app's root (still inert under a modal), so a
   // header with a backdrop filter or a transform never becomes its containing block (it stays centred on the screen's side)
   return vertical && typeof document !== 'undefined' ? createPortal(bar, document.getElementById('root') ?? document.body) : bar;
+}
+
+/**
+ * (GoodNotes bar) undo / redo at the reading bar's trailing side, next to «المحادثة» and search (the writing bar then
+ * leaves them out: `history="external"`). Same names, shortcuts and the persisted-history note as in the writing bar.
+ * Nothing when the writing bar is docked on a side (it keeps its own there).
+ */
+export function InkHistory() {
+  const ink = useInk();
+  const { inkSettings } = useInkInternal();
+  const noteId = useId();
+  if (inkSettings.toolbar.dock !== 'top') return null;
+  return (
+    <div className="ml-ink-history" role="group" aria-label="التراجع والإعادة">
+      <Tooltip
+        describe={false}
+        content={
+          <span className="ml-ink-tip ml-ink-tip--stack">
+            <span>
+              تراجع <Kbd>{`${MOD} Z`}</Kbd>
+            </span>
+            <span className="ml-ink-tip__note">سجل التراجع محفوظ على هذا الجهاز ويبقى بعد إعادة التحميل أو إغلاق التطبيق (آخر الخطوات ضمن حد للحجم).</span>
+          </span>
+        }
+      >
+        <IconButton label="تراجع" icon={<Undo2 size={18} />} size="sm" disabled={!ink.canUndo} aria-keyshortcuts="Control+Z Meta+Z" aria-describedby={noteId} onClick={ink.undo} />
+      </Tooltip>
+      <Tooltip describe={false} content={<span className="ml-ink-tip">إعادة <Kbd>{`${MOD} ⇧ Z`}</Kbd></span>}>
+        <IconButton label="إعادة" icon={<Redo2 size={18} />} size="sm" disabled={!ink.canRedo} aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z" onClick={ink.redo} />
+      </Tooltip>
+      <p id={noteId} className="ml-visually-hidden">سجل التراجع محفوظ على هذا الجهاز ويبقى بعد إعادة التحميل أو إغلاق التطبيق، ضمن حد للحجم تسقط بعده أقدم الخطوات. خطوة تغيّرت كتابتها بعدها على جهاز آخر لك لا تُنفّذ قبل سؤالك.</p>
+    </div>
+  );
 }
 
 const PEN_VARIANTS = [
@@ -424,7 +494,7 @@ function useToolOptionsLabel(): string {
   return key ? `خيارات ${toolLabel(tool)}: ${colorLabel(ink.toolState.color)}${meaning ? ` — ${meaning}` : ''}` : `خيارات ${toolLabel(tool)}`;
 }
 
-function ToolOptions({ onOpenSettings }: { onOpenSettings: () => void }) {
+function ToolOptions({ onOpenSettings, open, onOpenChange }: { onOpenSettings: () => void; open?: boolean; onOpenChange?: (v: boolean) => void }) {
   const ink = useInk();
   const key = presetKeyFor(ink.toolState.tool);
   const shown = key ? resolveInkColor(ink.toolState.color, currentPaperTone(), null) : 'transparent';
@@ -432,6 +502,8 @@ function ToolOptions({ onOpenSettings }: { onOpenSettings: () => void }) {
   return (
     <Popover
       label={label}
+      open={open}
+      onOpenChange={onOpenChange}
       trigger={
         <IconButton label={label} className="ml-ink-style-btn" icon={key ? <span className="ml-ink-swatch" style={{ background: shown }} /> : <SlidersHorizontal size={18} />} />
       }

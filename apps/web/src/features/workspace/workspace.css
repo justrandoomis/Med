@@ -1438,3 +1438,92 @@
 .wk-split-side__note {
   margin: var(--ml-space-2) var(--ml-space-3) 0;
 }
+
+/* ───────────── smart chat in the rail (wp/smart-rail) ───────────── */
+.wk-rail-panel--chat {
+  display: flex;
+  flex-direction: column;
+}
+.wk-smart {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+  min-height: 0;
+  padding: var(--ml-space-2) var(--ml-space-3) var(--ml-space-3);
+}
+.wk-smart[data-layout='side'] {
+  padding: 0;
+}
+.wk-smart__scope {
+  flex: none;
+}
+.wk-smart__surface {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: min(60dvh, 26rem);
+}
+.wk-smart[data-layout='side'] .wk-smart__surface {
+  min-height: 0;
+}
+.wk-rail-tool__head {
+  position: sticky;
+  top: 0;
+  z-index: var(--ml-z-sticky);
+  display: flex;
+  align-items: center;
+  gap: var(--ml-space-2);
+  padding: var(--ml-space-1) var(--ml-space-2);
+  border-bottom: 1px solid var(--ml-color-line);
+  background: var(--ml-color-paper);
+}
+.wk-rail-tool__title {
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-sm);
+  font-weight: var(--ml-weight-semibold);
+}
+.wk-rail-exam__title {
+  margin: 0;
+  padding-inline: var(--ml-space-4);
+  font-size: var(--ml-text-sm);
+}
+
+/* ───────────── GoodNotes bar (wp/smart-rail) ───────────── */
+.ml-ink-history {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+/* phone: the writing tools float in a slim strip at the bottom (thumb reach), never over the full-screen chat */
+.wk-inkstrip {
+  position: fixed;
+  z-index: var(--ml-z-nav);
+  left: max(var(--ml-space-4), var(--ml-safe-left));
+  right: max(var(--ml-space-4), var(--ml-safe-right));
+  bottom: calc(var(--ml-safe-bottom) + var(--ml-space-3));
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.wk-inkstrip > .ml-ink-toolbar:not(.ml-ink-toolbar--docked) {
+  flex: 0 1 auto;
+  max-width: 100%;
+  padding: 2px var(--ml-space-1);
+  overflow-x: auto;
+  border: 1px solid var(--ml-color-line);
+  border-radius: var(--ml-radius-pill);
+  background: color-mix(in srgb, var(--ml-color-elevated) 94%, transparent);
+  box-shadow: var(--ml-shadow-raised);
+  pointer-events: auto;
+  scrollbar-width: none;
+}
+:root[data-eink='on'] .wk-inkstrip > .ml-ink-toolbar {
+  background: var(--ml-color-paper);
+  box-shadow: none;
+  border-color: var(--ml-color-line-strong);
+}
+.wk-root:has(.wk-chat--full:not([hidden])) .wk-inkstrip,
+.wk-root--focus .wk-inkstrip {
+  display: none;
+}

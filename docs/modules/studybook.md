@@ -400,3 +400,30 @@ softened; citations to the lecture pages); the streamed draft stays labelled «�
   before, and from the checked answer after); chat → reader follows whole turns, not individual blocks; a new
   conversation on `/chat` starts from a lecture (no lecture picker there); the answer style is the thread's (not in the
   composer); the old `ChatPanel` stays only for its tests (handwriting, H4); conversations are not readable offline.
+
+## Smart chat — skills as cards in the conversation (wp/smart-rail, 2026-11-22)
+
+* **Migration `0471_chat_attachments.sql`** (base band, vault DB): `message.attachment_json` (the card payload of an
+  assistant message) and `message.skill` (the skill that produced the turn, on both rows).
+* **`POST /studybook/threads/:id/cards`** `{ text, skill, attachment, artifact_id?, context? }` (`cardCreateSchema`,
+  strict discriminated union) appends the owner's request + an assistant message with the card. No AI runs here: the
+  skill already ran in its own module. Every referenced id must exist in this vault (`question_generation_run`,
+  `question`, `generated_question_candidate`, `clinical_case` not trashed, `flashcard` not deleted, `source_version`) —
+  otherwise 404 and nothing is written; a compare / figure card needs `artifact_id` of a `comparison` /
+  `figure_explanation` artifact of the thread's lecture, and its content is that checked artifact (abstained → the turn is
+  `abstained`). The context is checked against the thread's pinned version like a question (Source Lock). The scope hash
+  is re-checked (a changed lock refuses). Card turns are excluded from the model's conversation history
+  (`skill IS NULL`) and cannot be edited / regenerated / saved as a note in the UI.
+* `ChatMessageView.attachment` (shared `ChatAttachment`): `{type:'mcq', run_id, question_ids, pending_ids?, difficulty?,
+  figure?}`, `{type:'case', case_id}`, `{type:'cards', card_ids, version_id, notes_ar?}`, `{type:'compare', items}`,
+  `{type:'figure'}`, `{type:'questions', ids, page_id}`, `{type:'sources', page_id}` — references only, never copies.
+* Web: `ChatSurface` takes `skills` (`ChatSkillsConfig`: items with availability + reason, `run`, card context): the chip
+  row (`SkillBar`), the «/» menu (`Composer` `menu` / `onMenuKey`), a pending skill turn with «أوقف», and the cards
+  (`ChatTurns.renderCard` → `cards.tsx`). Without skills (e.g. `/chat`) the surface is unchanged.
+* Tested: `srv:studybook/chat-cards.test.ts` (a card persists in the history and comes back on reload; unknown ids /
+  malformed attachments / another lecture's page refused with nothing written; a compare card shows the checked artifact;
+  a card never reaches the model's history), `web:src/features/workspace/chat/SmartChat.test.tsx`,
+  `web:src/features/studybook/chat/skills.test.ts`.
+* Limits: «بطاقات» makes cards from the lecture's described figures only (the learning module has no AI card generation
+  from page text; a selection card stays in the selection toolbar); a generated case is played in the chat only once it is
+  `ready`; the MCQ card's practice attempt appears in the exams history like any practice set.

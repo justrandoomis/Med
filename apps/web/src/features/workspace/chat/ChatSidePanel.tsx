@@ -4,23 +4,19 @@
 //   full    < 900 px: full screen, a compact «الصفحة N» bar (thumbnail + label) with «اعرض الصفحة» (the reader; the chat
 //           stays mounted and comes back with «عُد إلى المحادثة») and — landscape — «جنبًا إلى جنب» (50 / 50)
 //   split   phone landscape: the chat and the page side by side
-// Inside: ChatSurface (layout 'side'): title, «محادثة جديدة», the history as a column, the thread filling the height,
-// the composer (model / effort picker) pinned at the bottom. Escape closes; focus moves into the composer on open.
+// Inside: «المحادثة الذكية» (SmartChat → ChatSurface, layout 'side'): title, «محادثة جديدة», the history as a column,
+// the thread filling the height, the skill chips and the composer (model / effort picker, «/» menu) pinned at the
+// bottom. Escape closes; focus moves into the composer on open. «ملاحظاتي» in the header goes to the rail's notes.
 // It consumes the selection toolbar's «اسأل عن التحديد» requests (the selection becomes a context chip).
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { BookOpen, Columns2, Maximize2, MessageSquare, X } from 'lucide-react';
-import type { SelectionAnchor, SourceScope } from '@medlevo/shared';
+import type { KeyboardEvent } from 'react';
+import { BookOpen, Columns2, Maximize2, MessageSquare, NotebookPen, X } from 'lucide-react';
 import { Button, IconButton, cx } from '../../../design';
-import { useCapabilities } from '../../../lib/capabilities';
-import { useSettings } from '../../../lib/settings';
-import { ChatSurface } from '../../studybook/chat/ChatSurface';
-import { defaultScopeFor, regionsUnder } from '../../studybook/model';
-import { fetchRegions } from '../data/api';
+import type { CardContext } from '../../studybook/chat/cards';
 import type { SourceDocument } from '../data/useSourceDocument';
-import { aiRequestStore, usePendingAiRequest, type AiRequest } from '../model/aiActions';
 import type { ChatMode, ChatPhoneView } from '../model/layout';
 import { fullPageLabel } from '../model/pages';
 import { ThumbImage } from '../panels/LeftPanel';
+import { SmartChat } from './SmartChat';
 import type { ChatPanelApi } from './useChatPanel';
 import './chatSide.css';
 
@@ -41,56 +37,14 @@ export interface ChatSidePanelProps {
   onClose: () => void;
   /** chat → reader (page sync, «ص N» chips) */
   onJumpToPage: (pageIndex: number) => void;
-}
-
-async function withRegions(req: AiRequest): Promise<SelectionAnchor> {
-  if (!req.rects.length || !req.anchor.page_id) return req.anchor;
-  try {
-    const r = await fetchRegions(req.anchor.page_id);
-    const ids = regionsUnder(r.regions, req.rects);
-    return ids.length ? { ...req.anchor, region_ids: ids } : req.anchor;
-  } catch {
-    return req.anchor;
-  }
+  /** (smart chat) «ملاحظاتي»: the rail's notes tab (the chat closes, the rail takes its place) */
+  onOpenNotes?: () => void;
+  /** (smart chat) a card's full tool (figures / linked questions / cases) */
+  onOpenTool?: CardContext['onOpenTool'];
 }
 
 export function ChatSidePanel(p: ChatSidePanelProps) {
   const { doc } = p;
-  const { settings } = useSettings();
-  const gate = useCapabilities().feature('ai.chat');
-  const [scope, setScope] = useState<SourceScope>(() => defaultScopeFor(doc.detail, settings.default_scope_mode));
-  const [selection, setSelection] = useState<{ anchor: SelectionAnchor; text: string } | null>(null);
-  const [prefill, setPrefill] = useState<string | null>(null);
-  const [focus, setFocus] = useState(1);
-  // an explicit open (again) focuses the composer (adjusted while rendering; an old prefill is not re-applied)
-  const [seenOpen, setSeenOpen] = useState(p.openKey);
-  if (seenOpen !== p.openKey) {
-    setSeenOpen(p.openKey);
-    setPrefill(null);
-    setFocus((n) => n + 1);
-  }
-
-  // «اسأل عن التحديد» from the selection toolbar / handwriting: the selection is attached, the question prefilled
-  const pending = usePendingAiRequest();
-  const mounted = useRef(true);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
-  useEffect(() => {
-    if (!pending || pending.action !== 'ask') return;
-    // consuming the request re-runs this effect with `null`: the resolution below must not be dropped by it
-    aiRequestStore.clear(pending.id);
-    void withRegions(pending).then((anchor) => {
-      if (!mounted.current) return;
-      setSelection({ anchor, text: pending.text });
-      setPrefill(pending.prefill ?? null);
-      setFocus((n) => n + 1);
-    });
-  }, [pending]);
-
   const page = doc.pages[p.pageIndex] ?? null;
   const pageName = page ? fullPageLabel(page) : `الصفحة ${p.pageIndex + 1}`;
   const full = p.mode === 'full';
@@ -107,30 +61,31 @@ export function ChatSidePanel(p: ChatSidePanelProps) {
   };
 
   const closeButton = <IconButton size="sm" variant="plain" label="أغلق المحادثة" icon={<X size={16} />} onClick={p.onClose} />;
+  const notesButton = p.onOpenNotes ? <IconButton size="sm" variant="plain" label="ملاحظاتي" icon={<NotebookPen size={16} />} onClick={p.onOpenNotes} /> : null;
   const surface = (
-    <ChatSurface
+    <SmartChat
       layout="side"
-      sourceId={doc.detail.id}
-      sourceTitle={doc.detail.title}
-      pages={doc.pages}
-      pageLabel={(i) => doc.pages[i]?.printed_label ?? null}
-      visiblePage={p.pageIndex}
-      selection={selection}
-      scope={scope}
-      gate={gate}
+      doc={doc}
+      pageIndex={p.pageIndex}
       online={p.online}
       onJumpToPage={p.onJumpToPage}
-      onScopeChange={setScope}
-      focusKey={focus}
-      prefill={prefill}
+      onOpenTool={p.onOpenTool}
+      openKey={p.openKey}
+      consumeAsk
       headerActions={
         p.mode === 'split' ? (
           <>
             <IconButton size="sm" variant="plain" label="المحادثة بملء الشاشة" icon={<Maximize2 size={16} />} onClick={() => p.onPhoneView('chat')} />
+            {notesButton}
             {closeButton}
           </>
-        ) : full ? null : (
-          closeButton
+        ) : full ? (
+          notesButton
+        ) : (
+          <>
+            {notesButton}
+            {closeButton}
+          </>
         )
       }
     />

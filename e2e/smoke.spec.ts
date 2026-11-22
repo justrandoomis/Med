@@ -5,7 +5,7 @@
 // (AI honestly «requires configuration»: no AI key exists here). Runs on phone (390×844) and desktop (1280×800);
 // the consoleGuard fixture fails the test on any console error, page error or 5xx API answer.
 import type { CapabilitiesResponse, LectureQuestionsResponse, LibraryTreeResponse, QuestionListResponse, SourcePagesResponse } from '@medlevo/shared';
-import { apiAs, expect, GOLDEN_DIR, openWorkspace, screenshot, setupOwner, test, waitForWorkspace } from './support';
+import { apiAs, expect, GOLDEN_DIR, openWorkspace, screenshot, setupOwner, test, waitForWorkspace, openRailSection, openRailTool, skillChip } from './support';
 import { join } from 'node:path';
 
 const reEscape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -109,7 +109,7 @@ test('smoke: setup → library → upload → processing → reader → vault �
     await screenshot(page, testInfo, '06-workspace');
   });
 
-  await test.step('study rail: explain says why AI is unavailable; questions tab lists the linked questions (AC-16)', async () => {
+  await test.step('study rail: the smart chat says why AI is unavailable; the lecture’s questions list the linked questions (AC-16)', async () => {
     // the lecture came first, the question source later: matching links them once extraction finished
     await expect
       .poll(async () => (await api.get<LectureQuestionsResponse>(`/api/questions/for-lecture/${lecture.source_id}`)).matching.state, { timeout: 60_000 })
@@ -117,15 +117,17 @@ test('smoke: setup → library → upload → processing → reader → vault �
     const linked = await api.get<LectureQuestionsResponse>(`/api/questions/for-lecture/${lecture.source_id}`);
     expect(linked.items.length, 'questions of the course linked to the appendicitis lecture').toBeGreaterThan(0);
 
-    const railTab = (name: string) => page.getByRole('tab', { name: new RegExp(name) });
-    if (!(await railTab('الأسئلة').isVisible())) await page.getByRole('button', { name: 'لوحة الدراسة' }).first().click();
-    await railTab('الشرح والسؤال').click();
+    // (smart chat) the rail's first section: the chat says why, and every AI skill is disabled with the server's reason
+    await openRailSection(page, 'المحادثة الذكية');
     await expect(page.getByText('الشرح غير متاح الآن')).toBeVisible();
-    await expect(page.getByText(caps.features['ai.explain'].reason_ar!).first()).toBeVisible();
-    await expect(page.getByRole('button', { name: 'اشرح', exact: true })).toBeDisabled();
+    await expect(page.getByText(caps.features['ai.chat'].reason_ar!).first()).toBeVisible();
+    await expect(skillChip(page, 'اشرح الصفحة')).toBeDisabled();
+    await expect(skillChip(page, 'اسألني MCQ')).toBeDisabled();
+    await expect(page.getByRole('list', { name: 'مهارات غير متاحة الآن' }).first()).toContainText(caps.features['ai.generate_questions'].reason_ar!);
     await screenshot(page, testInfo, '07-rail-explain');
 
-    await railTab('الأسئلة').click();
+    // the lecture's linked questions: the full panel behind «أسئلة المحاضرة» (reading bar «⋯»)
+    await openRailTool(page, 'أسئلة المحاضرة');
     await expect(page.getByRole('link', { name: 'كل أسئلة المحاضرة في الخزنة' })).toBeVisible();
     await expect(page.locator('.qv-rail__list li').first()).toBeVisible();
     await screenshot(page, testInfo, '08-rail-questions');

@@ -2,7 +2,7 @@
 // Request schemas strip/deny anything that could smuggle scope or versions (AC-29): scope goes through
 // sourceScopeSchema → resolveScope (server), anchors are re-checked against the resolved scope.
 import { z } from 'zod';
-import { ABSTAIN_REASONS, ANSWER_STYLES, CHAT_EFFORTS, CHAT_KINDS, CHAT_MODELS, EXPLANATION_LEVELS, SUMMARY_TYPES, SUPPORT_TYPES, sourceScopeSchema, type GeneratedBlock } from '@medlevo/shared';
+import { ABSTAIN_REASONS, ANSWER_STYLES, CHAT_EFFORTS, CHAT_KINDS, CHAT_MODELS, CHAT_SKILLS, EXPLANATION_LEVELS, SUMMARY_TYPES, SUPPORT_TYPES, sourceScopeSchema, type GeneratedBlock } from '@medlevo/shared';
 import { RETRY_STRATEGIES } from '@medlevo/shared';
 import { rulesPatchSchema } from './rules';
 
@@ -138,6 +138,43 @@ export const messageCreateSchema = z
       .strict()
       .nullish(),
     replace_from: ID.nullish(),
+  })
+  .strict();
+
+/**
+ * (smart chat, wp/smart-rail) a skill result appended to a conversation as a card. The attachment only REFERENCES
+ * objects of other modules by id (chat.ts checks every id exists in this vault before anything is written); no AI runs
+ * here — the skill already ran through its own module (exam generation, cases, learning, compare / explain).
+ */
+const chatContextSchema = z
+  .object({ page_id: ID.nullish(), region_ids: z.array(ID).max(60).optional(), quote: z.string().max(6000).nullish() })
+  .strict()
+  .nullish();
+export const chatAttachmentSchema = z.discriminatedUnion('type', [
+  z
+    .object({
+      type: z.literal('mcq'),
+      run_id: ID,
+      question_ids: z.array(ID).max(20),
+      pending_ids: z.array(ID).max(20).optional(),
+      difficulty: z.string().max(40).nullish(),
+      figure: z.boolean().optional(),
+    })
+    .strict(),
+  z.object({ type: z.literal('case'), case_id: ID }).strict(),
+  z.object({ type: z.literal('cards'), card_ids: z.array(ID).max(60), version_id: ID, notes_ar: z.array(z.string().max(400)).max(6).optional() }).strict(),
+  z.object({ type: z.literal('compare'), items: z.array(z.string().trim().min(1).max(200)).min(2).max(4) }).strict(),
+  z.object({ type: z.literal('figure') }).strict(),
+  z.object({ type: z.literal('questions'), ids: z.array(ID).max(60), page_id: ID.nullable() }).strict(),
+  z.object({ type: z.literal('sources'), page_id: ID.nullable() }).strict(),
+]);
+export const cardCreateSchema = z
+  .object({
+    text: z.string().trim().min(1).max(600),
+    skill: z.enum(CHAT_SKILLS),
+    attachment: chatAttachmentSchema,
+    artifact_id: ID.nullish(),
+    context: chatContextSchema,
   })
   .strict();
 

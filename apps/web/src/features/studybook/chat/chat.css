@@ -515,3 +515,252 @@
   height: min(72dvh, 48rem);
   min-height: 22rem;
 }
+
+/* ───────── smart chat skills (wp/smart-rail): chips, the «/» menu, result cards ───────── */
+.ch-skills {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-1);
+  min-width: 0;
+}
+.ch-skills__row {
+  display: flex;
+  gap: var(--ml-space-1);
+  overflow-x: auto;
+  padding-block: 2px;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+}
+.ch-skills__row::-webkit-scrollbar {
+  display: none;
+}
+.ch-skill {
+  flex: none;
+  border-radius: var(--ml-radius-pill);
+}
+.ch-skills__reasons {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-xs);
+}
+.ch-skillform {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+  padding: var(--ml-space-3);
+  border: 1px solid var(--ml-color-line);
+  border-radius: var(--ml-radius-lg);
+  background: var(--ml-color-paper);
+}
+.ch-skillform__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ml-space-2);
+}
+.ch-skillform__title {
+  font-weight: var(--ml-weight-semibold);
+}
+.ch-slash {
+  margin: 0 0 var(--ml-space-1);
+  padding: 4px;
+  max-height: 16rem;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--ml-color-line);
+  border-radius: var(--ml-radius-md);
+  background: var(--ml-color-elevated);
+  box-shadow: var(--ml-shadow-raised);
+}
+.ch-slash__item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  column-gap: var(--ml-space-2);
+  padding: 6px var(--ml-space-2);
+  border-radius: var(--ml-radius-sm);
+  cursor: pointer;
+}
+.ch-slash__item--active {
+  background: var(--ml-color-accent-soft);
+  color: var(--ml-color-accent-soft-ink);
+}
+.ch-slash__item[aria-disabled='true'] {
+  color: var(--ml-color-ink-3);
+  cursor: default;
+}
+.ch-slash__label {
+  font-weight: var(--ml-weight-semibold);
+}
+.ch-slash__cmd {
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-xs);
+}
+.ch-slash__hint {
+  grid-column: 2 / -1;
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-xs);
+}
+.ch-skill-pending {
+  display: flex;
+  align-items: center;
+  gap: var(--ml-space-2);
+}
+.ch-card {
+  border: 1px solid var(--ml-color-line);
+  border-radius: var(--ml-radius-lg);
+  background: var(--ml-color-paper);
+}
+.ch-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+  padding: var(--ml-space-3);
+}
+.ch-card__title {
+  margin: 0;
+  font-weight: var(--ml-weight-semibold);
+}
+.ch-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ml-space-2);
+  margin: 0;
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-xs);
+}
+.ch-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ml-space-2);
+}
+.ch-card__pending {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--ml-space-1);
+}
+.ch-mcq {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-2);
+}
+.ch-mcq__options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ch-mcq__option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ml-space-2);
+  width: 100%;
+  min-height: var(--ml-control-h-md);
+  padding: var(--ml-space-2);
+  border: 1px solid var(--ml-color-control-border);
+  border-radius: var(--ml-radius-md);
+  background: var(--ml-color-paper);
+  color: var(--ml-color-ink);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.ch-mcq__option:hover:not(:disabled) {
+  background: var(--ml-color-fill);
+}
+.ch-mcq__option:disabled {
+  cursor: default;
+}
+.ch-mcq__option--right {
+  border-color: var(--ml-color-success);
+  background: var(--ml-color-success-soft);
+}
+.ch-mcq__option--wrong {
+  border-color: var(--ml-color-danger);
+  background: var(--ml-color-danger-soft);
+}
+/* e-ink: right / wrong are never colour alone (the marks and the status pill say it) — a heavier border */
+:root[data-eink='on'] .ch-mcq__option--right,
+:root[data-eink='on'] .ch-mcq__option--wrong {
+  border-width: 2px;
+  background: var(--ml-color-paper);
+}
+.ch-mcq__label {
+  flex: none;
+  font-weight: var(--ml-weight-semibold);
+}
+.ch-mcq__feedback {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--ml-space-2);
+}
+.ch-case__step {
+  margin: var(--ml-space-2) 0 0;
+  font-size: var(--ml-text-sm);
+}
+.ch-case__facts,
+.ch-case__qs,
+.ch-case__answers {
+  margin: 0;
+  padding-inline-start: var(--ml-space-5);
+}
+.ch-case__stage {
+  color: var(--ml-color-ink-2);
+  font-size: var(--ml-text-xs);
+}
+.ch-flash,
+.ch-qlist,
+.ch-sources {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ch-flash__card {
+  padding: var(--ml-space-2);
+  border: 1px solid var(--ml-color-line);
+  border-radius: var(--ml-radius-md);
+}
+.ch-flash__back {
+  color: var(--ml-color-ink-2);
+}
+.ch-qlist__item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--ml-space-2);
+  border-radius: var(--ml-radius-md);
+  color: var(--ml-color-ink);
+  text-decoration: none;
+}
+.ch-qlist__item:hover {
+  background: var(--ml-color-fill);
+}
+.ch-qlist__stem {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.ch-sources {
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+.ch-sources__chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--ml-space-1);
+  padding: 2px var(--ml-space-2);
+  border-radius: var(--ml-radius-pill);
+  background: var(--ml-color-paper-2);
+  font-size: var(--ml-text-sm);
+}

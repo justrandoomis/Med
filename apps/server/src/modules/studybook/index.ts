@@ -12,6 +12,7 @@
 //   POST /summaries/preview · POST /summaries · GET /summaries/:id
 //   POST /threads · GET /threads?source_id=&page_id= · GET /threads/:id · POST /threads/:id/messages · /archive
 //   PATCH /threads/:id {title} · DELETE /threads/:id   (chat UX) rename / delete a saved conversation
+//   POST /threads/:id/cards             (smart chat) append a skill result (owner request + card) to a conversation
 //   GET|PUT /chat/prefs                 (chat UX) the owner's remembered model / effort / auto-explain / page sync
 //   POST /messages/:id/save-note        → note (origin 'ai_answer') through the annotations sync handler
 //   GET  /rules?source_id=&node_id= · PUT /rules/owner · PUT|DELETE /rules/nodes/:nodeId
@@ -44,13 +45,13 @@ import {
   type SectionJobInput,
   type StudybookHooks,
 } from './book';
-import { archiveThread, assertChatModel, chatPrefs, createThread, deleteThread, getThread, listThreads, postMessage, renameThread, saveAnswerAsNote, saveChatPrefs } from './chat';
+import { appendCard, archiveThread, assertChatModel, chatPrefs, createThread, deleteThread, getThread, listThreads, postMessage, renameThread, saveAnswerAsNote, saveChatPrefs } from './chat';
 import { compareItems, explainSelection, isRealPatientRequest } from './explain';
 import { requireAi } from './generate';
 import { sendStudyStream } from './stream';
 import { registerDiagramRoutes } from './diagrams';
 import { nodeChain, nodeChainForSource, readOverride, resolveRules, rulesPatchSchema, templateForNode } from './rules';
-import { chatPrefsSchema, compareBodySchema, explainBodySchema, messageCreateSchema, saveNoteSchema, studyBookBodySchema, summaryBodySchema, threadCreateSchema, threadPatchSchema } from './schema';
+import { cardCreateSchema, chatPrefsSchema, compareBodySchema, explainBodySchema, messageCreateSchema, saveNoteSchema, studyBookBodySchema, summaryBodySchema, threadCreateSchema, threadPatchSchema } from './schema';
 
 const ID = z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/);
 /** what the rail's history lists (study books / summaries have their own views) */
@@ -252,6 +253,8 @@ export function createStudybookModule(opts: StudybookModuleOptions = {}) {
         (r) => r.answer.artifact?.removed ?? [],
       );
     });
+    // (smart chat) a skill result as a card in the conversation — no AI here, the skill ran in its own module
+    app.post('/threads/:id/cards', async (req) => appendCard(ctx, parseParams(idParams, req).id, parseBody(cardCreateSchema, req)));
     app.post('/threads/:id/archive', async (req) => ({ thread: archiveThread(ctx, parseParams(idParams, req).id) }));
     app.patch('/threads/:id', async (req) => ({ thread: renameThread(ctx, parseParams(idParams, req).id, parseBody(threadPatchSchema, req)) }));
     app.delete('/threads/:id', async (req) => deleteThread(ctx, parseParams(idParams, req).id));

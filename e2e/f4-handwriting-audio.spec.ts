@@ -106,6 +106,9 @@ test.describe('F4 handwriting recognition on a server without a vision provider'
       await expect(composer).toBeDisabled();
       await expect(chat.locator('#ch-composer-reason')).toContainText('ANTHROPIC_API_KEY');
       await expect(chat.locator('.ch-empty')).toBeVisible();
+      // (smart chat) the AI skills of the chat are off with the same reason — none pretends to run
+      await expect(chat.getByRole('group', { name: 'مهارات المحادثة' }).getByRole('button', { name: 'اسألني MCQ', exact: true })).toBeDisabled();
+      await expect(chat.getByRole('list', { name: 'مهارات غير متاحة الآن' })).toContainText('ANTHROPIC_API_KEY');
       await screenshot(page, testInfo, 'f4-ask-in-chat');
     });
   });

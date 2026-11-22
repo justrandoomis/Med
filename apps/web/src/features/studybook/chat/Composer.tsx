@@ -1,7 +1,7 @@
 // The chat composer: a textarea that grows with its text (up to a cap, then scrolls), Enter sends / Shift+Enter is a
 // new line (never while an IME is composing), context chips for the attached page / selection (removable), the
 // model + effort picker, and one round button that is «أرسل» or — while an answer streams — «أوقف».
-import { forwardRef, useImperativeHandle, useLayoutEffect, useRef, type ReactNode } from 'react';
+import { forwardRef, useImperativeHandle, useLayoutEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { ArrowUp, FileText, Square, TextQuote, X } from 'lucide-react';
 import { IconButton } from '../../../design';
 import { BidiText } from '../../evidence/BidiText';
@@ -29,6 +29,12 @@ export interface ComposerProps {
   picker?: ReactNode;
   label?: string;
   placeholder?: string;
+  /** (smart chat) the «/» command menu, shown above the text */
+  menu?: ReactNode;
+  /** the menu's keyboard (arrows / Enter / Tab / Escape): return true when the key was handled */
+  onMenuKey?: (e: KeyboardEvent<HTMLTextAreaElement>) => boolean;
+  /** the textarea's combobox wiring while the menu is open */
+  menuProps?: { 'aria-controls'?: string; 'aria-activedescendant'?: string; 'aria-expanded'?: boolean };
 }
 
 export interface ComposerHandle {
@@ -70,18 +76,22 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           ))}
         </ul>
       )}
+      {p.menu}
       <textarea
         ref={ta}
         className="ch-composer__input"
         dir="auto"
         rows={1}
         aria-label={p.label ?? 'رسالتك'}
-        placeholder={p.placeholder ?? 'اكتب سؤالك… (Enter للإرسال، Shift+Enter لسطر جديد)'}
+        placeholder={p.placeholder ?? (p.onMenuKey ? 'اكتب سؤالك، أو / للمهارات… (Enter للإرسال)' : 'اكتب سؤالك… (Enter للإرسال، Shift+Enter لسطر جديد)')}
         value={p.value}
         disabled={p.disabled && !p.streaming}
         aria-describedby={p.disabled && p.disabledReason ? reasonId : undefined}
+        aria-autocomplete={p.onMenuKey ? 'list' : undefined}
+        {...p.menuProps}
         onChange={(e) => p.onChange(e.target.value)}
         onKeyDown={(e) => {
+          if (!e.nativeEvent.isComposing && p.onMenuKey?.(e)) return;
           if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return;
           e.preventDefault();
           if (!p.streaming && canSend) p.onSend();

@@ -652,3 +652,68 @@ Owner: «make the chat a full side chat, not a small banner». The study chat no
   keyboard resize changes / clamps / remembers the width; history column toggle; «اسأل» → context chip; «ص N» moves
   the reader and the reader moves the chat; phone full screen with «اعرض الصفحة» and the back gesture; the layout
   decisions), `ExplainTab.test.tsx` (the tab's chat entry opens the panel; `ask` left to it).
+
+## Smart rail + GoodNotes reading bar (wp/smart-rail, 2026-11-22)
+
+Owner's requests: «a clean UI: two things — an AI chat that explains and makes questions, cases, MCQs… all built on the
+chat, as minimal as we can» and «the top bar like GoodNotes».
+
+### The rail: two sections
+* `panels/StudyRail.tsx` has TWO tabs: **«المحادثة الذكية»** (the smart chat, `chat/SmartChat.tsx`) and **«ملاحظاتي»**
+  (unchanged `MineTab`). The former «الشرح والسؤال» / «الأسئلة» / «حالات» / «المصادر» tabs became the chat's skills and
+  cards; their full panels are kept unchanged as **rail tools** (`RailTool` = explain | questions | cases | sources) shown in
+  the first section with «عُد إلى المحادثة» — opened from a card («كل أسئلة المحاضرة», «الصفحة وأشكالها وصور الويب»,
+  «حالات المحاضرة», «صور المحاضرة وأوصافها») or from the reading bar's «⋯» («أسئلة المحاضرة»، «حالات المحاضرة»،
+  «المصادر والأشكال»، «شرح سريع وترجمة»). Selecting the chat tab again returns from a tool.
+* Selection-toolbar actions: «اسأل» → the side chat (as before); explain / simplify / translate / compare / explain image
+  → the «شرح سريع وترجمة» tool (ExplainTab, its one-shot results); «أنشئ سؤال اختيار من متعدد» → the «أسئلة المحاضرة»
+  tool (CreateMcqPanel). PagesPanel's processing status is one «⋯» item away («حالة معالجة الصفحات…» → the source screen).
+* Coexistence on desktop: the rail's chat (layout `rail`) has «افتح المحادثة بجانب الصفحة»; the full-height side chat
+  (`ChatSidePanel`, the same SmartChat in layout `side`) takes the rail's place and has «ملاحظاتي» in its header (closes
+  the chat, opens the rail on the notes). The same conversation is shown in both (the lecture's latest thread).
+* Study modes (`modes/arrangement.ts`): `railOrder` is always `['chat','mine']`; `defaultTab` (review → notes),
+  `skillsFirst` (practice: MCQ, case, linked questions; understand: case), `hiddenTools` (exam: explain, sources). In
+  «امتحن نفسك» the first section is labelled «أسئلة وحالات» and holds the lecture's questions + cases to attempt (no
+  chat — it explains), with «مخفي الآن: «المحادثة الذكية» و«الشرح» و«المصادر». …» and the hidden tools disabled with the
+  reason in «⋯». Old saved rail tabs map to the chat section (`railSectionOf`).
+
+### Smart chat skills (`features/studybook/chat/{skills.ts,SkillBar.tsx,cards.tsx}`, `workspace/chat/useSmartSkills.ts`)
+Chips above the composer and a «/» menu in the composer (arrows, Enter / Tab, Escape; `aria-activedescendant`).
+Each skill calls an EXISTING capability; no new AI path:
+
+| skill | capability | result |
+|---|---|---|
+| «اشرح الصفحة» / «لخّص» | the chat itself (evidence-checked answer) | a chat answer |
+| «اسألني MCQ» (1/3/5, difficulty) | `POST /exams/generate` (page or selection anchor) → poll the run | MCQ card: a practice attempt (`POST /exams`, idempotent on the card's message id) — pick → right / wrong, explanation, lecture page chips, «السؤال التالي» / «سؤال آخر»; candidates that failed the checks: «بانتظار مراجعتك» → `/questions/review` |
+| «سؤال من الصورة» | `POST /exams/generate { figure: description_id }` (a described figure on this page) | MCQ card |
+| «حالة سريرية» | `POST /cases/generate` (this page) | case card: polls the generation; a READY case is revealed presentation → questions → answers; anything else «بانتظار مراجعتك» → `/cases/:id` |
+| «قارن» (two terms) | `POST /studybook/compare` | the checked comparison artifact (table) |
+| «اشرح الشكل» | `POST /studybook/explain/stream { explain_image }` | the checked figure explanation |
+| «بطاقات» | `POST /learning/cards/from-figures` + drafts | cards card: preview + «أضف إلى مراجعاتي» (`/cards/:id/draft accept`) |
+| «أسئلة المحاضرة» | `GET /questions/for-lecture` | compact list → the question screen |
+| «المصادر» | the conversation's Source Lock | scope badge, the lecture's sources, the figures / web pictures tool |
+
+Honesty: each chip has its own gate (`ai.chat`, `ai.generate_questions`, `ai.cases`, `ai.summaries`,
+`ai.figure_explain`, `questions.vault`, described figures, connection) and a disabled chip names the server's reason in
+the list under the chips («مهارات غير متاحة الآن», `aria-describedby`); the chat keeps «الشرح غير متاح الآن» + the reason
+and the visible Source Lock (`.sb-scope .ev-scope-badge`).
+
+### Reading bar like GoodNotes (`chrome/TopBar.tsx`, `ink/InkToolbar.tsx`)
+* Leading: back to the library · the pages panel · the title (ellipsized, full title as tooltip) + page chip · save state.
+* Centre: the writing tools as icons (`InkToolbar history="external"`). A **second tap on the active tool** opens its
+  colour / width options (the swatch popover, controlled; a third tap closes; when the options button has no room, the
+  options dialog).
+* Trailing: undo / redo (`InkHistory`, same names / shortcuts) · study mode · «المحادثة» · search · the study rail · «⋯»
+  (views, zoom + presets, page layout, rotation, page flip, focus mode, the rail tools, the pages' processing, note page,
+  offline, recording). Keyboard shortcuts unchanged.
+* Phone: the header keeps back · title · mode · search · chat · rail · «⋯»; the writing tools float in a slim strip at the
+  bottom (`.wk-inkstrip`, hidden under the full-screen chat and in focus mode; e-ink: no shadow).
+* Width guards kept: undo / redo never take a slot of the writing bar in the reading bar, a squeezed bar keeps the pen +
+  «المزيد», `.wk-topbar__center:has(> .wk-topbar__ink) { min-width: 22rem }` and the end slot's `min-width: max-content`.
+
+Tests: `web:src/features/workspace/chat/SmartChat.test.tsx` (two sections, each skill → its API → its card, MCQ answer
+flow, case reveal, cards accepted, compare, questions, sources, disabled-with-reason, «/» keyboard),
+`web:src/features/studybook/chat/skills.test.ts`, `web:test/ink/topbar-goodnotes.test.tsx`,
+`web:src/features/workspace/modes/{arrangement.test.ts,studyModes.test.tsx}`, `srv:studybook/chat-cards.test.ts`.
+E2E specs updated to the two sections (helpers `openRailSection`, `openRailTool`, `skillChip` in `e2e/support/ui.ts`):
+smoke, g7-ac23, g2-ac29, g2-ac05, g3-ac08, f3-study-modes, f4-handwriting-audio, g5-ac16, g7-ac30, n1-writing (undo).

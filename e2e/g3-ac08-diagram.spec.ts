@@ -5,7 +5,7 @@
 // verified in apps/server/test/acceptance/g3-ac08.test.ts with the test-only scripted provider.
 import type { CapabilitiesResponse, ImageListResponse, ImageQuizView, QuestionListResponse } from '@medlevo/shared';
 import { versionPages } from './g1-helpers';
-import { expect, screenshot, setupOwner, test, waitForWorkspace } from './support';
+import { expect, openRailSection, openRailTool, screenshot, setupOwner, skillChip, test, waitForWorkspace } from './support';
 
 test('AC-08: the flowchart labels are «uncertain» in the reader; AI paths are honest; the Image Quiz never asks an uncertain label', async ({ page, api }, testInfo) => {
   await setupOwner(page);
@@ -16,12 +16,11 @@ test('AC-08: the flowchart labels are «uncertain» in the reader; AI paths are 
   expect(p14, 'printed page 14 exists').toBeTruthy();
   const caps = await api.get<CapabilitiesResponse>('/api/capabilities');
 
-  await test.step('reader → «المصادر»: the diagram region of page 14 is «غير مؤكد», its OCR labels shown as read', async () => {
+  await test.step('reader → «المصادر والأشكال»: the diagram region of page 14 is «غير مؤكد», its OCR labels shown as read', async () => {
     await page.goto(`/study/${lecture.source_id}?page_id=${p14.id}`);
     await waitForWorkspace(page);
-    const railTab = (name: string) => page.getByRole('tab', { name: new RegExp(name) });
-    if (!(await railTab('المصادر').isVisible())) await page.getByRole('button', { name: 'لوحة الدراسة' }).first().click();
-    await railTab('المصادر').click();
+    // (smart chat) the former «المصادر» tab is the rail tool behind the reading bar's «⋯» (and the chat's «المصادر» card)
+    await openRailTool(page, 'المصادر والأشكال');
     const diagramRow = page.locator('.wk-region-row').filter({ has: page.locator('.wk-region-row__kind', { hasText: /^مخطط$/ }) });
     await expect(diagramRow).toHaveCount(1, { timeout: 30_000 });
     await expect(diagramRow).toContainText('غير مؤكد');
@@ -34,8 +33,13 @@ test('AC-08: the flowchart labels are «uncertain» in the reader; AI paths are 
   });
 
   await test.step('«اشرح الشكل» is disabled with the server reason; the API answers «not configured» and stores nothing', async () => {
-    const railTab = (name: string) => page.getByRole('tab', { name: new RegExp(name) });
-    await railTab('الشرح والسؤال').click();
+    // the smart chat's «اشرح الشكل» skill: disabled, the server's reason written under the chips
+    // (selecting the section again returns from the tool to the chat)
+    await openRailSection(page, 'المحادثة الذكية');
+    await expect(skillChip(page, 'اشرح الشكل')).toBeDisabled();
+    await expect(page.getByRole('list', { name: 'مهارات غير متاحة الآن' }).first()).toContainText(caps.features['ai.figure_explain'].reason_ar!);
+    // and in the quick explain tool (selection / page one-shot tools) it is off with the same reason
+    await openRailTool(page, 'شرح سريع وترجمة');
     await expect(page.getByRole('button', { name: 'اشرح الشكل' })).toBeDisabled();
     await expect(page.locator('#sb-figure-reason')).toContainText(caps.features['ai.figure_explain'].reason_ar!);
     const fig = await api.call('POST', '/api/studybook/explain', {

@@ -74,6 +74,47 @@ export interface ChatMessageExtras {
   usage?: ChatUsageView | null;
   /** why a rejected answer was not completed (cancelled, provider error) */
   error?: { code: string; message: string } | null;
+  /**
+   * (smart chat, wp/smart-rail) a skill result shown as an interactive card in the thread. It only REFERENCES server
+   * objects by id (a generation run and its questions, a case, flashcard drafts, a checked comparison…): the card loads
+   * them from their own module, so nothing in the conversation is a second copy of a question, case or answer.
+   */
+  attachment?: ChatAttachment | null;
+}
+
+// ───────── smart chat skills (cards in the thread) ─────────
+export const CHAT_SKILLS = ['explain_page', 'summarize', 'mcq', 'case', 'compare', 'cards', 'figure_question', 'explain_figure', 'lecture_questions', 'sources'] as const;
+export type ChatSkillId = (typeof CHAT_SKILLS)[number];
+
+export const CHAT_CARD_TYPES = ['mcq', 'case', 'cards', 'compare', 'questions', 'sources', 'figure'] as const;
+export type ChatCardType = (typeof CHAT_CARD_TYPES)[number];
+
+/** A skill result stored with an assistant message (references, never copies). */
+export type ChatAttachment =
+  /** generated MCQs (/api/exams/generate): published ids are answerable; the others wait in the review queue */
+  | { type: 'mcq'; run_id: string; question_ids: string[]; pending_ids?: string[]; difficulty?: string | null; figure?: boolean }
+  /** a generated (or existing) case of the cases module */
+  | { type: 'case'; case_id: string }
+  /** flashcard drafts of the learning module (accepted from the card into the owner's reviews) */
+  | { type: 'cards'; card_ids: string[]; version_id: string; notes_ar?: string[] }
+  /** an evidence-checked comparison (the message's artifact) between two terms */
+  | { type: 'compare'; items: string[] }
+  /** an evidence-checked explanation of the page's figure (the message's artifact) */
+  | { type: 'figure' }
+  /** questions of the vault linked to this lecture / page */
+  | { type: 'questions'; ids: string[]; page_id: string | null }
+  /** the lecture's sources and the conversation's Source Lock */
+  | { type: 'sources'; page_id: string | null };
+
+/** POST /studybook/threads/:id/cards — append a skill result (owner request + assistant card) to a conversation. */
+export interface ChatCardCreateBody {
+  /** the request as the owner sees it in the thread («اسألني 3 أسئلة MCQ — صعبة») */
+  text: string;
+  skill: ChatSkillId;
+  attachment: ChatAttachment;
+  /** compare / figure: the checked artifact the card shows */
+  artifact_id?: string | null;
+  context?: ChatMessageContext | null;
 }
 
 export interface ChatThreadExtras {

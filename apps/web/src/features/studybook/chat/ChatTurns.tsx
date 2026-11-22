@@ -34,6 +34,8 @@ export interface ChatTurnsProps {
   onWidenScope?: (wider: SourceScope, t: Turn) => void;
   onStop: () => void;
   busy: boolean;
+  /** (smart chat) the interactive card of a skill result (mcq, case, cards, questions, sources) */
+  renderCard?: (t: Turn) => ReactNode;
 }
 
 const PENDING_LABEL: Partial<Record<ChatMessageView['status'], string>> = {
@@ -106,6 +108,9 @@ export function ChatTurns(p: ChatTurnsProps) {
         const a = t.answer;
         const isLast = t === last && !p.pending;
         const settled = a && (a.status === 'final' || a.status === 'abstained');
+        // a skill card: interactive, loaded from its own module; compare / figure cards are the checked artifact itself
+        const card = a?.attachment ?? null;
+        const cardBody = card && !a!.artifact && settled ? (p.renderCard?.(t) ?? null) : null;
         return (
           <article key={t.id} className="ch-turn" data-turn-id={t.id} data-page={t.primaryPage ?? undefined} aria-label={t.primaryPage !== null ? `سؤال وجواب — صفحة ${labelOf(t.primaryPage)}` : 'سؤال وجواب'}>
             {div !== undefined && <Divider page={div} label={labelOf(div)} onJump={p.onJump} />}
@@ -114,14 +119,16 @@ export function ChatTurns(p: ChatTurnsProps) {
               actions={
                 <>
                   <IconButton size="sm" variant="plain" label="انسخ السؤال" icon={<Copy size={14} />} onClick={() => p.onCopy(t.question)} />
-                  {isLast && p.onEdit && <IconButton size="sm" variant="plain" label="عدّل السؤال" icon={<Pencil size={14} />} disabled={p.busy} onClick={() => p.onEdit!(t)} />}
+                  {isLast && p.onEdit && !card && <IconButton size="sm" variant="plain" label="عدّل السؤال" icon={<Pencil size={14} />} disabled={p.busy} onClick={() => p.onEdit!(t)} />}
                 </>
               }
             />
             <div className="ch-msg ch-msg--assistant">
               <span className="ml-visually-hidden">MedLevo: </span>
               {a && p.outcomes[a.id] && <DraftOutcome hadDraft={p.outcomes[a.id]!.hadDraft} removed={p.outcomes[a.id]!.removed} />}
-              {!a ? null : settled ? (
+              {!a ? null : cardBody ? (
+                cardBody
+              ) : settled ? (
                 a.artifact ? (
                   <ArtifactContent artifact={a.artifact} showRibbon={false} onWidenScope={p.onWidenScope ? (w) => p.onWidenScope!(w, t) : undefined} />
                 ) : (
@@ -134,8 +141,8 @@ export function ChatTurns(p: ChatTurnsProps) {
                 <div className="ch-actions">
                   <PageChips pages={a.status === 'final' ? (a.page_indexes ?? []) : []} label={p.pageLabel} onJump={p.onJump} />
                   {a.status === 'final' && <IconButton size="sm" variant="plain" label="انسخ الإجابة" icon={<Copy size={14} />} onClick={() => p.onCopy(a)} />}
-                  {isLast && p.onRegenerate && <IconButton size="sm" variant="plain" label="أعد توليد الإجابة" icon={<RefreshCw size={14} />} disabled={p.busy} onClick={() => p.onRegenerate!(t)} />}
-                  {a.status === 'final' && (
+                  {isLast && p.onRegenerate && !card && <IconButton size="sm" variant="plain" label="أعد توليد الإجابة" icon={<RefreshCw size={14} />} disabled={p.busy} onClick={() => p.onRegenerate!(t)} />}
+                  {a.status === 'final' && !card && (
                     <Button size="sm" variant="plain" icon={<NotebookPen size={14} />} disabled={p.saved[a.id]} onClick={() => p.onSaveNote(a)}>
                       {p.saved[a.id] ? 'حُفظت في ملاحظاتي' : 'احفظ كملاحظة'}
                     </Button>

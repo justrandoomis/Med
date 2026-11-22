@@ -14,6 +14,7 @@ import {
   SOURCE_TYPE_LABELS_AR,
   sourceChipLabel,
   type AnnotationAnchor,
+  type ChatAttachment,
   type ChatEffort,
   type ChatKind,
   type ChatMessageContext,
@@ -42,7 +43,7 @@ import { anchorRegions, isRealPatientRequest, realPatientAbstain } from './expla
 import { collectAiUsage, type AiTextEvent, type AiUsageEntry } from '../ai';
 import { assertAnchorInScope, generateSingleShot, pinnedScope, publishAbstention, requireAi, type ArtifactBase, type SingleShotInput } from './generate';
 import { GENERATOR_VERSION, resolveRules } from './rules';
-import type { chatPrefsSchema, messageCreateSchema, saveNoteSchema, threadCreateSchema, threadPatchSchema } from './schema';
+import type { cardCreateSchema, chatPrefsSchema, messageCreateSchema, saveNoteSchema, threadCreateSchema, threadPatchSchema } from './schema';
 import { termsForTexts } from './terms';
 import { labelParagraph, paragraphOf, richText, shorten, stripClaims } from './text';
 import { sha256 } from '../../lib/hash';
@@ -86,6 +87,9 @@ interface MessageRow {
   input_tokens: number | null;
   output_tokens: number | null;
   cost_usd: number | null;
+  /** (smart chat, 0471) the card a skill result shows; the skill that produced the turn */
+  attachment_json: string | null;
+  skill: string | null;
 }
 
 const MSG = {
@@ -97,6 +101,8 @@ const MSG = {
   noteRejected: 'تعذر حفظ الملاحظة.',
   replaceNotLast: 'يمكن تعديل آخر سؤال في المحادثة فقط (أو إعادة توليد آخر إجابة).',
   contextOutside: 'الصفحة أو التحديد المرفق ليس من نسخة المحاضرة التي بُنيت عليها هذه المحادثة.',
+  cardMissing: 'ما تشير إليه هذه البطاقة غير موجود (ربما حُذف)؛ لم تُضف إلى المحادثة.',
+  cardArtifact: 'نتيجة المقارنة أو شرح الشكل المطلوبة غير موجودة أو ليست من هذه المحاضرة.',
 };
 
 /** a thread the owner deleted is gone for every read and write (its messages stay for notes saved from them) */
@@ -175,6 +181,7 @@ function messageView(ctx: AppContext, m: MessageRow): ChatMessageView {
     context: fromJson<ChatMessageContext>(m.context_json),
     usage: m.role === 'assistant' && settled && (m.input_tokens !== null || m.cost_usd !== null) ? { input_tokens: m.input_tokens, output_tokens: m.output_tokens, cost_usd: m.cost_usd } : null,
     error: m.status === 'rejected' ? (detail?.error ?? null) : null,
+    attachment: m.role === 'assistant' ? (fromJson<ChatAttachment>(m.attachment_json) ?? null) : null,
   };
 }
 
@@ -302,15 +309,15 @@ export function saveChatPrefs(ctx: AppContext, patch: z.infer<typeof chatPrefsSc
   return chatPrefs(ctx);
 }
 
-type MessageInsert = Omit<MessageRow, 'created_at' | 'updated_at' | 'model' | 'effort' | 'page_indexes_json' | 'context_json' | 'input_tokens' | 'output_tokens' | 'cost_usd'> &
-  Partial<Pick<MessageRow, 'model' | 'effort' | 'page_indexes_json' | 'context_json'>>;
+type MessageInsert = Omit<MessageRow, 'created_at' | 'updated_at' | 'model' | 'effort' | 'page_indexes_json' | 'context_json' | 'input_tokens' | 'output_tokens' | 'cost_usd' | 'attachment_json' | 'skill'> &
+  Partial<Pick<MessageRow, 'model' | 'effort' | 'page_indexes_json' | 'context_json' | 'attachment_json' | 'skill'>>;
 
 function insertMessage(ctx: AppContext, m: MessageInsert): void {
   const now = ctx.clock.now();
   ctx.db.run(
-    `INSERT INTO message (id, thread_id, role, content_json, status, abstain_reason, artifact_id, created_at, style, reply_to_id, detail_json, updated_at, model, effort, page_indexes_json, context_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [m.id, m.thread_id, m.role, m.content_json, m.status, m.abstain_reason, m.artifact_id, now, m.style, m.reply_to_id, m.detail_json, now, m.model ?? null, m.effort ?? null, m.page_indexes_json ?? null, m.context_json ?? null],
+    `INSERT INTO message (id, thread_id, role, content_json, status, abstain_reason, artifact_id, created_at, style, reply_to_id, detail_json, updated_at, model, effort, page_indexes_json, context_json, attachment_json, skill)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [m.id, m.thread_id, m.role, m.content_json, m.status, m.abstain_reason, m.artifact_id, now, m.style, m.reply_to_id, m.detail_json, now, m.model ?? null, m.effort ?? null, m.page_indexes_json ?? null, m.context_json ?? null, m.attachment_json ?? null, m.skill ?? null],
   );
 }
 
@@ -453,9 +460,9 @@ export async function postMessage(ctx: AppContext, threadId: string, body: z.inf
   assertChatModel(ctx, body.model);
   if (body.replace_from) ctx.db.tx(() => dropLastTurn(ctx, t, body.replace_from!));
 
-  // history BEFORE this question (this thread only)
+  // history BEFORE this question (this thread only); skill cards are not answers and never reach the model
   const history = ctx.db
-    .all<MessageRow>(`SELECT * FROM message WHERE thread_id = ? AND status IN ('final','abstained') ORDER BY created_at DESC, id DESC LIMIT 6`, [t.id])
+    .all<MessageRow>(`SELECT * FROM message WHERE thread_id = ? AND status IN ('final','abstained') AND skill IS NULL ORDER BY created_at DESC, id DESC LIMIT 6`, [t.id])
     .reverse();
 
   const contextPages = pageIndexesOf(ctx, [attached.ctx?.page_id ?? null]);
@@ -590,6 +597,123 @@ export async function postMessage(ctx: AppContext, threadId: string, body: z.inf
       cost_usd: spent.cost,
     });
     if (!artifact.abstain) indexMessage(ctx, answerId, rt);
+  });
+  const msg = (id: string) => messageView(ctx, ctx.db.get<MessageRow>('SELECT * FROM message WHERE id = ?', [id])!);
+  return { owner_message: msg(ownerId), answer: msg(answerId) };
+}
+
+// ───────── smart chat: skill results as cards (wp/smart-rail, 0471) ─────────
+const CARD_LABELS_AR: Record<ChatAttachment['type'], string> = {
+  mcq: 'أسئلة اختيار من متعدد من مصادرك',
+  case: 'حالة سريرية من المحاضرة',
+  cards: 'بطاقات مراجعة من صور المحاضرة',
+  compare: 'مقارنة في جدول',
+  figure: 'شرح الشكل',
+  questions: 'أسئلة المحاضرة المرتبطة',
+  sources: 'مصادر هذه المحادثة ونطاقها',
+};
+
+function assertIds(ctx: AppContext, table: 'question' | 'generated_question_candidate' | 'flashcard', ids: string[], extra = ''): void {
+  const uniq = [...new Set(ids)];
+  if (!uniq.length) return;
+  const n = ctx.db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table} WHERE id IN (${uniq.map(() => '?').join(',')})${extra}`, uniq)!.n;
+  if (n !== uniq.length) throw new AppError('NOT_FOUND', MSG.cardMissing, 404, { table });
+}
+
+/**
+ * Every id a card references must exist in this vault (a card never points at nothing, and never smuggles another
+ * user's object in); compare / figure cards show an artifact the evidence pipeline already checked.
+ */
+function checkAttachment(ctx: AppContext, t: ThreadRow, a: ChatAttachment, artifactId: string | null | undefined): StudyArtifactView | null {
+  switch (a.type) {
+    case 'mcq':
+      if (!ctx.db.get('SELECT 1 AS x FROM question_generation_run WHERE id = ?', [a.run_id])) throw new AppError('NOT_FOUND', MSG.cardMissing, 404, { run_id: a.run_id });
+      assertIds(ctx, 'question', a.question_ids);
+      assertIds(ctx, 'generated_question_candidate', a.pending_ids ?? []);
+      return null;
+    case 'case':
+      if (!ctx.db.get('SELECT 1 AS x FROM clinical_case WHERE id = ? AND deleted_at IS NULL', [a.case_id])) throw new AppError('NOT_FOUND', MSG.cardMissing, 404, { case_id: a.case_id });
+      return null;
+    case 'cards':
+      if (!ctx.db.get('SELECT 1 AS x FROM source_version WHERE id = ?', [a.version_id])) throw new AppError('NOT_FOUND', MSG.cardMissing, 404, { version_id: a.version_id });
+      assertIds(ctx, 'flashcard', a.card_ids, ' AND deleted_at IS NULL');
+      return null;
+    case 'questions':
+      assertIds(ctx, 'question', a.ids);
+      return null;
+    case 'sources':
+      return null;
+    case 'compare':
+    case 'figure': {
+      if (!artifactId) throw new AppError('VALIDATION_FAILED', MSG.cardArtifact, 400);
+      let art: StudyArtifactView;
+      try {
+        art = artifactView(ctx, artifactId);
+      } catch {
+        throw new AppError('NOT_FOUND', MSG.cardArtifact, 404, { artifact_id: artifactId });
+      }
+      const kinds = a.type === 'compare' ? ['comparison'] : ['figure_explanation', 'explanation'];
+      const owner = ctx.db.get<{ primary_source_id: string | null }>('SELECT primary_source_id FROM artifact WHERE id = ?', [artifactId]);
+      if (!kinds.includes(art.kind) || (t.source_id && owner?.primary_source_id && owner.primary_source_id !== t.source_id)) {
+        throw new AppError('OUT_OF_SCOPE', MSG.cardArtifact, 409, { artifact_id: artifactId });
+      }
+      return art;
+    }
+  }
+}
+
+/**
+ * Append a skill result to a conversation: the owner's request + an assistant message carrying the card. Nothing is
+ * generated here (the skill ran in its own module); the card is part of the history (reload, other devices) and is
+ * never sent to the model as an answer. Compare / figure cards show the checked artifact itself.
+ */
+export function appendCard(ctx: AppContext, threadId: string, body: z.infer<typeof cardCreateSchema>): ChatPostResponse {
+  const t = threadRow(ctx, threadId);
+  if (t.archived_at) throw new AppError('CONFLICT', MSG.archived, 409);
+  const scope = resolveScope(ctx, fromJson<SourceScope>(t.scope_json));
+  if (t.scope_hash && scope.hash !== t.scope_hash) throw new AppError('OUT_OF_SCOPE', MSG.scopeChanged, 409, { thread_id: t.id });
+  const attached = checkedContext(ctx, t, scope, body.context);
+  const attachment = body.attachment as ChatAttachment;
+  const art = checkAttachment(ctx, t, attachment, body.artifact_id);
+  const contextPages = pageIndexesOf(ctx, [attached.ctx?.page_id ?? null]);
+  const ownerId = newId(ctx.clock.now());
+  const answerId = newId(ctx.clock.now());
+  const content = art ? answerRichText(art) : richTextFromPlain(CARD_LABELS_AR[attachment.type]);
+  ctx.db.tx(() => {
+    insertMessage(ctx, {
+      id: ownerId,
+      thread_id: t.id,
+      role: 'owner',
+      content_json: toJson(richTextFromPlain(body.text))!,
+      status: 'final',
+      abstain_reason: null,
+      artifact_id: null,
+      style: t.style,
+      reply_to_id: null,
+      detail_json: null,
+      page_indexes_json: toJson(contextPages),
+      context_json: attached.ctx ? toJson(attached.ctx) : null,
+      skill: body.skill,
+    });
+    insertMessage(ctx, {
+      id: answerId,
+      thread_id: t.id,
+      role: 'assistant',
+      content_json: toJson(content)!,
+      status: art?.abstain ? 'abstained' : 'final',
+      abstain_reason: art?.abstain?.reason ?? null,
+      artifact_id: art?.id ?? null,
+      style: t.style,
+      reply_to_id: ownerId,
+      detail_json: art?.abstain ? toJson({ abstain: art.abstain }) : null,
+      page_indexes_json: toJson(art && !art.abstain ? answerPages(ctx, t, art, contextPages) : contextPages),
+      context_json: null,
+      attachment_json: toJson(attachment),
+      skill: body.skill,
+    });
+    indexMessage(ctx, ownerId, richTextFromPlain(body.text));
+    if (!t.title) ctx.db.run('UPDATE contextual_thread SET title = ? WHERE id = ? AND title IS NULL', [shorten(body.text.replace(/\s+/g, ' '), 70), t.id]);
+    ctx.db.run('UPDATE contextual_thread SET updated_at = ? WHERE id = ?', [ctx.clock.now(), t.id]);
   });
   const msg = (id: string) => messageView(ctx, ctx.db.get<MessageRow>('SELECT * FROM message WHERE id = ?', [id])!);
   return { owner_message: msg(ownerId), answer: msg(answerId) };

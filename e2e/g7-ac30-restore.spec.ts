@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Page } from '@playwright/test';
 import type { AnnotationDTO, LectureQuestionsResponse, NoteDTO, SyncOp } from '@medlevo/shared';
-import { apiAs, expect, openWorkspace, screenshot, setupOwner, test } from './support';
+import { apiAs, expect, openRailTool, openWorkspace, screenshot, setupOwner, test } from './support';
 import { SERVER_DIR } from './support/paths';
 import { E2E_BACKUP_ENCRYPTION_KEY, startServer, type RunningServer } from './support/server';
 
@@ -143,8 +143,8 @@ test('AC-30: backup made in the app, restore verified by the server, restored wi
         // the questions and their links to the lecture
         const linked = await api2.get<LectureQuestionsResponse>(`/api/questions/for-lecture/${lecture.source_id}`);
         expect(linked.items.length).toBe(linkedBefore);
-        const railQ = p2.getByRole('tab', { name: /الأسئلة/ });
-        await railQ.click();
+        // (smart chat) the lecture's linked questions: the rail tool behind the reading bar's «⋯»
+        await openRailTool(p2, 'أسئلة المحاضرة');
         await expect(p2.locator('.qv-rail__list li').first()).toBeVisible({ timeout: 30_000 });
 
         // the card and its review log
