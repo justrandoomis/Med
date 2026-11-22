@@ -46,7 +46,7 @@ async function writeOnWordAndSelect(page: Page) {
 }
 
 test.describe('F4 handwriting recognition on a server without a vision provider', () => {
-  test('recognition says requires_configuration; «اسأل عن المحدد» composes a question with the paragraph for the rail', async ({ page, api }, testInfo) => {
+  test('recognition says requires_configuration; «اسأل عن المحدد» composes a question with the paragraph for the chat', async ({ page, api }, testInfo) => {
     const up = await lectureOpen(page, api, `F4 ask ${testInfo.project.name}`);
 
     await test.step('capability and API are honest', async () => {
@@ -78,7 +78,7 @@ test.describe('F4 handwriting recognition on a server without a vision provider'
       await page.getByRole('menuitem', { name: /اسأل عن المحدد/ }).click();
     });
 
-    await test.step('the owner types what the handwriting says; the paragraph next to it is found; the question goes to the rail', async () => {
+    await test.step('the owner types what the handwriting says; the paragraph next to it is found; the question goes to the chat', async () => {
       const dialog = page.getByRole('dialog', { name: 'اسأل عن المحدد' });
       await expect(dialog).toBeVisible();
       // the picture that WOULD be sent: the owner's strokes only
@@ -92,12 +92,21 @@ test.describe('F4 handwriting recognition on a server without a vision provider'
       await expect(q).toHaveValue(/McBurney/);
       await expect(dialog.getByText(/لا يُرسل شيء تلقائيًا/)).toBeVisible();
       await screenshot(page, testInfo, 'f4-ask-question');
-      await dialog.getByRole('button', { name: 'ضع السؤال في لوحة الدراسة' }).click();
-      const composer = page.getByLabel('سؤالك عن هذا الموضع');
+      // (chat side panel) the question goes to the study chat — beside the book on a desktop, full screen on a phone
+      await dialog.getByRole('button', { name: 'ضع السؤال في المحادثة' }).click();
+      const chat = page.getByRole('region', { name: 'المحادثة', exact: true });
+      await expect(chat).toBeVisible({ timeout: 15_000 });
+      const composer = chat.getByLabel('رسالتك');
       await expect(composer).toHaveValue(/«ليش؟»/, { timeout: 15_000 });
-      // the chat needs a key on this server: it says so, and nothing was sent
-      await expect(page.getByText(/ANTHROPIC_API_KEY/).first()).toBeVisible();
-      await screenshot(page, testInfo, 'f4-ask-in-rail');
+      await expect(composer).toHaveValue(/McBurney/);
+      // the paragraph next to the handwriting is attached as the selection context chip
+      const chips = chat.getByRole('list', { name: 'السياق المرفق بالرسالة' });
+      await expect(chips).toContainText('التحديد');
+      // the chat needs a key on this server: the composer says so and is disabled — nothing was sent
+      await expect(composer).toBeDisabled();
+      await expect(chat.locator('#ch-composer-reason')).toContainText('ANTHROPIC_API_KEY');
+      await expect(chat.locator('.ch-empty')).toBeVisible();
+      await screenshot(page, testInfo, 'f4-ask-in-chat');
     });
   });
 });

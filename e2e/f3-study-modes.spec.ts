@@ -19,7 +19,8 @@ const railTabs = (page: Page) => page.getByRole('tablist', { name: 'أقسام �
 
 /** open the rail (phone: a sheet behind «لوحة الدراسة») and select a section */
 async function railTab(page: Page, name: string): Promise<void> {
-  const tab = page.getByRole('tab', { name, exact: true });
+  // the rail's own tablist (a tab name is unique there; other tablists on the screen never share it)
+  const tab = page.getByRole('tablist', { name: 'أقسام لوحة الدراسة' }).getByRole('tab', { name, exact: true });
   if (!(await tab.isVisible())) await page.getByRole('button', { name: 'لوحة الدراسة' }).first().click();
   await tab.click();
   await expect(tab).toHaveAttribute('aria-selected', 'true');

@@ -20,6 +20,7 @@ import { useCapabilities } from '../../lib/capabilities';
 import { useQuery, invalidate } from '../library/data';
 import { countAr, NOUN } from '../library/labels';
 import { ProcessingStatusView, useProcessingStatus } from './ProcessingStatus';
+import { pageUnreadable, UNREADABLE_PAGE_LABEL } from './pageStatus';
 
 const TEXT_STATUS_AR: Record<PageTextStatus, string> = {
   pending: 'لم يُستخرج بعد',
@@ -195,7 +196,7 @@ export function PagesPanel({ sourceId, versions, activeVersionId, readOnly }: { 
             </thead>
             <tbody>
               {pages.slice(0, shown).map((p) => {
-                const st = PAGE_STATUS[p.processing_status];
+                const st = pageUnreadable(p) ? { label: UNREADABLE_PAGE_LABEL, tone: 'warning' as const } : PAGE_STATUS[p.processing_status];
                 return (
                   <tr key={p.id} data-status={p.processing_status}>
                     <th scope="row" data-label="الصفحة">

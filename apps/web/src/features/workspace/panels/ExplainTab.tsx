@@ -72,7 +72,7 @@ interface RunState {
 }
 
 /** last result per source (the tab remounts when the rail switches tabs) */
-const lastRun = new Map<string, { run: RunState; context: Context | null; mode: Mode }>();
+const lastRun = new Map<string, { run: RunState; context: Context | null; mode: Mode | null }>();
 
 const ACTION_LABELS: Record<ExplainAction, string> = { explain: 'اشرح', simplify: 'بسّط', translate: 'ترجم إلى العربية', explain_image: 'اشرح الشكل' };
 const RUNNING_STAGE: Record<ExplainAction | 'compare', string> = {
@@ -107,7 +107,11 @@ export function ExplainTab({ doc, page, pageIndex, online, onJumpToPage, onOpenC
   const compareGate = caps.feature('ai.summaries');
   const figureGate = caps.feature('ai.figure_explain');
   const saved = lastRun.get(sourceId);
-  const [mode, setMode] = useState<Mode>(saved?.mode ?? 'chat');
+  // the owner's pick (null = not picked yet). Unpicked, the tab opens on the chat when the chat can answer, and on the
+  // one-shot tools when it cannot: their disabled buttons with the server's reason say exactly what is unavailable and
+  // why, instead of a conversation that cannot start (no provider / offline / no consent — on every layout)
+  const [picked, setMode] = useState<Mode | null>(saved?.mode ?? null);
+  const mode: Mode = picked ?? (chatGate.available ? 'chat' : 'explain');
   const [context, setContext] = useState<Context | null>(saved?.context ?? null);
   const [scope, setScope] = useState<SourceScope>(() => defaultScopeFor(doc.detail, settings.default_scope_mode));
   const [picking, setPicking] = useState(false);
@@ -124,8 +128,8 @@ export function ExplainTab({ doc, page, pageIndex, online, onJumpToPage, onOpenC
   const pending = usePendingAiRequest();
 
   useEffect(() => {
-    lastRun.set(sourceId, { run: run.status === 'running' ? { status: 'idle' } : run, context, mode });
-  }, [sourceId, run, context, mode]);
+    lastRun.set(sourceId, { run: run.status === 'running' ? { status: 'idle' } : run, context, mode: picked });
+  }, [sourceId, run, context, picked]);
 
   // the anchor of the current page when nothing is selected
   const pageAnchor = useMemo<SelectionAnchor | null>(() => (page ? { source_id: sourceId, version_id: page.version_id, page_id: page.id, region_ids: [] } : null), [page, sourceId]);
@@ -256,6 +260,8 @@ export function ExplainTab({ doc, page, pageIndex, online, onJumpToPage, onOpenC
   const result = run.result?.artifact ?? null;
   const reasonId = 'sb-explain-reason';
   const unavailable = !explainGate.available;
+  // what cannot run in this mode, and why (the server's reason) — shown in every mode, phone and desktop alike
+  const blockedReason = mode === 'chat' ? (chatGate.available ? null : chatGate.reason) : unavailable ? explainGate.reason : null;
 
   return (
     <div className="wk-rail-section sb-explain">
@@ -312,10 +318,10 @@ export function ExplainTab({ doc, page, pageIndex, online, onJumpToPage, onOpenC
         </Link>
       </p>
 
-      {unavailable && mode !== 'chat' && (
+      {blockedReason && (
         <div className="wk-disabled-card" role="note" id={reasonId}>
           <p className="wk-disabled-card__title">الشرح غير متاح الآن</p>
-          <p className="wk-muted">{explainGate.reason}</p>
+          <p className="wk-muted">{blockedReason}</p>
         </div>
       )}
 
@@ -374,14 +380,10 @@ export function ExplainTab({ doc, page, pageIndex, online, onJumpToPage, onOpenC
       {mode === 'chat' && onOpenChat && (
         <div className="sb-chat-entry" role="group" aria-label="المحادثة">
           <p className="sb-muted">المحادثة الدراسية تُفتح في لوحة جانبية بطول الشاشة بجانب الصفحة (وبملء الشاشة على الهاتف)، وتتبع الصفحة التي تقرؤها.</p>
-          <Button variant="primary" size="sm" icon={<MessageSquare size={16} />} onClick={onOpenChat}>
+          {/* the chat opens even when it cannot answer: its composer is disabled there with the same reason */}
+          <Button variant="primary" size="sm" icon={<MessageSquare size={16} />} onClick={onOpenChat} aria-describedby={blockedReason ? reasonId : undefined}>
             افتح المحادثة
           </Button>
-          {!chatGate.available && (
-            <p className="sb-reason" role="note">
-              {chatGate.reason}
-            </p>
-          )}
         </div>
       )}
       {mode === 'chat' && !onOpenChat && (

@@ -68,7 +68,7 @@ test('AC-29: an injected file is data — shown and searched as text, no request
     if (!(await railTab('الشرح والسؤال').isVisible())) await page.getByRole('button', { name: 'لوحة الدراسة' }).first().click();
     await railTab('الشرح والسؤال').click();
     await expect(page.getByText('الشرح غير متاح الآن')).toBeVisible();
-    await expect(page.locator('.sb-scope .ev-scope-badge')).toContainText('المحاضرة فقط');
+    await expect(page.getByRole('tabpanel', { name: 'الشرح والسؤال' }).locator('.sb-scope .ev-scope-badge')).toContainText('المحاضرة فقط');
   });
 
   await test.step('Arabic file: the injection is RTL document text; linked pictures are never fetched or read', async () => {

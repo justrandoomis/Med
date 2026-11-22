@@ -12,6 +12,7 @@ import type { SourceDocument } from '../data/useSourceDocument';
 import { useSourceNavigation } from '../nav/SourceNavigation';
 import { PAGE_PROCESSING_AR, REGION_KIND_AR, regionStatus, TEXT_STATUS_AR, versionLabel } from '../model/labels';
 import { fullPageLabel } from '../model/pages';
+import { pageUnreadable, UNREADABLE_PAGE_LABEL } from '../../sources/pageStatus';
 import { FigureReadingPanel } from './FigureReadingPanel';
 import { FigureDescribeBar, FigureDescriptionCard, figuresApi, useFigureDescriptions } from './FigureDescriptionPanel';
 import { queryFromFigure, WebImagesPanel } from '../../media/webImages';
@@ -65,7 +66,11 @@ export function SourcesTab({ doc, page, onOpenSplit, splitReason }: { doc: Sourc
         .filter((q): q is string => !!q)
     : [];
   const text = page ? TEXT_STATUS_AR[page.text_status] : null;
-  const proc = page ? (PAGE_PROCESSING_AR[page.processing_status] ?? PAGE_PROCESSING_AR.pending!) : null;
+  const proc = page
+    ? pageUnreadable(page)
+      ? { label: UNREADABLE_PAGE_LABEL, tone: 'warning' as const }
+      : (PAGE_PROCESSING_AR[page.processing_status] ?? PAGE_PROCESSING_AR.pending!)
+    : null;
 
   return (
     <div className="wk-rail-section">

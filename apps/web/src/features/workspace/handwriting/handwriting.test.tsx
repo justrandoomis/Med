@@ -228,7 +228,7 @@ describe('«اسأل عن المحدد»', () => {
     // the chat's own state is shown honestly (requires configuration here)
     expect(screen.getByText(/المحادثة تتطلب ضبط مزود/)).toBeTruthy();
     fireEvent.change(q, { target: { value: `${q.value} باختصار` } });
-    fireEvent.click(screen.getByRole('button', { name: 'ضع السؤال في لوحة الدراسة' }));
+    fireEvent.click(screen.getByRole('button', { name: 'ضع السؤال في المحادثة' }));
     expect(onAsk).toHaveBeenCalledWith({
       anchor: { source_id: 'S1', version_id: 'V1', page_id: 'P1', region_ids: ['R1'], quote: { exact: 'Rebound tenderness indicates peritoneal irritation.' } },
       text: 'Rebound tenderness indicates peritoneal irritation.',

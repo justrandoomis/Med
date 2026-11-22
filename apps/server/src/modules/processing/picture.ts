@@ -20,6 +20,11 @@ export const PICTURE_NOISE_CONF = 40;
 /** a page that is mostly picture (≥ this share) whose weak "words" average below NOISE_MEAN_CONF is texture */
 export const PICTURE_DOMINANT_COVERAGE = 0.6;
 export const PICTURE_NOISE_MEAN_CONF = 45;
+/**
+ * At or above this pixelNoise the render is noise (neighbouring pixels as unrelated as distant ones): a damaged image
+ * stream, a broken decode, static. A real photo — even fine histology — is smooth at the pixel scale (≈ 0.1–0.5).
+ */
+export const PICTURE_MAX_NOISE = 0.8;
 
 const letters = (t: string) => (t.match(/[\p{L}\p{N}]/gu) ?? []).length;
 
@@ -44,6 +49,10 @@ export interface PictureInput {
   words: Array<Pick<OcrWord, 'text' | 'conf'>>;
   /** characters of digital (text-layer) body text on the page */
   digitalChars: number;
+  /** the render is blank (png.ts measureImageQuality): nothing is drawn, so there is no picture to be the content */
+  blank?: boolean;
+  /** pixelNoise of the render (absent = not measured): a damaged / garbage render is noise, not a photo */
+  noise?: number;
 }
 
 export interface PictureVerdict {
@@ -63,6 +72,9 @@ export interface PictureVerdict {
  * middling confidence, mostly paper) is therefore never a picture page: its doubts are real and stay in review.
  */
 export function classifyPicturePage(input: PictureInput): PictureVerdict {
+  // no real picture content (a blank render, a damaged one that decodes to noise): never «ready» as a picture — the
+  // page keeps its honest issue (no text found / damaged) and stays in review
+  const noContent = input.blank === true || (input.noise ?? 0) >= PICTURE_MAX_NOISE;
   let readableChars = input.digitalChars;
   let weakChars = 0;
   let weakConf = 0;
@@ -78,7 +90,7 @@ export function classifyPicturePage(input: PictureInput): PictureVerdict {
   }
   const weakMeanConf = weakN ? weakConf / weakN : null;
   const texture = weakChars < PICTURE_MAX_TEXT_CHARS || (input.coverage >= PICTURE_DOMINANT_COVERAGE && (weakMeanConf ?? 0) < PICTURE_NOISE_MEAN_CONF);
-  const picture = input.coverage >= PICTURE_MIN_COVERAGE && readableChars < PICTURE_MAX_TEXT_CHARS && texture;
+  const picture = !noContent && input.coverage >= PICTURE_MIN_COVERAGE && readableChars < PICTURE_MAX_TEXT_CHARS && texture;
   return { picture, readableChars, weakChars, weakMeanConf };
 }
 
@@ -117,6 +129,38 @@ export function busyShare(img: RgbaImage): number {
     if (chroma > BUSY_DELTA || Math.max(Math.abs(r - bg[0]!), Math.abs(g - bg[1]!), Math.abs(b - bg[2]!)) > BUSY_DELTA) busy++;
   }
   return busy / samples.length;
+}
+
+/**
+ * How much a raster looks like noise (0 = smooth, ≈ 1 = static): the mean luma difference between horizontally
+ * ADJACENT pixels over the mean difference between pixels far apart. Every real image is correlated at the pixel scale
+ * (a photo, a stained slide, a scan: adjacent pixels are alike), so the ratio stays well below 1; a render of a damaged
+ * stream or a garbage decode is not. A flat image (no difference anywhere) is 0 — `blank` covers it.
+ */
+export function pixelNoise(img: RgbaImage): number {
+  const { width: w, height: h, data } = img;
+  if (w < 4 || h < 4) return 0;
+  const luma = (x: number, y: number) => {
+    const o = (y * w + x) * 4;
+    return 0.299 * data[o]! + 0.587 * data[o + 1]! + 0.114 * data[o + 2]!;
+  };
+  const N = 128;
+  let near = 0;
+  let far = 0;
+  for (let gy = 0; gy < N; gy++) {
+    const y = Math.min(h - 1, Math.floor(((gy + 0.5) / N) * h));
+    const yFar = (y + Math.floor(h / 2)) % h;
+    for (let gx = 0; gx < N; gx++) {
+      const x = Math.min(w - 2, Math.floor(((gx + 0.5) / N) * w));
+      const xFar = (x + Math.floor(w / 2)) % w;
+      const v = luma(x, y);
+      near += Math.abs(v - luma(x + 1, y));
+      far += Math.abs(v - luma(xFar, yFar));
+    }
+  }
+  // far differences below ≈ 4 luma levels on average: a flat page (blank), not a measure of noise
+  if (far / (N * N) < 4) return 0;
+  return near / far;
 }
 
 /** Share of a page covered by the union of picture boxes (overlaps counted once; a coarse 64×64 grid). */

@@ -6,6 +6,7 @@ import type { SourcePageView, SourceVersionView } from '@medlevo/shared';
 import { ToastProvider } from '../../design';
 import { setFetchImpl } from '../../lib/api';
 import { PagesPanel, pageTextLabel } from './PagesPanel';
+import { pageUnreadable } from './pageStatus';
 
 afterEach(() => setFetchImpl(null));
 
@@ -77,5 +78,37 @@ describe('optional review in the pages panel', () => {
     await waitFor(() => expect(posts).toHaveLength(1));
     expect(posts[0]!.url).toContain('/control/review/processing/accept');
     expect(posts[0]!.body).toEqual({ version_id: 'V1' });
+  });
+
+  it('(regression, CI 2026-11) a page nothing was read from stays «تحتاج مراجعة» — never «جاهزة»', async () => {
+    const damaged = { processing_status: 'needs_review', text_status: 'no_text_found', error_code: 'PAGE_CONTENT_DAMAGED', picture_page: false } as const;
+    expect(pageUnreadable(damaged)).toBe(true);
+    expect(pageUnreadable({ ...damaged, error_code: 'NO_TEXT_FOUND' })).toBe(true);
+    // doubtful OCR on a page that was read: the optional review; a picture page: ready
+    expect(pageUnreadable({ processing_status: 'needs_review', text_status: 'ocr', error_code: 'LOW_QUALITY_SCAN', picture_page: false })).toBe(false);
+    expect(pageUnreadable({ ...damaged, picture_page: true })).toBe(false);
+    expect(pageUnreadable({ ...damaged, processing_status: 'failed' })).toBe(false);
+    setFetchImpl(async (input) => {
+      const url = String(input);
+      if (url.includes('/versions/V1/pages'))
+        return json({
+          version,
+          pages: [
+            page(0, { text_status: 'digital' }),
+            page(1, { processing_status: 'needs_review', text_status: 'no_text_found', error_code: 'PAGE_CONTENT_DAMAGED', error_detail_ar: 'محتوى الصفحة تالف جزئيًا', optional_review: 1 }),
+          ],
+        });
+      if (url.includes('/processing')) return json({ version_id: 'V1', status: 'needs_review', summary: null, job: null });
+      return json({});
+    });
+    render(
+      <ToastProvider>
+        <PagesPanel sourceId="S1" versions={[version]} activeVersionId="V1" readOnly={false} />
+      </ToastProvider>,
+    );
+    const row = (await screen.findByText('تحتاج مراجعة — لم يُقرأ محتواها')).closest('tr')!;
+    expect(row.getAttribute('data-status')).toBe('needs_review');
+    expect(row.textContent).toContain('تالف جزئيًا');
+    expect(row.textContent).not.toContain('جاهزة — مراجعة اختيارية');
   });
 });

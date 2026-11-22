@@ -84,7 +84,9 @@ describe.skipIf(!PERF_ENABLED)('resilience: kill -9 mid-processing, restart, res
     let final: JobView | null = null;
     for (;;) {
       const s = await statusOf();
-      if (!resumedAt && s.job && s.job.attempts >= 2 && s.job.status === 'running') resumedAt = Date.now();
+      // the new process requeues the stale job at boot (an interruption: the attempt is given back), so any «running»
+      // seen after the restart is the resumed run
+      if (!resumedAt && s.job && s.job.status === 'running') resumedAt = Date.now();
       if (s.job && ['completed', 'partial', 'failed', 'cancelled'].includes(s.job.status)) {
         final = s.job;
         break;
@@ -100,7 +102,7 @@ describe.skipIf(!PERF_ENABLED)('resilience: kill -9 mid-processing, restart, res
     const db = new DatabaseSync(dbPath, { readOnly: true });
     try {
       const n = (sql: string, ...p: unknown[]) => (db.prepare(sql).get(...(p as never[])) as { n: number }).n;
-      const job = db.prepare(`SELECT id, status, attempts, error_code FROM processing_job WHERE kind = 'process_source_version'`).get() as { id: string; status: string; attempts: number };
+      const job = db.prepare(`SELECT id, status, attempts, interruptions, error_code FROM processing_job WHERE kind = 'process_source_version'`).get() as { id: string; status: string; attempts: number; interruptions: number };
       const cps = db.prepare(`SELECT step_key, data_json, done_at FROM job_checkpoint WHERE job_id = ? AND step_key LIKE 'page:%:regions'`).all(job.id) as Array<{ step_key: string; data_json: string; done_at: number }>;
       const perPage = new Map(
         (db.prepare(`SELECT p.page_index AS i, COUNT(r.id) AS n, MIN(r.created_at) AS created FROM source_page p LEFT JOIN source_region r ON r.page_id = p.id WHERE p.version_id = ? GROUP BY p.id`).all(versionId) as Array<{ i: number; n: number; created: number }>).map((r) => [r.i, r]),
@@ -127,7 +129,10 @@ describe.skipIf(!PERF_ENABLED)('resilience: kill -9 mid-processing, restart, res
         pages_written_after_the_crash: rerunAfterCrash,
       };
       expect(job.status).toBe('completed');
-      expect(job.attempts).toBe(2);
+      // (wp/robustness, jobs/queue.ts) the kill -9 is an INTERRUPTION, not a failed attempt: requeueStale gives the
+      // attempt back and counts the interruption apart, so the resumed run is still attempt 1
+      expect(job.attempts).toBe(1);
+      expect(job.interruptions).toBe(1);
       expect(cps).toHaveLength(PAGES);
       expect(result.duplicate_reading_orders).toBe(0);
       expect(result.duplicate_review_items).toBe(0);
@@ -147,7 +152,7 @@ describe.skipIf(!PERF_ENABLED)('resilience: kill -9 mid-processing, restart, res
         restart_to_resumed_ms: resumedAt ? resumedAt - restartAt : null,
         crash_to_resumed_ms: resumedAt ? resumedAt - killedAt : null,
         restart_to_completed_ms: doneAt - restartAt,
-        final_job: { status: final?.status, attempts: final?.attempts },
+        final_job: { status: final?.status, attempts: final?.attempts, interruptions: job.interruptions },
         result,
       });
     } finally {

@@ -430,4 +430,27 @@ describe('ExplainTab — streaming (H4)', () => {
     });
     await waitFor(() => expect(aiRequestStore.get()?.action).toBe('ask'));
   });
+  it('(regression, CI 2026-11) AI unavailable: every layout says «الشرح غير متاح الآن» with the reason — in chat mode too', async () => {
+    capabilitiesStore.reset(caps('requires_configuration'));
+    server(() => json({}));
+    const { doc, page } = makeDoc();
+    const onOpenChat = vi.fn();
+    render(
+      <MemoryRouter>
+        <ToastProvider>
+          <ExplainTab doc={doc} page={page} pageIndex={1} online onOpenChat={onOpenChat} />
+        </ToastProvider>
+      </MemoryRouter>,
+    );
+    // nothing picked: the tab opens on the disabled tools with the reason (not on a chat that cannot start)
+    const card = document.querySelector('.wk-disabled-card')!;
+    expect(card.textContent).toContain('الشرح غير متاح الآن');
+    expect(card.textContent).toContain(AI_REASON);
+    expect(screen.getByRole('button', { name: 'اشرح' })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: 'اشرح الشكل' })).toHaveProperty('disabled', true);
+    // the owner picks the chat: the reason stays on screen, the entry points at it
+    fireEvent.click(screen.getByRole('radio', { name: 'محادثة' }));
+    expect(document.querySelector('.wk-disabled-card')!.textContent).toContain('الشرح غير متاح الآن');
+    expect(screen.getByRole('button', { name: 'افتح المحادثة' }).getAttribute('aria-describedby')).toBe(document.querySelector('.wk-disabled-card')!.id);
+  });
 });
