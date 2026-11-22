@@ -12,7 +12,7 @@
 //    label never becomes a fixed quiz answer (AC-08).
 //  * Image Quiz payloads never reveal the answer: neutral image URL, no file name, caption, title or alt text.
 //  * External image candidates pass validateImageCandidate (modality, region, caption, age group) — mismatches are
-//    excluded with reasons (AC-09). External image search itself is not available in this version.
+//    excluded with reasons (AC-09). Web reference images («صور من الويب») are separate: web-images-api.ts.
 import { z } from 'zod';
 import type { FeatureState } from './features';
 
@@ -468,7 +468,8 @@ export interface VisualSourceView {
 export interface VisualSourceListResponse {
   items: VisualSourceView[];
   /** whether anything would actually be fetched: the server switch + a provider (none in this version) */
-  fetch: { server_allows: boolean; provider_available: boolean; state: 'disabled' | 'not_implemented'; reason_ar: string };
+  /** 'available': the web reference images run (their fixed allow-list of services; see web-images-api.ts) */
+  fetch: { server_allows: boolean; provider_available: boolean; state: 'disabled' | 'not_implemented' | 'available'; reason_ar: string };
   notes_ar: string[];
 }
 

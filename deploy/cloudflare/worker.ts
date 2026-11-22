@@ -16,8 +16,14 @@ interface Env {
   MEDLEVO_BACKUP_INTERVAL_MINUTES: string;
   MEDLEVO_AI_MONTHLY_BUDGET_USD?: string;
   MEDLEVO_AI_OPEN_ALLOWANCE?: string;
+  /** "true" turns on the web reference images (fixed allow-list of image APIs); string, like every var */
+  MEDLEVO_ALLOW_EXTERNAL_FETCH?: string;
+  /** Google Programmable Search engine id (optional; Google is used only with GOOGLE_CSE_KEY too) */
+  GOOGLE_CSE_ID?: string;
   // secrets (wrangler secret put …)
   ANTHROPIC_API_KEY?: string;
+  /** Google Custom Search JSON API key (optional) */
+  GOOGLE_CSE_KEY?: string;
   MEDLEVO_SETUP_TOKEN: string;
   MEDLEVO_R2_ACCOUNT_ID: string;
   MEDLEVO_R2_ACCESS_KEY_ID: string;
@@ -48,6 +54,9 @@ export class MedLevoContainer extends Container<Env> {
       MEDLEVO_BACKUP_INTERVAL_MINUTES: env.MEDLEVO_BACKUP_INTERVAL_MINUTES,
       MEDLEVO_AI_MONTHLY_BUDGET_USD: env.MEDLEVO_AI_MONTHLY_BUDGET_USD,
       MEDLEVO_AI_OPEN_ALLOWANCE: env.MEDLEVO_AI_OPEN_ALLOWANCE,
+      MEDLEVO_ALLOW_EXTERNAL_FETCH: env.MEDLEVO_ALLOW_EXTERNAL_FETCH,
+      GOOGLE_CSE_ID: env.GOOGLE_CSE_ID,
+      GOOGLE_CSE_KEY: env.GOOGLE_CSE_KEY,
       MEDLEVO_R2_ACCOUNT_ID: env.MEDLEVO_R2_ACCOUNT_ID,
       MEDLEVO_R2_ACCESS_KEY_ID: env.MEDLEVO_R2_ACCESS_KEY_ID,
       MEDLEVO_R2_SECRET_ACCESS_KEY: env.MEDLEVO_R2_SECRET_ACCESS_KEY,

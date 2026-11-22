@@ -28,6 +28,10 @@
     "MEDLEVO_BACKUP_INTERVAL_MINUTES": "10",
     // the owner asked for no AI limit: every account and subject shares the (maximum) deployment budget
     "MEDLEVO_AI_MONTHLY_BUDGET_USD": "100000",
-    "MEDLEVO_AI_OPEN_ALLOWANCE": "true"
+    "MEDLEVO_AI_OPEN_ALLOWANCE": "true",
+    // web reference images («صور من الويب»): a STRING read by the server's boolish parser ("true"/"1"/"yes"/"on" = on).
+    // The server then calls only its fixed allow-list (Wikimedia Commons, NLM Open-i, Google CSE when keyed) over https.
+    // Google is optional: `wrangler secret put GOOGLE_CSE_KEY` and set GOOGLE_CSE_ID here (both, or Google stays off).
+    "MEDLEVO_ALLOW_EXTERNAL_FETCH": "true"
   }
 }

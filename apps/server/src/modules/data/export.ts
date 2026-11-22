@@ -757,6 +757,8 @@ const FULL_TABLES: Array<{ table: string; type: string; where?: string; rev?: st
   { table: 'figure_question', type: 'figure_question', columns: 'question_id AS id, question_id, description_id, created_at' },
   // Round 7 H4 (§32): the owner's registry of allowed external visual sources
   { table: 'visual_source', type: 'visual_source' },
+  // web reference images pinned to the notes (attribution included; the pictures stay at their sources)
+  { table: 'web_image_ref', type: 'web_image_ref' },
   // (Academic OS P1-T2) authorship layers, the version history of annotations / notes / layers, and the attribution of
   // copied items (who wrote the original; never evidence)
   { table: 'annotation_layer', type: 'annotation_layer', rev: 'rev' },

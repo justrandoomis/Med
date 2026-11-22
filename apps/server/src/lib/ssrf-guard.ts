@@ -47,6 +47,11 @@ export interface SafeFetchOptions {
   maxBytes?: number;
   maxRedirects?: number;
   allowedPorts?: number[];
+  /**
+   * optional host allow-list, checked on EVERY hop (the first URL and each redirect) before DNS: a host it refuses is
+   * never contacted (the web image search passes its fixed list of API hosts and image CDNs)
+   */
+  allowHost?: (host: string) => boolean;
   signal?: AbortSignal;
   /** injectable for tests; default: node:dns lookup (all addresses) */
   resolver?: Resolver;
@@ -206,6 +211,9 @@ export async function safeFetch(rawUrl: string, opts: SafeFetchOptions): Promise
   const redirects: string[] = [];
   for (let hop = 0; ; hop++) {
     const host = validateUrlShape(url, opts);
+    if (opts.allowHost && !opts.allowHost(host)) {
+      throw new SsrfBlockedError('host-not-allowed', 'الرابط غير مسموح: المضيف ليس في قائمة المصادر المسموح بها.');
+    }
     const address = await resolveAndValidate(host, resolver);
     let res: TransportResponse;
     try {

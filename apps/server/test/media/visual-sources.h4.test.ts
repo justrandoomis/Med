@@ -162,7 +162,7 @@ describe('fetch gate with the server switch ON', () => {
   });
   afterAll(async () => t.close());
 
-  it('allows only an enabled entry; the list says there is still no provider (nothing fetched)', async () => {
+  it('allows only an enabled entry; with the switch on the list says the web images run on their own allow-list', async () => {
     const res = await t.app.inject({ method: 'POST', url: '/api/media/visual-sources', headers: h, payload: { name: 'Open images (TEST)', domain: 'openimages-test.org' } });
     expect(res.statusCode, res.body).toBe(201);
     const id = (res.json() as { item: VisualSourceView }).item.id;
@@ -171,10 +171,11 @@ describe('fetch gate with the server switch ON', () => {
     await t.app.inject({ method: 'PATCH', url: `/api/media/visual-sources/${id}`, headers: h, payload: { enabled: false } });
     expect(() => assertExternalFetchAllowed(t.ctx, 'https://cdn.openimages-test.org/a.png')).toThrow(/ليس من مصدر بصري سمحت به/);
     const list = (await t.app.inject({ method: 'GET', url: '/api/media/visual-sources', headers: h })).json() as VisualSourceListResponse;
-    expect(list.fetch).toMatchObject({ server_allows: true, provider_available: false, state: 'not_implemented' });
-    // the capability stays honest: external image search is not built
+    expect(list.fetch).toMatchObject({ server_allows: true, provider_available: true, state: 'available' });
+    expect(list.fetch.reason_ar).toContain('بوابة التحقق');
+    // the capability is honest: the web reference images run (Google needs its key)
     const caps = (await t.app.inject({ method: 'GET', url: '/api/capabilities', headers: h })).json() as { features: Record<string, { state: string; reason_ar?: string }> };
-    expect(caps.features['external.images']!.state).toBe('not_implemented');
-    expect(caps.features['external.images']!.reason_ar).toContain('سجل المصادر البصرية');
+    expect(caps.features['external.images']!.state).toBe('available');
+    expect(caps.features['external.images']!.reason_ar).toContain('يحتاج مفتاح Google');
   });
 });

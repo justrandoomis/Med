@@ -92,18 +92,18 @@ describe('audio', () => {
     expect(d.json()).toMatchObject({ duration_ms: 3_600_000, duration_origin: 'player' });
   });
 
-  it('status and capabilities are honest: transcription needs configuration, auto-linking / external images are not built; in-app recording (track F4) is explicit-action only', async () => {
+  it('status and capabilities are honest: transcription needs configuration, auto-linking is not built, web images wait for the server switch; in-app recording (track F4) is explicit-action only', async () => {
     const s = (await t.app.inject({ method: 'GET', url: '/api/media/status', headers: h })).json();
     expect(s.transcription.state).toBe('requires_configuration');
     expect(s.recording.state).toBe('available');
     expect(s.recording.reason_ar).toContain('الميكروفون');
     expect(s.recording.reason_ar).toContain('لا يبدأ إلا بضغطك');
     expect(s.auto_linking.state).toBe('not_implemented');
-    expect(s.external_image_search.state).toBe('not_implemented');
+    expect(s.external_image_search.state).toBe('requires_configuration');
     expect(s.external_image_search.reason_ar).toContain('MEDLEVO_ALLOW_EXTERNAL_FETCH');
     const caps = (await t.app.inject({ method: 'GET', url: '/api/capabilities', headers: h })).json();
     expect(caps.features['workspace.audio'].state).toBe('available');
-    expect(caps.features['external.images'].state).toBe('not_implemented');
+    expect(caps.features['external.images'].state).toBe('requires_configuration');
   });
 });
 
@@ -408,7 +408,7 @@ describe('AC-09 matcher over the library', () => {
     const ex = new Map(body.excluded.map((e: { image: { id: string }; validation: { reasons_ar: string[] } }) => [e.image.id, e.validation.reasons_ar.join(' ')]));
     expect(ex.get(ct.id)).toContain('لا يطابق');
     expect(ex.get(gen.id)).toContain('مولّدة');
-    expect(body.external.state).toBe('not_implemented');
+    expect(body.external.state).toBe('requires_configuration');
   });
 });
 

@@ -100,7 +100,9 @@ if the server reads a variable the example does not name, or if the example carr
 | `ANTHROPIC_API_KEY` | empty | enables the AI features. **Server only**: never sent to the browser, stored in the database, logged, exported or backed up |
 | `MEDLEVO_MODEL_GENERATION` / `_VERIFICATION` / `_VISION` | adapter defaults | per-role model overrides (impact preview in «مركز التحكم» → «الذكاء الاصطناعي») |
 | `MEDLEVO_AI_MONTHLY_BUDGET_USD` | `20` | estimated monthly budget; `0` blocks every AI call |
-| `MEDLEVO_ALLOW_EXTERNAL_FETCH` | `false` | external fetching stays off (no external provider is built) |
+| `MEDLEVO_ALLOW_EXTERNAL_FETCH` | `false` | `true` turns on the web reference images «صور من الويب» (Wikimedia Commons, NLM Open-i; fixed host allow-list) |
+| `GOOGLE_CSE_KEY` / `GOOGLE_CSE_ID` | — | optional: Google Programmable Search image results (both needed; the key is a secret) |
+| `MEDLEVO_WEB_IMAGE_CACHE_MB` | `256` | size cap of the web thumbnail cache (`DATA_DIR/cache/web-images`, not backed up) |
 | `MEDLEVO_TIMEZONE` | `Asia/Baghdad` | display timezone (storage is always UTC) |
 | `MEDLEVO_MAX_UPLOAD_MB`, `MEDLEVO_MAX_ZIP_*` | 200 MB, 500 entries, 1 GB | upload and archive limits |
 | `MEDLEVO_TRUST_PROXY`, `MEDLEVO_CLIENT_IP_HEADER` | `false`, empty | `true` only behind your own reverse proxy; a hop count or an address list for a platform (Render uses `1` + `cf-connecting-ip`, [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) §8.2) |

@@ -227,3 +227,12 @@ Pencil, S Pen, BOOX, iPhone, Safari, Firefox, a screen reader or a real camera; 
 | Speech control / screen readers on the reader's page indicator | axe `label-content-name-mismatch` (serious, WCAG 2.5.3) in every look: the name now starts with the shown words | `apps/web/src/features/workspace/chrome/GoToPage.gate1.test.tsx`; **VoiceOver / TalkBack / Voice Control: Not run (no device)** |
 | Touch targets of breadcrumb links on a phone | 24 px tall («أنا» 10 px wide) → 44 × 44 px on a coarse pointer | `apps/web/test/breadcrumbs-css.gate1.critic.test.ts`; Tested (env) — **a real phone: Not run** |
 | Upgrading an R1-a installation straight to R1-c | refused with the way that works (deploy R1-b first — on Render, if `main` already holds R1-c: Manual Deploy → «Deploy a specific commit» → `514f356`, then «Deploy latest commit»), nothing changed; R1-a → R1-b → R1-c keeps every entity, file and recording and R1-b then refuses R1-c data | `apps/server/test/tenancy/owner-migration.gate1.test.ts`; scratch end-to-end script against the real `d0c8ab4` / `514f356` builds; **on Render: Not run (no account)** |
+
+## Web reference images «صور من الويب» — `external.images` (2026-11-22)
+
+| Capability | State | How it is decided | Tests |
+|---|---|---|---|
+| `external.images` (Wikimedia Commons + NLM Open-i) | `available` with `MEDLEVO_ALLOW_EXTERNAL_FETCH=true`; otherwise `requires_configuration` with the reason and how to enable it (nothing contacted) | the server switch (`media/web-images/service.ts` `status()`); `/api/media/web-images/status` lists each provider | `srv:media/web-images.test.ts` (disabled and enabled apps) |
+| Google Programmable Search (inside `external.images`) | `requires_configuration` «يحتاج مفتاح Google» until BOTH `GOOGLE_CSE_KEY` and `GOOGLE_CSE_ID` are set; never scraped | provider state; the capability's reason says whether Google is keyed | `srv:media/web-images.test.ts` «enabled with Google keys» |
+| Thumbnails offline-ish | browser HTTP cache (`private, max-age=30 d, immutable`) + the server's cache; no service-worker caching | — | proxy headers tested; offline behaviour: Not run |
+| Real services (Wikimedia / Open-i / Google) | Not run in CI (fake HTTP layer) | — | — |

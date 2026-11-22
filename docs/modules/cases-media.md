@@ -505,3 +505,83 @@ Confirmed and fixed (regression tests fail on the code before the fix):
     «recovered» them as an interrupted recording (listed for attention, uploaded again — the server keeps one copy) on a
     device whose storage was already full. `uploadRecordingDirect` now drops that recording's chunks once the server
     has it (kept when the upload fails). Test: `web:src/features/workspace/audio/directUpload.review.h3.test.ts` (2).
+
+## Web reference images «صور من الويب» (§32, 2026-11-22)
+
+Owner's request: «I need embedded images from sources on Google» — reference pictures from the web shown next to the
+lecture while studying (e.g. «adenocarcinoma of the colon», «granuloma histology»). Built as a separate feature from the
+AC-09 matching gate: these are **references with attribution**, never lecture content and never examples that passed the
+gate (the visual-source registry above still decides that).
+
+### Server (`apps/server/src/modules/media/web-images/`, migration `0680_web_image_ref.sql`)
+
+* `ImageSearchProvider` adapters (`providers.ts`, pure parsing + URL building):
+  * **Wikimedia Commons** (`commons.wikimedia.org/w/api.php`, File namespace, `filetype:bitmap`, no key): FREE licences only
+    (`isFreeLicence`: CC0 / public domain / CC BY / CC BY-SA / GFDL / FAL; NC, ND and fair use are dropped), raster thumbnails
+    from `upload.wikimedia.org` only; title, author (HTML stripped), licence + licence URL, file page → `usage: free_licence`.
+  * **NLM Open-i** (`openi.nlm.nih.gov/api/search`, no key): PubMed Central figures with their captions, article link
+    (https), shortened author list, the article's CC licence when given → `usage: linked_preview`.
+  * **Google Programmable Search** (Custom Search JSON API, `searchType=image`, `safe=active`): ONLY when `GOOGLE_CSE_KEY`
+    and `GOOGLE_CSE_ID` are both set; otherwise `requires_configuration` «يحتاج مفتاح Google». Only Google's own thumbnail
+    (`encrypted-tbn0…3.gstatic.com`) is ever fetched — never the third-party site; licence «غير معروف — حقوق الصورة
+    لأصحابها» → `linked_preview`. Google is never scraped. The key lives behind `config.secrets.googleCseKey()`.
+* Outbound layer (`http.ts`): every request goes through `safeFetch` (server switch, https on 443 only, public addresses,
+  pinned DNS) plus a new `allowHost` hook in `lib/ssrf-guard.ts` checked on **every hop, redirects included**, before DNS.
+  API hosts: `commons.wikimedia.org`, `openi.nlm.nih.gov`, `www.googleapis.com`; image hosts: `upload.wikimedia.org`,
+  `openi.nlm.nih.gov`, `encrypted-tbn[0-3].gstatic.com`. Timeouts 8 s (API) / 10 s (image); caps 2 MB (JSON) / 3 MB (image);
+  pictures must be JPEG / PNG / GIF / WebP by BOTH the declared type and the sniffed bytes (SVG / HTML refused, 415).
+* Query (`query.ts`): Arabic is turned into English medical terms with a small built-in dictionary (no AI, nothing sent to
+  translate); unknown Arabic words are reported («untranslated») and left out; nothing usable → 400 with the reason.
+  AI translation is not wired (it would need the owner's consent — kept optional, not built).
+* Merge (`service.ts`): providers in parallel, each failing alone with its reason (`error_ar`); de-duplicated by original
+  URL, thumbnail URL and Commons file name (a Google copy of a Commons file is dropped); unsafe titles dropped; ordered by
+  provider base + query-term overlap + medical-term boost − rank; results cached in memory 10 min.
+* Proxy-and-cache: results carry same-origin `thumb` / `large` = `/api/media/web-images/thumb?u=<remote>&s=<HMAC>`; the
+  proxy serves only URLs the server signed (key derived from the server secret, purpose `web-image-proxy`) AND on the image
+  allow-list — not an open proxy. Cache in `DATA_DIR/cache/web-images` (not in backups): content-addressed blobs
+  (`blobs/<sha256>`) + URL index, LRU-evicted under `MEDLEVO_WEB_IMAGE_CACHE_MB` (default 256). Headers: `private,
+  max-age=2592000, immutable`, `ETag` (304), `nosniff`, `CSP default-src 'none'; sandbox`, `CORP same-origin`,
+  `no-referrer`. The user's address never reaches the image hosts.
+* Reference cards (`web_image_ref`, vault): «أضف إلى ملاحظاتي» stores a card only from a result whose `token` (HMAC over
+  provider, title, caption, author, licence, page / image / proxy URLs) verifies — the credit cannot be dropped or changed
+  (403). One card per picture per lecture; change log; full JSON export. The picture itself is not copied into the vault.
+* Capability: `external.images` = `available` with `MEDLEVO_ALLOW_EXTERNAL_FETCH` on (the reason says whether Google has
+  its key), `requires_configuration` with the reason when off. `/api/media/status` `external_image_search` follows it; the
+  visual-source registry's `fetch` block says `available` too.
+
+Routes (under `/api/media`): `GET /web-images/status` · `POST /web-images/search {query, providers?, limit?}` (30/min) ·
+`GET /web-images/thumb?u=&s=` · `GET /web-images/refs?source_id=` · `POST /web-images/refs` · `DELETE /web-images/refs/:id`.
+
+### Web (`apps/web/src/features/media/webImages/`)
+
+* `WebImagesPanel` in the workspace rail «المصادر», right under «صور المحاضرة» (the figure descriptions): search box
+  (Arabic or English), suggestions made from the page's figure descriptions (`queryFromFigure`: diagnosis + picture type,
+  else the English caption) — **nothing is searched until the owner asks**; grid with source · author · licence (linked) ·
+  «الصفحة الأصلية»; lightbox; «أضف إلى ملاحظاتي»; «مراجعي من الويب لهذه المحاضرة» with remove. Off on the server → the
+  reason and how to enable it, no search box.
+* For other screens (the AI chat / explanations — not wired here): `searchWebImages(query)` and
+  `<WebImageStrip query=… sourceId? pageId? max? />` from `features/media/webImages`. Always keep the attribution and the
+  label «صورة من الويب — ليست من محاضرتك».
+
+### Enabling it
+
+* Local / Render: `MEDLEVO_ALLOW_EXTERNAL_FETCH=true` (+ optional `GOOGLE_CSE_KEY`, `GOOGLE_CSE_ID`), restart.
+* Cloudflare: `wrangler.jsonc` vars `"MEDLEVO_ALLOW_EXTERNAL_FETCH": "true"` (a string; the server's boolish parser reads
+  "true"/"1"/"yes"/"on"); the Worker passes it, `GOOGLE_CSE_ID` (a var) and the secret `GOOGLE_CSE_KEY`
+  (`wrangler secret put GOOGLE_CSE_KEY`) to the container (`deploy/cloudflare/worker.ts`).
+
+### Tests
+
+`srv:media/web-images.test.ts` (fake transport + resolver UNDER the real SSRF guard; no network): each adapter's parsing
+and licence filter, the Arabic query, allow-list / private-address / redirect refusals, SVG / lying content-type refusals,
+switch off → nothing contacted, cache dedupe + LRU, proxy (signed only, cached, 304, 401 without session), reference cards
+(tampered credit refused), Google only with keys (safe search, key never in the response, Commons duplicate dropped).
+`web:src/features/media/webImages/webImages.test.tsx`: disabled state, results with attribution, lightbox, pin,
+suggestions, `<WebImageStrip>`, `queryFromFigure`.
+
+### Limits (honest list)
+
+* Wikimedia has no safe-search parameter: a small unsafe-word filter on titles / captions only (medical nudity is not filtered).
+* Pinned cards keep the picture through the proxy cache, not a vault copy: after eviction it is fetched again (online).
+* No AI translation of Arabic queries (dictionary only); no inline images in the AI chat yet (the component exists).
+* Not run against the real services in CI; the Open-i response shape was checked by hand against the live API on 2026-11-22.

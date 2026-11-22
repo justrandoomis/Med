@@ -2,7 +2,7 @@
 // Owner-managed: name, domain (+ optional atlas path), the owner's licence note, enabled. Used by
 //   * validateImageCandidate (check `allowed_source`): an external candidate is accepted only from an ENABLED entry;
 //   * assertExternalFetchAllowed: the gate any future fetch must pass — the server switch MEDLEVO_ALLOW_EXTERNAL_FETCH
-//     AND an enabled entry. No image provider exists in this version, so nothing is fetched (the list says so).
+//     AND an enabled entry. (The web reference images, web-images/, search their own fixed allow-list instead.)
 // Entries are owner data (in the full JSON export and the backup); every change is in the change log.
 import {
   VISUAL_SOURCE_KIND_LABELS_AR,
@@ -95,11 +95,21 @@ function assertUnique(ctx: AppContext, domain: string, path: string | null, exce
   if (dup) throw new AppError('CONFLICT', `هذا النطاق مسجّل مسبقًا باسم «${dup.name}».`, 409);
 }
 
-/** The server switch and the provider: what would actually be fetched (nothing in this version). */
+/**
+ * The server switch and the provider. With the switch on, the web reference images («صور من الويب») search their own
+ * FIXED allow-list (Wikimedia Commons, NLM Open-i, Google CSE with its key) and show results as web pictures with
+ * attribution; this registry still decides which external pictures pass the AC-09 matching gate as examples.
+ */
 export function fetchState(ctx: AppContext): VisualSourceListResponse['fetch'] {
   return ctx.config.allowExternalFetch
-    ? { server_allows: true, provider_available: false, state: 'not_implemented', reason_ar: 'الجلب من الإنترنت مسموح على الخادم، لكن لا يوجد مزود بحث عن الصور في هذا الإصدار؛ لا يُجلب شيء. أي مزود مستقبلي يجلب من المصادر المفعّلة هنا فقط.' }
-    : { server_allows: false, provider_available: false, state: 'disabled', reason_ar: 'الجلب من الإنترنت معطّل على الخادم (MEDLEVO_ALLOW_EXTERNAL_FETCH)، ولا يوجد مزود بحث عن الصور؛ لا يُجلب شيء من هذه المصادر. السجل يحدد ما يُقبل إن وُجدت صورة خارجية.' };
+    ? {
+        server_allows: true,
+        provider_available: true,
+        state: 'available',
+        reason_ar:
+          'الجلب من الإنترنت مسموح على الخادم: «صور من الويب» في مساحة الدراسة تبحث في قائمة ثابتة من الخدمات (ويكيميديا كومنز، Open-i، و Google إن ضُبط مفتاحه) وتعرض كل صورة بمصدرها وترخيصها، موسومة «صورة من الويب — ليست من محاضرتك». هذا السجل يحدد أي صورة خارجية تُقبل مثالًا مطابقًا في بوابة التحقق.',
+      }
+    : { server_allows: false, provider_available: false, state: 'disabled', reason_ar: 'الجلب من الإنترنت معطّل على الخادم (MEDLEVO_ALLOW_EXTERNAL_FETCH)؛ لا يُجلب شيء، و«صور من الويب» متوقفة. السجل يحدد ما يُقبل إن وُجدت صورة خارجية.' };
 }
 
 export function listVisualSources(ctx: AppContext): VisualSourceListResponse {

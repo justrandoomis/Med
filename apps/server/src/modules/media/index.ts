@@ -21,9 +21,12 @@
 //          · GET /recordings?source_id=  (track F4)
 //   GET    /visual-sources · POST /visual-sources · PATCH /visual-sources/:id · DELETE /visual-sources/:id
 //          (Round 7 H4, §32) the owner's registry of allowed external visual sources (Control Center)
+//   GET    /web-images/status · POST /web-images/search · GET /web-images/thumb · GET|POST /web-images/refs ·
+//          DELETE /web-images/refs/:id — web reference images «صور من الويب» (web-images/routes.ts)
 // Capabilities: workspace.audio → available (playback, manual transcript, subtitle import, manual links, in-app
-// recording when the browser supports MediaRecorder — automatic transcription is not available, said in /status); external.images → not implemented with the
-// reason (no image provider; external fetch is off by default) — the validation gate exists for a future provider.
+// recording when the browser supports MediaRecorder — automatic transcription is not available, said in /status); external.images → the web reference
+// images (Wikimedia Commons, NLM Open-i, Google CSE with its key): `available` with MEDLEVO_ALLOW_EXTERNAL_FETCH on,
+// `requires_configuration` with the reason when it is off (web-images/service.ts status()).
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { imageRequestSchema, type ImageMatchResponse, type MediaStatusResponse } from '@medlevo/shared';
@@ -42,6 +45,7 @@ import { getImageRow } from './images';
 import { validateImageCandidate } from './validate-image';
 import { getRecordingRow, recordingsForSource, recordingView, uploadRecording } from './recordings';
 import { createVisualSource, deleteVisualSource, enabledVisualSources, listVisualSources, patchVisualSource } from './visual-sources';
+import { registerWebImageRoutes, webImagesOf } from './web-images/routes';
 
 const id = z.string().trim().min(1).max(64);
 const idParams = z.object({ id });
@@ -51,11 +55,6 @@ const TRANSCRIPTION_AR = 'التفريغ الآلي (transcription) غير مت�
 const RECORDING_AR = 'التسجيل داخل التطبيق متاح من مساحة الدراسة («المزيد» ← «سجّل ملاحظة صوتية»): لا يبدأ إلا بضغطك، ويظهر مؤشر التسجيل وزر الإيقاف طوال الوقت، ويُحفظ التسجيل على جهازك أولًا ثم يُرفع كملاحظة صوتية. يحتاج متصفحًا يدعم MediaRecorder وإذنك بالميكروفون.';
 const AUTOLINK_AR = 'الربط التلقائي بين الصوت والصفحات غير مبني: لا تُخترع مطابقة زمنية دون أساس. الربط اليدوي متاح، وأي ربط تلقائي مستقبلي يُوسم «تلقائي» ويمكنك تأكيده أو إزالته.';
 
-function externalImagesReason(ctx: AppContext): string {
-  return ctx.config.allowExternalFetch
-    ? 'البحث الخارجي عن الصور غير مبني في هذا الإصدار (لا يوجد مزود صور). أي نتيجة خارجية مستقبلًا تمر ببوابة التحقق (نوع التصوير، المنطقة، التعليق، العمر، ومصدر من سجل المصادر البصرية التي سمحت بها) وتُستبعد غير المطابقة مع السبب.'
-    : 'البحث الخارجي عن الصور غير متاح: الجلب من الإنترنت معطّل على الخادم (MEDLEVO_ALLOW_EXTERNAL_FETCH) ولا يوجد مزود صور. ابحث في صور مصادرك؛ بوابة التحقق من المطابقة وسجل المصادر البصرية المسموح بها (مركز التحكم) جاهزان لأي مزود مستقبلي.';
-}
 
 export function mediaStatus(ctx: AppContext): MediaStatusResponse {
   const transcribe = ctx.ai.status().tasks.transcribe;
@@ -70,13 +69,17 @@ export function mediaStatus(ctx: AppContext): MediaStatusResponse {
     auto_linking: { state: 'not_implemented', reason_ar: AUTOLINK_AR },
     image_explorer: { state: 'available' },
     image_quiz: { state: 'available' },
-    external_image_search: { state: 'not_implemented', reason_ar: externalImagesReason(ctx) },
+    external_image_search: (() => {
+      const w = webImagesOf(ctx).status();
+      return w.reason_ar ? { state: w.state, reason_ar: w.reason_ar } : { state: w.state };
+    })(),
   };
 }
 
 export default async function register(app: FastifyInstance, { ctx }: ModuleOptions): Promise<void> {
   ctx.capabilities.set('workspace.audio', 'available', AUDIO_REASON_AR);
-  ctx.capabilities.set('external.images', 'not_implemented', externalImagesReason(ctx));
+  // web reference images: sets the external.images capability from the live state
+  registerWebImageRoutes(app, ctx);
 
   app.get('/status', async (): Promise<MediaStatusResponse> => mediaStatus(ctx));
 

@@ -79,6 +79,12 @@ export interface AppConfig {
     figureDescribeMax?: number;
   };
   allowExternalFetch: boolean;
+  /**
+   * web reference images («صور من الويب», media/web-images): Google Programmable Search is used only when BOTH
+   * GOOGLE_CSE_KEY (secret, `secrets.googleCseKey()`) and GOOGLE_CSE_ID are set; thumbnails cache cap
+   * (MEDLEVO_WEB_IMAGE_CACHE_MB, default 256). Nothing is fetched without allowExternalFetch.
+   */
+  webImages: { googleConfigured: boolean; googleCseId: string | null; cacheBytes: number };
   /** built SPA to serve in production (null → API only) */
   webDistDir: string | null;
   /** PL-0: off-site backups to Cloudflare R2 (S3 API), encrypted on this server first (lib/objectstore) */
@@ -111,6 +117,8 @@ export interface AppConfig {
     anthropicApiKey(): string | null;
     r2SecretAccessKey(): string | null;
     backupEncryptionKey(): Buffer | null;
+    /** only the web image search's Google adapter (modules/media/web-images/providers.ts) may call it */
+    googleCseKey(): string | null;
   };
 }
 
@@ -155,6 +163,10 @@ const envSchema = z.object({
   // every account and subject without an explicit cap shares the deployment budget (a private deployment)
   MEDLEVO_AI_OPEN_ALLOWANCE: z.preprocess((v) => (v === undefined || v === '' ? undefined : String(v).toLowerCase() === 'true' || v === '1'), z.boolean().default(false)),
   MEDLEVO_ALLOW_EXTERNAL_FETCH: z.preprocess(emptyToUndefined, boolish.default(false)),
+  // web reference images (media/web-images): Google Programmable Search only with both values; thumbnail cache cap
+  GOOGLE_CSE_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
+  GOOGLE_CSE_ID: z.preprocess(emptyToUndefined, z.string().max(200).optional()),
+  MEDLEVO_WEB_IMAGE_CACHE_MB: z.preprocess(emptyToUndefined, z.coerce.number().positive().max(100_000).default(256)),
   MEDLEVO_WEB_DIST: z.preprocess(emptyToUndefined, z.string().optional()),
   // PL-0 off-site backups (lib/objectstore/offsite-config.ts). Missing R2 values never stop the server.
   MEDLEVO_R2_ACCOUNT_ID: z.preprocess(emptyToUndefined, z.string().optional()),
@@ -275,6 +287,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   else if (nodeEnv === 'production') webDistDir = join(REPO_ROOT, 'apps', 'web', 'dist');
 
   const anthropicKey = e.ANTHROPIC_API_KEY?.trim() || null;
+  const googleCseKey = e.GOOGLE_CSE_KEY?.trim() || null;
+  const googleCseId = e.GOOGLE_CSE_ID?.trim() || null;
   const MB = 1024 * 1024;
   let offsite: ReturnType<typeof parseOffsiteConfig>;
   try {
@@ -357,6 +371,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       figureDescribeMax: e.MEDLEVO_FIGURE_DESCRIBE_MAX,
     },
     allowExternalFetch: e.MEDLEVO_ALLOW_EXTERNAL_FETCH,
+    webImages: { googleConfigured: googleCseKey !== null && googleCseId !== null, googleCseId, cacheBytes: Math.floor(e.MEDLEVO_WEB_IMAGE_CACHE_MB * MB) },
     webDistDir,
     offsite: offsite.offsite,
     quota: {
@@ -371,6 +386,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       anthropicApiKey: () => anthropicKey,
       r2SecretAccessKey: offsite.secrets.r2SecretAccessKey,
       backupEncryptionKey: offsite.secrets.backupEncryptionKey,
+      googleCseKey: () => googleCseKey,
     }),
   };
   // Make the secrets accessor non-enumerable as well (belt and braces for serializers/loggers).

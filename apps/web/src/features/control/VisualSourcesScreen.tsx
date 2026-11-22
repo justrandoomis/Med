@@ -162,7 +162,7 @@ export function VisualSourcesScreen() {
               الجلب من الإنترنت
             </h2>
             <p>
-              <StatusPill tone={d.fetch.state === 'disabled' ? 'neutral' : 'warning'}>{d.fetch.state === 'disabled' ? 'معطّل على الخادم' : 'لا يوجد مزود صور'}</StatusPill>
+              <StatusPill tone={d.fetch.state === 'disabled' ? 'neutral' : d.fetch.state === 'available' ? 'success' : 'warning'}>{d.fetch.state === 'disabled' ? 'معطّل على الخادم' : d.fetch.state === 'available' ? 'صور من الويب تعمل' : 'لا يوجد مزود صور'}</StatusPill>
             </p>
             <p className="cc-muted">{d.fetch.reason_ar}</p>
           </section>

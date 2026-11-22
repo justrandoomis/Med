@@ -14,6 +14,7 @@ import { PAGE_PROCESSING_AR, REGION_KIND_AR, regionStatus, TEXT_STATUS_AR, versi
 import { fullPageLabel } from '../model/pages';
 import { FigureReadingPanel } from './FigureReadingPanel';
 import { FigureDescribeBar, FigureDescriptionCard, figuresApi, useFigureDescriptions } from './FigureDescriptionPanel';
+import { queryFromFigure, WebImagesPanel } from '../../media/webImages';
 
 const FIGURE_KINDS = new Set(['figure', 'diagram']);
 
@@ -56,6 +57,13 @@ export function SourcesTab({ doc, page, onOpenSplit, splitReason }: { doc: Sourc
     await figs.reload();
   };
   const canDescribe = figs.data?.can_describe.available ?? false;
+  // «صور من الويب»: queries proposed from this page's figure descriptions (searched only when the owner picks one)
+  const webSuggestions = page
+    ? (figs.data?.items ?? [])
+        .filter((d) => d.page_id === page.id && d.owner_status !== 'rejected')
+        .map((d) => queryFromFigure(d.content))
+        .filter((q): q is string => !!q)
+    : [];
   const text = page ? TEXT_STATUS_AR[page.text_status] : null;
   const proc = page ? (PAGE_PROCESSING_AR[page.processing_status] ?? PAGE_PROCESSING_AR.pending!) : null;
 
@@ -114,6 +122,8 @@ export function SourcesTab({ doc, page, onOpenSplit, splitReason }: { doc: Sourc
       <h3 className="wk-rail-h">صور المحاضرة</h3>
       <FigureDescribeBar versionId={version.id} data={figs.data} error={figs.error} reload={figs.reload} online={online} />
       {pageDescription && <FigureDescriptionCard description={pageDescription} sourceId={detail.id} canDescribe={canDescribe} onChanged={figs.replace} onRedescribe={redescribe} />}
+
+      <WebImagesPanel online={online} suggestions={webSuggestions} sourceId={detail.id} versionId={version.id} pageId={page?.id} />
 
       <h3 className="wk-rail-h">مناطق هذه الصفحة</h3>
       {!page ? null : error ? (
