@@ -114,13 +114,23 @@ export function useVersionDocument(detail: SourceDetail | null, versionId: strin
           setState({ status: 'error', message: 'لا يوجد إصدار قابل للعرض لهذا المصدر بعد. ارفع الملف أو انتظر انتهاء المعالجة.', offline: false, notFound: false });
           return;
         }
-        const { pages } = await fetchPages(detail.id, version.id, ctrl.signal);
         const { mode, pdfFileId } = renderModeFor(version);
+        // the PDF opens WHILE the page list loads (both need only the detail): one round trip less before the first
+        // page is drawn (docs/PERFORMANCE.md «Opening a lecture»)
+        const opening = mode === 'pdf' && pdfFileId ? loadPdfHandle(pdfFileId) : null;
+        opening?.then(
+          (h) => {
+            pdf = h;
+            if (cancelled) h.destroy();
+          },
+          () => undefined,
+        );
+        const { pages } = await fetchPages(detail.id, version.id, ctrl.signal);
         let pdfError: string | null = null;
-        if (mode === 'pdf' && pdfFileId) {
+        if (opening) {
           if (!cancelled) setState({ status: 'loading', stage: 'جارٍ فتح ملف PDF…' });
           try {
-            pdf = await loadPdfHandle(pdfFileId);
+            pdf = await opening;
           } catch (e) {
             pdfError = isApiError(e) && e.offline ? 'ملف هذا المصدر غير محمّل على هذا الجهاز ولا يوجد اتصال.' : 'تعذّر فتح ملف PDF. قد يكون الملف تالفًا أو غير متاح حاليًا.';
           }

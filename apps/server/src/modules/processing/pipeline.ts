@@ -34,6 +34,8 @@ import { chooseOrientation, orientationTrials, quarter, readingScore, type Quart
 import { decodePng, encodePng, isPng, measureImageQuality, type ImageQuality, type RgbaImage } from './png';
 import { enqueueVersionAnalysisFollowUp } from './fingerprint';
 import { enqueueFigureDescriptionFollowUp } from './figures';
+import { enqueueOcrVerifyFollowUp } from './ocr-verify';
+import { busyShare, classifyPicturePage, keepOnPicture, pictureCoverage } from './picture';
 import { applyLectureKind, linkFiguresAcrossPages } from './structure';
 import { writeSummary } from './summary';
 import { hasReversedLamAlef, prepareRegionText, suspicionReasonAr, type SuspicionContext } from './text';
@@ -55,6 +57,14 @@ export function renderDpi(width: number, height: number): number {
   const capped = Math.floor(72 * Math.sqrt(MAX_RENDER_PIXELS / area));
   return Math.max(8, Math.min(RENDER_DPI, capped));
 }
+/** width in px of a stored page thumbnail (112 CSS px in the rail × 2 for high-density phone screens) */
+export const THUMBNAIL_WIDTH_PX = 224;
+
+/** Render resolution of a page thumbnail `width` pt wide (THUMBNAIL_WIDTH_PX, bounded 8–72 dpi). */
+export function thumbnailDpi(width: number): number {
+  return Math.max(8, Math.min(72, Math.round((THUMBNAIL_WIDTH_PX * 72) / Math.max(1, width))));
+}
+
 /** below this many body characters a page is treated as "no digital text" */
 export const MIN_BODY_CHARS = 25;
 
@@ -71,6 +81,8 @@ export interface ProcessorDeps {
   /** null when the OCR models are not installed */
   ocr: OcrEngine | null;
   hooks: ProcessingHooks;
+  /** pages processed at the same time (bounded pool; default 1 = strictly in order) */
+  parallelism?: number;
 }
 
 export interface PageOutcome {
@@ -93,6 +105,8 @@ export interface ProcessOutput {
   chunks: { inserted: number; deleted: number; kept: number };
   lecture_kind: string | null;
   warnings_ar: string[];
+  /** wall-clock milliseconds per stage of this attempt (docs/PERFORMANCE.md «Processing measurements») */
+  timings_ms?: Record<string, number>;
 }
 
 interface VersionRow {
@@ -146,6 +160,8 @@ interface OcrCheckpoint {
   rotation?: number | null;
   /** the words are in the stored (raw) orientation of a JPEG whose EXIF could not be applied (no raster) */
   rawSpace?: boolean;
+  /** share of the picture that is picture content, not paper (picture.ts busyShare); absent = not measured */
+  pictureShare?: number;
 }
 
 /** A PDF page in its layout space (see VersionRun.layoutSpace). */
@@ -309,6 +325,17 @@ class VersionRun {
   private officeGeom: PageGeom | null = null;
   private readonly warnings: string[] = [];
   private ligatureFixes = 0;
+  // measurements (wall clock): stages of this attempt, and the summed time spent in OCR / pdftoppm across pages
+  private readonly timings: Record<string, number> = {};
+  private stageStart = performance.now();
+  private ocrMs = 0;
+  private renderMs = 0;
+
+  private mark(stage: string): void {
+    const now = performance.now();
+    this.timings[stage] = Math.round(now - this.stageStart);
+    this.stageStart = now;
+  }
 
   constructor(
     private readonly deps: ProcessorDeps,
@@ -342,12 +369,17 @@ class VersionRun {
         ? [...new Set(run.input.page_indexes)].filter((i) => i >= 0 && i < insp.pageCount).sort((a, b) => a - b)
         : all;
 
-      for (let k = 0; k < targets.length; k++) {
-        this.checkAbort();
-        const i = targets[k]!;
-        run.progress({ stage: 'extract', done: k, total: targets.length, unit: 'pages' });
+      this.mark('inspect');
+      // pages in a bounded pool: with N OCR workers, N scanned pages are rendered + read at once (both CPU cores);
+      // each page keeps its own checkpoint, so a retry still resumes page by page. The first fatal error stops new
+      // pages from starting; the pages already running finish (and are checkpointed) before it is re-thrown.
+      const width = Math.max(1, Math.min(this.deps.parallelism ?? 1, targets.length));
+      let next = 0;
+      let done = 0;
+      let fatal: unknown = null;
+      const one = async (i: number): Promise<void> => {
         const page = this.pageRow(i);
-        if (!page) continue;
+        if (!page) return;
         let outcome: PageOutcome;
         try {
           outcome = await run.checkpoint<PageOutcome>(`page:${i}:regions`, async () => {
@@ -364,13 +396,35 @@ class VersionRun {
         this.ligatureFixes += outcome.ligature_fixes;
         processed.push(i);
         writeSummary(ctx, version.id, 'extract', run.id);
-      }
+      };
+      const lane = async (): Promise<void> => {
+        while (fatal === null && next < targets.length) {
+          if (run.signal.aborted) {
+            fatal = run.signal.reason ?? new JobError('JOB_ABORTED', 'أُوقفت المهمة.', { retryable: true });
+            return;
+          }
+          const i = targets[next++]!;
+          run.progress({ stage: 'extract', done, total: targets.length, unit: 'pages' });
+          try {
+            await one(i);
+          } catch (e) {
+            if (fatal === null) fatal = e;
+            return;
+          }
+          done++;
+        }
+      };
+      await Promise.all(Array.from({ length: width }, () => lane()));
+      if (fatal !== null) throw fatal;
+      processed.sort((a, b) => a - b);
       run.progress({ stage: 'extract', done: targets.length, total: targets.length, unit: 'pages' });
+      this.mark('pages');
 
       this.checkAbort();
       run.progress({ stage: 'layout' });
       writeSummary(ctx, version.id, 'layout', run.id);
       linkFiguresAcrossPages(ctx, version.id);
+      this.mark('layout');
 
       run.progress({ stage: 'structure' });
       writeSummary(ctx, version.id, 'structure', run.id);
@@ -379,7 +433,9 @@ class VersionRun {
       this.checkAbort();
       run.progress({ stage: 'index' });
       writeSummary(ctx, version.id, 'index', run.id);
+      this.mark('structure');
       const chunks = writeChunks(ctx, version.id, version.source_id, buildChunks(ctx, version.id));
+      this.mark('index');
 
       run.progress({ stage: 'validate' });
       const final = writeSummary(ctx, version.id, 'done', run.id, { final: true });
@@ -398,6 +454,8 @@ class VersionRun {
       if (final.status !== 'failed') enqueueVersionAnalysisFollowUp(ctx, version.id, run.id);
       // figure descriptions: only with a configured provider AND a standing ai_processing consent (else nothing is sent)
       if (final.status !== 'failed') enqueueFigureDescriptionFollowUp(ctx, version.id, run.id);
+      // uncertain OCR: re-read by the routine vision model under the same rules (provider + standing consent + budget)
+      if (final.status !== 'failed') enqueueOcrVerifyFollowUp(ctx, version.id, run.id);
       const output: ProcessOutput = {
         version_id: version.id,
         status: final.status,
@@ -407,7 +465,9 @@ class VersionRun {
         chunks,
         lecture_kind: kind?.kind ?? null,
         warnings_ar: this.warnings,
+        timings_ms: { ...this.timings, ocr_sum: Math.round(this.ocrMs), render_sum: Math.round(this.renderMs) },
       };
+      run.log.info({ version: version.id, pages: processed.length, parallelism: this.deps.parallelism ?? 1, timings_ms: output.timings_ms }, 'version processed');
       if (final.status === 'failed') throw new JobError('NOTHING_READABLE', final.summary.stage_label_ar, { retryable: false, details: output });
       return final.status === 'partial' ? { partial: true, output } : output;
     } catch (e) {
@@ -748,16 +808,20 @@ class VersionRun {
   }
 
   private async recognize(image: Buffer, mode: 'auto' | 'sparse' | 'block' = 'auto', damaged = false) {
+    const t0 = performance.now();
     try {
       return await this.deps.ocr!.recognize({ image, mode });
     } catch (e) {
       this.run.log.warn({ err: errorText(e) }, 'ocr failed');
       // H2 item 7: a picture whose data cannot be decoded will fail the same way next time — say so instead of «retry»
       throw new PageFailure('OCR_FAILED', damaged ? MSG.imageDamaged : MSG.ocrFailed);
+    } finally {
+      this.ocrMs += performance.now() - t0;
     }
   }
 
   private async render(fileId: string, pageNumber: number, dpi: number, crop?: { x: number; y: number; w: number; h: number }): Promise<Buffer> {
+    const t0 = performance.now();
     try {
       return await renderPdfPage({
         pdftoppm: this.deps.tools.pdftoppm!,
@@ -772,6 +836,35 @@ class VersionRun {
       if (this.run.signal.aborted) throw this.run.signal.reason ?? e;
       this.run.log.warn({ err: errorText(e) }, 'render failed');
       throw new PageFailure('RENDER_FAILED', MSG.renderFailed);
+    } finally {
+      this.renderMs += performance.now() - t0;
+    }
+  }
+
+  /**
+   * A small stored picture of the page (THUMBNAIL_WIDTH_PX wide) for the thumbnail rail: served from /api/files with
+   * immutable caching, so the phone no longer runs pdf.js over every page (decoding full-size slide photos) just to draw
+   * a 112 px preview. Best effort: without pdftoppm, or when the render fails, the reader draws it as before.
+   */
+  private async thumbnail(fileId: string, pageNumber: number, widthPt: number): Promise<string | null> {
+    if (!this.deps.tools.pdftoppm) return null;
+    const t0 = performance.now();
+    try {
+      const png = await renderPdfPage({
+        pdftoppm: this.deps.tools.pdftoppm,
+        pdfPath: this.ctx.files.path(fileId),
+        pageNumber,
+        dpi: thumbnailDpi(widthPt),
+        tmpRoot: this.ctx.config.tmpDir,
+        signal: this.run.signal,
+        timeoutMs: 30_000,
+      });
+      return (await this.ctx.files.put(png, { mime: 'image/png', originalName: `thumb-${pageNumber}.png` })).id;
+    } catch (e) {
+      if (this.run.signal.aborted) throw this.run.signal.reason ?? e;
+      return null;
+    } finally {
+      this.renderMs += performance.now() - t0;
     }
   }
 
@@ -836,6 +929,7 @@ class VersionRun {
     }
 
     let items: TextItem[] = space.items;
+    let picture = false;
     let ocrData: OcrCheckpoint | null = null;
     let ocrUnavailable: { code: string; reason: string } | null = null;
     if (needsOcr) {
@@ -869,13 +963,17 @@ class VersionRun {
             quality,
             missed: read.missed,
             rotation: read.rotation,
+            ...(decoded ? { pictureShare: Math.round(busyShare(decoded) * 1000) / 1000 } : {}),
           };
         });
         // the OCR words are in the render turned by the detected rotation: that turn of the display space is the layout space
         if (typeof ocrData.rotation === 'number' && ocrData.rotation !== space.turn) space = this.layoutSpace(content, quarter(ocrData.rotation));
         // the render IS the display box (crop box, /Rotate applied): render px / scale = display units
         const ocrScale = (ocrData.dpi ?? RENDER_DPI) / 72;
-        const ocrItems = wordsToItems(ocrData.words, (x, y) => [x / ocrScale, y / ocrScale]);
+        // a picture slide (a photo with at most a short caption): photo texture read as "words" is not text
+        const pictureShare = Math.min(pictureCoverage(space.images, space.geom), ocrData.pictureShare ?? 0);
+        picture = classifyPicturePage({ coverage: pictureShare, words: ocrData.words, digitalChars: bodyCharsOf(space) }).picture;
+        const ocrItems = wordsToItems(picture ? ocrData.words.filter(keepOnPicture) : ocrData.words, (x, y) => [x / ocrScale, y / ocrScale]);
         // digital text wins where both exist (e.g. a digital page number over a scan)
         items = [...space.items, ...ocrItems.filter((o) => !space.items.some((d) => overlapArea(d, o) > 0.5 * area(o)))];
       }
@@ -958,10 +1056,12 @@ class VersionRun {
       assets.set(fig.key, { fileId: assetFile });
     }
     const withDiagrams = addDiagramChildren(regions);
+    const thumbnailFileId = await this.thumbnail(fileId, page.page_index + 1, displayPv.width);
 
     const quality = ocrData?.quality ?? null;
-    const lowQuality = Boolean(quality?.lowQuality);
-    const reviews = finalizeRegions(withDiagrams, lowQuality, { reversedLigatures: insp.reversedLamAlef === true, verifiedWords: new Set(content.verifiedWords) });
+    // the «quality» of a photo is not the quality of a scan: a picture page is never a low-quality scan
+    const lowQuality = Boolean(quality?.lowQuality) && !picture;
+    const reviews = finalizeRegions(withDiagrams, lowQuality, { reversedLigatures: insp.reversedLamAlef === true, verifiedWords: new Set(content.verifiedWords), picture });
     regionsToPageSpace(withDiagrams, space.pv);
     const ocrTextRegions = withDiagrams.filter((r) => r.textOrigin === 'ocr' && r.text && r.kind !== 'diagram' && r.kind !== 'header' && r.kind !== 'footer');
     const digitalTextRegions = withDiagrams.filter((r) => r.textOrigin === 'digital' && r.text && r.kind !== 'header' && r.kind !== 'footer');
@@ -972,7 +1072,9 @@ class VersionRun {
       pageIssue = { code: ocrUnavailable.code, reason: ocrUnavailable.reason, kind: 'unreadable_page' };
     } else if (ocrData) {
       textStatus = ocrTextRegions.length && digitalTextRegions.length ? 'mixed' : ocrTextRegions.length ? 'ocr' : digitalTextRegions.length ? 'digital' : 'no_text_found';
-      if (!ocrTextRegions.length) pageIssue = { code: 'NO_TEXT_FOUND', reason: MSG.noTextFound, kind: 'unreadable_page' };
+      // a picture page is ready: its picture is the content (no «no text found», no «unread writing» in the tissue)
+      if (picture) pageIssue = null;
+      else if (!ocrTextRegions.length) pageIssue = { code: 'NO_TEXT_FOUND', reason: MSG.noTextFound, kind: 'unreadable_page' };
       else if (lowQuality)
         pageIssue = { code: 'LOW_QUALITY_SCAN', reason: MSG.lowQuality((quality?.reasons ?? []).map((r) => QUALITY_REASON_AR[r])), kind: 'ocr_error' };
       else if (ocrData.missed?.length) pageIssue = { code: 'TEXT_NOT_READ', reason: MSG.textNotRead(ocrData.missed.length), kind: 'ocr_error' };
@@ -995,6 +1097,7 @@ class VersionRun {
       ocr_confidence: ocrData?.confidence !== null && ocrData?.confidence !== undefined ? Math.round(ocrData.confidence * 10) / 1000 : null,
       has_images: images.length > 0,
       render_file_id: ocrData?.renderFileId ?? null,
+      thumbnail_file_id: thumbnailFileId,
       error_code: pageIssue?.code ?? null,
       error_detail: pageIssue?.reason ?? null,
       // how the page was read: OCR trials of the render, or the direction of its digital text (H2 items 3, 5)
@@ -1088,6 +1191,7 @@ class VersionRun {
     let ocrData: OcrCheckpoint | null = null;
     let regions: LayoutRegion[] = [];
     let turn: QuarterTurn = 0;
+    let picture = false;
     if (!unavailable) {
       ocrData = await run.checkpoint<OcrCheckpoint>(`page:${page.page_index}:ocr`, async () => {
         // OCR reads the picture as displayed (EXIF applied — tesseract alone honours only big-endian EXIF); a picture
@@ -1104,11 +1208,15 @@ class VersionRun {
           missed: read.missed,
           rotation: read.rotation,
           ...(decoded || exif === 1 ? {} : { rawSpace: true }),
+          ...(decoded ? { pictureShare: Math.round(busyShare(decoded) * 1000) / 1000 } : {}),
         };
       });
       turn = quarter(ocrData.rotation ?? 0);
       // words of a JPEG that could not be decoded were read in its stored (raw) orientation: mapped to the displayed one
-      const words = ocrData.rawSpace && raw ? ocrData.words.map((w) => exifWordToDisplayed(w, raw, exif)) : ocrData.words;
+      const allWords = ocrData.rawSpace && raw ? ocrData.words.map((w) => exifWordToDisplayed(w, raw, exif)) : ocrData.words;
+      // a photo (histology, gross specimen, X-ray) with at most a short caption: its texture is not text
+      picture = classifyPicturePage({ coverage: ocrData.pictureShare ?? 0, words: allWords, digitalChars: 0 }).picture;
+      const words = picture ? allWords.filter(keepOnPicture) : allWords;
       const items = wordsToItems(words, (x, y) => [x, y]);
       const pv = shown ? pageView({ width: shown.width, height: shown.height, rotation: turn }) : null;
       const g = pv ? { width: pv.width, height: pv.height } : { width: Math.max(1, ...items.map((i) => i.x1)), height: Math.max(1, ...items.map((i) => i.bottom)) };
@@ -1135,12 +1243,12 @@ class VersionRun {
       assets.set(key, { fileId, imageKind: 'unknown' });
     }
     for (const r of regions) r.locator = { ...(r.locator ?? {}), ...(fileName ? { file_name: fileName } : {}) };
-    const lowQuality = Boolean(quality?.lowQuality) && hasText;
-    const reviews = finalizeRegions(regions, lowQuality);
+    const lowQuality = Boolean(quality?.lowQuality) && hasText && !picture;
+    const reviews = finalizeRegions(regions, lowQuality, { picture });
     let pageIssue: { code: string; reason: string; kind: 'unreadable_page' | 'ocr_error' } | null = null;
     if (unavailable) pageIssue = { code: unavailable.code, reason: unavailable.reason, kind: 'unreadable_page' };
     else if (lowQuality) pageIssue = { code: 'LOW_QUALITY_SCAN', reason: MSG.lowQuality((quality?.reasons ?? []).map((r) => QUALITY_REASON_AR[r])), kind: 'ocr_error' };
-    else if (hasText && ocrData?.missed?.length) pageIssue = { code: 'TEXT_NOT_READ', reason: MSG.textNotRead(ocrData.missed.length), kind: 'ocr_error' };
+    else if (hasText && !picture && ocrData?.missed?.length) pageIssue = { code: 'TEXT_NOT_READ', reason: MSG.textNotRead(ocrData.missed.length), kind: 'ocr_error' };
     if (pageIssue) {
       reviews.push({
         kind: pageIssue.kind,
@@ -1246,7 +1354,7 @@ function addDiagramChildren(regions: LayoutRegion[]): LayoutRegion[] {
  * low-quality scan → OCR regions needs_review (one page-level item is added by the caller);
  * diagrams → 'uncertain' (labels read without understanding).
  */
-export function finalizeRegions(regions: LayoutRegion[], lowQuality: boolean, textCtx: SuspicionContext = {}): ReviewItemInput[] {
+export function finalizeRegions(regions: LayoutRegion[], lowQuality: boolean, textCtx: SuspicionContext & { picture?: boolean } = {}): ReviewItemInput[] {
   const reviews: ReviewItemInput[] = [];
   const byKey = new Map(regions.map((r) => [r.key, r]));
   // a word-start repair on this page proves the font reverses lam-alef, like the document-level signal
@@ -1285,7 +1393,11 @@ export function finalizeRegions(regions: LayoutRegion[], lowQuality: boolean, te
     const weakWord = typeof r.minWordConf === 'number' && r.minWordConf < OCR_REVIEW_WORD_CONF;
     const weakRegion = typeof r.confidence === 'number' && r.confidence < OCR_REVIEW_WORD_CONF / 100;
     if (ocrText && (weakWord || weakRegion)) reasons.push(MSG.lowConfidence(r.minWordConf ?? (r.confidence ?? 0) * 100, r.lowConfWords ?? []));
-    if (reasons.length) {
+    if (reasons.length && textCtx.picture && r.textOrigin === 'ocr') {
+      // a caption / label read on a picture page: an uncertain reading (never a fixed answer, AC-08), not a review task
+      r.status = 'uncertain';
+      r.reviewReasonAr = reasons.join(' ');
+    } else if (reasons.length) {
       r.status = 'needs_review';
       r.reviewReasonAr = reasons.join(' ');
       reviews.push({

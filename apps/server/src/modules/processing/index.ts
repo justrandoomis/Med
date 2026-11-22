@@ -1,6 +1,7 @@
 // Document processing module (track A2). Registers the process_source_version job, declares the honest
 // state of processing.* capabilities, and exposes GET /api/processing/status (which converters and OCR
 // models this server really has). The sources module creates source/version/file rows and enqueues jobs.
+import { availableParallelism } from 'node:os';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { PROCESS_JOB_KIND, type FeatureKey, type ProcessJobInput, type ProcessingToolsStatusResponse } from '@medlevo/shared';
@@ -11,6 +12,7 @@ import { createProcessHandler, MAX_ATTEMPTS, PIPELINE_VERSION, type ProcessingHo
 import { detectTools, type ToolPaths } from './tools';
 import { registerVisionJob, registerVisionRoutes } from './vision';
 import { registerFigureDescriptionJob, registerFigureDescriptionRoutes } from './figures';
+import { registerOcrVerifyJob } from './ocr-verify';
 
 export { PIPELINE_VERSION } from './pipeline';
 export { INDEX_VERSION } from './chunks';
@@ -22,6 +24,17 @@ export interface ProcessingModuleOptions {
   ocr?: boolean;
   /** TEST-ONLY fault injection hooks */
   hooks?: ProcessingHooks;
+  /** pages of one version processed at once (= OCR workers); default MEDLEVO_PROCESSING_PARALLELISM or auto */
+  parallelism?: number;
+}
+
+/**
+ * Pages processed in parallel: the configured value, else min(2, CPU cores) — one OCR worker per core (a page's OCR is
+ * single-threaded WASM). Tests default to 1 (deterministic order, one ~150 MB worker) unless they ask.
+ */
+export function processingParallelism(ctx: AppContext, requested?: number): number {
+  const v = requested ?? ctx.config.jobs.processingParallelism ?? (ctx.config.env === 'test' ? 1 : Math.min(2, availableParallelism()));
+  return Math.max(1, Math.min(8, Math.floor(v)));
 }
 
 export const processJobInputSchema = z
@@ -81,7 +94,8 @@ export function createProcessingModule(opts: ProcessingModuleOptions = {}): Modu
   return async function processingModule(app: FastifyInstance, { ctx }: ModuleOptions): Promise<void> {
     const tools = detectTools(opts.tools);
     const ocrOk = opts.ocr !== false && ocrModelsAvailable().ok;
-    const ocr = ocrOk ? new OcrEngine(ctx.config.dataDir) : null;
+    const parallelism = processingParallelism(ctx, opts.parallelism);
+    const ocr = ocrOk ? new OcrEngine(ctx.config.dataDir, { workers: parallelism }) : null;
     declareCapabilities(ctx, tools, ocrOk);
 
     ctx.jobs.register<ProcessJobInput, unknown>(PROCESS_JOB_KIND, {
@@ -90,7 +104,7 @@ export function createProcessingModule(opts: ProcessingModuleOptions = {}): Modu
       timeoutMs: 60 * 60 * 1000,
       concurrency: 1, // CPU-bound (pdfjs, OCR); one version at a time keeps the owner's device responsive
       inputSchema: processJobInputSchema as unknown as z.ZodType<ProcessJobInput>,
-      handler: createProcessHandler({ ctx, tools, ocr, hooks: opts.hooks ?? {} }),
+      handler: createProcessHandler({ ctx, tools, ocr, hooks: opts.hooks ?? {}, parallelism }),
     });
 
     // (track F3) figure structure readings — derived, uncertain until the owner reviews them (AC-08)
@@ -99,6 +113,8 @@ export function createProcessingModule(opts: ProcessingModuleOptions = {}): Modu
     // automatic figure descriptions (derived «وصف آلي — راجعه»; only with a standing ai_processing consent)
     registerFigureDescriptionJob(ctx);
     registerFigureDescriptionRoutes(app, ctx);
+    // uncertain OCR re-read by the routine vision model (same gate as the figure descriptions; ./ocr-verify.ts)
+    registerOcrVerifyJob(ctx);
 
     app.addHook('onClose', async () => {
       await ocr?.close();

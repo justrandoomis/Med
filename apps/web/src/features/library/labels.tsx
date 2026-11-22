@@ -1,7 +1,7 @@
 // Labels, counts and status presentation shared by the library, upload and sources screens.
 // Status is always text + icon (never colour alone); counts are real numbers, never percentages.
 import type { ReactNode } from 'react';
-import { CircleAlert, CircleCheck, CircleDashed, Clock3, FileText, Image, Images, LoaderCircle, Mic, Presentation, ScrollText, TriangleAlert } from 'lucide-react';
+import { CircleAlert, CircleCheck, CircleDashed, Clock3, FileText, Image, Images, LoaderCircle, Mic, Presentation, ScrollText } from 'lucide-react';
 import {
   SOURCE_TYPE_LABELS_AR,
   type ProcessingStatus,
@@ -78,7 +78,8 @@ const STATUS: Record<ProcessingStatus, { label: string; tone: StatusTone; icon: 
   partial: { label: 'جاهز جزئيًا', tone: 'warning', icon: <CircleDashed size={14} /> },
   ready: { label: 'جاهز', tone: 'success', icon: <CircleCheck size={14} /> },
   failed: { label: 'فشلت المعالجة', tone: 'danger', icon: <CircleAlert size={14} /> },
-  needs_review: { label: 'يحتاج مراجعة', tone: 'warning', icon: <TriangleAlert size={14} /> },
+  // every page can be studied; what is left is an OPTIONAL comparison of doubtful OCR text with the page picture
+  needs_review: { label: 'جاهز — مراجعة اختيارية', tone: 'info', icon: <CircleCheck size={14} /> },
 };
 
 export function processingLabel(status: ProcessingStatus, format?: SourceFormat | null): string {

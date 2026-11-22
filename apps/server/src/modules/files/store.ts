@@ -7,7 +7,7 @@
 // missing is fetched back from the object store (MEDLEVO_BLOB_STORE=r2) before it is read. Bytes are never deleted
 // here (modules/files/blobs.ts).
 import { closeSync, createReadStream, createWriteStream, existsSync, fsyncSync, mkdirSync, openSync, renameSync, rmSync, statSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { open, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { PassThrough, Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -84,6 +84,25 @@ function fsyncPath(path: string): void {
   }
 }
 
+/**
+ * fsync of a file's data WITHOUT blocking the event loop (the libuv thread pool does it). Every page render and figure
+ * crop of a processing run goes through put(): the synchronous fsync stalled every other request (opening a lecture
+ * while another one processes) for the length of the flush (docs/PERFORMANCE.md «Uploads and stored files»).
+ */
+async function fsyncFile(path: string): Promise<void> {
+  try {
+    // 'r+': Windows refuses FlushFileBuffers on a read-only handle (EPERM); POSIX accepts both
+    const fh = await open(path, 'r+');
+    try {
+      await fh.sync();
+    } finally {
+      await fh.close();
+    }
+  } catch {
+    // best effort, as fsyncPath: a platform that cannot sync this handle keeps the write as it is
+  }
+}
+
 export class FileStore {
   private readonly tokenKey: Buffer;
 
@@ -128,7 +147,9 @@ export class FileStore {
     try {
       const out = createWriteStream(tmp, { flags: 'wx', mode: 0o600 });
       await pipeline(source, meter, out);
-      fsyncPath(tmp);
+      // durable before any row can point at it (same guarantee as before; only the waiting is asynchronous). The
+      // steps from the sha lookup to the row insert below stay synchronous: two puts of the same bytes cannot race.
+      await fsyncFile(tmp);
     } catch (e) {
       rmSync(tmp, { force: true });
       throw e;

@@ -62,7 +62,8 @@ export function computeSummary(ctx: AppContext, versionId: string, stage: Summar
   if (stage === 'done') {
     if (status === 'ready') label = `اكتملت المعالجة: ${total} من ${total} ${total === 1 ? 'صفحة' : 'صفحات'} جاهزة.`;
     else if (status === 'needs_review')
-      label = `اكتملت المعالجة: ${ready} جاهزة و${needsReview} تحتاج مراجعتك قبل الاعتماد عليها${unreadable ? ` (منها ${unreadable} لم يُقرأ نصها)` : ''}.`;
+      // an OPTIONAL review: every page can be studied; the owner may compare doubtful OCR text with the page picture
+      label = `اكتملت المعالجة: كل الصفحات جاهزة للدراسة؛ في ${needsReview} منها مراجعة اختيارية للنص المقروء آليًا${unreadable ? ` (منها ${unreadable} لم يُقرأ نصها)` : ''}.`;
     else if (status === 'partial')
       label = `اكتملت المعالجة جزئيًا: ${ready + needsReview} من ${total} قابلة للقراءة، ${failed} متعثرة${unprocessed ? ` و${unprocessed} لم تُعالج بعد` : ''}. التغطية غير كاملة.`;
     else label = 'تعذرت معالجة الملف: لم تُقرأ أي صفحة.';

@@ -63,6 +63,8 @@ export interface AppConfig {
   dbPoolSize: number;
   jobs: {
     concurrency: number;
+    /** pages of one lecture processed in parallel / OCR workers (MEDLEVO_PROCESSING_PARALLELISM; absent = auto) */
+    processingParallelism?: number;
     pollIntervalMs: number;
     heartbeatMs: number;
     staleAfterMs: number;
@@ -150,6 +152,8 @@ const envSchema = z.object({
   MEDLEVO_TIMEZONE: z.preprocess(emptyToUndefined, z.string().default('Asia/Baghdad')),
   MEDLEVO_SCRYPT_LOG_N: z.preprocess(emptyToUndefined, z.coerce.number().int().min(10).max(20).default(15)),
   MEDLEVO_JOB_CONCURRENCY: z.preprocess(emptyToUndefined, z.coerce.number().int().min(1).max(16).default(2)),
+  // pages of ONE lecture processed at once (= tesseract OCR workers); 0 = auto (min(2, CPU cores))
+  MEDLEVO_PROCESSING_PARALLELISM: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).max(8).default(0)),
   // P1-T1: tenancy
   MEDLEVO_DB_POOL_SIZE: z.preprocess(emptyToUndefined, z.coerce.number().int().min(4).max(20_000).default(500)),
   MEDLEVO_LOGIN_IP_FAILURES_PER_HOUR: z.preprocess(emptyToUndefined, z.coerce.number().int().min(1).max(100_000).default(300)),
@@ -353,6 +357,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     dbPoolSize: e.MEDLEVO_DB_POOL_SIZE,
     jobs: {
       concurrency: e.MEDLEVO_JOB_CONCURRENCY,
+      ...(e.MEDLEVO_PROCESSING_PARALLELISM > 0 ? { processingParallelism: e.MEDLEVO_PROCESSING_PARALLELISM } : {}),
       pollIntervalMs: 1000,
       heartbeatMs: 5000,
       staleAfterMs: 60_000,
