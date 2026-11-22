@@ -2,7 +2,7 @@
 // working-looking button), a verified explanation renders through ArtifactContent with its chip, an abstention shows
 // its reason and widens the scope only on the owner's explicit click, server errors keep their specific title, the
 // selection toolbar's request runs with the selection anchor, and Ask shows its own capability reason.
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import {
@@ -403,5 +403,31 @@ describe('ExplainTab — streaming (H4)', () => {
       s.close();
     });
     expect(await screen.findByText(/رُفضت نتيجة الذكاء الاصطناعي/)).toBeTruthy();
+  });
+
+  it('(chat side panel) with the workspace chat: «محادثة» opens the side panel instead of an in-tab chat; «اسأل» is left to it', async () => {
+    server(() => json({}));
+    const { doc, page } = makeDoc();
+    const onOpenChat = vi.fn();
+    render(
+      <MemoryRouter>
+        <ToastProvider>
+          <ExplainTab doc={doc} page={page} pageIndex={1} online onOpenChat={onOpenChat} />
+        </ToastProvider>
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole('radio', { name: 'شرح سريع' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'محادثة' }));
+    expect(onOpenChat).toHaveBeenCalledTimes(1);
+    // no cramped chat in the tab: an entry to the panel
+    expect(document.querySelector('.sb-chat-surface')).toBeNull();
+    expect(screen.queryByLabelText('رسالتك')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'افتح المحادثة' }));
+    expect(onOpenChat).toHaveBeenCalledTimes(2);
+    // a selection «اسأل» request stays for the side chat to consume
+    act(() => {
+      aiRequestStore.request({ action: 'ask', anchor: { source_id: doc.detail.id, version_id: page.version_id, page_id: page.id, region_ids: [] }, text: 'Ultrasound', pageIndex: 1, rects: [] });
+    });
+    await waitFor(() => expect(aiRequestStore.get()?.action).toBe('ask'));
   });
 });

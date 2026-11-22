@@ -31,6 +31,8 @@ export interface StudyRailProps {
   onGoToPage: (pageIndex: number) => void;
   /** (chat UX) move the reader WITHOUT closing the panel (the chat's page sync and «ص N» chips) */
   onReaderJump?: (pageIndex: number) => void;
+  /** (chat side panel) «محادثة» in the explain tab opens the full-height chat beside the book */
+  onOpenChat?: () => void;
   onOpenSplit: (sourceId: string) => void;
   splitReason: string | null;
   online: boolean;
@@ -76,7 +78,7 @@ export function StudyRail(p: StudyRailProps) {
         )}
         {a.railOrder.includes('explain') && (
           <TabPanel value="explain" className="wk-rail-panel">
-            <ExplainTab doc={p.doc} page={p.page} pageIndex={p.pageIndex} online={p.online} onJumpToPage={p.onReaderJump} />
+            <ExplainTab doc={p.doc} page={p.page} pageIndex={p.pageIndex} online={p.online} onJumpToPage={p.onReaderJump} onOpenChat={p.onOpenChat} />
             <DiagramPanel doc={p.doc} page={p.page} online={p.online} />
           </TabPanel>
         )}

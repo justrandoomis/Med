@@ -506,3 +506,13 @@ span.sb-quote {
 .sb-pane__allowance {
   padding: var(--ml-space-2) var(--ml-space-4) 0;
 }
+
+/* (chat side panel) the explain tab's entry to the full-height chat beside the book */
+.sb-chat-entry {
+  display: grid;
+  justify-items: start;
+  gap: var(--ml-space-2);
+  padding: var(--ml-space-3);
+  border-radius: var(--ml-radius-md);
+  background: var(--ml-color-paper-2);
+}

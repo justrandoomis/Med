@@ -119,7 +119,7 @@ function Thumbnails({ doc, pageIndex, onGoToPage }: LeftPanelProps) {
   );
 }
 
-function ThumbImage({ doc, page, show }: { doc: SourceDocument; page: SourcePageView; show: boolean }) {
+export function ThumbImage({ doc, page, show }: { doc: SourceDocument; page: SourcePageView; show: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [failed, setFailed] = useState(false);
   const ratio = page.width && page.height ? page.height / page.width : 1.414;

@@ -10,7 +10,7 @@
 //   chat → reader  an answer about other pages moves the reader to them; scrolling the thread to a page's section,
 //                  a «صفحة N» divider or a «ص N» chip moves the reader there
 //   no loop        each side marks the move it makes (PageSyncGuard) and the echo of that move is not followed back
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { History, MessageSquarePlus, Paperclip } from 'lucide-react';
 import {
   newId,
@@ -87,8 +87,13 @@ export interface ChatSurfaceProps {
   focusKey?: number;
   prefill?: string | null;
   initialThreadId?: string | null;
-  /** 'rail' = narrow side panel / dock (history as an overlay), 'full' = /chat (history as a column) */
-  layout?: 'rail' | 'full';
+  /**
+   * 'rail' = narrow panel inside a tab (history as an overlay), 'side' = the workspace's full-height chat panel (history
+   * slides in as a column inside it), 'full' = /chat (history as a column, open)
+   */
+  layout?: 'rail' | 'side' | 'full';
+  /** extra controls at the end of the header (the side panel's «أغلق المحادثة») */
+  headerActions?: ReactNode;
   /** tests: a fixed clock for the history groups and the guard */
   now?: () => number;
 }
@@ -192,7 +197,7 @@ export function ChatSurface(p: ChatSurfaceProps) {
       setActive(r);
       setEditing(null);
       setError(null);
-      if (layout === 'rail') setHistoryOpen(false);
+      if (layout !== 'full') setHistoryOpen(false);
     } catch (e) {
       setError({
         message: errorMessage(e, 'تعذّر فتح المحادثة.'),
@@ -431,7 +436,7 @@ export function ChatSurface(p: ChatSurfaceProps) {
     setEditing(null);
     setText('');
     autoAsked.current.clear();
-    if (layout === 'rail') setHistoryOpen(false);
+    if (layout !== 'full') setHistoryOpen(false);
     composer.current?.focus();
   };
 
@@ -475,6 +480,7 @@ export function ChatSurface(p: ChatSurfaceProps) {
         <MixedText as="span" className="ch-head__title" text={active?.thread.title ?? (p.sourceTitle ? `محادثة جديدة — ${p.sourceTitle}` : 'محادثة جديدة')} />
         {active && <ScopeBadge scope={active.thread.scope} />}
         <IconButton size="sm" variant="plain" label="محادثة جديدة" icon={<MessageSquarePlus size={16} />} onClick={newChat} />
+        {p.headerActions}
       </header>
       {p.onJumpToPage && (
         <div className="ch-syncbar">

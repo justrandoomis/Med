@@ -613,10 +613,42 @@ Copy, never move (server, routes and rules: `docs/modules/ink.md`, «P1-T2 step 
 
 The rail's «الشرح والسؤال» tab opens on «محادثة» (the Claude-style study chat, `features/studybook/chat/ChatSurface.tsx`;
 the one-shot tools are «شرح سريع» and «مقارنة»). `StudyRail` takes `onReaderJump` (moves the reader WITHOUT closing the
-panel); `WorkspaceScreen` passes `goToPage`. On a phone the explain tab is a non-modal bottom dock (`ChatDock`, two
-heights) instead of the modal sheet, so the page stays visible and scrollable above the chat.
+panel); `WorkspaceScreen` passes `goToPage`. (The phone bottom dock `ChatDock` was replaced by the full side chat below.)
 Page sync («مزامنة الصفحات», remembered per user): the visible page scrolls the thread to the turn filed under it;
 «اشرح هذه الصفحة تلقائيًا» asks for a page that stays in view for 1.6 s and has no turn (once per page, never while an
 answer is written, never without the chat capability / allowance); an answer about other pages, a «ص N» chip, a
 «صفحة N» divider, or scrolling the thread to another page's section moves the reader. `PageSyncGuard` drops the echo of
 a move made by the other side for 900 ms (no feedback loop; `chat/model.test.ts` simulates the ping-pong).
+
+### Chat UX — a full side chat, not a small banner (wp/chat-side, 2026-11-22)
+
+Owner: «make the chat a full side chat, not a small banner». The study chat no longer lives inside the «شرح» tab:
+- **Desktop / tablet (≥ 900 px, `CHAT_SIDE_MIN_WIDTH`)** — `features/workspace/chat/ChatSidePanel.tsx` is a dedicated,
+  full-height panel (`<section aria-label="المحادثة">`, a labelled region) under the reading bar, opened by the bar's
+  «المحادثة» button (`TopBar` `chatOpen` / `onToggleChat`, `aria-pressed`), by «محادثة» / «افتح المحادثة» in the
+  explain tab (`ExplainTab` `onOpenChat`, also from the «محاضرة وشرح» split pane), and by the selection toolbar's
+  «اسأل عن التحديد» (the panel consumes the `ask` request: the selection becomes its context chip, a handwriting
+  prefill goes into the composer, never sent). It sits in the study rail's grid area (inline-start, right in Arabic)
+  and **switches** with the rail: opening the chat closes the rail (it reopens when the chat closes), opening the rail
+  closes the chat — the two never squeeze the book together. The page panel stays only while the book keeps
+  `MIN_CANVAS_WIDTH` (`decidePanelsWithChat`; not «closed» for good). Width: ~42 % by default, 360 px … 65 %
+  (`chatBounds` / `chatWidthFor`), drag or arrow keys / Home / End on the handle (`role="separator"`,
+  `aria-valuenow/min/max`, the design system's `useResizablePanel`), remembered per account
+  (`userStorage` key `medlevo.workspace.chat-width`). The book reflows to the remaining width: `BookCanvas` measures its
+  scroller with a `ResizeObserver` and re-applies its reading anchor on every geometry change (no overlay, no loop —
+  the canvas width comes from the grid column, never from its content). Inside: `ChatSurface layout="side"` — the
+  header (title, «المحادثات المحفوظة» toggle, «محادثة جديدة», «أغلق المحادثة» via `headerActions`), the history slides
+  in as a column inside the panel (never a modal), the thread fills the height, the composer (model / effort picker)
+  is pinned at the bottom. Focus moves into the composer on every open; Escape closes (not while a menu, dialog or
+  the inline rename owns it); arrow keys inside the panel never turn pages. Hidden in «امتحن نفسك» and focus mode.
+- **Phone (< 900 px)** — the chat is full screen (`wk-chat--full`) with a compact bar: the page thumbnail, «الصفحة N»,
+  «اعرض الصفحة» (the reader; the chat stays mounted with its unsent text, «عُد إلى المحادثة — الصفحة N» brings it
+  back), in landscape «المحادثة والصفحة جنبًا إلى جنب» (50 / 50, `decideChat` → `split`), and «أغلق المحادثة». The open
+  chat is a history entry (marked `medlevoChat`): the back gesture closes it and returns to the reader at the synced
+  page; closing from the panel pops only that entry (never after the app navigated elsewhere).
+- Page sync (reader ↔ chat) is unchanged (`ChatSurface` receives the reader's page and `goToPage`).
+- `/chat` (`ChatScreen`, `layout="full"`) is unchanged.
+- Tests: `features/workspace/chat/ChatSidePanel.test.tsx` (open from the bar → region + composer focus + Escape;
+  keyboard resize changes / clamps / remembers the width; history column toggle; «اسأل» → context chip; «ص N» moves
+  the reader and the reader moves the chat; phone full screen with «اعرض الصفحة» and the back gesture; the layout
+  decisions), `ExplainTab.test.tsx` (the tab's chat entry opens the panel; `ask` left to it).

@@ -1,0 +1,105 @@
+/*
+ * (chat side panel, wp/chat-side) The study chat beside the book. Tokens only (design/tokens.css): light / dark /
+ * e-ink follow the token themes; logical properties throughout (the panel sits in the study rail's place: the
+ * inline-start side, right in Arabic, its resize handle on its inline-end edge facing the book).
+ */
+.wk-chat {
+  grid-area: rail;
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  background: var(--ml-color-paper);
+  border-inline-end: 1px solid var(--ml-color-line);
+}
+.wk-chat[hidden] {
+  display: none;
+}
+.wk-chat__inner {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: var(--ml-space-2) var(--ml-space-3) calc(var(--ml-space-2) + var(--ml-safe-bottom));
+}
+.wk-chat .ml-resize-handle {
+  margin-inline-end: -5px;
+  z-index: 1;
+}
+/* the thread fills the panel's height; the composer stays pinned under it */
+.wk-chat .ch {
+  flex: 1;
+  height: auto;
+}
+.wk-chat .ch-thread {
+  min-height: 0;
+}
+
+/* phone: full screen over the reader (the reader stays mounted under it, at the synced page) */
+.wk-chat--full {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--ml-z-nav) + 1);
+  flex-direction: column;
+  border: 0;
+  padding-top: var(--ml-safe-top);
+  padding-inline: var(--ml-safe-right) var(--ml-safe-left);
+}
+.wk-chat__pagebar {
+  display: flex;
+  align-items: center;
+  gap: var(--ml-space-2);
+  flex: none;
+  min-height: 3rem;
+  padding: var(--ml-space-1) var(--ml-space-3);
+  border-block-end: 1px solid var(--ml-color-line);
+  background: var(--ml-color-paper-2);
+}
+.wk-chat__thumb {
+  flex: none;
+  width: 1.75rem;
+  overflow: hidden;
+  border-radius: var(--ml-radius-sm);
+  border: 1px solid var(--ml-color-line);
+  background: var(--ml-color-canvas);
+}
+.wk-chat__thumb .wk-thumb__frame {
+  display: block;
+  width: 100%;
+}
+.wk-chat__thumb img,
+.wk-chat__thumb canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.wk-chat__page {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--ml-text-sm);
+  font-weight: var(--ml-weight-semibold);
+}
+
+/* «عُد إلى المحادثة» over the reader while the page is shown */
+.wk-chat-return {
+  position: fixed;
+  inset-inline: var(--ml-space-3);
+  inset-block-end: calc(var(--ml-space-3) + var(--ml-safe-bottom));
+  z-index: calc(var(--ml-z-nav) + 1);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: var(--ml-space-2);
+  pointer-events: none;
+}
+.wk-chat-return > * {
+  pointer-events: auto;
+  box-shadow: var(--ml-shadow-raised);
+}
+:root[data-eink='on'] .wk-chat-return > * {
+  box-shadow: none;
+}

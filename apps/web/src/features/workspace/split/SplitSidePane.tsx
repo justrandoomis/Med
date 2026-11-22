@@ -31,9 +31,11 @@ export interface SplitSidePaneProps {
   /** why the explanations are not offered (e.g. «امتحن نفسك») — null when they are */
   explainHiddenReason: string | null;
   onClose: () => void;
+  /** (chat side panel) «محادثة» opens the full-height chat beside the book */
+  onOpenChat?: () => void;
 }
 
-export function SplitSidePane({ kind, onKind, doc, page, pageIndex, online, onGoToPage, arrangement, explainHiddenReason, onClose }: SplitSidePaneProps) {
+export function SplitSidePane({ kind, onKind, doc, page, pageIndex, online, onGoToPage, arrangement, explainHiddenReason, onClose, onOpenChat }: SplitSidePaneProps) {
   // a kind is mounted the first time it is shown and then kept (hidden) so switching never loses its state
   const [opened, setOpened] = useState<ReadonlySet<SplitSideKind>>(() => new Set([kind]));
   if (!opened.has(kind)) setOpened(new Set([...opened, kind]));
@@ -61,7 +63,7 @@ export function SplitSidePane({ kind, onKind, doc, page, pageIndex, online, onGo
         {opened.has('questions') && <QuestionsTab doc={doc} page={page} pageIndex={pageIndex} onGoToPage={onGoToPage} online={online} arrangement={arrangement} />}
       </div>
       <div className={cx('wk-split-side__body', kind !== 'explain' && 'is-hidden')} hidden={kind !== 'explain'}>
-        {showExplain && <ExplainTab doc={doc} page={page} pageIndex={pageIndex} online={online} />}
+        {showExplain && <ExplainTab doc={doc} page={page} pageIndex={pageIndex} online={online} onOpenChat={onOpenChat} />}
       </div>
     </section>
   );

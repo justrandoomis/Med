@@ -11,6 +11,7 @@ import {
   Ellipsis,
   Focus,
   LayoutPanelLeft,
+  MessageSquare,
   Minus,
   PanelLeft,
   PanelRight,
@@ -59,6 +60,11 @@ export interface TopBarProps {
   onToggleLeft: () => void;
   railOpen: boolean;
   onToggleRail: () => void;
+  /** (chat side panel) «المحادثة»: opens / closes the full-height study chat beside the book (full screen on a phone) */
+  chatOpen?: boolean;
+  onToggleChat?: () => void;
+  /** why the chat is not offered here (e.g. «امتحن نفسك») — the button stays, disabled, with this reason */
+  chatHiddenReason?: string | null;
   saveState: SyncState;
   saveDetail: string;
   back: { label: string; title: string } | null;
@@ -189,6 +195,11 @@ export function TopBar(p: TopBarProps) {
           <Hint label="البحث في المصدر">
             <IconButton label="البحث في المصدر" icon={<Search size={20} />} pressed={p.searchOpen} onClick={p.onToggleSearch} />
           </Hint>
+          {p.onToggleChat && (
+            <Hint label={p.chatHiddenReason ?? 'المحادثة'}>
+              <IconButton label="المحادثة" icon={<MessageSquare size={20} />} pressed={!!p.chatOpen} disabled={!!p.chatHiddenReason} onClick={p.onToggleChat} />
+            </Hint>
+          )}
           <Hint label="لوحة الدراسة">
             <IconButton label="لوحة الدراسة" icon={<PanelRight size={20} />} pressed={p.railOpen} onClick={p.onToggleRail} />
           </Hint>
@@ -307,6 +318,13 @@ export function TopBar(p: TopBarProps) {
           <Hint label="الصفحات والفهرس والعلامات ([)">
             <IconButton label="الصفحات والفهرس والعلامات" icon={<PanelLeft size={18} />} size="sm" pressed={p.leftOpen} onClick={p.onToggleLeft} />
           </Hint>
+          {p.onToggleChat && (
+            <Hint label={p.chatHiddenReason ?? 'المحادثة بجانب الصفحة'}>
+              <Button size="sm" variant={p.chatOpen ? 'primary' : 'secondary'} icon={<MessageSquare size={16} />} aria-pressed={!!p.chatOpen} disabled={!!p.chatHiddenReason} onClick={p.onToggleChat}>
+                المحادثة
+              </Button>
+            </Hint>
+          )}
           <Hint label="لوحة الدراسة (])">
             <IconButton label="لوحة الدراسة" icon={<PanelRight size={18} />} size="sm" pressed={p.railOpen} onClick={p.onToggleRail} />
           </Hint>

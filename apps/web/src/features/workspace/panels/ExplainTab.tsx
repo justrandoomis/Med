@@ -6,7 +6,7 @@
 // says exactly why (the server's reason) instead of pretending.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Image as ImageIcon, Languages, Sparkles, Wand2, X } from 'lucide-react';
+import { Image as ImageIcon, Languages, MessageSquare, Sparkles, Wand2, X } from 'lucide-react';
 import {
   ANSWER_STYLES,
   ANSWER_STYLE_LABELS_AR,
@@ -45,6 +45,11 @@ export interface ExplainTabProps {
   online: boolean;
   /** (chat UX) move the reader to a page — the chat's page sync and «ص N» chips (absent: no sync) */
   onJumpToPage?: (pageIndex: number) => void;
+  /**
+   * (chat side panel) the workspace's full-height chat beside the book: «محادثة» opens it instead of the cramped in-tab
+   * chat, and «اسأل عن التحديد» requests go to it (absent: the chat lives in this tab, as on its own)
+   */
+  onOpenChat?: () => void;
 }
 
 type ExplainAction = 'explain' | 'simplify' | 'translate' | 'explain_image';
@@ -93,7 +98,7 @@ function retryContextOf(anchor: SelectionAnchor | null | undefined, doc: SourceD
   return { anchor, text: anchor.quote?.exact ?? '', pageIndex: i >= 0 ? i : (fallback?.pageIndex ?? 0) };
 }
 
-export function ExplainTab({ doc, page, pageIndex, online, onJumpToPage }: ExplainTabProps) {
+export function ExplainTab({ doc, page, pageIndex, online, onJumpToPage, onOpenChat }: ExplainTabProps) {
   const caps = useCapabilities();
   const { settings } = useSettings();
   const sourceId = doc.detail.id;
@@ -201,6 +206,8 @@ export function ExplainTab({ doc, page, pageIndex, online, onJumpToPage }: Expla
   // a request from the selection toolbar (Explain / Simplify / Translate / Ask / Compare / Explain Image)
   useEffect(() => {
     if (!pending) return;
+    // the side chat consumes «اسأل» itself (WorkspaceScreen opens it)
+    if (pending.action === 'ask' && onOpenChat) return;
     aiRequestStore.clear(pending.id);
     void (async () => {
       const anchor = await withRegions(pending);
@@ -280,7 +287,10 @@ export function ExplainTab({ doc, page, pageIndex, online, onJumpToPage }: Expla
           { value: 'compare', label: 'مقارنة' },
         ]}
         value={mode}
-        onValueChange={setMode}
+        onValueChange={(m) => {
+          setMode(m);
+          if (m === 'chat') onOpenChat?.();
+        }}
         size="sm"
         fullWidth
       />
@@ -361,7 +371,20 @@ export function ExplainTab({ doc, page, pageIndex, online, onJumpToPage }: Expla
         </form>
       )}
 
-      {mode === 'chat' && (
+      {mode === 'chat' && onOpenChat && (
+        <div className="sb-chat-entry" role="group" aria-label="المحادثة">
+          <p className="sb-muted">المحادثة الدراسية تُفتح في لوحة جانبية بطول الشاشة بجانب الصفحة (وبملء الشاشة على الهاتف)، وتتبع الصفحة التي تقرؤها.</p>
+          <Button variant="primary" size="sm" icon={<MessageSquare size={16} />} onClick={onOpenChat}>
+            افتح المحادثة
+          </Button>
+          {!chatGate.available && (
+            <p className="sb-reason" role="note">
+              {chatGate.reason}
+            </p>
+          )}
+        </div>
+      )}
+      {mode === 'chat' && !onOpenChat && (
         <div className="sb-chat-surface">
           <ChatSurface
             sourceId={sourceId}

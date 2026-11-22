@@ -61,6 +61,29 @@
   border-radius: var(--ml-radius-lg);
   box-shadow: var(--ml-shadow-raised);
 }
+/* the workspace's chat side panel: the history slides in as a column inside the panel (never a modal) */
+.ch[data-layout='side'] .ch-body__history {
+  flex: 0 0 min(17rem, 46%);
+  animation: ch-history-in var(--ml-duration-base) var(--ml-ease-standard);
+}
+@keyframes ch-history-in {
+  from {
+    opacity: 0;
+    /* from the inline-start edge (right in Arabic) */
+    transform: translateX(var(--ch-history-from, 1rem));
+  }
+}
+[dir='ltr'] .ch[data-layout='side'] .ch-body__history {
+  --ch-history-from: -1rem;
+}
+:root[data-eink='on'] .ch[data-layout='side'] .ch-body__history {
+  animation: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ch[data-layout='side'] .ch-body__history {
+    animation: none;
+  }
+}
 .ch-main {
   display: flex;
   flex-direction: column;
@@ -479,48 +502,6 @@
   flex: 1;
 }
 
-/* ───────── phone dock (non-modal bottom panel in the workspace) ───────── */
-.ch-dock {
-  position: fixed;
-  inset-inline: 0;
-  inset-block-end: 0;
-  z-index: var(--ml-z-nav);
-  display: flex;
-  flex-direction: column;
-  height: 48dvh;
-  padding: var(--ml-space-2) var(--ml-space-3) calc(var(--ml-space-2) + var(--ml-safe-bottom));
-  border-start-start-radius: var(--ml-radius-xl);
-  border-start-end-radius: var(--ml-radius-xl);
-  background: var(--ml-color-paper);
-  box-shadow: var(--ml-shadow-overlay);
-  transition: height var(--ml-duration-base) var(--ml-ease-standard);
-}
-.ch-dock[data-size='tall'] {
-  height: 86dvh;
-}
-.ch-dock__bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--ml-space-2);
-}
-.ch-dock__title {
-  font-weight: var(--ml-weight-semibold);
-  font-size: var(--ml-text-sm);
-}
-.ch-dock__body {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-}
-:root[data-eink='on'] .ch-dock {
-  transition: none;
-}
-@media (prefers-reduced-motion: reduce) {
-  .ch-dock {
-    transition: none;
-  }
-}
 @media (max-width: 40rem) {
   .ch-bubble {
     max-width: 92%;
@@ -533,8 +514,4 @@
   flex-direction: column;
   height: min(72dvh, 48rem);
   min-height: 22rem;
-}
-.ch-dock .sb-chat-surface {
-  height: 100%;
-  min-height: 0;
 }

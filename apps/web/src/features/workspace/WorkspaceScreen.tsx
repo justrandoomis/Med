@@ -22,7 +22,7 @@ import { mergeServerAnnotations, registerWorkspaceAppliers } from './data/local'
 import { activeVersionId, useSourceDetail, useVersionDocument, type SourceDocument } from './data/useSourceDocument';
 import { SearchPanel } from './chrome/SearchPanel';
 import { TopBar, type WorkspaceView } from './chrome/TopBar';
-import { canSplit, decidePanels, defaultLeftOpen, effectiveLayout, canShowSpread, RAIL_MAX, RAIL_MIN } from './model/layout';
+import { canSplit, decidePanels, decidePanelsWithChat, defaultLeftOpen, effectiveLayout, canShowSpread, RAIL_MAX, RAIL_MIN } from './model/layout';
 import { usePendingAiRequest } from './model/aiActions';
 import { useMcqRequest } from './model/mcqRequest';
 import { arrangementFor } from './modes/arrangement';
@@ -52,7 +52,8 @@ import { useStudySession, type StudySessionApi } from './session/useStudySession
 import { SecondaryPane, SplitPicker } from './split/SplitPane';
 import { SplitSidePane, type SplitSideKind } from './split/SplitSidePane';
 import { StudyBookPane } from './studybook/StudyBookPane';
-import { ChatDock } from '../studybook/chat/ChatDock';
+import { ChatSidePanel } from './chat/ChatSidePanel';
+import { useChatPanel } from './chat/useChatPanel';
 import { useStudyBookAvailability } from './studybook/useStudyBook';
 import { useOfflineDownloadAction } from '../offline/OnDevice';
 import { ExternalLinkDialog, LinkTargetDialog } from './notes/NotePageDialogs';
@@ -262,8 +263,16 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
   const [lastPanel, setLastPanel] = useState<'rail' | 'left'>('rail');
   const rail = useResizablePanel({ initial: loc0.rail?.width ?? settings.rail_width, min: RAIL_MIN, max: RAIL_MAX, side: 'start', onCommit: (w) => void updateSettings({ rail_width: w }) });
   const [focusMode, setFocusMode] = useState(false);
+  // (chat side panel) the study chat beside the book (≥ 900 px) or full screen (phone); never in «امتحن نفسك»
+  const chatHiddenReason = session.mode === 'exam' ? EXAM_MODE_HIDDEN_AR : null;
+  const chat = useChatPanel({ width, disabled: focusMode || !!chatHiddenReason });
+  const chatBeside = chat.mode === 'docked' || chat.mode === 'split';
   // focus mode: the book alone (§23) — panels keep their state and come back after
-  const panels = decidePanels({ width, railOpen: railOpen && !focusMode, railWidth: rail.width, leftOpen: leftOpen && !focusMode, last: lastPanel });
+  const panels = chatBeside
+    ? decidePanelsWithChat({ width, railOpen: false, railWidth: rail.width, leftOpen: leftOpen && !focusMode, last: lastPanel, chatWidth: chat.width })
+    : decidePanels({ width, railOpen: railOpen && !focusMode && !chat.open, railWidth: rail.width, leftOpen: leftOpen && !focusMode, last: lastPanel });
+  /** the rail was open when the chat took its place (it comes back when the chat closes) */
+  const [railBeforeChat, setRailBeforeChat] = useState(false);
 
   // ── split study ──
   const [split, setSplit] = useState<{ sourceId: string; pageIndex: number; zoom?: number | null } | null>(loc0.split?.secondary_source_id ? { sourceId: loc0.split.secondary_source_id, pageIndex: loc0.split.secondary_page_index ?? 0 } : null);
@@ -666,10 +675,35 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
   }, []);
 
   // ── panels ──
+  // (chat side panel) the chat and the study rail share one place beside the book: opening one closes the other (the
+  // rail comes back when the chat closes), so the two never squeeze the book together
+  const { openChat: chatOpenFn, close: chatCloseFn, open: chatIsOpen } = chat;
+  const openChat = useCallback(() => {
+    if (!chatIsOpen) setRailBeforeChat(railOpen && !panels.phone);
+    setRailOpen(false);
+    chatOpenFn();
+  }, [chatIsOpen, chatOpenFn, railOpen, panels.phone, setRailBeforeChat]);
+  const closeChat = useCallback(() => {
+    chatCloseFn();
+    if (railBeforeChat) setRailOpen(true);
+    setRailBeforeChat(false);
+  }, [chatCloseFn, railBeforeChat, setRailBeforeChat]);
+  // anything that opens the rail while the chat is open (a note draft, «أنشئ سؤال», the review list…) takes its place
+  // (adjusted while rendering: openChat itself closes the rail, so both open means the rail was asked for after it)
+  if (chatIsOpen && railOpen) {
+    setRailBeforeChat(false);
+    chatCloseFn();
+  }
+  const toggleChat = useCallback(() => (chatIsOpen ? closeChat() : openChat()), [chatIsOpen, closeChat, openChat]);
   const toggleRail = useCallback(() => {
-    setRailOpen((o) => !o);
+    if (chatIsOpen) {
+      // the rail takes the chat's place
+      setRailBeforeChat(false);
+      chatCloseFn();
+      setRailOpen(true);
+    } else setRailOpen((o) => !o);
     setLastPanel('rail');
-  }, []);
+  }, [chatIsOpen, chatCloseFn, setRailBeforeChat]);
   const toggleLeft = useCallback(() => {
     setLeftOpen((o) => !o);
     setLastPanel('left');
@@ -709,7 +743,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
       }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       // composite widgets handle their own arrows; the Study Book pane scrolls natively
-      const inWidget = !!target?.closest('[role="toolbar"],[role="tablist"],[role="radiogroup"],[role="menu"],[role="separator"],[role="dialog"],.wk-rail,.wk-left,.wk-search,.sb-pane');
+      const inWidget = !!target?.closest('[role="toolbar"],[role="tablist"],[role="radiogroup"],[role="menu"],[role="separator"],[role="dialog"],.wk-rail,.wk-chat,.wk-left,.wk-search,.sb-pane');
       const onCanvas = !!target?.closest('.wk-canvas');
       // the Study Book alone: no page flips of a lecture that is not on screen
       if (bookOnly && ['ArrowLeft', 'ArrowRight', 'ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End'].includes(key)) return;
@@ -809,7 +843,12 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
   const [aiSeen, setAiSeen] = useState<string | null>(null);
   if ((pendingAi?.id ?? null) !== aiSeen) {
     setAiSeen(pendingAi?.id ?? null);
-    if (pendingAi) {
+    if (pendingAi?.action === 'ask' && !chatHiddenReason) {
+      // «اسأل عن التحديد» → the side chat (it consumes the request: the selection becomes its context chip)
+      if (!chat.open) setRailBeforeChat(railOpen && !panels.phone);
+      setRailOpen(false);
+      chat.openChat();
+    } else if (pendingAi) {
       setRailTab('explain');
       setRailOpen(true);
       setLastPanel('rail');
@@ -1053,7 +1092,6 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
   };
 
   const page = pages[pageIndex] ?? null;
-  const chatDock = panels.phone && railTab === 'explain';
   const backTop = backStack[backStack.length - 1];
   const zoomLabel = zoomPercent(fit === 'width' ? effectiveZoom : zoom);
   const railNode = (
@@ -1074,6 +1112,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
         goToPage(i);
       }}
       onReaderJump={(i) => goToPage(i)}
+      onOpenChat={chatHiddenReason ? undefined : openChat}
       onOpenSplit={(id) => setSplit({ sourceId: id, pageIndex: 0 })}
       splitReason={splitReason}
       online={online}
@@ -1180,6 +1219,9 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
               onToggleLeft={toggleLeft}
               railOpen={panels.rail !== 'closed'}
               onToggleRail={toggleRail}
+              chatOpen={chat.open}
+              onToggleChat={toggleChat}
+              chatHiddenReason={chatHiddenReason}
               saveState={sync.state}
               saveDetail={describeSyncSnapshot(sync)}
               back={backTop ? { label: 'العودة إلى موضعك', title: backTop.label } : null}
@@ -1253,7 +1295,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
             </div>
           )}
 
-          <div className={cx('wk-body', panels.rail === 'docked' && 'wk-body--rail', panels.left === 'docked' && 'wk-body--left', (splitActive || splitBookActive || splitSideActive) && 'wk-body--split', bookOnly && 'wk-body--book')}>
+          <div className={cx('wk-body', (panels.rail === 'docked' || chatBeside) && 'wk-body--rail', panels.left === 'docked' && 'wk-body--left', (splitActive || splitBookActive || splitSideActive) && 'wk-body--split', bookOnly && 'wk-body--book')}>
             <main className="wk-main" aria-label="الكتاب">
               {searchOpen && (
                 <SearchPanel
@@ -1354,6 +1396,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
                     arrangement={arrangementFor(studyMode)}
                     explainHiddenReason={studyMode === 'exam' ? EXAM_MODE_HIDDEN_AR : null}
                     onClose={() => changeView('original')}
+                    onOpenChat={chatHiddenReason ? undefined : openChat}
                   />
                 )}
                 {splitActive && split && (
@@ -1376,6 +1419,22 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
                 <div className="wk-rail__inner">{railNode}</div>
                 <div {...rail.handleProps('تغيير عرض لوحة الدراسة')} />
               </aside>
+            )}
+            {chat.mode !== 'closed' && (
+              <ChatSidePanel
+                doc={doc}
+                pageIndex={pageIndex}
+                online={online}
+                mode={chat.mode}
+                width={chat.width}
+                handleProps={chat.handleProps}
+                phoneView={chat.phoneView}
+                onPhoneView={chat.setPhoneView}
+                landscape={chat.landscape}
+                openKey={chat.openKey}
+                onClose={closeChat}
+                onJumpToPage={(i) => goToPage(i)}
+              />
             )}
             {panels.left === 'docked' && (
               <nav className="wk-left" aria-label="الصفحات والفهرس والعلامات">
@@ -1404,13 +1463,10 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
             />
           )}
 
-          {/* (chat UX) phone + explain & chat: a non-modal bottom dock, so the page stays visible and follows the chat */}
-          <Sheet open={panels.rail === 'sheet' && !chatDock} onClose={() => setRailOpen(false)} title="لوحة الدراسة" side="start" width="min(26rem, 92vw)">
+          {/* (chat side panel) on a phone the chat is full screen (ChatSidePanel), the rail stays a sheet */}
+          <Sheet open={panels.rail === 'sheet'} onClose={() => setRailOpen(false)} title="لوحة الدراسة" side="start" width="min(26rem, 92vw)">
             {railNode}
           </Sheet>
-          <ChatDock open={panels.rail === 'sheet' && chatDock} title="الشرح والمحادثة" onClose={() => setRailOpen(false)}>
-            {railNode}
-          </ChatDock>
           <Sheet open={panels.left === 'sheet'} onClose={() => setLeftOpen(false)} title="الصفحات والفهرس والعلامات" side="end" width="min(22rem, 92vw)">
             {leftNode}
           </Sheet>

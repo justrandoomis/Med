@@ -103,3 +103,45 @@ export const SPLIT_MIN_WIDTH = 1024;
 export function canSplit(width: number): boolean {
   return width >= SPLIT_MIN_WIDTH;
 }
+
+// ───────── (chat side panel, wp/chat-side) the study chat beside the book ─────────
+/** from this width the chat is a docked, resizable side panel; below it the chat is full screen */
+export const CHAT_SIDE_MIN_WIDTH = 900;
+export const CHAT_MIN = 360;
+export const CHAT_MAX_RATIO = 0.65;
+export const CHAT_DEFAULT_RATIO = 0.42;
+
+/** min / max width of the docked chat for a workspace this wide (max 65 %, never under the min) */
+export function chatBounds(width: number): { min: number; max: number } {
+  return { min: CHAT_MIN, max: Math.max(CHAT_MIN, Math.round(width * CHAT_MAX_RATIO)) };
+}
+
+/** the docked chat's width: the remembered one (clamped to this screen), else ~42 % of it */
+export function chatWidthFor(width: number, remembered: number | null): number {
+  const { min, max } = chatBounds(width);
+  const want = remembered ?? Math.round(width * CHAT_DEFAULT_RATIO);
+  return Math.round(Math.min(max, Math.max(min, want)));
+}
+
+export type ChatMode = 'closed' | 'docked' | 'full' | 'split';
+/** on a phone: the chat full screen, the page (chat hidden, kept), or — landscape — both side by side */
+export type ChatPhoneView = 'chat' | 'page' | 'split';
+
+export function decideChat(r: { width: number; open: boolean; phoneView: ChatPhoneView; landscape: boolean }): ChatMode {
+  if (!r.open) return 'closed';
+  if (r.width >= CHAT_SIDE_MIN_WIDTH) return 'docked';
+  if (r.phoneView === 'split' && r.landscape) return 'split';
+  return 'full';
+}
+
+/**
+ * The panels with the chat docked beside the book: the chat takes the study rail's place (the two never squeeze the
+ * book together — opening one closes the other), the page panel stays only while the book keeps its minimum width
+ * (it is not «closed» for good: it comes back when the chat closes).
+ */
+export function decidePanelsWithChat(r: PanelRequest & { chatWidth: number }): PanelDecision {
+  const phone = r.width < PHONE_MAX_WIDTH;
+  const left: PanelMode = !r.leftOpen ? 'closed' : phone ? 'closed' : r.width - r.chatWidth - LEFT_PANEL_WIDTH >= MIN_CANVAS_WIDTH ? 'docked' : 'closed';
+  const railWidth = Math.min(RAIL_MAX, Math.max(RAIL_MIN, Math.round(r.railWidth)));
+  return { phone, rail: 'closed', left, railWidth, canvasWidth: Math.max(0, r.width - r.chatWidth - (left === 'docked' ? LEFT_PANEL_WIDTH : 0)), closed: null };
+}
