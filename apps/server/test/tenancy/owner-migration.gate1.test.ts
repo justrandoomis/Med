@@ -47,7 +47,7 @@ describe('GATE-1: an R1-a database reaching a release that adds base migrations'
     const shipped = readMigrations().map((m) => m.name);
     expect(R1A_BASE_MIGRATIONS).toHaveLength(44);
     expect(R1A_BASE_MIGRATIONS.every((m) => shipped.includes(m))).toBe(true);
-    expect(shipped.filter((m) => !R1A_BASE_MIGRATIONS.includes(m))).toEqual(['0031_job_interruptions.sql', '0163_pinned_region.sql', '0860_document_copy.sql', '0862_private_link.sql', '0863_stroke_copy_identity.sql', '0864_deck_copy.sql']);
+    expect(shipped.filter((m) => !R1A_BASE_MIGRATIONS.includes(m))).toEqual(['0031_job_interruptions.sql', '0163_pinned_region.sql', '0230_figure_description.sql', '0860_document_copy.sql', '0862_private_link.sql', '0863_stroke_copy_identity.sql', '0864_deck_copy.sql']);
   });
 
   it('the plan names the way that works (the multi-user release R1-b first), never «older than R1-a»', () => {
