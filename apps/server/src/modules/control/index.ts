@@ -34,7 +34,7 @@ import { history } from './history';
 import { applyImpact, previewImpact } from './impact';
 import { intelligence } from './intelligence';
 import { processingOverview } from './processing';
-import { counts, listReview, resolveReview, reviewDetail } from './review';
+import { acceptProcessingReviews, counts, listReview, resolveReview, reviewDetail } from './review';
 import { sourcesPriorities } from './sources';
 import { storageReport } from './storage';
 import { registerQualityRoutes } from './quality';
@@ -120,6 +120,11 @@ export default async function register(app: FastifyInstance, { ctx }: ModuleOpti
   });
   app.get('/review/:id', async (req) => reviewDetail(ctx, parseParams(z.object({ id: ID }), req).id));
   app.post('/review/:id/resolve', async (req) => resolveReview(ctx, parseParams(z.object({ id: ID }), req).id, parseBody(resolveBody, req)));
+  // «اعتمد الكل» / «اعتمد كما هو»: accept the optional processing review of a version (or of one page) as it is
+  app.post('/review/processing/accept', async (req) => {
+    const b = parseBody(z.object({ version_id: ID, page_id: ID.optional() }).strict(), req);
+    return acceptProcessingReviews(ctx, { versionId: b.version_id, pageId: b.page_id ?? null });
+  });
 
   app.get('/processing', async () => processingOverview(ctx));
   app.get('/intelligence', async () => intelligence(ctx));

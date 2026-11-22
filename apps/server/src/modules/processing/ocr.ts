@@ -1,6 +1,8 @@
 // Local OCR with tesseract.js 7 (WASM) and the bundled eng + ara "best_int" models. Nothing leaves the
-// machine. One worker is created lazily and reused (recognitions are serialized through a queue); it is
-// terminated when the app closes. Bidi control marks that tesseract emits are stripped from every word.
+// machine. A small pool of workers (default 1; the pipeline asks for one per page it processes in parallel) is created
+// lazily and reused — each worker serializes its own recognitions, a request goes to the least busy worker, so two
+// pages of a scanned lecture are read on two CPU cores at once (docs/PERFORMANCE.md «Processing parallelism»). The
+// workers are terminated when the app closes. Bidi control marks that tesseract emits are stripped from every word.
 import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
@@ -69,12 +71,28 @@ export function ocrModelsAvailable(): { ok: boolean; missing: string[] } {
   return { ok: missing.length === 0, missing: [...missing] };
 }
 
+interface Slot {
+  worker: Promise<TesseractWorker> | null;
+  queue: Promise<unknown>;
+  pending: number;
+}
+
 export class OcrEngine {
-  private worker: Promise<TesseractWorker> | null = null;
-  private queue: Promise<unknown> = Promise.resolve();
+  private readonly slots: Slot[];
   private closed = false;
 
-  constructor(private readonly dataDir: string) {}
+  constructor(
+    private readonly dataDir: string,
+    opts: { workers?: number } = {},
+  ) {
+    const n = Math.max(1, Math.min(8, Math.floor(opts.workers ?? 1)));
+    this.slots = Array.from({ length: n }, () => ({ worker: null, queue: Promise.resolve(), pending: 0 }));
+  }
+
+  /** number of OCR workers (recognitions that can run at the same time) */
+  get size(): number {
+    return this.slots.length;
+  }
 
   /** tesseract.js expects one directory holding <lang>.traineddata.gz → copy the bundled models once. */
   private prepareLangDir(): string {
@@ -90,35 +108,38 @@ export class OcrEngine {
     return dir;
   }
 
-  private async getWorker(): Promise<TesseractWorker> {
+  private async getWorker(slot: Slot): Promise<TesseractWorker> {
     if (this.closed) throw new Error('OCR engine closed');
-    if (!this.worker) {
+    if (!slot.worker) {
       const langPath = this.prepareLangDir();
       const cachePath = join(this.dataDir, 'tessdata-cache');
       mkdirSync(cachePath, { recursive: true, mode: 0o700 });
       const { createWorker } = await import('tesseract.js');
-      this.worker = createWorker([...OCR_LANGS], 1 /* LSTM only */, {
+      const created = createWorker([...OCR_LANGS], 1 /* LSTM only */, {
         langPath,
         cachePath,
         gzip: true,
         logger: () => undefined,
         errorHandler: () => undefined,
       });
-      this.worker.catch(() => {
-        this.worker = null;
+      slot.worker = created;
+      created.catch(() => {
+        if (slot.worker === created) slot.worker = null;
       });
     }
-    return this.worker;
+    return slot.worker;
   }
 
   /** Drop the current worker (it is terminated in the background); the next request creates a new one. */
-  private resetWorker(): void {
-    const w = this.worker;
-    this.worker = null;
+  private resetWorker(slot: Slot): void {
+    const w = slot.worker;
+    slot.worker = null;
     if (w) void w.then((x) => x.terminate()).catch(() => undefined);
   }
 
   recognize(req: OcrRequest): Promise<OcrResult> {
+    // the least busy worker (ties: the first — a single page never starts a second worker)
+    const slot = this.slots.reduce((a, b) => (b.pending < a.pending ? b : a));
     const limited = async (): Promise<OcrResult> => {
       let timer: NodeJS.Timeout | undefined;
       const state = { abandoned: false };
@@ -133,7 +154,7 @@ export class OcrEngine {
         return await Promise.race([run(state), timeout]);
       } catch (e) {
         // a recognition that never finishes would block the serialized queue forever: kill that worker
-        if (e instanceof OcrTimeoutError) this.resetWorker();
+        if (e instanceof OcrTimeoutError) this.resetWorker(slot);
         throw e;
       } finally {
         clearTimeout(timer);
@@ -142,7 +163,7 @@ export class OcrEngine {
     // `state.abandoned` is checked right before every worker call: a terminated tesseract.js worker must
     // never be used again (its async `send` would reject with nobody listening → unhandled rejection)
     const run = async (state: { abandoned: boolean }): Promise<OcrResult> => {
-      const worker = await this.getWorker();
+      const worker = await this.getWorker(slot);
       if (state.abandoned) throw new OcrTimeoutError();
       await worker.setParameters({ tessedit_pageseg_mode: (req.mode === 'sparse' ? '11' : req.mode === 'block' ? '6' : '3') as never });
       const options = req.rectangle ? { rectangle: req.rectangle } : {};
@@ -167,21 +188,27 @@ export class OcrEngine {
       const confidence = words.length ? words.reduce((s, w) => s + w.conf, 0) / words.length : null;
       return { words, confidence };
     };
-    const p = this.queue.then(limited, limited);
-    this.queue = p.catch(() => undefined);
+    slot.pending++;
+    const p = slot.queue.then(limited, limited).finally(() => {
+      slot.pending--;
+    });
+    slot.queue = p.catch(() => undefined);
     return p;
   }
 
   async close(): Promise<void> {
     this.closed = true;
-    const w = this.worker;
-    this.worker = null;
-    if (w) {
-      try {
-        await (await w).terminate();
-      } catch {
-        // already gone
-      }
-    }
+    await Promise.all(
+      this.slots.map(async (slot) => {
+        const w = slot.worker;
+        slot.worker = null;
+        if (!w) return;
+        try {
+          await (await w).terminate();
+        } catch {
+          // already gone
+        }
+      }),
+    );
   }
 }

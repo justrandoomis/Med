@@ -39,6 +39,8 @@ export interface PageUpdate {
   ocr_confidence: number | null;
   has_images: boolean;
   render_file_id?: string | null;
+  /** small picture of the page for the thumbnail rail (null/absent = keep the stored one) */
+  thumbnail_file_id?: string | null;
   error_code: string | null;
   error_detail: string | null;
   section_key?: string | null;
@@ -257,13 +259,14 @@ export function persistPage(
       }
       ctx.db.run(
         `UPDATE source_page SET text_status = ?, processing_status = ?, ocr_confidence = ?, has_images = ?, render_file_id = COALESCE(?, render_file_id),
-           error_code = ?, error_detail = ?, section_key = COALESCE(?, section_key), updated_at = ? WHERE id = ?`,
+           thumbnail_file_id = COALESCE(?, thumbnail_file_id), error_code = ?, error_detail = ?, section_key = COALESCE(?, section_key), updated_at = ? WHERE id = ?`,
         [
           page.text_status,
           page.processing_status,
           page.ocr_confidence,
           page.has_images ? 1 : 0,
           page.render_file_id ?? null,
+          page.thumbnail_file_id ?? null,
           page.error_code,
           page.error_detail,
           page.section_key ?? null,

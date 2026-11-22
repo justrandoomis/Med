@@ -363,3 +363,38 @@ and logs: scratch `gate1-review/perf/`. Still run here, not in CI (AOS-23.2 asks
   (V8 grows its heap lazily); a small server should set `--max-old-space-size` — not tested on a 1 GB machine.
 * Memory figures are process-level (`process.memoryUsage`, `getrusage maxrss`) sampled every 20 ms; the sampler cannot
   run while the event loop is blocked, so sampled peaks can be under-estimates (the maxrss figures are exact).
+
+## Upload → open → save pass (2026-11-22, branch wp/review-speed)
+
+Production now has 2 vCPU / 8 GB (wrangler.jsonc). Measured on the Windows dev box (28 logical cores, no poppler —
+render / figure-crop numbers could not be measured here; the scanned-page perf scenario needs pdftoppm).
+
+| change | where | measured / estimated |
+|---|---|---|
+| **OCR uses both cores.** The tesseract.js engine was ONE worker with every recognition serialized, and a lecture's pages ran strictly one after another (the process job kind runs one version at a time). Now `OcrEngine` keeps a pool (a request goes to the least busy worker) and `VersionRun` processes pages in a bounded pool of the same width. Width = `MEDLEVO_PROCESSING_PARALLELISM`, default `min(2, CPU cores)` (tests: 1). Each page keeps its own checkpoint; the first fatal error stops new pages, running ones finish and are checkpointed, then it is re-thrown. | `processing/ocr.ts`, `pipeline.ts`, `processing/index.ts`, `config.ts` | 8 × `scanned_page.png` (warm workers): **1 worker 3.21 s → 2 workers 1.62–1.79 s (1.8–2.0×)**. A scanned / image-heavy lecture's OCR stage is expected to roughly halve on the 2-vCPU container (one extra worker ≈ 150 MB). Digital-text pages are pdf.js-bound on the main thread and do not gain. |
+| **Stage timings on every run**: `timings_ms` in the job output and the `version processed` log line (`inspect`, `pages`, `layout`, `structure`, `index`, plus `ocr_sum` / `render_sum` summed over pages) | `pipeline.ts` | measurement only |
+| **Stored page thumbnails.** Processing never wrote `thumbnail_file_id`, so the reader's thumbnail rail ran pdf.js over every PDF page on the phone (decoding full-size slide photos for a 112 px preview, and evicting the reader's own pages from the 16-page pdf.js cache). Each PDF page now gets a 224 px-wide PNG (pdftoppm at ≤ 72 dpi), served from `/api/files/:id` (`private, max-age=31536000, immutable`, ETag = sha256). The web already prefers `thumbnail_file_id`. | `pipeline.ts` `thumbnail()`, `persist.ts` | estimate (no poppler here): one extra pdftoppm at ≤ 72 dpi per page during processing (tens of ms, counted in `render_sum`) against seconds of phone CPU when the rail is open on a 100+ page lecture |
+| **fsync off the event loop.** `FileStore.put` called `fsyncSync` for every stored blob — every page render, figure crop and thumbnail of a processing run — stalling every other request (opening a lecture while another processes) for the flush. The data fsync is now `FileHandle.sync()` in the thread pool, still BEFORE the row can point at the blob (same durability; the sha lookup → rename → row insert stays synchronous, so two puts of the same bytes cannot race). On Windows the handle is opened `r+` (FlushFileBuffers refuses read-only handles; the old sync path silently did nothing there). | `files/store.ts` | not measurable on this box's SSD; on the container's disk each fsync is typically 1–10 ms of blocked event loop per stored file |
+| **Opening a lecture: one round trip less.** The PDF was opened only after the page list arrived; both need only the source detail, so they now start together. | `web/.../data/useSourceDocument.ts` | ≈ 1 mobile round trip (≈ 150–300 ms) before the first page |
+| **pdf.js over the network**: 512 KiB range requests (the 64 KiB default needs ≈ 32 requests for one 2 MB slide photo) and no background download of the whole file while reading (`disableAutoFetch`). An offline copy is still opened from bytes. | `web/src/lib/pdf.ts` | fewer requests per image-heavy page (≈ 8× fewer range requests for large embedded images); the background fetch no longer competes with the visible pages |
+| **«اعتمد الكل»** resolves a version's optional review in ONE outer transaction (one commit instead of one per item) | `control/review.ts` | — |
+
+Checked and left as they are (with numbers):
+
+- **Page pictures / files**: `/api/files/:id` already sends `private, max-age=31536000, immutable` + `ETag` (sha256) and
+  answers `If-None-Match` with 304 — covered by `test/processing/optional-review.test.ts`. Space files are
+  `private, no-cache` on purpose (revalidated against the visibility check).
+- **Source detail / page list / regions** have no query-per-page (two aggregate queries were added for
+  `picture_page` / `optional_review`); the indexes they use exist.
+- **WAL + `synchronous = NORMAL`** were already set (`db/db.ts`).
+- **Sync push batching** (one transaction per push instead of per op): micro-benchmark on node:sqlite, WAL +
+  NORMAL, 100 ops of ≈ 2 KB: 3.9 ms per push as 100 transactions vs 1.0 ms as one — ≈ 3 ms per 100-op push, not
+  worth losing the per-op isolation (an op that fails unexpectedly is rolled back alone). Left as is. The client
+  already debounces (outbox 400 ms, ≤ 100 ops per request; notes 600 ms after the last keystroke).
+
+Not done (next candidates): crop figure pictures from the OCR render already in memory instead of one more full-page
+pdftoppm per figure; hash the upload while it streams to the temp file (today it is read and hashed again by
+`sha256File` and by `files.put`); an expression index for the processing-status lookup
+(`json_extract(input_json, '$.version_id')` on `processing_job`); `accept-ink: 2` on the reader's annotation download;
+the resumable chunked upload API from the web upload screen; skipping the orientation trials when the first reading is
+confident.

@@ -109,7 +109,7 @@ function coverageNote(status: ProcessingStatus, s: ProcessingSummary | null): st
     const missing = s ? s.pages_failed + Math.max(0, (s.pages_total ?? 0) - s.pages_ready - s.pages_failed - s.pages_needs_review) : null;
     return `الصفحات الأخرى قابلة للقراءة. الشروح والملخصات التي تشمل هذه النسخة تذكر أن التغطية غير كاملة${missing ? ` (${missing} ${missing === 1 ? 'صفحة' : 'صفحات'} ناقصة)` : ''} ولا تُسمّى كاملة.`;
   }
-  if (status === 'needs_review') return 'كل الصفحات معالجة، لكن بعضها يحتاج مراجعتك قبل الاعتماد على نصه (راجعه من «قائمة المراجعة»).';
+  if (status === 'needs_review') return 'كل الصفحات معالجة وجاهزة للدراسة؛ في بعضها مراجعة اختيارية للنص المقروء آليًا (من «قائمة المراجعة» أو «اعتمد الكل»).';
   if (status === 'processing' || status === 'pending') return 'المعالجة لم تنتهِ بعد؛ الصفحات الجاهزة قابلة للقراءة الآن.';
   return 'جاهزة.';
 }

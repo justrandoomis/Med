@@ -29,6 +29,9 @@ export function loadPdfjs(): Promise<typeof PdfjsLib> {
  */
 export async function openPdf(src: { data: ArrayBuffer | Uint8Array } | { url: string }) {
   const pdfjs = await loadPdfjs();
-  const params = 'data' in src ? { data: src.data } : { url: src.url, withCredentials: true };
+  // over the network: 512 KiB range requests (the 64 KiB default needs ~32 requests for one 2 MB slide photo) and no
+  // background download of the whole file while the student reads (it competed with the pages on screen); the
+  // offline copy, when there is one, is opened from bytes instead (pdfDoc.ts)
+  const params = 'data' in src ? { data: src.data } : { url: src.url, withCredentials: true, rangeChunkSize: 512 * 1024, disableAutoFetch: true };
   return pdfjs.getDocument(params).promise;
 }

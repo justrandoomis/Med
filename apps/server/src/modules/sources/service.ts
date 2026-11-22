@@ -33,6 +33,9 @@ import {
   type VersionRow,
 } from './views';
 
+/** a picture page's own text is shorter than this (the bound of processing/picture.ts and figures.ts) */
+const PICTURE_PAGE_TEXT_CHARS = 80;
+
 export const SOURCE_AR = 'المصدر';
 
 /**
@@ -143,7 +146,35 @@ export class SourcesService {
     const pages = ctx.db.all<PageRow>('SELECT * FROM source_page WHERE version_id = ? ORDER BY page_index', [versionId]);
     // a page without a printed number is named by its file position when other pages are numbered (AC-04)
     const numbered = pages.some((p) => p.kind === 'page' && !!p.printed_label);
-    return { version: toVersionView(v, src.frozen_version_id), pages: pages.map((p) => ({ ...toPageView(p), numbered_version: numbered })) };
+    // one aggregate per version (no query per page): own text length and open optional-review items
+    const textChars = new Map(
+      ctx.db
+        .all<{ page_id: string; n: number }>(
+          `SELECT page_id, COALESCE(SUM(length(replace(trim(text), ' ', ''))), 0) AS n FROM source_region
+            WHERE version_id = ? AND text IS NOT NULL AND kind NOT IN ('figure','caption','diagram','header','footer') AND parent_region_id IS NULL GROUP BY page_id`,
+          [versionId],
+        )
+        .map((r) => [r.page_id, r.n]),
+    );
+    const reviews = new Map(
+      ctx.db
+        .all<{ page_id: string; n: number }>(
+          `SELECT json_extract(details_json, '$.page_id') AS page_id, COUNT(*) AS n FROM review_queue_item
+            WHERE status = 'open' AND kind IN ('ocr_error','unreadable_page') AND json_valid(details_json)
+              AND json_extract(details_json, '$.origin') = 'processing' AND json_extract(details_json, '$.version_id') = ? GROUP BY 1`,
+          [versionId],
+        )
+        .map((r) => [r.page_id, r.n]),
+    );
+    return {
+      version: toVersionView(v, src.frozen_version_id),
+      pages: pages.map((p) => ({
+        ...toPageView(p),
+        numbered_version: numbered,
+        picture_page: p.has_images === 1 && p.processing_status !== 'failed' && p.processing_status !== 'pending' && (textChars.get(p.id) ?? 0) < PICTURE_PAGE_TEXT_CHARS,
+        optional_review: reviews.get(p.id) ?? 0,
+      })),
+    };
   }
 
   regions(pageId: string): PageRegionsResponse {

@@ -193,6 +193,13 @@ export interface SourcePageView {
    * position only («الصفحة 1 في الملف») — never «ص 1», which may be the printed number of another page.
    */
   numbered_version?: boolean;
+  /**
+   * A picture page («صورة»): pictures cover it and its own text is at most a short caption (< 80 characters) — the
+   * picture is the content (described by the AI figure descriptions when enabled). Set by GET …/versions/:id/pages.
+   */
+  picture_page?: boolean;
+  /** open processing review items of this page — an OPTIONAL review («مراجعة اختيارية»), never a block */
+  optional_review?: number;
 }
 
 export interface SourcePagesResponse {

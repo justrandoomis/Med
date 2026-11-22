@@ -18,7 +18,7 @@ export const PAGE_PROCESSING_AR: Record<string, { label: string; tone: StatusTon
   processing: { label: 'قيد المعالجة', tone: 'info' },
   ready: { label: 'جاهزة', tone: 'success' },
   failed: { label: 'فشلت معالجتها', tone: 'danger' },
-  needs_review: { label: 'تحتاج مراجعة', tone: 'warning' },
+  needs_review: { label: 'جاهزة — مراجعة اختيارية', tone: 'info' },
   skipped: { label: 'تُخطّيت', tone: 'neutral' },
 };
 

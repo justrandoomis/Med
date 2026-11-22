@@ -626,3 +626,77 @@ outside figures is under 80 characters) is described once by a vision model. Mod
   correct answer worded differently from the lecture goes to review); image questions in the review queue show the
   stem, not the picture; the Control Center lists the routine model under the vision role without its own env var row;
   cards / questions made from a description are not re-flagged when the owner later corrects that description.
+
+## Optional review, picture pages and the automatic second reading (2026-11-22)
+
+Owner report: «يحتاج مراجعة» kept appearing on lecture pages and read as an error. Root causes, all in `pipeline.ts`:
+
+1. **Picture slides were treated as scans.** A pathology / histology / gross-specimen slide (a photo with a caption
+   shorter than 25 characters) has «no digital text», so it was OCR'd as a scan. Tesseract reads tissue texture as
+   low-confidence "words" (`OCR_REVIEW_WORD_CONF` → a review item per noise region), the coverage check
+   (`missedTextSegments`) finds "writing that was not read" in the tissue (`TEXT_NOT_READ`), a blurred / low-contrast
+   photo was called a low-quality scan (`LOW_QUALITY_SCAN`), and a photo with no caption was «لم يُقرأ نصها»
+   (`NO_TEXT_FOUND`). Every one of those made the page `needs_review`.
+2. **Every OCR doubt was presented as a blocking warning** (orange «تحتاج مراجعة», «… تحتاج مراجعتك قبل الاعتماد
+   عليها»), although nothing was ever blocked: retrieval, chunks and the study screens already used `needs_review`
+   pages (`evidence/retrieval.ts` counts them as ready; chunks only drop `rejected` regions). Only claim validation
+   (`evidence/claims.ts`) and fixed exam answers (`evidence/pack.ts`) treat a `needs_review` OCR region as uncertain —
+   which is right while the doubt is real, and is lifted by the second reading below.
+
+### Picture pages («صورة», `picture.ts`)
+
+A page is a picture page when (all on the OCR checkpoint, so a resumed run decides the same way):
+
+- **picture content** ≥ 30 %: for a PDF page the smaller of (share of the page covered by its images) and
+  `busyShare` of the render; for an image page `busyShare` of the picture. `busyShare` samples a 96×96 grid and counts
+  samples that are clearly coloured (stain, mucosa, skin: chroma > 40) or differ from the background colour (the most
+  frequent quantised colour) by > 40. Paper is near-neutral and uniform, so a scan of a TEXT page — even a blurred one
+  with two lines (`low_quality_scan.png`, < 0.3) — is never a picture; the stained-tissue test slide measures 0.997;
+- **readable text** (words ≥ 60 % confidence + digital body text) < 80 letters (the «image-only page» bound of the
+  figure descriptions);
+- **weak words** (40–60 %) < 80 letters — or the page is ≥ 60 % picture and those weak words average < 45 %
+  (texture). A blurred scan of a text page (many words at a middling confidence) stays in review.
+
+On a picture page only readable words are stored (texture read as letters is dropped, `keepOnPicture`); a weak
+caption word is an `uncertain` reading (never a fixed answer, AC-08) without a review item; `LOW_QUALITY_SCAN`,
+`TEXT_NOT_READ` and `NO_TEXT_FOUND` are not raised. The page is `ready`; its picture is described by the automatic
+figure descriptions when the owner enabled AI (`collectTargets` already picks image-only pages through
+`render_file_id`). `GET /api/sources/:id/versions/:vid/pages` adds `picture_page` (has images, own text < 80
+non-space characters) and `optional_review` (open processing items of the page) — two aggregate queries per version,
+no query per page.
+
+### Automatic second reading (`ocr-verify.ts`, job `processing.verify_ocr`)
+
+Queued after processing (`enqueueOcrVerifyFollowUp`, idempotent per processing run) ONLY when the figure-description
+gate passes: a provider is configured, the owner has a STANDING `ai_processing` consent naming it, and the routine
+vision task (`describe_figure`, the cheap model; same budget line) is available. Without them nothing is sent or queued.
+The job waits (deferral, no attempt spent) while a processing job of the version is queued/running, then for every
+page with open `ocr_error` items (at most 40 pages; consent + budget re-checked before EVERY page) sends the page picture
+(`render_file_id`) with the flagged passages as delimited untrusted data and asks for an exact transcription (no
+correction, no translation), plus the whole page text when the doubt is page-level (`LOW_QUALITY_SCAN`,
+`TEXT_NOT_READ`). The comparison is deterministic: **consistent** = token Dice ≥ 0.9 after `normalizeForSearch` AND
+every weak OCR word (`low_confidence_words`) present in the second reading. Consistent → the region becomes `extracted`
+(a table whose flagged cells are all settled too), the item is closed `accepted` with resolution
+`{ by: 'vision_check', model, agreement }`, the page refreshed (`refreshPageState`) and audited. **The text is never
+changed.** A real conflict stays open with the model's reading kept beside it in `details_json.vision_check`, for the
+owner to compare. A digital-text page with a suspicious text layer (ligatures / bidi) has no render and is not re-read.
+
+### The owner's optional review
+
+`POST /api/control/review/processing/accept {version_id, page_id?}` («اعتمد كما هو» for one page, «اعتمد الكل» for
+the version) resolves every open processing item with the same `accept` decision the review screen offers (region →
+«راجعته شخصيًا», text unchanged; page → accepted), all in ONE outer transaction (each item in its own savepoint;
+an item that cannot be accepted is skipped and counted). Returns `{accepted, skipped, pages_ready, open_left}`.
+Note: like a single «قبول», an accepted region is owner-reviewed, so re-processing that page later is refused (the
+owner's decision is never replaced silently).
+
+UI: the version / page status `needs_review` reads «جاهز — مراجعة اختيارية» / «جاهزة — مراجعة اختيارية» (info tone,
+not a warning), the summary label says every page is ready for study with an optional review, the pages panel shows
+«صورة» for picture pages and the two accept buttons.
+
+Tests: `apps/server/test/processing/optional-review.test.ts` (classification, the raster measure on the low-quality
+fixture, a stained-tissue slide processed end to end with real OCR → ready / no item / no texture stored, the
+deterministic agreement, the scripted vision provider: consistent → accepted, conflict → stays with the reading, no
+consent → nothing sent, «اعتمد كما هو» / «اعتمد الكل» → pages and version ready, `/api/files` immutable + 304);
+`apps/web/src/features/sources/PagesPanel.optional.test.tsx`. The golden `low_quality_scan.png` case still goes to
+review (a text scan is not a picture).

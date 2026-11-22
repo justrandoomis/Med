@@ -70,7 +70,7 @@ export function ProcessingStatusView({ status, format, error }: { status: Proces
     if (total !== null && total > 0) counts.push(`جاهز ${ready} من ${countAr(total, unit)}`);
     else if (ready > 0) counts.push(`جاهز ${countAr(ready, unit)}`);
     if (s.pages_failed > 0) counts.push(`تعثّر ${s.pages_failed}`);
-    if (s.pages_needs_review > 0) counts.push(`يحتاج مراجعة ${s.pages_needs_review}`);
+    if (s.pages_needs_review > 0) counts.push(`مراجعة اختيارية ${s.pages_needs_review}`);
     if (s.pages_ocr > 0) counts.push(`قُرئ بالتعرف الضوئي (OCR) ${s.pages_ocr}`);
   }
   // the server's Arabic stage label (ProcessingSummary) is authoritative; job state is the fallback

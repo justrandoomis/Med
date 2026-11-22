@@ -625,6 +625,12 @@ function outcomeExtra(o: CorrectionOutcome): Record<string, unknown> {
 }
 
 export function resolveReview(ctx: AppContext, id: string, body: ResolveReviewRequest): ResolveReviewResponse {
+  const { effects, alert } = resolveOne(ctx, id, body);
+  return { item: reviewDetail(ctx, id), effects_ar: effects, alert };
+}
+
+/** One decision in its own transaction (a savepoint inside «اعتمد الكل»). */
+function resolveOne(ctx: AppContext, id: string, body: ResolveReviewRequest): { effects: string[]; alert: ResolveReviewResponse['alert'] } {
   const note = body.note?.trim() ? body.note.trim().slice(0, 1000) : null;
   let alert: ResolveReviewResponse['alert'] = null;
   let effects: string[] = [];
@@ -698,7 +704,53 @@ export function resolveReview(ctx: AppContext, id: string, body: ResolveReviewRe
       ctx.db.run(`UPDATE review_queue_item SET resolution_json = json_set(resolution_json, '$.effects_ar', json(?)) WHERE id = ?`, [JSON.stringify(effects), r.id]);
     }
   });
-  return { item: reviewDetail(ctx, id), effects_ar: effects, alert };
+  return { effects, alert };
+}
+
+export interface AcceptProcessingResult {
+  accepted: number;
+  skipped: number;
+  pages_ready: number;
+  open_left: number;
+}
+
+/**
+ * «اعتمد كما هو» / «اعتمد الكل»: the owner accepts the OPTIONAL review of a lecture version's processing (OCR doubts,
+ * suspicious characters, pages without text) as it is — every open processing item of the version (or of one page) is
+ * resolved with the same «accept» decision the review screen offers (region → «راجعته شخصيًا», text unchanged; page →
+ * «الصفحة مقبولة»). Items that cannot be accepted (already decided, a source in the trash) are skipped and counted.
+ * One outer transaction: one commit for the whole batch instead of one per item.
+ */
+export function acceptProcessingReviews(ctx: AppContext, q: { versionId: string; pageId?: string | null }): AcceptProcessingResult {
+  const v = ctx.db.get<{ id: string }>('SELECT id FROM source_version WHERE id = ?', [q.versionId]);
+  if (!v) throw new AppError('NOT_FOUND', 'نسخة المحاضرة غير موجودة.', 404);
+  const where = `status = 'open' AND kind IN ('ocr_error','unreadable_page') AND json_valid(details_json)
+      AND json_extract(details_json, '$.origin') = 'processing' AND json_extract(details_json, '$.version_id') = ?
+      AND (? IS NULL OR json_extract(details_json, '$.page_id') = ?)`;
+  const args = [q.versionId, q.pageId ?? null, q.pageId ?? null];
+  const ids = ctx.db.all<{ id: string; page_id: string | null }>(`SELECT id, json_extract(details_json, '$.page_id') AS page_id FROM review_queue_item WHERE ${where} ORDER BY created_at, id`, args);
+  let accepted = 0;
+  let skipped = 0;
+  const pages = new Set<string>();
+  ctx.db.tx(() => {
+    // region items first: a page-level decision is then the last one on its page
+    const ordered = [...ids].sort((a, b) => Number(a.page_id === null) - Number(b.page_id === null));
+    for (const it of ordered) {
+      try {
+        resolveOne(ctx, it.id, { action: 'accept', note: 'اعتمدتُ المراجعة الاختيارية كما هي.' });
+        accepted++;
+        if (it.page_id) pages.add(it.page_id);
+      } catch {
+        skipped++;
+      }
+    }
+  });
+  const ready = pages.size
+    ? ctx.db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM source_page WHERE processing_status = 'ready' AND id IN (${[...pages].map(() => '?').join(',')})`, [...pages])!.n
+    : 0;
+  // what is still open in the whole version (also after a one-page «اعتمد كما هو»)
+  const left = ctx.db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM review_queue_item WHERE ${where}`, [q.versionId, null, null])!.n;
+  return { accepted, skipped, pages_ready: ready, open_left: left };
 }
 
 function alertSummary(ctx: AppContext, alertId: string): string {

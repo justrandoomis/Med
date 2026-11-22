@@ -1,7 +1,9 @@
 // Per-page processing (§07, §13, AC-03, AC-04): printed label vs file position, text status, OCR
 // confidence, failed pages WITH reasons, and «retry page» (only when processing is really available).
+// Doubtful OCR text is an OPTIONAL review («مراجعة اختيارية»): the page is ready and studied like any other; the owner may
+// accept it as it is in one tap («اعتمد كما هو», or «اعتمد الكل» for the version). A picture page shows «صورة».
 import { useState } from 'react';
-import { RotateCcw } from 'lucide-react';
+import { CheckCheck, RotateCcw } from 'lucide-react';
 import {
   pageDisplayLabel,
   withNumberedVersion,
@@ -34,9 +36,15 @@ const PAGE_STATUS: Record<SourcePageView['processing_status'], { label: string; 
   processing: { label: 'قيد المعالجة', tone: 'info' },
   ready: { label: 'جاهزة', tone: 'success' },
   failed: { label: 'تعثّرت', tone: 'danger' },
-  needs_review: { label: 'تحتاج مراجعة', tone: 'warning' },
+  needs_review: { label: 'جاهزة — مراجعة اختيارية', tone: 'info' },
   skipped: { label: 'تُخطّيت', tone: 'neutral' },
 };
+
+/** The text column: a picture page is «صورة» (its picture is the content), else how its text was read. */
+export function pageTextLabel(p: Pick<SourcePageView, 'text_status' | 'picture_page'>): string {
+  if (p.picture_page) return p.text_status === 'ocr' || p.text_status === 'mixed' || p.text_status === 'digital' ? 'صورة مع تعليق قصير' : 'صورة';
+  return TEXT_STATUS_AR[p.text_status];
+}
 
 export function processingFeature(format: SourceFormat): FeatureKey | null {
   switch (format) {
@@ -101,6 +109,21 @@ export function PagesPanel({ sourceId, versions, activeVersionId, readOnly }: { 
   // AC-04: a cached answer from before the server sent `numbered_version` gets it from the whole list
   const pages = withNumberedVersion(q.data?.pages ?? []);
   const failed = pages.filter((p) => p.processing_status === 'failed');
+  const optional = pages.reduce((n, p) => n + (p.optional_review ?? 0), 0);
+  const accept = async (pageId?: string) => {
+    setBusy(pageId ? `a${pageId}` : 'accept-all');
+    try {
+      const r = await api.post<{ accepted: number; open_left: number }>('/control/review/processing/accept', pageId ? { version_id: version.id, page_id: pageId } : { version_id: version.id });
+      toast.show({ title: r.accepted === 1 ? 'اعتُمد عنصر واحد كما هو' : `اعتُمد ${r.accepted} عنصرًا كما هي`, tone: 'success' });
+      void q.refresh();
+      setProcKey((k) => k + 1);
+      invalidate(`/sources/${sourceId}`);
+    } catch (e) {
+      toast.show({ title: errorMessage(e), tone: 'danger' });
+    } finally {
+      setBusy(null);
+    }
+  };
   return (
     <div className="ml-stack">
       {versions.length > 1 && (
@@ -143,6 +166,18 @@ export function PagesPanel({ sourceId, versions, activeVersionId, readOnly }: { 
           {failedPagesLine(failed.length)}؛ بقية الصفحات قابلة للقراءة، ولن يُعرض أي ملخص على أنه كامل قبل معالجتها.
         </p>
       )}
+      {optional > 0 && (
+        <div className="ml-cluster ml-proc__optional" role="status">
+          <span className="ml-field__hint">
+            مراجعة اختيارية: في بعض الصفحات نص مقروء آليًا غير مؤكد. الدراسة والذكاء الاصطناعي يعملان بها الآن؛ قارنها بصورة الصفحة متى شئت أو اعتمدها كما هي.
+          </span>
+          {!readOnly && (
+            <Button size="sm" variant="plain" icon={<CheckCheck size={16} />} onClick={() => void accept()} loading={busy === 'accept-all'}>
+              اعتمد الكل
+            </Button>
+          )}
+        </div>
+      )}
       {pages.length > 0 && (
         <div className="ml-pages">
           <table className="ml-pages__table">
@@ -171,7 +206,7 @@ export function PagesPanel({ sourceId, versions, activeVersionId, readOnly }: { 
                         </span>
                       )}
                     </th>
-                    <td data-label="النص">{TEXT_STATUS_AR[p.text_status]}</td>
+                    <td data-label="النص">{pageTextLabel(p)}</td>
                     <td data-label="ثقة التعرّف">
                       <bdi dir="ltr">{confidenceLabel(p.ocr_confidence)}</bdi>
                     </td>
@@ -180,6 +215,18 @@ export function PagesPanel({ sourceId, versions, activeVersionId, readOnly }: { 
                       {p.error_detail_ar && <span className="ml-pages__reason">{p.error_detail_ar}</span>}
                     </td>
                     <td data-label="">
+                      {(p.optional_review ?? 0) > 0 && !readOnly && (
+                        <Button
+                          size="sm"
+                          variant="plain"
+                          icon={<CheckCheck size={16} />}
+                          onClick={() => void accept(p.id)}
+                          loading={busy === `a${p.id}`}
+                          aria-label={`اعتمد كما هو: ${pageDisplayLabel(p)}`}
+                        >
+                          اعتمد كما هو
+                        </Button>
+                      )}
                       {(p.processing_status === 'failed' || p.processing_status === 'needs_review') && featureKey && (
                         <Button
                           size="sm"
