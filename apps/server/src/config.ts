@@ -163,6 +163,8 @@ const envSchema = z.object({
   MEDLEVO_MODEL_VISION: z.preprocess(emptyToUndefined, z.string().optional()),
   MEDLEVO_MODEL_VISION_ROUTINE: z.preprocess(emptyToUndefined, z.string().optional()),
   MEDLEVO_FIGURE_DESCRIBE_MAX: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).max(500).default(60)),
+  // how long a sign-in lasts without use (sliding: every use extends it); a private deployment may keep it for years
+  MEDLEVO_SESSION_DAYS: z.preprocess(emptyToUndefined, z.coerce.number().int().min(1).max(3650).default(30)),
   MEDLEVO_AI_MONTHLY_BUDGET_USD: z.preprocess(emptyToUndefined, z.coerce.number().min(0).max(100_000).default(20)),
   // every account and subject without an explicit cap shares the deployment budget (a private deployment)
   MEDLEVO_AI_OPEN_ALLOWANCE: z.preprocess((v) => (v === undefined || v === '' ? undefined : String(v).toLowerCase() === 'true' || v === '1'), z.boolean().default(false)),
@@ -350,7 +352,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     },
     auth: {
       scryptLogN: e.MEDLEVO_SCRYPT_LOG_N,
-      sessionTtlMs: 30 * 24 * 60 * 60 * 1000,
+      sessionTtlMs: e.MEDLEVO_SESSION_DAYS * 24 * 60 * 60 * 1000,
       passwordMinLength: 10,
       loginIpFailuresPerHour: e.MEDLEVO_LOGIN_IP_FAILURES_PER_HOUR,
     },

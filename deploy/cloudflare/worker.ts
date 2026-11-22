@@ -16,6 +16,7 @@ interface Env {
   MEDLEVO_BACKUP_INTERVAL_MINUTES: string;
   MEDLEVO_AI_MONTHLY_BUDGET_USD?: string;
   MEDLEVO_AI_OPEN_ALLOWANCE?: string;
+  MEDLEVO_SESSION_DAYS?: string;
   /** "true" turns on the web reference images (fixed allow-list of image APIs); string, like every var */
   MEDLEVO_ALLOW_EXTERNAL_FETCH?: string;
   /** Google Programmable Search engine id (optional; Google is used only with GOOGLE_CSE_KEY too) */
@@ -54,6 +55,7 @@ export class MedLevoContainer extends Container<Env> {
       MEDLEVO_BACKUP_INTERVAL_MINUTES: env.MEDLEVO_BACKUP_INTERVAL_MINUTES,
       MEDLEVO_AI_MONTHLY_BUDGET_USD: env.MEDLEVO_AI_MONTHLY_BUDGET_USD,
       MEDLEVO_AI_OPEN_ALLOWANCE: env.MEDLEVO_AI_OPEN_ALLOWANCE,
+      MEDLEVO_SESSION_DAYS: env.MEDLEVO_SESSION_DAYS,
       MEDLEVO_ALLOW_EXTERNAL_FETCH: env.MEDLEVO_ALLOW_EXTERNAL_FETCH,
       GOOGLE_CSE_ID: env.GOOGLE_CSE_ID,
       GOOGLE_CSE_KEY: env.GOOGLE_CSE_KEY,

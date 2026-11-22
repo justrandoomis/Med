@@ -29,6 +29,8 @@
     // the owner asked for no AI limit: every account and subject shares the (maximum) deployment budget
     "MEDLEVO_AI_MONTHLY_BUDGET_USD": "100000",
     "MEDLEVO_AI_OPEN_ALLOWANCE": "true",
+    // the owner asked to stay signed in: a sign-in lasts 10 years without use (sign out / «الأجهزة» still revoke it)
+    "MEDLEVO_SESSION_DAYS": "3650",
     // web reference images («صور من الويب»): a STRING read by the server's boolish parser ("true"/"1"/"yes"/"on" = on).
     // The server then calls only its fixed allow-list (Wikimedia Commons, NLM Open-i, Google CSE when keyed) over https.
     // Google is optional: `wrangler secret put GOOGLE_CSE_KEY` and set GOOGLE_CSE_ID here (both, or Google stays off).
