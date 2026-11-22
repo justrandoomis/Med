@@ -8,6 +8,7 @@ import type { JobView } from './api';
 import type { SourceScope } from './scope';
 import type { RichText } from './richtext';
 import type { ExplanationRules, ExplanationTemplateKey, SelectionAnchor } from './studybook';
+import type { ChatMessageExtras, ChatThreadExtras } from './chat-api';
 
 // ───────── labels (Arabic UI copy shared by server text and web) ─────────
 export const GENERATED_EXAMPLE_LABEL_AR = 'مثال تعليمي مولد';
@@ -177,7 +178,7 @@ export interface StudyBookCreateResponse {
 }
 
 // ───────── chat (§30) ─────────
-export interface ChatMessageView {
+export interface ChatMessageView extends ChatMessageExtras {
   id: string;
   thread_id: string;
   role: 'owner' | 'assistant' | 'system_notice';
@@ -191,7 +192,7 @@ export interface ChatMessageView {
   created_at: number;
 }
 
-export interface ChatThreadView {
+export interface ChatThreadView extends ChatThreadExtras {
   id: string;
   source_id: string | null;
   version_id: string | null;

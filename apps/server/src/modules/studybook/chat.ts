@@ -9,9 +9,17 @@
 //    source versions}) through the annotations module's own sync handler; it stays labelled generated and is
 //    never a new source of truth
 import {
+  CHAT_EFFORTS,
+  DEFAULT_CHAT_PREFS,
   SOURCE_TYPE_LABELS_AR,
   sourceChipLabel,
   type AnnotationAnchor,
+  type ChatEffort,
+  type ChatKind,
+  type ChatMessageContext,
+  type ChatModelId,
+  type ChatPrefs,
+  type ChatPrefsResponse,
   type ChatMessageView,
   type ChatPostResponse,
   type ChatThreadResponse,
@@ -31,10 +39,10 @@ import { newId } from '../../lib/ids';
 import { resolveScope, VERIFIER_VERSION } from '../evidence/services';
 import { artifactView, storedScope, type AbstainView, type StoredScope } from './artifacts';
 import { anchorRegions, isRealPatientRequest, realPatientAbstain } from './explain';
-import type { AiTextEvent } from '../ai';
+import { collectAiUsage, type AiTextEvent, type AiUsageEntry } from '../ai';
 import { assertAnchorInScope, generateSingleShot, pinnedScope, publishAbstention, requireAi, type ArtifactBase, type SingleShotInput } from './generate';
 import { GENERATOR_VERSION, resolveRules } from './rules';
-import type { messageCreateSchema, saveNoteSchema, threadCreateSchema } from './schema';
+import type { chatPrefsSchema, messageCreateSchema, saveNoteSchema, threadCreateSchema, threadPatchSchema } from './schema';
 import { termsForTexts } from './terms';
 import { labelParagraph, paragraphOf, richText, shorten, stripClaims } from './text';
 import { sha256 } from '../../lib/hash';
@@ -54,6 +62,8 @@ interface ThreadRow {
   resolved_scope_json: string | null;
   scope_hash: string | null;
   archived_at: number | null;
+  kind: string;
+  deleted_at: number | null;
 }
 
 interface MessageRow {
@@ -69,6 +79,13 @@ interface MessageRow {
   reply_to_id: string | null;
   detail_json: string | null;
   updated_at: number | null;
+  model: string | null;
+  effort: string | null;
+  page_indexes_json: string | null;
+  context_json: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cost_usd: number | null;
 }
 
 const MSG = {
@@ -78,12 +95,23 @@ const MSG = {
   messageNotFound: 'الرسالة المطلوبة غير موجودة.',
   notSavable: 'تُحفظ كملاحظة الإجابات المكتملة فقط (لا المسودات ولا الامتناعات).',
   noteRejected: 'تعذر حفظ الملاحظة.',
+  replaceNotLast: 'يمكن تعديل آخر سؤال في المحادثة فقط (أو إعادة توليد آخر إجابة).',
+  contextOutside: 'الصفحة أو التحديد المرفق ليس من نسخة المحاضرة التي بُنيت عليها هذه المحادثة.',
 };
 
+/** a thread the owner deleted is gone for every read and write (its messages stay for notes saved from them) */
 function threadRow(ctx: AppContext, id: string): ThreadRow {
   const t = ctx.db.get<ThreadRow>('SELECT * FROM contextual_thread WHERE id = ?', [id]);
-  if (!t) throw new AppError('NOT_FOUND', MSG.notFound, 404, { thread_id: id });
+  if (!t || t.deleted_at !== null) throw new AppError('NOT_FOUND', MSG.notFound, 404, { thread_id: id });
   return t;
+}
+
+/** 0-based page indexes of page ids (unknown ids dropped), sorted and unique. */
+function pageIndexesOf(ctx: AppContext, pageIds: Array<string | null | undefined>): number[] {
+  const ids = [...new Set(pageIds.filter((x): x is string => !!x))];
+  if (!ids.length) return [];
+  const rows = ctx.db.all<{ page_index: number }>(`SELECT page_index FROM source_page WHERE id IN (${ids.map(() => '?').join(',')})`, ids);
+  return [...new Set(rows.map((r) => r.page_index))].sort((a, b) => a - b);
 }
 
 function threadView(ctx: AppContext, t: ThreadRow): ChatThreadView {
@@ -104,6 +132,8 @@ function threadView(ctx: AppContext, t: ThreadRow): ChatThreadView {
     updated_at: t.updated_at,
     message_count: stats.n,
     last_message_preview: last ? shorten(richTextToPlain(fromJson<RichText>(last.content_json)), 140) || null : null,
+    kind: (t.kind as ChatKind) ?? 'chat',
+    source_title: t.source_id ? (ctx.db.get<{ title: string }>('SELECT title FROM source WHERE id = ?', [t.source_id])?.title ?? null) : null,
   };
 }
 
@@ -115,7 +145,7 @@ function threadView(ctx: AppContext, t: ThreadRow): ChatThreadView {
 const STALE_DRAFT_MS = 30 * 60 * 1000;
 
 function messageView(ctx: AppContext, m: MessageRow): ChatMessageView {
-  const detail = fromJson<{ abstain?: AbstainView }>(m.detail_json);
+  const detail = fromJson<{ abstain?: AbstainView; error?: { code: string; message: string } }>(m.detail_json);
   const pending = m.role === 'assistant' && (m.status === 'draft' || m.status === 'verifying');
   if (pending && ctx.clock.now() - (m.updated_at ?? m.created_at) > STALE_DRAFT_MS) m = { ...m, status: 'rejected' };
   const settled = m.status === 'final' || m.status === 'abstained';
@@ -139,6 +169,12 @@ function messageView(ctx: AppContext, m: MessageRow): ChatMessageView {
     abstain: detail?.abstain ?? artifact?.abstain ?? null,
     reply_to_id: m.reply_to_id,
     created_at: m.created_at,
+    model: m.model,
+    effort: (m.effort as ChatEffort | null) ?? null,
+    page_indexes: fromJson<number[]>(m.page_indexes_json) ?? [],
+    context: fromJson<ChatMessageContext>(m.context_json),
+    usage: m.role === 'assistant' && settled && (m.input_tokens !== null || m.cost_usd !== null) ? { input_tokens: m.input_tokens, output_tokens: m.output_tokens, cost_usd: m.cost_usd } : null,
+    error: m.status === 'rejected' ? (detail?.error ?? null) : null,
   };
 }
 
@@ -162,10 +198,12 @@ export function createThread(ctx: AppContext, body: z.infer<typeof threadCreateS
   const versionId = anchor?.version_id ?? (sourceId ? (scope.versionBySource[sourceId] ?? null) : null);
   const now = ctx.clock.now();
   const id = newId(now);
-  const title = body.title?.trim() || (anchor?.quote?.exact ? `حول: ${shorten(anchor.quote.exact, 60)}` : 'محادثة حول هذه الصفحة');
+  const kind: ChatKind = body.kind ?? 'chat';
+  // a conversation not bound to a page / selection is named after its first question (postMessage) — null until then
+  const title = body.title?.trim() || (anchor?.quote?.exact ? `حول: ${shorten(anchor.quote.exact, 60)}` : anchor?.page_id ? 'محادثة حول هذه الصفحة' : null);
   ctx.db.run(
-    `INSERT INTO contextual_thread (id, source_id, version_id, anchor_json, scope_json, style, title, created_at, updated_at, page_id, socratic, resolved_scope_json, scope_hash)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO contextual_thread (id, source_id, version_id, anchor_json, scope_json, style, title, created_at, updated_at, page_id, socratic, resolved_scope_json, scope_hash, kind)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       sourceId,
@@ -180,14 +218,23 @@ export function createThread(ctx: AppContext, body: z.infer<typeof threadCreateS
       body.socratic ? 1 : 0,
       toJson(storedScope(scope)),
       scope.hash,
+      kind,
     ],
   );
   return { thread: threadView(ctx, threadRow(ctx, id)), messages: [] };
 }
 
-export function listThreads(ctx: AppContext, q: { source_id?: string; page_id?: string; limit?: number }): ChatThreadView[] {
-  const where = ['archived_at IS NULL'];
+export function listThreads(ctx: AppContext, q: { source_id?: string; page_id?: string; limit?: number; scope?: 'all' | 'global'; q?: string }): ChatThreadView[] {
+  const where = ['archived_at IS NULL', 'deleted_at IS NULL'];
   const params: unknown[] = [];
+  if (q.scope === 'global') where.push('source_id IS NULL');
+  const needle = q.q?.trim();
+  if (needle) {
+    // title or one of the owner's questions (plain substring; LIKE wildcards in the needle are escaped)
+    const like = `%${needle.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    where.push(`(title LIKE ? ESCAPE '\\' OR id IN (SELECT thread_id FROM message WHERE role = 'owner' AND content_json LIKE ? ESCAPE '\\'))`);
+    params.push(like, like);
+  }
   if (q.source_id) {
     where.push('source_id = ?');
     params.push(q.source_id);
@@ -212,16 +259,66 @@ export function archiveThread(ctx: AppContext, id: string): ChatThreadView {
   return threadView(ctx, threadRow(ctx, id));
 }
 
-function insertMessage(ctx: AppContext, m: Omit<MessageRow, 'created_at' | 'updated_at'>): void {
+export function renameThread(ctx: AppContext, id: string, body: z.infer<typeof threadPatchSchema>): ChatThreadView {
+  threadRow(ctx, id);
+  ctx.db.run('UPDATE contextual_thread SET title = ?, updated_at = ? WHERE id = ?', [body.title.trim(), ctx.clock.now(), id]);
+  return threadView(ctx, threadRow(ctx, id));
+}
+
+/** Deletes a conversation for the owner: gone from lists, reads and search; messages stay only for notes saved from them. */
+export function deleteThread(ctx: AppContext, id: string): { deleted: true } {
+  threadRow(ctx, id);
+  ctx.db.tx(() => {
+    ctx.db.run('UPDATE contextual_thread SET deleted_at = ?, updated_at = ? WHERE id = ?', [ctx.clock.now(), ctx.clock.now(), id]);
+    ctx.db.run(`DELETE FROM owner_content_fts WHERE entity_type = 'message' AND entity_id IN (SELECT id FROM message WHERE thread_id = ?)`, [id]);
+  });
+  return { deleted: true };
+}
+
+// ───────── remembered chat preferences (one row in this user's own vault) ─────────
+export function chatPrefs(ctx: AppContext): ChatPrefsResponse {
+  const r = ctx.db.get<{ model: string | null; effort: string | null; auto_explain: number; sync_pages: number }>(`SELECT model, effort, auto_explain, sync_pages FROM chat_preference WHERE id = 'owner'`);
+  const available = ctx.ai.selectableModels() as ChatModelId[];
+  const prefs: ChatPrefs = r
+    ? {
+        // a remembered model this server can no longer serve falls back to the default (never sent, never a refusal loop)
+        model: r.model && available.includes(r.model as ChatModelId) ? (r.model as ChatModelId) : null,
+        effort: r.effort && (CHAT_EFFORTS as readonly string[]).includes(r.effort) ? (r.effort as ChatEffort) : null,
+        auto_explain: r.auto_explain === 1,
+        sync_pages: r.sync_pages === 1,
+      }
+    : { ...DEFAULT_CHAT_PREFS };
+  return { prefs, defaults: ctx.ai.taskDefaults('chat'), available_models: available };
+}
+
+export function saveChatPrefs(ctx: AppContext, patch: z.infer<typeof chatPrefsSchema>): ChatPrefsResponse {
+  const cur = chatPrefs(ctx).prefs;
+  const next: ChatPrefs = { ...cur, ...patch };
+  ctx.db.run(
+    `INSERT INTO chat_preference (id, model, effort, auto_explain, sync_pages, updated_at) VALUES ('owner', ?, ?, ?, ?, ?)
+     ON CONFLICT (id) DO UPDATE SET model = excluded.model, effort = excluded.effort, auto_explain = excluded.auto_explain, sync_pages = excluded.sync_pages, updated_at = excluded.updated_at`,
+    [next.model, next.effort, next.auto_explain ? 1 : 0, next.sync_pages ? 1 : 0, ctx.clock.now()],
+  );
+  return chatPrefs(ctx);
+}
+
+type MessageInsert = Omit<MessageRow, 'created_at' | 'updated_at' | 'model' | 'effort' | 'page_indexes_json' | 'context_json' | 'input_tokens' | 'output_tokens' | 'cost_usd'> &
+  Partial<Pick<MessageRow, 'model' | 'effort' | 'page_indexes_json' | 'context_json'>>;
+
+function insertMessage(ctx: AppContext, m: MessageInsert): void {
   const now = ctx.clock.now();
   ctx.db.run(
-    `INSERT INTO message (id, thread_id, role, content_json, status, abstain_reason, artifact_id, created_at, style, reply_to_id, detail_json, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [m.id, m.thread_id, m.role, m.content_json, m.status, m.abstain_reason, m.artifact_id, now, m.style, m.reply_to_id, m.detail_json, now],
+    `INSERT INTO message (id, thread_id, role, content_json, status, abstain_reason, artifact_id, created_at, style, reply_to_id, detail_json, updated_at, model, effort, page_indexes_json, context_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [m.id, m.thread_id, m.role, m.content_json, m.status, m.abstain_reason, m.artifact_id, now, m.style, m.reply_to_id, m.detail_json, now, m.model ?? null, m.effort ?? null, m.page_indexes_json ?? null, m.context_json ?? null],
   );
 }
 
-function setMessage(ctx: AppContext, id: string, patch: Partial<Pick<MessageRow, 'status' | 'content_json' | 'abstain_reason' | 'artifact_id' | 'detail_json'>>): void {
+function setMessage(
+  ctx: AppContext,
+  id: string,
+  patch: Partial<Pick<MessageRow, 'status' | 'content_json' | 'abstain_reason' | 'artifact_id' | 'detail_json' | 'model' | 'page_indexes_json' | 'input_tokens' | 'output_tokens' | 'cost_usd'>>,
+): void {
   const sets: string[] = [];
   const params: unknown[] = [];
   for (const [k, v] of Object.entries(patch)) {
@@ -249,6 +346,17 @@ function answerRichText(a: StudyArtifactView): RichText {
 const CHAT_TASK =
   'Answer the OWNER QUESTION about the selected passage (if any) using only the evidence excerpts. Previous turns of THIS conversation are given as generated, non-evidence context: do not treat earlier answers as evidence, and do not carry assumptions from other lectures.';
 
+/** (chat UX) what each conversation kind adds to the task (the evidence rules stay those of CHAT_TASK). */
+const KIND_TASK: Record<ChatKind, string | null> = {
+  chat: null,
+  explain:
+    'The learner is reading the lecture page by page: explain the ATTACHED PAGE (or selection) in order, as a teacher would, covering every point on it that the evidence supports. Use headings and lists where they help.',
+  question:
+    'The learner needs help with a QUESTION (e.g. an exam MCQ): explain the concept it tests and why each option is right or wrong, from the evidence only. If the learner asks to be quizzed, ask one question at a time and wait.',
+  compare:
+    'The learner wants a COMPARISON: answer with a comparison_table block (one row per feature, one column per item compared), each cell a cited sentence, then a short paragraph with the key difference.',
+};
+
 export interface PostMessageOptions {
   signal?: AbortSignal;
   /** (Round 7 H4, §30) streaming endpoint hooks: the unverified draft text and the pipeline phase */
@@ -258,27 +366,133 @@ export interface PostMessageOptions {
 
 const CANCELLED_AR = 'أوقفتَ الإجابة قبل اكتمالها؛ لم يُحفظ منها شيء ولم يُعرض منها ما لم يُتحقق منه.';
 
+/**
+ * (chat UX) The page / selection attached to one message, checked against the thread's lecture version (a context can
+ * never widen the Source Lock: its version must be one the thread's pinned scope resolved to).
+ */
+function checkedContext(ctx: AppContext, t: ThreadRow, scope: { versionIds: string[] }, c: ChatMessageContext | null | undefined): { ctx: ChatMessageContext | null; versionId: string | null } {
+  if (!c || (!c.page_id && !c.region_ids?.length && !c.quote?.trim())) return { ctx: null, versionId: null };
+  let versionId: string | null = null;
+  if (c.page_id) {
+    const p = ctx.db.get<{ version_id: string }>('SELECT version_id FROM source_page WHERE id = ?', [c.page_id]);
+    if (!p || (t.version_id ? p.version_id !== t.version_id : !scope.versionIds.includes(p.version_id))) throw new AppError('OUT_OF_SCOPE', MSG.contextOutside, 409, { page_id: c.page_id });
+    versionId = p.version_id;
+  }
+  if (c.region_ids?.length) {
+    const v = versionId ?? t.version_id;
+    if (!v) throw new AppError('OUT_OF_SCOPE', MSG.contextOutside, 409);
+    anchorRegions(ctx, { source_id: t.source_id ?? '', version_id: v, page_id: c.page_id ?? null, region_ids: c.region_ids });
+    versionId = v;
+  }
+  return { ctx: { page_id: c.page_id ?? null, region_ids: c.region_ids ?? [], quote: c.quote?.trim() ? c.quote.trim().slice(0, 6000) : null }, versionId };
+}
+
+/** Pages of THIS lecture version an answer explains or cites (block page tags + cited evidence pages). */
+function answerPages(ctx: AppContext, t: ThreadRow, a: StudyArtifactView, contextPages: number[]): number[] {
+  const set = new Set<number>(contextPages);
+  for (const b of a.blocks) for (const i of b.meta?.page_indexes ?? []) set.add(i);
+  const blockPageIds = a.blocks.flatMap((b) => b.meta?.page_ids ?? []);
+  for (const i of pageIndexesOf(ctx, blockPageIds)) set.add(i);
+  for (const c of Object.values(a.claims)) {
+    for (const ci of c.citations) {
+      const e = ci.evidence;
+      if (e.page_index !== null && (!t.version_id || e.version_id === t.version_id)) set.add(e.page_index);
+    }
+  }
+  return [...set].sort((x, y) => x - y);
+}
+
+function sumUsage(usage: AiUsageEntry[]): { input: number | null; output: number | null; cost: number | null } {
+  if (!usage.length) return { input: null, output: null, cost: null };
+  const n = (v: number | null) => v ?? 0;
+  return {
+    input: usage.reduce((s, u) => s + n(u.inputTokens), 0),
+    output: usage.reduce((s, u) => s + n(u.outputTokens), 0),
+    cost: Math.round(usage.reduce((s, u) => s + u.costUsd, 0) * 1e8) / 1e8,
+  };
+}
+
+/**
+ * (chat UX) edit the last question / regenerate its answer: the owner message `fromId` (the LAST owner message of the
+ * thread) and everything after it are removed before the new turn is written. Only the last turn can be replaced, so
+ * the history the next answer sees is always the history the owner sees.
+ */
+function dropLastTurn(ctx: AppContext, t: ThreadRow, fromId: string): void {
+  const m = ctx.db.get<MessageRow>('SELECT * FROM message WHERE id = ? AND thread_id = ?', [fromId, t.id]);
+  if (!m || m.role !== 'owner') throw new AppError('NOT_FOUND', MSG.messageNotFound, 404, { message_id: fromId });
+  const lastOwner = ctx.db.get<{ id: string }>(`SELECT id FROM message WHERE thread_id = ? AND role = 'owner' ORDER BY created_at DESC, id DESC LIMIT 1`, [t.id]);
+  if (lastOwner?.id !== fromId) throw new AppError('CONFLICT', MSG.replaceNotLast, 409, { message_id: fromId });
+  const doomed = ctx.db.all<{ id: string }>('SELECT id FROM message WHERE thread_id = ? AND (created_at > ? OR (created_at = ? AND id >= ?))', [t.id, m.created_at, m.created_at, m.id]).map((r) => r.id);
+  if (!doomed.length) return;
+  const qs = doomed.map(() => '?').join(',');
+  ctx.db.run(`DELETE FROM owner_content_fts WHERE entity_type = 'message' AND entity_id IN (${qs})`, doomed);
+  ctx.db.run(`DELETE FROM message WHERE id IN (${qs})`, doomed);
+}
+
+/**
+ * (chat UX) a chosen model must be one the configured provider offers (or its default): checked BEFORE anything is
+ * written or retrieved, so a refused model never leaves a half turn (the orchestrator enforces it again on the call).
+ */
+export function assertChatModel(ctx: AppContext, model: string | null | undefined): void {
+  if (!model || model === ctx.ai.taskDefaults('chat').model || ctx.ai.selectableModels().includes(model)) return;
+  throw new AppError('AI_NOT_CONFIGURED', 'النموذج المختار غير متاح على هذا الخادم. اختر نموذجًا آخر من القائمة أو اترك الاختيار الافتراضي.', 409, { model, reason: 'model_not_available' });
+}
+
 export async function postMessage(ctx: AppContext, threadId: string, body: z.infer<typeof messageCreateSchema>, opts: PostMessageOptions = {}): Promise<ChatPostResponse> {
   const t = threadRow(ctx, threadId);
   if (t.archived_at) throw new AppError('CONFLICT', MSG.archived, 409);
   const scope = resolveScope(ctx, fromJson<SourceScope>(t.scope_json));
   if (t.scope_hash && scope.hash !== t.scope_hash) throw new AppError('OUT_OF_SCOPE', MSG.scopeChanged, 409, { thread_id: t.id });
   const style = (body.style ?? t.style) as ChatThreadView['style'];
+  const kind: ChatKind = body.kind ?? ((t.kind as ChatKind) || 'chat');
   const anchor = fromJson<SelectionAnchor>(t.anchor_json);
+  const attached = checkedContext(ctx, t, scope, body.context);
   const rules = resolveRules(ctx, { sourceId: t.source_id, overrides: { socratic: t.socratic === 1 } });
   const realPatient = isRealPatientRequest(body.text);
   if (!realPatient) requireAi(ctx, 'chat');
+  assertChatModel(ctx, body.model);
+  if (body.replace_from) ctx.db.tx(() => dropLastTurn(ctx, t, body.replace_from!));
 
   // history BEFORE this question (this thread only)
   const history = ctx.db
     .all<MessageRow>(`SELECT * FROM message WHERE thread_id = ? AND status IN ('final','abstained') ORDER BY created_at DESC, id DESC LIMIT 6`, [t.id])
     .reverse();
 
+  const contextPages = pageIndexesOf(ctx, [attached.ctx?.page_id ?? null]);
   const ownerId = newId(ctx.clock.now());
   const answerId = newId(ctx.clock.now());
   ctx.db.tx(() => {
-    insertMessage(ctx, { id: ownerId, thread_id: t.id, role: 'owner', content_json: toJson(richTextFromPlain(body.text))!, status: 'final', abstain_reason: null, artifact_id: null, style, reply_to_id: null, detail_json: null });
-    insertMessage(ctx, { id: answerId, thread_id: t.id, role: 'assistant', content_json: toJson({ v: 1, paragraphs: [] })!, status: 'draft', abstain_reason: null, artifact_id: null, style, reply_to_id: ownerId, detail_json: null });
+    insertMessage(ctx, {
+      id: ownerId,
+      thread_id: t.id,
+      role: 'owner',
+      content_json: toJson(richTextFromPlain(body.text))!,
+      status: 'final',
+      abstain_reason: null,
+      artifact_id: null,
+      style,
+      reply_to_id: null,
+      detail_json: null,
+      model: body.model ?? null,
+      effort: body.effort ?? null,
+      page_indexes_json: toJson(contextPages),
+      context_json: attached.ctx ? toJson(attached.ctx) : null,
+    });
+    insertMessage(ctx, {
+      id: answerId,
+      thread_id: t.id,
+      role: 'assistant',
+      content_json: toJson({ v: 1, paragraphs: [] })!,
+      status: 'draft',
+      abstain_reason: null,
+      artifact_id: null,
+      style,
+      reply_to_id: ownerId,
+      detail_json: null,
+      effort: body.effort ?? null,
+    });
+    // a conversation is named after its first question (the owner can rename it)
+    if (!t.title) ctx.db.run('UPDATE contextual_thread SET title = ? WHERE id = ? AND title IS NULL', [shorten(body.text.replace(/\s+/g, ' '), 70), t.id]);
     ctx.db.run('UPDATE contextual_thread SET updated_at = ? WHERE id = ?', [ctx.clock.now(), t.id]);
   });
 
@@ -290,16 +504,17 @@ export async function postMessage(ctx: AppContext, threadId: string, body: z.inf
     rules,
     // chat answers are conversational: keyed per message (never served to another question)
     cacheKey: sha256(`chat|${t.id}|${answerId}|${GENERATOR_VERSION}|${VERIFIER_VERSION}`),
-    params: { thread_id: t.id, message_id: answerId, style, socratic: t.socratic === 1, level: rules.level, language: 'ar' },
+    params: { thread_id: t.id, message_id: answerId, style, socratic: t.socratic === 1, level: rules.level, language: 'ar', kind, model: body.model ?? null, effort: body.effort ?? null },
     anchor,
   };
 
   let artifact: StudyArtifactView;
+  let usage: AiUsageEntry[] = [];
   try {
     if (realPatient) {
       artifact = publishAbstention(ctx, base, realPatientAbstain());
     } else {
-      const selection = anchor?.quote?.exact?.trim() ?? '';
+      const selection = attached.ctx?.quote ?? anchor?.quote?.exact?.trim() ?? '';
       const leading = [];
       if (selection) leading.push({ label: 'SELECTION (text the learner selected in the source)', text: selection.slice(0, 6000) });
       if (history.length) {
@@ -308,32 +523,47 @@ export async function postMessage(ctx: AppContext, threadId: string, body: z.inf
           text: history.map((h) => `${h.role === 'owner' ? 'Learner' : 'Previous answer (generated)'}: ${richTextToPlain(fromJson<RichText>(h.content_json)).slice(0, 1500)}`).join('\n\n'),
         });
       }
+      // the message's own context (the page being read now) wins over the thread's anchor
+      const retrievalAnchor = attached.ctx?.region_ids?.length
+        ? { region_ids: attached.ctx.region_ids }
+        : attached.ctx?.page_id
+          ? { page_id: attached.ctx.page_id }
+          : anchor?.region_ids?.length
+            ? { region_ids: anchor.region_ids }
+            : anchor?.page_id
+              ? { page_id: anchor.page_id }
+              : null;
+      const kindTask = KIND_TASK[kind];
       const input: SingleShotInput = {
         ...base,
         retrieval: {
           query: [body.text, selection].join(' ').slice(0, 2000),
-          anchor: anchor?.region_ids?.length ? { region_ids: anchor.region_ids } : anchor?.page_id ? { page_id: anchor.page_id } : null,
+          anchor: retrievalAnchor,
           k: 8,
           purpose: 'lecture_explanation',
         },
         call: {
           task: 'chat',
           style,
-          taskText: CHAT_TASK,
+          taskText: kindTask ? `${CHAT_TASK} ${kindTask}` : CHAT_TASK,
           ownerInstruction: body.text,
           socratic: t.socratic === 1,
           leading,
           terms: termsForTexts(ctx, [body.text, selection]),
           signal: opts.signal,
           onText: opts.onText,
+          model: body.model ?? null,
+          effort: body.effort ?? null,
         },
-        defaultRegionIds: anchor?.region_ids ?? [],
+        defaultRegionIds: attached.ctx?.region_ids?.length ? attached.ctx.region_ids : (anchor?.region_ids ?? []),
         onPhase: (phase) => {
           if (phase === 'verifying') setMessage(ctx, answerId, { status: 'verifying' });
           opts.onPhase?.(phase);
         },
       };
-      artifact = await generateSingleShot(ctx, input);
+      const run = await collectAiUsage(() => generateSingleShot(ctx, input));
+      artifact = run.value;
+      usage = run.usage;
     }
   } catch (e) {
     const err = e as { code?: string; messageAr?: string };
@@ -344,6 +574,7 @@ export async function postMessage(ctx: AppContext, threadId: string, body: z.inf
   }
 
   const rt = answerRichText(artifact);
+  const spent = sumUsage(usage);
   ctx.db.tx(() => {
     setMessage(ctx, answerId, {
       status: artifact.abstain ? 'abstained' : 'final',
@@ -351,6 +582,12 @@ export async function postMessage(ctx: AppContext, threadId: string, body: z.inf
       abstain_reason: artifact.abstain?.reason ?? null,
       artifact_id: artifact.id,
       detail_json: toJson({ abstain: artifact.abstain ?? undefined, removed: artifact.removed.length }),
+      // the model that actually served the generation (the verifier is recorded on the artifact's claims)
+      model: artifact.model ?? usage.find((u) => u.task === 'chat' && u.status === 'ok')?.model ?? null,
+      page_indexes_json: toJson(artifact.abstain ? contextPages : answerPages(ctx, t, artifact, contextPages)),
+      input_tokens: spent.input,
+      output_tokens: spent.output,
+      cost_usd: spent.cost,
     });
     if (!artifact.abstain) indexMessage(ctx, answerId, rt);
   });

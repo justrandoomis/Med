@@ -20,7 +20,7 @@ import { toJson } from '../../db/db';
 import { AppError } from '../../lib/errors';
 import { newId } from '../../lib/ids';
 import type { AiTextEvent } from '../ai';
-import type { ProviderImage, UntrustedBlock } from '../ai/types';
+import type { AiEffort, ProviderImage, UntrustedBlock } from '../ai/types';
 import {
   abstainFor,
   packFromCandidates,
@@ -194,6 +194,9 @@ export interface ModelCallSpec {
   terms?: Array<{ term_en: string; preferred_ar: string | null; abbreviation: string | null }>;
   /** (Round 7 H4, §30) the model's raw text as it streams — an unverified draft for a streaming endpoint */
   onText?: (e: AiTextEvent) => void;
+  /** (chat UX) the owner's model / effort for this generation call (validated by the orchestrator's allow-list) */
+  model?: string | null;
+  effort?: AiEffort | null;
 }
 
 /** One model call with the GeneratedContent contract. */
@@ -223,6 +226,8 @@ export async function callModel(ctx: AppContext, scope: ScopeReport, rules: Expl
     signal: m.signal,
     timeoutMs: m.timeoutMs ?? 240_000,
     ...(m.onText ? { onText: m.onText } : {}),
+    ...(m.model ? { model: m.model } : {}),
+    ...(m.effort ? { effort: m.effort } : {}),
   });
   return { content: res.output, model: res.model };
 }

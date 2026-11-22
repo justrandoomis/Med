@@ -8,10 +8,10 @@ import type { ModuleOptions } from '../../context';
 import { fromJson } from '../../db/db';
 import { parseQuery } from '../../lib/http';
 
-export { AiOrchestrator, AI_RULES_VERSION, extractJson, type AiTextEvent, type GenerateStructuredRequest, type GenerateStructuredResult } from './orchestrator';
+export { AiOrchestrator, AI_RULES_VERSION, collectAiUsage, extractJson, type AiUsageEntry, type AiTextEvent, type GenerateStructuredRequest, type GenerateStructuredResult } from './orchestrator';
 export { createProviderFromConfig } from './providers';
 export { buildPrompt, UNTRUSTED_POLICY } from './prompt';
-export type { AiProvider, ProviderRequest, ProviderResponse, ProviderUsage, ProviderImage, UntrustedBlock } from './types';
+export type { AiEffort, AiProvider, ProviderRequest, ProviderResponse, ProviderUsage, ProviderImage, UntrustedBlock } from './types';
 
 const usageQuery = z.object({ limit: z.coerce.number().int().min(1).max(200).default(50) });
 

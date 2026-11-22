@@ -66,7 +66,7 @@ export class ScriptedAi implements AiProvider {
 
   async generateStructured(req: ProviderRequest): Promise<ProviderResponse> {
     this.calls.push(req);
-    const base = { model: this.model, usage: this.usage, requestRef: `fake-${this.calls.length}` };
+    const base = { model: req.model || this.model, usage: this.usage, requestRef: `fake-${this.calls.length}` };
     if (req.task === 'verify_support' && !this.queues.get('verify_support')?.length && !this.permanent.has('verify_support')) {
       return {
         ...base,

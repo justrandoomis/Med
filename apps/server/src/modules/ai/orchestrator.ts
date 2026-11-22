@@ -7,6 +7,7 @@
 //    (./budget.ts); user #1 keeps today's whole budget, other accounts start at 0 until the platform admin sets a cap
 //  * output validated with the zod schema; one bounded repair attempt, then SCHEMA_REJECTED
 //  * every provider call writes a usage_record (ok / error / schema_rejected / budget_blocked) — no prompt text
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { FastifyBaseLogger } from 'fastify';
 import { z } from 'zod';
 import { AI_TASKS, type AiBudgetStatus, type AiStatusResponse, type AiTask, type AiTaskStatus, type ResolvedScope } from '@medlevo/shared';
@@ -19,7 +20,7 @@ import { isNoTenantBound } from '../../system/binding';
 import type { AiBudgetService } from './budget';
 import type { AiConsentGate } from './consent';
 import { buildPrompt, estimateTokens } from './prompt';
-import { ProviderError, type AiProvider, type ProviderErrorKind, type ProviderImage, type ProviderResponse, type UntrustedBlock } from './types';
+import { ProviderError, type AiEffort, type AiProvider, type ProviderErrorKind, type ProviderImage, type ProviderResponse, type UntrustedBlock } from './types';
 
 /** Version of the explanation/verification rules; recorded with every call and in cache keys. */
 export const AI_RULES_VERSION = 'rules-2026.10-1';
@@ -48,6 +49,32 @@ export interface GenerateStructuredRequest<T> {
    * the caller labels it «مسودة لم تُتحقق بعد» and replaces it with the validated, verified result.
    */
   onText?: (e: AiTextEvent) => void;
+  /**
+   * (chat UX) the owner's choice for THIS call: a model from the provider's `selectableModels` allow-list (any other id
+   * is refused (AI_NOT_CONFIGURED, details.reason model_not_available)) and an effort level. Absent → the task's configured model / effort. The budget
+   * guard prices the worst case with the chosen model and effort.
+   */
+  model?: string | null;
+  effort?: AiEffort | null;
+}
+
+/** (chat UX) usage records written while a collector is active (e.g. one chat answer: generation + verification). */
+export interface AiUsageEntry {
+  usageId: string;
+  task: AiTask;
+  model: string;
+  status: UsageStatus;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  costUsd: number;
+}
+const usageCollector = new AsyncLocalStorage<AiUsageEntry[]>();
+
+/** Runs `fn`; every usage record any AI call inside it writes (same async context) is appended to the returned list. */
+export async function collectAiUsage<T>(fn: () => Promise<T>): Promise<{ value: T; usage: AiUsageEntry[] }> {
+  const usage: AiUsageEntry[] = [];
+  const value = await usageCollector.run(usage, fn);
+  return { value, usage };
 }
 
 export type AiTextEvent = { type: 'delta'; attempt: 1 | 2; text: string } | { type: 'restart'; attempt: 2 };
@@ -73,6 +100,7 @@ type UsageStatus = 'ok' | 'error' | 'schema_rejected' | 'budget_blocked';
 const MSG = {
   notConfigured: 'ميزات الذكاء الاصطناعي غير مفعّلة: لم يُضبط مفتاح مزود على الخادم (ANTHROPIC_API_KEY). باقي الميزات الحتمية تعمل دونه.',
   unsupported: 'مزود الذكاء الاصطناعي الحالي لا يدعم هذه المهمة.',
+  modelNotAvailable: 'النموذج المختار غير متاح على هذا الخادم. اختر نموذجًا آخر من القائمة أو اترك الاختيار الافتراضي.',
   providerError: 'تعذر الحصول على رد من مزود الذكاء الاصطناعي. أعد المحاولة بعد قليل.',
   schemaRejected: 'رُفضت نتيجة الذكاء الاصطناعي لأنها لم تطابق البنية المطلوبة حتى بعد محاولة تصحيح واحدة. لم يُحفظ شيء منها.',
   outOfScope: 'طُلب استخدام مصدر خارج نطاق المصادر المحدد (Source Lock). وسّع النطاق صراحةً إن أردت.',
@@ -264,7 +292,19 @@ export class AiOrchestrator {
         now,
       ],
     );
+    usageCollector.getStore()?.push({ usageId: id, task: u.task, model: u.model, status: u.status, inputTokens: u.inputTokens ?? null, outputTokens: u.outputTokens ?? null, costUsd: u.cost ?? 0 });
     return id;
+  }
+
+  /** (chat UX) models the owner may pick now (the provider's allow-list), [] without a provider. */
+  selectableModels(): string[] {
+    return [...(this.provider?.selectableModels ?? [])];
+  }
+
+  /** (chat UX) the configured model and effort of a task (what runs when the owner picks nothing). */
+  taskDefaults(task: AiTask): { model: string | null; effort: AiEffort } {
+    const p = this.provider;
+    return { model: p && p.supports(task) ? p.modelFor(task) : null, effort: p?.effortFor?.(task) ?? 'high' };
   }
 
   async generateStructured<T>(req: GenerateStructuredRequest<T>): Promise<GenerateStructuredResult<T>> {
@@ -280,7 +320,12 @@ export class AiOrchestrator {
     this.consent?.assert(provider);
 
     const rulesVersion = req.rulesVersion ?? AI_RULES_VERSION;
-    const model = provider.modelFor(req.task);
+    let model = provider.modelFor(req.task);
+    if (req.model && req.model !== model) {
+      if (!(provider.selectableModels ?? []).includes(req.model)) throw new AppError('AI_NOT_CONFIGURED', MSG.modelNotAvailable, 409, { model: req.model, reason: 'model_not_available' });
+      model = req.model;
+    }
+    const effort = req.effort ?? undefined;
     const maxOutputTokens = Math.min(Math.max(req.maxOutputTokens ?? 4096, 16), 64_000);
     const built = buildPrompt(req.system, req.input, req.instruction);
     let jsonSchema: Record<string, unknown> | undefined;
@@ -292,7 +337,7 @@ export class AiOrchestrator {
     const base = { task: req.task, provider: provider.name, sourceVersionIds: req.sourceVersionIds, rulesVersion, jobId: req.jobId ?? null };
 
     // budget guard (worst case: full output length, incl. any reasoning headroom the provider adds)
-    const ceiling = provider.outputTokenCeiling ? provider.outputTokenCeiling(req.task, maxOutputTokens) : maxOutputTokens;
+    const ceiling = provider.outputTokenCeiling ? provider.outputTokenCeiling(req.task, maxOutputTokens, effort) : maxOutputTokens;
     const worstCase = provider.estimateCostUsd(model, { inputTokens: estimateTokens(built.system + built.prompt), outputTokens: Math.max(ceiling, maxOutputTokens) });
     /**
      * P1-T1 step 2: an atomic reservation of the worst case in the system ledger (the charged allowance and the
@@ -334,6 +379,7 @@ export class AiOrchestrator {
           jsonSchema,
           images: req.images,
           maxOutputTokens,
+          ...(effort ? { effort } : {}),
           signal,
           ...(req.onText ? { onTextDelta: (text: string) => req.onText!({ type: 'delta', attempt, text }) } : {}),
         });

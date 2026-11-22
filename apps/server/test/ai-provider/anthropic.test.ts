@@ -171,6 +171,20 @@ describe('Anthropic adapter — request shaping', () => {
     expect(rec.output_config?.format).toBeUndefined();
     expect(() => toStructuredOutputSchema(z.toJSONSchema(z.object({ m: z.record(z.string(), z.string()) })) as Record<string, unknown>)).toThrow();
   });
+
+  it('(chat UX) the owner’s effort overrides the task effort and sizes the reasoning headroom; the chat models are selectable', () => {
+    const p = new AnthropicProvider({ apiKey: FAKE_KEY });
+    expect(p.selectableModels).toEqual(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']);
+    expect(p.effortFor('chat')).toBe('high');
+    const low = p.buildParams(request({ task: 'chat', model: 'claude-sonnet-5-5', effort: 'low', maxOutputTokens: 6000 }));
+    expect(low.model).toBe('claude-sonnet-5-5');
+    expect(low.output_config?.effort).toBe('low');
+    expect(low.max_tokens).toBe(6000 + 4_000);
+    const max = p.buildParams(request({ task: 'chat', effort: 'max', maxOutputTokens: 6000 }));
+    expect(max.output_config?.effort).toBe('max');
+    expect(max.max_tokens).toBe(6000 + 32_000);
+    expect(p.buildParams(request({ task: 'chat', maxOutputTokens: 6000 })).max_tokens).toBe(6000 + 16_000);
+  });
 });
 
 describe('Anthropic adapter — responses, usage and cost', () => {

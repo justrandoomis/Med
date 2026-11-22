@@ -146,8 +146,8 @@ const asks = (calls: Call[]) => calls.filter((c) => c.method === 'POST' && /\/me
 const created = (calls: Call[]) => calls.filter((c) => c.method === 'POST' && c.url === '/api/studybook/threads').map((c) => (c.body!.scope as SourceScope).mode);
 
 async function askQuestion(text: string) {
-  fireEvent.change(screen.getByLabelText('سؤالك عن هذا الموضع'), { target: { value: text } });
-  fireEvent.click(screen.getByRole('button', { name: 'اسأل' }));
+  fireEvent.change(screen.getByLabelText('رسالتك'), { target: { value: text } });
+  fireEvent.click(screen.getByRole('button', { name: 'أرسل' }));
 }
 
 beforeEach(() => capabilitiesStore.reset(caps()));
@@ -167,7 +167,7 @@ describe('G2 AC-05 — the rail chat follows the visible Source Lock', () => {
         </ToastProvider>
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole('radio', { name: 'سؤال' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'محادثة' })); // (chat UX) the study chat
     expect(railLock()).toContain('المحاضرة فقط');
 
     // 1) Lecture Only: the answer is not in the lecture → abstention with an explicit wider-scope action
@@ -181,7 +181,7 @@ describe('G2 AC-05 — the rail chat follows the visible Source Lock', () => {
     expect(created(calls)).toEqual(['lecture_only', 'lecture_plus_references']);
     await waitFor(() => expect(railLock()).toContain('المحاضرة + المراجع'));
     // the open conversation shows its own lock
-    const head = document.querySelector('.sb-messages .sb-row') as HTMLElement;
+    const head = document.querySelector('.ch-head') as HTMLElement;
     expect(head.querySelector('.ev-scope-badge')?.textContent).toContain('المحاضرة + المراجع');
 
     // 3) the owner narrows the lock back to «المحاضرة فقط» in the picker

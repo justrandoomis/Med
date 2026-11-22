@@ -141,14 +141,17 @@ function server(explain: (body: Record<string, unknown>, n: number) => Response 
   return calls;
 }
 
-function renderTab(doc: SourceDocument, page: SourcePageView) {
-  return render(
+/** (chat UX) the tab opens on the study chat; these tests drive the one-shot tools («شرح سريع») unless told otherwise */
+function renderTab(doc: SourceDocument, page: SourcePageView, o: { chat?: boolean } = {}) {
+  const r = render(
     <MemoryRouter>
       <ToastProvider>
         <ExplainTab doc={doc} page={page} pageIndex={1} online />
       </ToastProvider>
     </MemoryRouter>,
   );
+  if (!o.chat) fireEvent.click(screen.getByRole('radio', { name: 'شرح سريع' }));
+  return r;
 }
 
 beforeEach(() => {
@@ -270,17 +273,17 @@ describe('ExplainTab', () => {
     expect(retry).toMatchObject({ action: 'simplify', anchor: passage, retry_of: { artifact_id: 'A1', strategy: 'analogy' } });
   });
 
-  it('Ask: the composer is disabled with the chat capability’s reason when chat is not configured', async () => {
+  it('Chat: the composer is disabled with the chat capability’s reason when chat is not configured', async () => {
     const c = caps('available');
     c.features['ai.chat'] = { key: 'ai.chat', state: 'requires_configuration', reason_ar: AI_REASON };
     capabilitiesStore.reset(c);
     server(() => json({}));
     const { doc, page } = makeDoc();
-    renderTab(doc, page);
-    fireEvent.click(screen.getByRole('radio', { name: 'سؤال' }));
-    const composer = await screen.findByLabelText('سؤالك عن هذا الموضع');
+    renderTab(doc, page, { chat: true });
+    fireEvent.click(screen.getByRole('radio', { name: 'محادثة' })); // the tab remembers the last mode per lecture
+    const composer = await screen.findByLabelText('رسالتك');
     expect(composer).toHaveProperty('disabled', true);
-    await waitFor(() => expect(screen.getByRole('button', { name: 'اسأل' })).toHaveProperty('disabled', true));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'أرسل' })).toHaveProperty('disabled', true));
     expect(screen.getAllByText(AI_REASON).length).toBeGreaterThan(0);
   });
 });
