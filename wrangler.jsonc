@@ -11,9 +11,13 @@
       "class_name": "MedLevoContainer",
       "image": "./Dockerfile",
       "max_instances": 1,
-      // 1 vCPU / 4 GB RAM / 20 GB disk: OCR, LibreOffice and the restore check of every backup run in this memory;
-      // the disk holds the data, one local archive and a restore during boot
-      "instance_type": { "vcpu": 1, "memory_mib": 4096, "disk_mb": 20000 }
+      // the disk (20 GB) holds the data, one local archive and a restore during boot
+      // 2 vCPU / 8 GB (owner asked for faster upload / open / save: OCR and page renders use both cores)
+      "instance_type": { "vcpu": 2, "memory_mib": 8192, "disk_mb": 20000 },
+      // close to the owner (Iraq): Middle East first, Eastern Europe as the fallback (it was placed in San Jose)
+      "constraints": { "regions": ["ME", "EEUR"] },
+      // the old instance gets time for its final R2 backup on SIGTERM (server: backupNowAndWait, ≤ 4 min)
+      "rollout_active_grace_period": 300
     }
   ],
   "durable_objects": { "bindings": [{ "name": "MEDLEVO", "class_name": "MedLevoContainer" }] },
