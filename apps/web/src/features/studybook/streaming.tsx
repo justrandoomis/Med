@@ -104,7 +104,7 @@ export function reduceStream<T>(v: StreamView, e: StudyStreamEvent<T>): StreamVi
 }
 
 /** The unverified draft: labelled, muted, no chips, announced politely only by its label (not word by word). */
-export function StreamDraft({ view, actions }: { view: StreamView; actions?: ReactNode }) {
+export function StreamDraft({ view, actions, body }: { view: StreamView; actions?: ReactNode; /** (chat UX) the draft drawn another way (markdown); still muted, still without chips */ body?: ReactNode }) {
   return (
     <section className="sb-draft" aria-label={STREAM_DRAFT_LABEL_AR} aria-busy="true">
       <div className="sb-draft__head">
@@ -120,7 +120,7 @@ export function StreamDraft({ view, actions }: { view: StreamView; actions?: Rea
       {view.blocks.length > 0 ? (
         <>
           {view.note && <p className="sb-draft__note">{view.note}</p>}
-          <div className="sb-draft__body">
+          {body ? <div className="sb-draft__body">{body}</div> : <div className="sb-draft__body">
             {view.blocks.map((b, i) =>
               b.kind === 'heading' ? (
                 <BidiText key={i} as="p" className="sb-draft__heading" text={b.sentences.join(' ')} />
@@ -128,7 +128,7 @@ export function StreamDraft({ view, actions }: { view: StreamView; actions?: Rea
                 <BidiText key={i} as="p" className="sb-draft__p" text={b.sentences.join(' ')} />
               ),
             )}
-          </div>
+          </div>}
         </>
       ) : null}
     </section>

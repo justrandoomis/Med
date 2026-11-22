@@ -52,6 +52,7 @@ import { useStudySession, type StudySessionApi } from './session/useStudySession
 import { SecondaryPane, SplitPicker } from './split/SplitPane';
 import { SplitSidePane, type SplitSideKind } from './split/SplitSidePane';
 import { StudyBookPane } from './studybook/StudyBookPane';
+import { ChatDock } from '../studybook/chat/ChatDock';
 import { useStudyBookAvailability } from './studybook/useStudyBook';
 import { useOfflineDownloadAction } from '../offline/OnDevice';
 import { ExternalLinkDialog, LinkTargetDialog } from './notes/NotePageDialogs';
@@ -1052,6 +1053,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
   };
 
   const page = pages[pageIndex] ?? null;
+  const chatDock = panels.phone && railTab === 'explain';
   const backTop = backStack[backStack.length - 1];
   const zoomLabel = zoomPercent(fit === 'width' ? effectiveZoom : zoom);
   const railNode = (
@@ -1071,6 +1073,7 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
         if (panels.phone) setRailOpen(false);
         goToPage(i);
       }}
+      onReaderJump={(i) => goToPage(i)}
       onOpenSplit={(id) => setSplit({ sourceId: id, pageIndex: 0 })}
       splitReason={splitReason}
       online={online}
@@ -1401,9 +1404,13 @@ function Workspace({ doc, decision, session, url, online }: WorkspaceProps) {
             />
           )}
 
-          <Sheet open={panels.rail === 'sheet'} onClose={() => setRailOpen(false)} title="لوحة الدراسة" side="start" width="min(26rem, 92vw)">
+          {/* (chat UX) phone + explain & chat: a non-modal bottom dock, so the page stays visible and follows the chat */}
+          <Sheet open={panels.rail === 'sheet' && !chatDock} onClose={() => setRailOpen(false)} title="لوحة الدراسة" side="start" width="min(26rem, 92vw)">
             {railNode}
           </Sheet>
+          <ChatDock open={panels.rail === 'sheet' && chatDock} title="الشرح والمحادثة" onClose={() => setRailOpen(false)}>
+            {railNode}
+          </ChatDock>
           <Sheet open={panels.left === 'sheet'} onClose={() => setLeftOpen(false)} title="الصفحات والفهرس والعلامات" side="end" width="min(22rem, 92vw)">
             {leftNode}
           </Sheet>

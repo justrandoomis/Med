@@ -2,7 +2,7 @@
 // Request schemas strip/deny anything that could smuggle scope or versions (AC-29): scope goes through
 // sourceScopeSchema → resolveScope (server), anchors are re-checked against the resolved scope.
 import { z } from 'zod';
-import { ABSTAIN_REASONS, ANSWER_STYLES, EXPLANATION_LEVELS, SUMMARY_TYPES, SUPPORT_TYPES, sourceScopeSchema, type GeneratedBlock } from '@medlevo/shared';
+import { ABSTAIN_REASONS, ANSWER_STYLES, CHAT_EFFORTS, CHAT_KINDS, CHAT_MODELS, EXPLANATION_LEVELS, SUMMARY_TYPES, SUPPORT_TYPES, sourceScopeSchema, type GeneratedBlock } from '@medlevo/shared';
 import { RETRY_STRATEGIES } from '@medlevo/shared';
 import { rulesPatchSchema } from './rules';
 
@@ -117,10 +117,40 @@ export const threadCreateSchema = z
     style: z.enum(ANSWER_STYLES).default('detailed'),
     socratic: z.boolean().optional(),
     title: z.string().max(200).optional(),
+    kind: z.enum(CHAT_KINDS).optional(),
   })
   .strict();
 
-export const messageCreateSchema = z.object({ text: z.string().trim().min(1).max(4000), style: z.enum(ANSWER_STYLES).optional() }).strict();
+/**
+ * (chat UX) model + effort are an allow-list (shared CHAT_MODELS / CHAT_EFFORTS); the orchestrator also refuses a model
+ * the configured provider does not offer. The context is checked against the thread's lecture version (chat.ts).
+ */
+export const messageCreateSchema = z
+  .object({
+    text: z.string().trim().min(1).max(4000),
+    style: z.enum(ANSWER_STYLES).optional(),
+    model: z.enum(CHAT_MODELS).optional(),
+    effort: z.enum(CHAT_EFFORTS).optional(),
+    /** this turn's kind (a lecture conversation mixes explain / question / compare turns); absent → the thread's */
+    kind: z.enum(CHAT_KINDS).optional(),
+    context: z
+      .object({ page_id: ID.nullish(), region_ids: z.array(ID).max(60).optional(), quote: z.string().max(6000).nullish() })
+      .strict()
+      .nullish(),
+    replace_from: ID.nullish(),
+  })
+  .strict();
+
+export const threadPatchSchema = z.object({ title: z.string().trim().min(1).max(200) }).strict();
+
+export const chatPrefsSchema = z
+  .object({
+    model: z.enum(CHAT_MODELS).nullable().optional(),
+    effort: z.enum(CHAT_EFFORTS).nullable().optional(),
+    auto_explain: z.boolean().optional(),
+    sync_pages: z.boolean().optional(),
+  })
+  .strict();
 
 export const saveNoteSchema = z.object({ note_id: ID, node_id: ID.nullish() }).strict();
 

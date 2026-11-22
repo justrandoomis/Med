@@ -29,6 +29,8 @@ export interface StudyRailProps {
   onDraftConsumed: () => void;
   anchorFor: (pageIndex: number) => AnnotationAnchor | null;
   onGoToPage: (pageIndex: number) => void;
+  /** (chat UX) move the reader WITHOUT closing the panel (the chat's page sync and «ص N» chips) */
+  onReaderJump?: (pageIndex: number) => void;
   onOpenSplit: (sourceId: string) => void;
   splitReason: string | null;
   online: boolean;
@@ -74,7 +76,7 @@ export function StudyRail(p: StudyRailProps) {
         )}
         {a.railOrder.includes('explain') && (
           <TabPanel value="explain" className="wk-rail-panel">
-            <ExplainTab doc={p.doc} page={p.page} pageIndex={p.pageIndex} online={p.online} />
+            <ExplainTab doc={p.doc} page={p.page} pageIndex={p.pageIndex} online={p.online} onJumpToPage={p.onReaderJump} />
             <DiagramPanel doc={p.doc} page={p.page} online={p.online} />
           </TabPanel>
         )}

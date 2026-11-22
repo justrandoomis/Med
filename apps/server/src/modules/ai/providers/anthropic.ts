@@ -18,7 +18,7 @@
 //  * no tools are ever sent: the model cannot reach URLs, files or other services (§49, AC-29).
 import Anthropic from '@anthropic-ai/sdk';
 import type { AiTask } from '@medlevo/shared';
-import { ProviderError, type AiProvider, type ProviderErrorKind, type ProviderRequest, type ProviderResponse, type ProviderUsage } from '../types';
+import { ProviderError, type AiEffort, type AiProvider, type ProviderErrorKind, type ProviderRequest, type ProviderResponse, type ProviderUsage } from '../types';
 
 export const ANTHROPIC_DEFAULT_MODEL = 'claude-opus-5-5';
 /** routine image descriptions after processing (many pictures per lecture): the cheaper vision-capable model */
@@ -49,7 +49,10 @@ export const TASK_ROLE: Record<AiTask, ModelRole | null> = {
   transcribe: null,
 };
 
-type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+type Effort = AiEffort;
+
+/** (chat UX) models the owner may pick for a chat answer (shared CHAT_MODELS); verification keeps its own model. */
+export const ANTHROPIC_SELECTABLE_MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'] as const;
 
 /** Effort per task: evidence-grounded medical generation and verification are intelligence-sensitive (≥ high). */
 export const TASK_EFFORT: Record<AiTask, Effort> = {
@@ -201,6 +204,7 @@ export class AnthropicProvider implements AiProvider {
   /** AOS-21.42: a hosted API — a user's content goes only with their ai_processing consent naming 'anthropic' */
   readonly dataLeavesDeployment = true;
   readonly streamsText = true;
+  readonly selectableModels: readonly string[] = ANTHROPIC_SELECTABLE_MODELS;
   readonly #client: Anthropic;
   readonly #models: Record<ModelRole, string>;
   readonly #routineVision: string;
@@ -243,8 +247,12 @@ export class AnthropicProvider implements AiProvider {
     return this.#models[role];
   }
 
-  outputTokenCeiling(task: AiTask, requested: number): number {
-    return Math.min(MAX_OUTPUT_TOKENS, requested + REASONING_HEADROOM[TASK_EFFORT[task] ?? 'high']);
+  effortFor(task: AiTask): Effort {
+    return TASK_EFFORT[task] ?? 'high';
+  }
+
+  outputTokenCeiling(task: AiTask, requested: number, effort?: Effort): number {
+    return Math.min(MAX_OUTPUT_TOKENS, requested + REASONING_HEADROOM[effort ?? TASK_EFFORT[task] ?? 'high']);
   }
 
   estimateCostUsd(model: string, usage: ProviderUsage): number {
@@ -262,7 +270,7 @@ export class AnthropicProvider implements AiProvider {
   /** The request body (exported for tests through buildParams). */
   buildParams(req: ProviderRequest): Anthropic.Beta.Messages.MessageCreateParamsNonStreaming {
     const model = req.model;
-    const effort = TASK_EFFORT[req.task] ?? 'high';
+    const effort = req.effort ?? TASK_EFFORT[req.task] ?? 'high';
     const content: Anthropic.Beta.Messages.BetaContentBlockParam[] = [];
     for (const img of req.images ?? []) {
       if (!IMAGE_MIMES.has(img.mime)) throw new ProviderError('bad_request', { model });
@@ -284,7 +292,7 @@ export class AnthropicProvider implements AiProvider {
 
     const params: Anthropic.Beta.Messages.MessageCreateParamsNonStreaming = {
       model,
-      max_tokens: this.outputTokenCeiling(req.task, req.maxOutputTokens),
+      max_tokens: this.outputTokenCeiling(req.task, req.maxOutputTokens, req.effort),
       system: req.system,
       messages: [{ role: 'user', content }],
       ...(Object.keys(outputConfig).length ? { output_config: outputConfig } : {}),

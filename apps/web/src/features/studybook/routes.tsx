@@ -6,6 +6,8 @@ export const routes: FeatureRoutes = {
   shell: [
     { path: 'terms', lazy: () => import('./TermsScreen').then((m) => ({ Component: m.TermsScreen })) },
     { path: 'explanation-rules', lazy: () => import('./RulesScreen').then((m) => ({ Component: m.RulesScreen })) },
+    // (chat UX) every saved study conversation, ChatGPT-like history; continue any of them
+    { path: 'chat', lazy: () => import('./chat/ChatScreen').then((m) => ({ Component: m.ChatScreen })) },
     // Round 7 H4: one generated explanation on its own page (reached from the topics it is linked to)
     { path: 'explanations/:artifactId', lazy: () => import('./ArtifactScreen').then((m) => ({ Component: m.ArtifactScreen })) },
   ],

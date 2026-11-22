@@ -11,6 +11,8 @@
 //   GET  /books/:id · POST /books/:id/resume · /cancel · /freeze
 //   POST /summaries/preview · POST /summaries · GET /summaries/:id
 //   POST /threads · GET /threads?source_id=&page_id= · GET /threads/:id · POST /threads/:id/messages · /archive
+//   PATCH /threads/:id {title} · DELETE /threads/:id   (chat UX) rename / delete a saved conversation
+//   GET|PUT /chat/prefs                 (chat UX) the owner's remembered model / effort / auto-explain / page sync
 //   POST /messages/:id/save-note        → note (origin 'ai_answer') through the annotations sync handler
 //   GET  /rules?source_id=&node_id= · PUT /rules/owner · PUT|DELETE /rules/nodes/:nodeId
 //   GET|POST /terms · PATCH|DELETE /terms/:id   the owner's terminology dictionary (§21) — see below
@@ -42,13 +44,13 @@ import {
   type SectionJobInput,
   type StudybookHooks,
 } from './book';
-import { archiveThread, createThread, getThread, listThreads, postMessage, saveAnswerAsNote } from './chat';
+import { archiveThread, assertChatModel, chatPrefs, createThread, deleteThread, getThread, listThreads, postMessage, renameThread, saveAnswerAsNote, saveChatPrefs } from './chat';
 import { compareItems, explainSelection, isRealPatientRequest } from './explain';
 import { requireAi } from './generate';
 import { sendStudyStream } from './stream';
 import { registerDiagramRoutes } from './diagrams';
 import { nodeChain, nodeChainForSource, readOverride, resolveRules, rulesPatchSchema, templateForNode } from './rules';
-import { compareBodySchema, explainBodySchema, messageCreateSchema, saveNoteSchema, studyBookBodySchema, summaryBodySchema, threadCreateSchema } from './schema';
+import { chatPrefsSchema, compareBodySchema, explainBodySchema, messageCreateSchema, saveNoteSchema, studyBookBodySchema, summaryBodySchema, threadCreateSchema, threadPatchSchema } from './schema';
 
 const ID = z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/);
 /** what the rail's history lists (study books / summaries have their own views) */
@@ -62,7 +64,14 @@ const listQuery = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(30),
 });
 const bookQuery = z.object({ source_id: ID });
-const threadsQuery = z.object({ source_id: ID.optional(), page_id: ID.optional(), limit: z.coerce.number().int().min(1).max(100).default(50) });
+const threadsQuery = z.object({
+  source_id: ID.optional(),
+  page_id: ID.optional(),
+  /** (chat UX) global: conversations not bound to one lecture; all (default): every live conversation */
+  scope: z.enum(['all', 'global']).optional(),
+  q: z.string().max(200).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
 const rulesQuery = z.object({ source_id: ID.optional(), node_id: ID.optional() });
 
 export interface StudybookModuleOptions {
@@ -234,6 +243,8 @@ export function createStudybookModule(opts: StudybookModuleOptions = {}) {
       const body = parseBody(messageCreateSchema, req);
       getThread(ctx, threadId); // 404 before the stream opens
       if (!isRealPatientRequest(body.text)) requireAi(ctx, 'chat');
+      // (chat UX) a model this server cannot serve is refused before the stream opens (the orchestrator refuses it too)
+      assertChatModel(ctx, body.model);
       return sendStudyStream(
         req,
         reply,
@@ -242,6 +253,10 @@ export function createStudybookModule(opts: StudybookModuleOptions = {}) {
       );
     });
     app.post('/threads/:id/archive', async (req) => ({ thread: archiveThread(ctx, parseParams(idParams, req).id) }));
+    app.patch('/threads/:id', async (req) => ({ thread: renameThread(ctx, parseParams(idParams, req).id, parseBody(threadPatchSchema, req)) }));
+    app.delete('/threads/:id', async (req) => deleteThread(ctx, parseParams(idParams, req).id));
+    app.get('/chat/prefs', async () => chatPrefs(ctx));
+    app.put('/chat/prefs', async (req) => saveChatPrefs(ctx, parseBody(chatPrefsSchema, req)));
     app.post('/messages/:id/save-note', async (req) => saveAnswerAsNote(ctx, parseParams(idParams, req).id, parseBody(saveNoteSchema, req)));
 
     // ───────── explanation rules (§19) ─────────

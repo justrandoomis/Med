@@ -21,6 +21,11 @@ export interface ProviderRequest {
   jsonSchema?: Record<string, unknown>;
   images?: ProviderImage[];
   maxOutputTokens: number;
+  /**
+   * (chat UX) the owner's chosen effort for this call (`output_config.effort`); absent → the task's configured effort.
+   * Providers without an effort control ignore it.
+   */
+  effort?: AiEffort;
   signal: AbortSignal;
   /**
    * (Round 7 H4, §30) called with each visible text delta as the provider streams it, in order. The text is the
@@ -29,6 +34,9 @@ export interface ProviderRequest {
    */
   onTextDelta?: (text: string) => void;
 }
+
+/** Reasoning effort levels (Anthropic `output_config.effort`). */
+export type AiEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 export interface ProviderUsage {
   /** all input tokens billed for the request (uncached + cache writes + cache reads) */
@@ -101,7 +109,14 @@ export interface AiProvider {
    * (track C2, optional) the largest number of output tokens a call may bill for `requested` visible output
    * tokens (e.g. + reasoning headroom). The orchestrator's worst-case budget check uses it.
    */
-  outputTokenCeiling?(task: AiTask, requested: number): number;
+  outputTokenCeiling?(task: AiTask, requested: number, effort?: AiEffort): number;
+  /**
+   * (chat UX) model ids the owner may pick per request instead of modelFor(task) (an allow-list; absent → none).
+   * The orchestrator refuses any other id.
+   */
+  readonly selectableModels?: readonly string[];
+  /** (chat UX) the effort a task runs at when the request names none */
+  effortFor?(task: AiTask): AiEffort;
   generateStructured(req: ProviderRequest): Promise<ProviderResponse>;
   /** (Round 7 H4) whether `onTextDelta` receives real incremental deltas (else it is never called) */
   readonly streamsText?: boolean;

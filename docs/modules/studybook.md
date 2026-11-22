@@ -346,3 +346,57 @@ The Playwright browser check (`real-server-check.mjs`) was **not re-run** in thi
 * Not verified: a real model's stream (no API key here — the adapter is tested against mocked HTTP; the server keeps
   reporting `requires_configuration` without a key). Behind a buffering reverse proxy the draft would arrive at once
   (`X-Accel-Buffering: no` is sent; `docs/DEPLOYMENT.md` proxies were not re-tested with SSE).
+
+## Chat UX — Claude-style study chat, saved conversations, model + effort, page sync (wp/chat-ux, 2026-11-22)
+
+The contextual chat (§30) becomes the one study chat for explain / question help / compare / free chat. The evidence
+rules are unchanged: every answer is the evidence-checked result (unsupported medical sentences removed, never
+softened; citations to the lecture pages); the streamed draft stays labelled «مسودة لم تُتحقق بعد» and is replaced.
+
+* **Migration `0470_chat_conversations.sql`** (base band, vault DB): `contextual_thread.kind` (chat | explain | question |
+  compare), `contextual_thread.deleted_at`; `message.model`, `effort`, `page_indexes_json`, `context_json`,
+  `input_tokens`, `output_tokens`, `cost_usd`; table `chat_preference` (one row per vault: model, effort, auto_explain,
+  sync_pages). Listed in `test/tenancy/owner-migration.gate1.test.ts`.
+* **Routes** (added): `PATCH /threads/:id {title}` (rename), `DELETE /threads/:id` (gone from lists / reads / search;
+  messages kept only for notes saved from them), `GET /threads?scope=global&q=` (conversations not bound to a lecture;
+  search in titles and the owner's questions), `GET|PUT /chat/prefs`. `POST /threads` takes `kind`; a thread without a
+  page / selection is named after its first question.
+* **Message body** (`messageCreateSchema`): `model` in shared `CHAT_MODELS` (claude-opus-5-5 «الأدق», claude-sonnet-5-5
+  «متوازن», claude-haiku-5-5 «الأسرع»), `effort` in `CHAT_EFFORTS` (low / medium / high / xhigh / max — all accepted by
+  the three models), `kind` (this turn), `context {page_id, region_ids, quote}` (the attached page / selection — must
+  belong to the thread's lecture version, else `OUT_OF_SCOPE`; it steers retrieval like an anchor), `replace_from` (edit
+  the last question / regenerate its answer: only the LAST owner message, else 409; that turn is deleted first).
+* **Model / effort**: anything outside the allow-list is a 400 (zod); a model the configured provider does not offer
+  (`AiProvider.selectableModels`) is refused BEFORE anything is written or retrieved (`AI_NOT_CONFIGURED`,
+  `details.reason = model_not_available`; JSON, also on the stream route). The orchestrator re-checks it, prices the
+  worst case with the chosen model + effort (reservation / allowance unchanged), and passes `effort` to the adapter
+  (`output_config.effort`, reasoning headroom by effort). Only the GENERATION call uses the choice — verification keeps
+  the configured verifier model and effort. Default = the task's configuration (`ctx.ai.taskDefaults('chat')`).
+* **Usage per answer**: `collectAiUsage` (AsyncLocalStorage in the orchestrator) gathers every usage record of the
+  answer (generation + verification) into `message.input_tokens / output_tokens / cost_usd` (ESTIMATED).
+* **Page tags**: owner message = the attached page; answer = attached page + block `meta.page_indexes` / `page_ids` +
+  pages of cited evidence of the thread's version. Shown as `page_indexes` on `ChatMessageView`.
+* **Isolation**: conversations and preferences live in each user's own vault (tested: another user gets 404 / empty).
+* **Sync / offline**: conversations are server-side (they survive reload and appear on the owner's other devices);
+  they are not queued offline — answering needs the server (AI + evidence check). Saved answers still become notes
+  through the annotations sync handler.
+* **Web** (`features/studybook/chat/`): `ChatSurface` (thread, empty state with suggestions «اشرح هذه الصفحة» / «لخّص
+  المحاضرة» / «اسألني سؤالًا» / «قارن بين…», composer, history, page sync), `ChatTurns` (owner bubbles at the inline-end,
+  answers full width through `ArtifactContent`, «صفحة N» dividers, «ص N» chips, copy / regenerate / edit-last / save as
+  note, model + estimated cost), `Composer` (grows, Enter sends, Shift+Enter new line, IME-safe, context chips, send /
+  stop), `ModelEffortMenu` (popover with two radio groups; unavailable models disabled with the reason), `ChatHistory`
+  (grouped اليوم / أمس / آخر 7 أيام / آخر 30 يومًا / أقدم, search, «محادثات هذه المحاضرة» / «كل المحادثات», rename, delete
+  with its consequence), `Markdown` (safe: React elements only — headings, lists, tables, code, quotes, bold, italic; no
+  HTML, links or images; every block takes the direction of its first strong letter, other-script runs isolated by
+  BidiText — AC-20), `ChatDock` (phone: non-modal bottom panel), `ChatScreen` (`/chat[?thread=]`), `model.ts` (pure
+  logic), `chat.css` (tokens only). `StreamDraft` takes an optional `body` (the draft as markdown). A polite live region
+  announces phases / completion / stop (never the text word by word).
+* Tests: `srv:studybook/chat-ux.test.ts` (CRUD + search + rename + delete, isolation between users, prefs, model /
+  effort reach the generation call only + usage recorded, allow-list 400 / not-offered 409 before any model call,
+  context page tags + out-of-version refusal, replace_from last-only, the stream persists only the checked answer),
+  `srv:ai-provider/anthropic.test.ts` (effort override + headroom), `web:features/studybook/chat/{model.test.ts,
+  ChatSurface.test.tsx}`; `ExplainTab.test.tsx` and `ChatScope.g2.test.tsx` now drive the new surface (G2 still green).
+* Not done / limits: no real-model run (no key here); the draft has no page tags (pages are known from the attached page
+  before, and from the checked answer after); chat → reader follows whole turns, not individual blocks; a new
+  conversation on `/chat` starts from a lecture (no lecture picker there); the answer style is the thread's (not in the
+  composer); the old `ChatPanel` stays only for its tests (handwriting, H4); conversations are not readable offline.

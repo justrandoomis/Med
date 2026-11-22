@@ -1,5 +1,6 @@
-// «الشرح والسؤال» rail tab (§19, §20, §30): explain / simplify / translate / explain the figure for the current
-// selection or page, ask about it (contextual chat), compare — always under the visible Source Lock and through
+// «الشرح والسؤال» rail tab (§19, §20, §30): the Claude-style study chat (default: explain the page, ask, compare in a
+// conversation that follows the pages — chat/ChatSurface.tsx), the one-shot tools explain / simplify / translate /
+// explain the figure for the current selection or page, compare — always under the visible Source Lock and through
 // the server's evidence pipeline. Results render with C1's ArtifactContent (chips → Evidence Peek → open the
 // source → back); abstentions show their reason and an explicit «وسّع النطاق»; without an AI provider the tab
 // says exactly why (the server's reason) instead of pretending.
@@ -33,7 +34,7 @@ import { fetchRegions } from '../data/api';
 import type { SourceDocument } from '../data/useSourceDocument';
 import { aiRequestStore, usePendingAiRequest, type AiRequest } from '../model/aiActions';
 import { fullPageLabel } from '../model/pages';
-import { ChatPanel } from '../studybook/ChatPanel';
+import { ChatSurface } from '../../studybook/chat/ChatSurface';
 import '../studybook/studybook.css';
 import { AiAllowanceNote, aiAllowanceStore } from '../../../lib/aiAllowance';
 
@@ -42,10 +43,12 @@ export interface ExplainTabProps {
   page: SourcePageView | null;
   pageIndex: number;
   online: boolean;
+  /** (chat UX) move the reader to a page — the chat's page sync and «ص N» chips (absent: no sync) */
+  onJumpToPage?: (pageIndex: number) => void;
 }
 
 type ExplainAction = 'explain' | 'simplify' | 'translate' | 'explain_image';
-type Mode = 'explain' | 'ask' | 'compare';
+type Mode = 'chat' | 'explain' | 'compare';
 
 interface Context {
   anchor: SelectionAnchor;
@@ -90,7 +93,7 @@ function retryContextOf(anchor: SelectionAnchor | null | undefined, doc: SourceD
   return { anchor, text: anchor.quote?.exact ?? '', pageIndex: i >= 0 ? i : (fallback?.pageIndex ?? 0) };
 }
 
-export function ExplainTab({ doc, page, pageIndex, online }: ExplainTabProps) {
+export function ExplainTab({ doc, page, pageIndex, online, onJumpToPage }: ExplainTabProps) {
   const caps = useCapabilities();
   const { settings } = useSettings();
   const sourceId = doc.detail.id;
@@ -99,7 +102,7 @@ export function ExplainTab({ doc, page, pageIndex, online }: ExplainTabProps) {
   const compareGate = caps.feature('ai.summaries');
   const figureGate = caps.feature('ai.figure_explain');
   const saved = lastRun.get(sourceId);
-  const [mode, setMode] = useState<Mode>(saved?.mode ?? 'explain');
+  const [mode, setMode] = useState<Mode>(saved?.mode ?? 'chat');
   const [context, setContext] = useState<Context | null>(saved?.context ?? null);
   const [scope, setScope] = useState<SourceScope>(() => defaultScopeFor(doc.detail, settings.default_scope_mode));
   const [picking, setPicking] = useState(false);
@@ -204,7 +207,7 @@ export function ExplainTab({ doc, page, pageIndex, online }: ExplainTabProps) {
       const ctx: Context = { anchor, text: pending.text, pageIndex: pending.pageIndex };
       setContext(ctx);
       if (pending.action === 'ask') {
-        setMode('ask');
+        setMode('chat');
         setAskPrefill(pending.prefill ?? null);
         setAskFocus((n) => n + 1);
       } else if (pending.action === 'compare') {
@@ -272,8 +275,8 @@ export function ExplainTab({ doc, page, pageIndex, online }: ExplainTabProps) {
       <SegmentedControl<Mode>
         label="نوع الطلب"
         options={[
-          { value: 'explain', label: 'شرح' },
-          { value: 'ask', label: 'سؤال' },
+          { value: 'chat', label: 'محادثة' },
+          { value: 'explain', label: 'شرح سريع' },
           { value: 'compare', label: 'مقارنة' },
         ]}
         value={mode}
@@ -294,9 +297,12 @@ export function ExplainTab({ doc, page, pageIndex, online }: ExplainTabProps) {
         <Link className={buttonClass({ variant: 'plain', size: 'sm' })} to="/terms">
           قاموس المصطلحات
         </Link>
+        <Link className={buttonClass({ variant: 'plain', size: 'sm' })} to="/chat">
+          كل المحادثات
+        </Link>
       </p>
 
-      {unavailable && mode !== 'ask' && (
+      {unavailable && mode !== 'chat' && (
         <div className="wk-disabled-card" role="note" id={reasonId}>
           <p className="wk-disabled-card__title">الشرح غير متاح الآن</p>
           <p className="wk-muted">{explainGate.reason}</p>
@@ -355,23 +361,27 @@ export function ExplainTab({ doc, page, pageIndex, online }: ExplainTabProps) {
         </form>
       )}
 
-      {mode === 'ask' && (
-        <ChatPanel
-          sourceId={sourceId}
-          page={page}
-          anchor={context?.anchor ?? null}
-          anchorText={context?.text || null}
-          scope={scope}
-          style={style}
-          gate={chatGate}
-          online={online}
-          focusKey={askFocus}
-          prefill={askPrefill}
-          onScopeChange={setScope}
-        />
+      {mode === 'chat' && (
+        <div className="sb-chat-surface">
+          <ChatSurface
+            sourceId={sourceId}
+            sourceTitle={doc.detail.title}
+            pages={doc.pages}
+            pageLabel={(i) => doc.pages[i]?.printed_label ?? null}
+            visiblePage={pageIndex}
+            selection={context?.text ? { anchor: context.anchor, text: context.text } : null}
+            scope={scope}
+            gate={chatGate}
+            online={online}
+            onJumpToPage={onJumpToPage}
+            onScopeChange={setScope}
+            focusKey={askFocus}
+            prefill={askPrefill}
+          />
+        </div>
       )}
 
-      {mode !== 'ask' && run.status === 'running' && run.stream && run.stream.blocks.length > 0 ? (
+      {mode !== 'chat' && run.status === 'running' && run.stream && run.stream.blocks.length > 0 ? (
         <StreamDraft
           view={run.stream}
           actions={
@@ -383,7 +393,7 @@ export function ExplainTab({ doc, page, pageIndex, online }: ExplainTabProps) {
             </Button>
           }
         />
-      ) : mode !== 'ask' && run.status === 'running' ? (
+      ) : mode !== 'chat' && run.status === 'running' ? (
         <div className="sb-running">
           <LoadingState inline stage={run.stream?.phaseLabel ?? RUNNING_STAGE[run.action ?? 'explain']} />
           {run.stream?.restartNote && <p className="sb-draft__restart">{run.stream.restartNote}</p>}
@@ -395,7 +405,7 @@ export function ExplainTab({ doc, page, pageIndex, online }: ExplainTabProps) {
           </Button>
         </div>
       ) : null}
-      {mode !== 'ask' && run.status === 'error' && run.error && (
+      {mode !== 'chat' && run.status === 'error' && run.error && (
         <ErrorState
           inline
           title={run.error.code === 'AI_NOT_CONFIGURED' ? 'الذكاء الاصطناعي غير مُعدّ' : run.error.code === 'AI_BUDGET_EXCEEDED' ? 'بلغت الميزانية حدّها' : run.error.code === 'OUT_OF_SCOPE' ? 'خارج نطاق المصادر' : 'تعذّر إكمال الطلب'}
@@ -403,7 +413,7 @@ export function ExplainTab({ doc, page, pageIndex, online }: ExplainTabProps) {
           onRetry={run.action && run.action !== 'compare' ? () => void explain(run.action as ExplainAction) : run.action === 'compare' ? () => void compare() : undefined}
         />
       )}
-      {mode !== 'ask' && run.status === 'done' && result && (
+      {mode !== 'chat' && run.status === 'done' && result && (
         <div className="sb-result">
           <div className="sb-row">
             {run.result?.cached && <StatusPill tone="neutral">من محفوظاتك — النطاق والقواعد والنسخة نفسها</StatusPill>}

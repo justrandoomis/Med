@@ -608,3 +608,15 @@ Copy, never move (server, routes and rules: `docs/modules/ink.md`, «P1-T2 step 
   through tokens only (`noteMigration.css`).
 * **Seam changes outside this track's own new files:** `WorkspaceScreen.tsx` (+15 lines: the banner mount),
   `ReanchorSection.tsx` (the review block, dialog wording props, empty-state text).
+
+## Chat UX — the study chat follows the pages (wp/chat-ux, 2026-11-22)
+
+The rail's «الشرح والسؤال» tab opens on «محادثة» (the Claude-style study chat, `features/studybook/chat/ChatSurface.tsx`;
+the one-shot tools are «شرح سريع» and «مقارنة»). `StudyRail` takes `onReaderJump` (moves the reader WITHOUT closing the
+panel); `WorkspaceScreen` passes `goToPage`. On a phone the explain tab is a non-modal bottom dock (`ChatDock`, two
+heights) instead of the modal sheet, so the page stays visible and scrollable above the chat.
+Page sync («مزامنة الصفحات», remembered per user): the visible page scrolls the thread to the turn filed under it;
+«اشرح هذه الصفحة تلقائيًا» asks for a page that stays in view for 1.6 s and has no turn (once per page, never while an
+answer is written, never without the chat capability / allowance); an answer about other pages, a «ص N» chip, a
+«صفحة N» divider, or scrolling the thread to another page's section moves the reader. `PageSyncGuard` drops the echo of
+a move made by the other side for 900 ms (no feedback loop; `chat/model.test.ts` simulates the ping-pong).
