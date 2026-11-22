@@ -35,7 +35,7 @@ import { decodePng, encodePng, isPng, measureImageQuality, type ImageQuality, ty
 import { enqueueVersionAnalysisFollowUp } from './fingerprint';
 import { enqueueFigureDescriptionFollowUp } from './figures';
 import { enqueueOcrVerifyFollowUp } from './ocr-verify';
-import { busyShare, classifyPicturePage, keepOnPicture, pictureCoverage } from './picture';
+import { busyShare, classifyPicturePage, keepOnPicture, pictureCoverage, pixelNoise } from './picture';
 import { applyLectureKind, linkFiguresAcrossPages } from './structure';
 import { writeSummary } from './summary';
 import { hasReversedLamAlef, prepareRegionText, suspicionReasonAr, type SuspicionContext } from './text';
@@ -162,6 +162,8 @@ interface OcrCheckpoint {
   rawSpace?: boolean;
   /** share of the picture that is picture content, not paper (picture.ts busyShare); absent = not measured */
   pictureShare?: number;
+  /** how much the render looks like noise (picture.ts pixelNoise); absent = not measured (an older checkpoint) */
+  pictureNoise?: number;
 }
 
 /** A PDF page in its layout space (see VersionRun.layoutSpace). */
@@ -963,7 +965,7 @@ class VersionRun {
             quality,
             missed: read.missed,
             rotation: read.rotation,
-            ...(decoded ? { pictureShare: Math.round(busyShare(decoded) * 1000) / 1000 } : {}),
+            ...(decoded ? { pictureShare: Math.round(busyShare(decoded) * 1000) / 1000, pictureNoise: Math.round(pixelNoise(decoded) * 1000) / 1000 } : {}),
           };
         });
         // the OCR words are in the render turned by the detected rotation: that turn of the display space is the layout space
@@ -972,7 +974,13 @@ class VersionRun {
         const ocrScale = (ocrData.dpi ?? RENDER_DPI) / 72;
         // a picture slide (a photo with at most a short caption): photo texture read as "words" is not text
         const pictureShare = Math.min(pictureCoverage(space.images, space.geom), ocrData.pictureShare ?? 0);
-        picture = classifyPicturePage({ coverage: pictureShare, words: ocrData.words, digitalChars: bodyCharsOf(space) }).picture;
+        picture = classifyPicturePage({
+          coverage: pictureShare,
+          words: ocrData.words,
+          digitalChars: bodyCharsOf(space),
+          blank: ocrData.quality?.blank === true,
+          ...(typeof ocrData.pictureNoise === 'number' ? { noise: ocrData.pictureNoise } : {}),
+        }).picture;
         const ocrItems = wordsToItems(picture ? ocrData.words.filter(keepOnPicture) : ocrData.words, (x, y) => [x / ocrScale, y / ocrScale]);
         // digital text wins where both exist (e.g. a digital page number over a scan)
         items = [...space.items, ...ocrItems.filter((o) => !space.items.some((d) => overlapArea(d, o) > 0.5 * area(o)))];
@@ -1073,7 +1081,8 @@ class VersionRun {
     } else if (ocrData) {
       textStatus = ocrTextRegions.length && digitalTextRegions.length ? 'mixed' : ocrTextRegions.length ? 'ocr' : digitalTextRegions.length ? 'digital' : 'no_text_found';
       // a picture page is ready: its picture is the content (no «no text found», no «unread writing» in the tissue)
-      if (picture) pageIssue = null;
+      // (never over a page found damaged / unverified before the reading: that stumble stays shown, AC-03)
+      if (picture && pageIssue?.kind !== 'unreadable_page') pageIssue = null;
       else if (!ocrTextRegions.length) pageIssue = { code: 'NO_TEXT_FOUND', reason: MSG.noTextFound, kind: 'unreadable_page' };
       else if (lowQuality)
         pageIssue = { code: 'LOW_QUALITY_SCAN', reason: MSG.lowQuality((quality?.reasons ?? []).map((r) => QUALITY_REASON_AR[r])), kind: 'ocr_error' };
@@ -1208,14 +1217,20 @@ class VersionRun {
           missed: read.missed,
           rotation: read.rotation,
           ...(decoded || exif === 1 ? {} : { rawSpace: true }),
-          ...(decoded ? { pictureShare: Math.round(busyShare(decoded) * 1000) / 1000 } : {}),
+          ...(decoded ? { pictureShare: Math.round(busyShare(decoded) * 1000) / 1000, pictureNoise: Math.round(pixelNoise(decoded) * 1000) / 1000 } : {}),
         };
       });
       turn = quarter(ocrData.rotation ?? 0);
       // words of a JPEG that could not be decoded were read in its stored (raw) orientation: mapped to the displayed one
       const allWords = ocrData.rawSpace && raw ? ocrData.words.map((w) => exifWordToDisplayed(w, raw, exif)) : ocrData.words;
       // a photo (histology, gross specimen, X-ray) with at most a short caption: its texture is not text
-      picture = classifyPicturePage({ coverage: ocrData.pictureShare ?? 0, words: allWords, digitalChars: 0 }).picture;
+      picture = classifyPicturePage({
+        coverage: ocrData.pictureShare ?? 0,
+        words: allWords,
+        digitalChars: 0,
+        blank: ocrData.quality?.blank === true,
+        ...(typeof ocrData.pictureNoise === 'number' ? { noise: ocrData.pictureNoise } : {}),
+      }).picture;
       const words = picture ? allWords.filter(keepOnPicture) : allWords;
       const items = wordsToItems(words, (x, y) => [x, y]);
       const pv = shown ? pageView({ width: shown.width, height: shown.height, rotation: turn }) : null;

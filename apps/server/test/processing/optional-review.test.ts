@@ -12,8 +12,8 @@ import type { ProviderRequest } from '../../src/modules/ai/types';
 import { agreement, consistent, enqueueOcrVerifyFollowUp } from '../../src/modules/processing/ocr-verify';
 import type { LayoutRegion } from '../../src/modules/processing/layout/types';
 import { finalizeRegions } from '../../src/modules/processing/pipeline';
-import { busyShare, classifyPicturePage, keepOnPicture, pictureCoverage } from '../../src/modules/processing/picture';
-import { decodePng, encodePng, type RgbaImage } from '../../src/modules/processing/png';
+import { busyShare, classifyPicturePage, keepOnPicture, pictureCoverage, pixelNoise } from '../../src/modules/processing/picture';
+import { decodePng, encodePng, measureImageQuality, type RgbaImage } from '../../src/modules/processing/png';
 import { computeSummary } from '../../src/modules/processing/summary';
 import { grantAiConsent } from '../helpers/consent';
 import { createTestApp } from '../helpers/app';
@@ -100,6 +100,30 @@ describe('picture pages («صورة»): classification', () => {
   it('picture content is measured on the raster: a tissue photo is busy, a blurred TEXT scan is mostly paper', () => {
     expect(busyShare(tissue())).toBeGreaterThan(0.5);
     expect(busyShare(decodePng(readFileSync(join(FIXTURES, 'low_quality_scan.png'))))).toBeLessThan(0.3);
+  });
+
+  it('a page with no real picture content is never a «ready» picture page (blank / damaged render) — regression', () => {
+    // CI 2026-11: a damaged page («لا يوجد نص», g1_damaged_page.pdf p.2) must stay flagged, never «جاهزة — صورة».
+    // A blank render: nothing drawn → no picture to be the content, whatever the coverage of the (empty) image boxes
+    const blank = solid(400, 300, [255, 255, 255]);
+    expect(measureImageQuality(blank).blank).toBe(true);
+    expect(classifyPicturePage({ coverage: 1, words: [], digitalChars: 0, blank: true }).picture).toBe(false);
+    // a damaged stream / garbage decode renders as static: busy everywhere (it would pass the coverage test) but noise
+    let seed = 3;
+    const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+    const noise = solid(400, 300, [0, 0, 0]);
+    for (let i = 0; i < 400 * 300; i++) noise.data.set([rnd() * 255, rnd() * 255, rnd() * 255], i * 4);
+    expect(busyShare(noise)).toBeGreaterThan(0.5);
+    const n = pixelNoise(noise);
+    expect(n).toBeGreaterThan(0.9);
+    expect(classifyPicturePage({ coverage: busyShare(noise), words: words([['~i', 20]]), digitalChars: 0, noise: n }).picture).toBe(false);
+    // genuine pathology pictures stay smooth at the pixel scale and stay picture pages
+    for (const img of [tissue(), tissueSlide(), decodePng(readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'histology_slide_01.png')))]) {
+      expect(pixelNoise(img)).toBeLessThan(0.6);
+      expect(measureImageQuality(img).blank).toBe(false);
+    }
+    expect(classifyPicturePage({ coverage: 0.9, words: words([['Cirrhosis', 91]]), digitalChars: 0, blank: false, noise: pixelNoise(tissueSlide()) }).picture).toBe(true);
+    expect(pixelNoise(blank)).toBe(0);
   });
 
   it('coverage counts overlapping pictures once', () => {

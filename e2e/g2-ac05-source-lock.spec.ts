@@ -4,7 +4,7 @@
 // What this verifies end to end: the premise (the answer is ONLY in the reference), the lock the server resolves for
 // «Lecture Only» whatever the request smuggles in, an out-of-lock anchor refused before anything else, AI requests
 // refused honestly with nothing stored or served, and the rail's Source Lock UI (badge, picker preview, nothing widens
-// until «طبّق النطاق», Ask disabled with the server's reason). The AI paths themselves (abstention + wider-scope
+// until «طبّق النطاق», the chat composer disabled with the server's reason). The AI paths themselves (abstention + wider-scope
 // action, no cache across locks) are verified in apps/server/test/acceptance/g2-ac05.test.ts with the test-only
 // provider; the web chat lock in apps/web/src/features/workspace/studybook/ChatScope.g2.test.tsx.
 import type { PageRegionsResponse, ScopeResolveResponse, SearchResponse, SourcePagesResponse } from '@medlevo/shared';
@@ -79,7 +79,8 @@ test('AC-05: «Lecture Only» is the lecture alone; an answer only in the refere
     const railTab = (name: string) => page.getByRole('tab', { name: new RegExp(name) });
     if (!(await railTab('الشرح والسؤال').isVisible())) await page.getByRole('button', { name: 'لوحة الدراسة' }).first().click();
     await railTab('الشرح والسؤال').click();
-    const badge = page.locator('.sb-scope .ev-scope-badge');
+    // the rail's own Source Lock (the study chat shows the lock of a thread in its own header, .ch-scope-badge)
+    const badge = page.getByRole('tabpanel', { name: 'الشرح والسؤال' }).locator('.sb-scope .ev-scope-badge');
     await expect(badge).toContainText('المحاضرة فقط');
     await page.getByRole('button', { name: 'غيّر النطاق' }).click();
     const preview = page.locator('.ev-scope-picker__preview');
@@ -91,10 +92,14 @@ test('AC-05: «Lecture Only» is the lecture alone; an answer only in the refere
     await screenshot(page, testInfo, 'g2-ac05-picker-wider-preview');
     await page.getByRole('button', { name: 'إلغاء' }).click();
     await expect(badge).toContainText('المحاضرة فقط'); // the preview never applied itself
-    // Ask: disabled with the server's reason (no key) — no answer can come from anywhere
-    await page.getByRole('radio', { name: 'سؤال' }).click();
-    await expect(page.getByLabel('سؤالك عن هذا الموضع')).toBeDisabled();
-    await expect(page.locator('#sb-chat-reason')).toContainText('ANTHROPIC_API_KEY');
+    // Ask (the study chat, wp/chat-ux): it opens beside the book (full screen on a phone) and cannot answer here — the
+    // composer is disabled with the server's reason (no key), so no answer can come from anywhere
+    await page.getByRole('radio', { name: 'محادثة', exact: true }).click();
+    const chat = page.getByRole('region', { name: 'المحادثة', exact: true });
+    await expect(chat).toBeVisible();
+    await expect(chat.getByLabel('رسالتك')).toBeDisabled();
+    await expect(chat.getByRole('button', { name: 'أرسل' })).toBeDisabled();
+    await expect(chat.locator('#ch-composer-reason')).toContainText('ANTHROPIC_API_KEY');
     await screenshot(page, testInfo, 'g2-ac05-ask-disabled');
   });
 });

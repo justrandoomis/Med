@@ -478,7 +478,7 @@ export function ChatSurface(p: ChatSurfaceProps) {
       <header className="ch-head">
         <IconButton size="sm" variant="plain" label={historyOpen ? 'أخفِ المحادثات المحفوظة' : 'المحادثات المحفوظة'} icon={<History size={16} />} pressed={historyOpen} onClick={() => setHistoryOpen((v) => !v)} />
         <MixedText as="span" className="ch-head__title" text={active?.thread.title ?? (p.sourceTitle ? `محادثة جديدة — ${p.sourceTitle}` : 'محادثة جديدة')} />
-        {active && <ScopeBadge scope={active.thread.scope} />}
+        {active && <ScopeBadge className="ch-scope-badge" scope={active.thread.scope} />}
         <IconButton size="sm" variant="plain" label="محادثة جديدة" icon={<MessageSquarePlus size={16} />} onClick={newChat} />
         {p.headerActions}
       </header>

@@ -320,8 +320,19 @@ export function TopBar(p: TopBarProps) {
           </Hint>
           {p.onToggleChat && (
             <Hint label={p.chatHiddenReason ?? 'المحادثة بجانب الصفحة'}>
-              <Button size="sm" variant={p.chatOpen ? 'primary' : 'secondary'} icon={<MessageSquare size={16} />} aria-pressed={!!p.chatOpen} disabled={!!p.chatHiddenReason} onClick={p.onToggleChat}>
-                المحادثة
+              {/* the word folds away below 1440 px (icon + the same accessible name): the reading bar's middle slot keeps
+                  room for the writing bar, which is never pushed under these controls (e2e r1b-final-critic) */}
+              <Button
+                size="sm"
+                variant={p.chatOpen ? 'primary' : 'secondary'}
+                icon={<MessageSquare size={16} />}
+                aria-label="المحادثة"
+                aria-pressed={!!p.chatOpen}
+                disabled={!!p.chatHiddenReason}
+                onClick={p.onToggleChat}
+                className="wk-chat-toggle"
+              >
+                <span className="wk-chat-toggle__text">المحادثة</span>
               </Button>
             </Hint>
           )}

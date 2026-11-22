@@ -284,7 +284,7 @@ export function RecognitionDialog({ target, onClose, recognition, chat, online, 
   const title = isAsk ? 'اسأل عن المحدد' : 'تحويل الكتابة إلى نص';
 
   return (
-    <Dialog open={!!target} onClose={onClose} title={title} size="md" description={isAsk ? 'كتابتك + الفقرة المجاورة → سؤال واضح في لوحة الدراسة. لا يُرسل شيء قبل أن ترسله أنت.' : 'قراءة مشتقة لكتابتك: لا تمحو الحبر ولا تغيّره، وتقبل التصحيح.'}>
+    <Dialog open={!!target} onClose={onClose} title={title} size="md" description={isAsk ? 'كتابتك + الفقرة المجاورة → سؤال واضح في المحادثة. لا يُرسل شيء قبل أن ترسله أنت.' : 'قراءة مشتقة لكتابتك: لا تمحو الحبر ولا تغيّره، وتقبل التصحيح.'}>
       <div className="hw-dialog" dir="rtl">
         {phase.kind !== 'ask' && (
           <>
@@ -429,7 +429,7 @@ export function RecognitionDialog({ target, onClose, recognition, chat, online, 
             )}
             <div className="hw-actions">
               <Button variant="primary" icon={<MessageCircleQuestion size={16} />} disabled={!question.trim()} onClick={handoff}>
-                ضع السؤال في لوحة الدراسة
+                ضع السؤال في المحادثة
               </Button>
               <Button variant="plain" onClick={() => setPhase(phase.rec ? { kind: 'result', rec: phase.rec } : { kind: 'idle' })}>
                 رجوع

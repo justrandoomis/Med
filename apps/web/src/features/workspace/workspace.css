@@ -102,6 +102,27 @@
 .wk-topbar__ink:empty {
   display: none;
 }
+/* (CI 2026-11, «المحادثة» joined the end slot) at 1280 px the middle slot shrank below its own content and the writing
+   tools ran under «خيارات العرض». On a wide reader the middle slot now keeps room for the mode switch, the view menu
+   and the writing bar's pen + «المزيد» (the writing bar folds the rest); the title slot gives way first (its title
+   ellipsizes; the back button and the page chip keep their place), and the chat toggle folds to its icon below 1440 px. */
+@media (min-width: 64rem) {
+  .wk-topbar__start {
+    min-width: 13rem;
+  }
+  .wk-topbar__center:has(> .wk-topbar__ink) {
+    min-width: 22rem;
+  }
+}
+@media (max-width: 89.99rem) {
+  .wk-chat-toggle {
+    gap: 0;
+    padding-inline: var(--ml-space-2);
+  }
+  .wk-chat-toggle .wk-chat-toggle__text {
+    display: none;
+  }
+}
 .wk-backjump {
   flex: none;
 }

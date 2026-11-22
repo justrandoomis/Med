@@ -146,7 +146,8 @@ export function InkToolbar() {
   const status = useSyncExternalStore(store.subscribeStatus, store.getStatus, store.getStatus);
   const registered = useRegisteredInkTools();
   const rootRef = useRef<HTMLDivElement>(null);
-  const [size, setSize] = useState(0);
+  // the measured width (null = not measured yet: everything is shown until the first measure)
+  const [size, setSize] = useState<number | null>(null);
   const [dialog, setDialog] = useState<InkDialogKind | null>(null);
   const [optionsDialog, setOptionsDialog] = useState(false);
   const optionsLabel = useToolOptionsLabel();
@@ -211,11 +212,14 @@ export function InkToolbar() {
   const hasOptions = presetKey !== null || fam === 'eraser' || fam === 'image' || fam === 'link' || fam === 'lasso' || fam === 'insert_space' || fam === 'measure' || fam === 'zoom_window' || !!inkTool(tool)?.Options;
   const defaultLayout = tb.order.length === 0 && layout.hidden.size === 0 && !recent && registered.length === 0 && !vertical;
   // the default layout fits exactly as before N1; an arranged one fits by the same ranking
-  const shown = defaultLayout ? visibleSlots(size, buttonSize(), 4, host?.links ? undefined : 'link') : fitSlots(layoutPriority(layout.visible, recent ? ['recent'] : []), size, buttonSize());
+  // a measured width of 0 is a squeezed bar, not «not measured»: it keeps the pen + «المزيد» only (before, a 0 px
+  // measure meant «show every tool», and a squeezed bar spilled all of them over the reading bar's end slot)
+  const room = size === null ? 0 : Math.max(1, size);
+  const shown = defaultLayout ? visibleSlots(room, buttonSize(), 4, host?.links ? undefined : 'link') : fitSlots(layoutPriority(layout.visible, recent ? ['recent'] : []), room, buttonSize());
   const inBar = layout.visible.filter((id) => shown.has(id));
   const overflow = layout.visible.filter((id) => !shown.has(id));
   const clip = getClipboard();
-  const compact = size > 0 && overflow.length > 0;
+  const compact = size !== null && overflow.length > 0;
   const tip = (label: string, shortcut?: string) => (
     <span className="ml-ink-tip">
       {label}
